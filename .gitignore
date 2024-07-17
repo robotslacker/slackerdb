@@ -1,0 +1,9 @@
+.idea/
+
+.vscode/
+
+target
+
+dist
+
+logs
