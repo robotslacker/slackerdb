@@ -1,5 +1,6 @@
 package org.slackerdb.postgres.fsm;
 
+import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.buffers.BBufferUtils;
 import org.slackerdb.iterators.ProcessId;
 import org.slackerdb.logger.AppLogger;
@@ -71,4 +72,9 @@ public class StartupMessage extends ProtoState {
                 new BackendKeyData(pidValue, FIXED_SECRET),
                 new ReadyForQuery(protoContext.getValue("TRANSACTION", false)));
     }
+
+    public Iterator<ProtoStep> execute(BytesEvent event, ChannelHandlerContext channelHandlerContext) {
+        return execute(event);
+    }
+
 }

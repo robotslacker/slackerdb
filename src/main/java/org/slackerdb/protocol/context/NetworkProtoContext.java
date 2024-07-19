@@ -1,5 +1,8 @@
 package org.slackerdb.protocol.context;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
+import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.buffers.BBuffer;
 import org.slackerdb.buffers.BBufferEndianness;
 import org.slackerdb.exceptions.AskMoreDataException;
@@ -41,6 +44,7 @@ public abstract class NetworkProtoContext extends ProtoContext {
      */
     private boolean greetingsSent = false;
 
+    private ByteBuffer returnBuffer = null;
     /**
      * Wrapper for the connection with the client
      */
@@ -108,6 +112,13 @@ public abstract class NetworkProtoContext extends ProtoContext {
                 AppLogger.logger.trace("[SERVER][TX CONTENT ]: {}", dumpMessage);
             }
         }
+        if (client == null) {
+            StackTraceElement[] stackTraceElements = Thread.currentThread().getStackTrace();
+            for (StackTraceElement element : stackTraceElements) {
+                System.out.println(element);
+            }
+        }
+
         var res = client.write(response);
 
         if (res != null) {
@@ -118,6 +129,48 @@ public abstract class NetworkProtoContext extends ProtoContext {
                 throw new ConnectionExeception("Cannot write on channel");
             }
         }
+    }
+
+    /**
+     * Write to the client socket, calls the method to serialize the message
+     *
+     * @param rm
+     */
+    @Override
+    public void write(ReturnMessage rm, ChannelHandlerContext channelHandlerContext) {
+        lastAccess.set(getNow());
+
+        var returnMessage = (NetworkReturnMessage) rm;
+        //Create a new buffer fit for the destination
+        var resultBuffer = buildBuffer();
+        //Write on the buffer the message content
+        returnMessage.write(resultBuffer);
+        var length = resultBuffer.size();
+        //Create a bytebuffer fitting
+        var response = ByteBuffer.allocate(length);
+        response.put(resultBuffer.toArray());
+        //To send
+        response.flip();
+
+        // 打印即将返回的Buffer信息
+        if (AppLogger.logger.getLevel().levelStr.equals("TRACE")) {
+            AppLogger.logger.trace("[SERVER][TX PROTOCOL]: {}",
+                    returnMessage.getClass().getSimpleName());
+            for (String dumpMessage : Utils.bytesToHexList(response.array())) {
+                AppLogger.logger.trace("[SERVER][TX CONTENT 22]: {}", dumpMessage);
+            }
+        }
+
+        // 发送处理后的消息
+//        ByteBuf responseBuf = channelHandlerContext.alloc().ioBuffer(response.remaining());
+//        channelHandlerContext.writeAndFlush(responseBuf);
+        channelHandlerContext.writeAndFlush(response);
+    }
+
+    @Override
+    public ByteBuffer getReturnBuffer()
+    {
+        return returnBuffer;
     }
 
     /**
@@ -215,6 +268,22 @@ public abstract class NetworkProtoContext extends ProtoContext {
      * @param currentEvent
      */
     @Override
+    protected void postExecute(BaseEvent currentEvent, ChannelHandlerContext channelHandlerContext) {
+        if (currentEvent instanceof BytesEvent) {
+            var remainingBytes = (BytesEvent) currentEvent;
+            if (remainingBytes.getBuffer().size() >= remainingBytes.getBuffer().getPosition()) {
+                remainingBytes.getBuffer().truncate();
+                sendSync(remainingBytes, channelHandlerContext);
+            }
+        }
+    }
+
+    /**
+     * Repost the remaining data if something left
+     *
+     * @param currentEvent
+     */
+    @Override
     protected void postExecute(BaseEvent currentEvent) {
         if (currentEvent instanceof BytesEvent) {
             var remainingBytes = (BytesEvent) currentEvent;
@@ -257,8 +326,44 @@ public abstract class NetworkProtoContext extends ProtoContext {
     }
 
     /**
+     * Add new bytes to the currently remaining bytes. In case of "askmoredata"
+     * just continue without doing nothing
+     *
+     * @param currentEvent
+     * @return
+     */
+    @Override
+    public boolean reactToEvent(BaseEvent currentEvent, ChannelHandlerContext channelHandlerContext) {
+        try {
+            lastAccess.set(getNow());
+            if (currentEvent instanceof BytesEvent) {
+                var be = (BytesEvent) currentEvent;
+                if (remainingBytes != null && remainingBytes.getBuffer().size() > 0) {
+                    log.trace("[SERVER][RX] Adding to remaining bytes");
+                    remainingBytes.getBuffer().setPosition(remainingBytes.getBuffer().size());
+                    remainingBytes.getBuffer().write(be.getBuffer().getAll());
+                    remainingBytes.getBuffer().setPosition(0);
+                    currentEvent = remainingBytes;
+                    remainingBytes = null;
+
+                }
+            }
+            return super.reactToEvent(currentEvent, channelHandlerContext);
+        } catch (AskMoreDataException ex) {
+            log.trace("[SERVER][RX] Asking for more data");
+            remainingBytes = (BytesEvent) currentEvent;
+            return true;
+        }
+    }
+
+    /**
      * Send the greetings to the server
      */
+    public void sendGreetings(ChannelHandlerContext channelHandlerContext) {
+        lastAccess.set(getNow());
+        this.send(new BytesEvent(this, NullState.class, buildBuffer()), channelHandlerContext);
+    }
+
     public void sendGreetings() {
         lastAccess.set(getNow());
         this.send(new BytesEvent(this, NullState.class, buildBuffer()));
@@ -299,6 +404,16 @@ public abstract class NetworkProtoContext extends ProtoContext {
         super.postStop(executor);
     }
 
+    @Override
+    protected void postStop(ProtoState executor, ChannelHandlerContext channelHandlerContext) {
+//        try {
+//            client.close();
+//        } catch (IOException e) {
+//            log.warn("[SERVER] Closed connection: " + executor.getClass().getSimpleName());
+//        }
+        super.postStop(executor);
+    }
+
     /**
      * Run steps through the executor
      *
@@ -313,6 +428,17 @@ public abstract class NetworkProtoContext extends ProtoContext {
             lastAccess.set(getNow());
             try (final MDC.MDCCloseable mdc = MDC.putCloseable("connection", contextId + "")) {
                 super.runSteps(stepsToInvoke, executor, event);
+            }
+        });
+    }
+
+    @Override
+    public void runSteps(Iterator<ProtoStep> stepsToInvoke, ProtoState executor, BaseEvent event, ChannelHandlerContext channelHandlerContext ) {
+        lastAccess.set(getNow());
+        executorService.execute(() -> {
+            lastAccess.set(getNow());
+            try (final MDC.MDCCloseable mdc = MDC.putCloseable("connection", contextId + "")) {
+                super.runSteps(stepsToInvoke, executor, event, channelHandlerContext);
             }
         });
     }

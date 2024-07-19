@@ -1,5 +1,6 @@
 package org.slackerdb.protocol.states;
 
+import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.exceptions.AskMoreDataException;
 import org.slackerdb.protocol.descriptor.ProtoDescriptor;
 import org.slackerdb.protocol.events.BaseEvent;
@@ -42,18 +43,18 @@ public abstract class ProtoState {
         this.messages = new HashSet<>(Arrays.asList(messages));
         Class<?> current;
         String exceptionMessage = "";
-        try {
-            for (var message : messages) {
-                //Check that it can handle all needed messages
-                current = message;
-                exceptionMessage = "Missing method " + this.getClass().getSimpleName() + "::canRun(" + current.getSimpleName() + ") ";
-                getClass().getMethod("canRun", message);
-                exceptionMessage = "Missing method " + this.getClass().getSimpleName() + "::execute(" + current.getSimpleName() + ") ";
-                getClass().getMethod("execute", message);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException(exceptionMessage + e.getMessage(), e);
-        }
+//        try {
+//            for (var message : messages) {
+//                //Check that it can handle all needed messages
+//                current = message;
+//                exceptionMessage = "Missing method " + this.getClass().getSimpleName() + "::canRun(" + current.getSimpleName() + ") ";
+//                getClass().getMethod("canRun", message);
+//                exceptionMessage = "Missing method " + this.getClass().getSimpleName() + "::execute(" + current.getSimpleName() + ") ";
+//                getClass().getMethod("execute", message);
+//            }
+//        } catch (Exception e) {
+//            throw new RuntimeException(exceptionMessage + e.getMessage(), e);
+//        }
     }
 
     /**
@@ -182,6 +183,7 @@ public abstract class ProtoState {
      * @param event
      * @return
      */
+
     public Iterator<ProtoStep> executeEvent(BaseEvent event) {
         Method meth;
         try {
@@ -191,6 +193,20 @@ public abstract class ProtoState {
         }
         try {
             return (Iterator<ProtoStep>) meth.invoke(this, event);
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            throw new RuntimeException(e.getCause());
+        }
+    }
+
+    public Iterator<ProtoStep> executeEvent(BaseEvent event, ChannelHandlerContext channelHandlerContext) {
+        Method meth;
+        try {
+            meth = getClass().getMethod("execute", event.getClass(), ChannelHandlerContext.class);
+        } catch (NoSuchMethodException e) {
+            throw new RuntimeException(e);
+        }
+        try {
+            return (Iterator<ProtoStep>) meth.invoke(this, event, channelHandlerContext);
         } catch (IllegalAccessException | InvocationTargetException e) {
             throw new RuntimeException(e.getCause());
         }

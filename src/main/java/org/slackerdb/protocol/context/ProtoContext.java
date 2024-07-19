@@ -1,6 +1,7 @@
 package org.slackerdb.protocol.context;
 
 
+import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.exceptions.AskMoreDataException;
 import org.slackerdb.exceptions.FailedStateException;
 import org.slackerdb.logger.AppLogger;
@@ -21,11 +22,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 
+import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+
 
 /**
  * Instance of a protocol definition
@@ -46,7 +49,7 @@ public abstract class ProtoContext {
      */
     protected final ExecutorService executorService =
             new ThreadPoolExecutor(1, 100, 0L, TimeUnit.MILLISECONDS,
-                    new LinkedBlockingQueue<>());
+                    new LinkedBlockingQueue<>(), new CustomThreadFactory("xxx"));
     protected final int contextId;
     /**
      * The descriptor of the protocol
@@ -250,6 +253,36 @@ public abstract class ProtoContext {
         });
     }
 
+
+    /**
+     * Send a message and execute it
+     *
+     * @param event
+     * @return
+     */
+    public Future<Boolean> send(BaseEvent event, ChannelHandlerContext channelHandlerContext) {
+        lastAccess.set(getNow());
+        return executorService.submit(() -> {
+            try (final MDC.MDCCloseable mdc = MDC.putCloseable("connection", contextId + "")) {
+                synchronized (sendLock) {
+                    return reactToEvent(event, channelHandlerContext);
+                }
+            }
+        });
+    }
+
+    /**
+     * Send a message synchronously
+     *
+     * @param event
+     * @return
+     */
+    public boolean sendSync(BaseEvent event, ChannelHandlerContext channelHandlerContext) {
+        try (final MDC.MDCCloseable mdc = MDC.putCloseable("connection", contextId + "")) {
+            return reactToEvent(event, channelHandlerContext);
+        }
+    }
+
     /**
      * Send a message synchronously
      *
@@ -257,7 +290,6 @@ public abstract class ProtoContext {
      * @return
      */
     public boolean sendSync(BaseEvent event) {
-
         try (final MDC.MDCCloseable mdc = MDC.putCloseable("connection", contextId + "")) {
             return reactToEvent(event);
         }
@@ -269,6 +301,7 @@ public abstract class ProtoContext {
      * @param currentEvent
      * @return
      */
+
     public boolean reactToEvent(BaseEvent currentEvent) {
         try {
             lastAccess.set(getNow());
@@ -292,6 +325,45 @@ public abstract class ProtoContext {
             }
             //Post execution
             postExecute(currentEvent);
+            return true;
+        } catch (AskMoreDataException askMoreData) {
+            //If more data is required just rethrow
+            throw askMoreData;
+        } catch (Exception ex) {
+            //Real exception
+            log.debug(ex.getMessage(), ex);
+            //Execute the special handler
+            handleExceptionInternal(ex);
+            //Stop the execution
+            return false;
+        } finally {
+            Sleeper.yield();
+        }
+    }
+
+    public boolean reactToEvent(BaseEvent currentEvent, ChannelHandlerContext channelHandlerContext) {
+        try {
+            lastAccess.set(getNow());
+            log.trace("[SERVER] RunFsmCycle");
+            //Prepartion for the execution
+            preExecute(currentEvent);
+            //Find what should execute
+            ProtoState foundedState = findThePossibleNextState(currentEvent);
+            if (foundedState == null) {
+                //May be next time
+                return true;
+            }
+
+            log.debug("[SERVER][RX]: {} Tags: {}", foundedState.getClass().getSimpleName(), currentEvent.getTagKeyValues());
+            currentState = foundedState;
+
+            //Invoke the execution
+            var stepsToInvoke = currentState.executeEvent(currentEvent, channelHandlerContext);
+            if (stepsToInvoke != null) {
+                runSteps(stepsToInvoke, currentState, currentEvent, channelHandlerContext);
+            }
+            //Post execution
+            postExecute(currentEvent, channelHandlerContext);
             return true;
         } catch (AskMoreDataException askMoreData) {
             //If more data is required just rethrow
@@ -342,7 +414,6 @@ public abstract class ProtoContext {
      * @param event
      */
     public void runSteps(Iterator<ProtoStep> stepsToRun, ProtoState currentState, BaseEvent event) {
-
         while (stepsToRun.hasNext()) {
             lastAccess.set(getNow());
             var steps = stepsToRun.next();
@@ -363,12 +434,46 @@ public abstract class ProtoContext {
         }
     }
 
+
+    /**
+     * Run the result of the invocation of the state
+     *
+             * @param stepsToRun
+     * @param currentState
+     * @param event
+     */
+    public void runSteps(Iterator<ProtoStep> stepsToRun, ProtoState currentState, BaseEvent event, ChannelHandlerContext channelHandlerContext) {
+
+        while (stepsToRun.hasNext()) {
+            lastAccess.set(getNow());
+            var steps = stepsToRun.next();
+            if (steps == null) continue;
+            if (steps.getClass() == Stop.class) {
+                //Special state, termiante
+                postStop(currentState,channelHandlerContext);
+                run.set(false);
+                break;
+            } else {
+                //Run the step
+                var stepResult = steps.run();
+                if (stepResult == null) continue;
+                //Write somwhere the result
+                log.debug("[SERVER][TX]: {} Tags: {}", stepResult.getClass().getSimpleName(), event.getTagKeyValues());
+                write(stepResult, channelHandlerContext);
+            }
+        }
+    }
+
     /**
      * Override for termination
      *
      * @param executor
      */
     protected void postStop(ProtoState executor) {
+
+    }
+
+    protected void postStop(ProtoState executor, ChannelHandlerContext channelHandlerContext) {
 
     }
 
@@ -380,6 +485,18 @@ public abstract class ProtoContext {
     public void write(ReturnMessage returnMessage) {
 
     }
+
+    /**
+     * Override to send data outside
+     *
+     * @param returnMessage
+     */
+    public void write(ReturnMessage returnMessage, ChannelHandlerContext channelHandlerContext) {
+
+    }
+
+
+    public abstract ByteBuffer getReturnBuffer();
 
     /**
      * Pre execute
@@ -686,6 +803,9 @@ public abstract class ProtoContext {
      */
     protected void postExecute(BaseEvent currentEvent) {
 
+    }
+
+    protected void postExecute(BaseEvent currentEvent, ChannelHandlerContext channelHandlerContext) {
     }
 
     /**

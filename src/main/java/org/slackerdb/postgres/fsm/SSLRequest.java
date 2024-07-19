@@ -1,5 +1,6 @@
 package org.slackerdb.postgres.fsm;
 
+import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.buffers.BBufferUtils;
 import org.slackerdb.iterators.ProcessId;
 import org.slackerdb.postgres.messages.NoticeReponse;
@@ -35,6 +36,9 @@ public class SSLRequest extends ProtoState {
 
         inputBuffer.truncate(8);
         return iteratorOfList(new NoticeReponse());
+    }
 
+    public Iterator<ProtoStep> execute(BytesEvent event, ChannelHandlerContext channelHandlerContext) {
+        return execute(event);
     }
 }

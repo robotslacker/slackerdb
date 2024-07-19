@@ -1,9 +1,11 @@
 package org.slackerdb.postgres.fsm;
 
+import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.buffers.BBuffer;
 import org.slackerdb.exceptions.AskMoreDataException;
 import org.slackerdb.postgres.fsm.events.PostgresPacket;
 import org.slackerdb.protocol.context.NetworkProtoContext;
+import org.slackerdb.protocol.events.BytesEvent;
 import org.slackerdb.protocol.messages.ProtoStep;
 import org.slackerdb.protocol.states.ProtoState;
 
@@ -42,6 +44,11 @@ public abstract class PostgresState extends ProtoState {
         var length = inputBuffer.getInt(1);
         inputBuffer.truncate(length + 1);
         return res;
+    }
+
+
+    public Iterator<ProtoStep> execute(PostgresPacket event, ChannelHandlerContext channelHandlerContext) {
+        return execute(event);
     }
 
     protected abstract Iterator<ProtoStep> executeStandardMessage(BBuffer inputBuffer, NetworkProtoContext protoContext);

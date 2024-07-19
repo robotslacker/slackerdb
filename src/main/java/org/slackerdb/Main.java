@@ -6,6 +6,7 @@ import org.slackerdb.postgres.PostgresProtocol;
 import org.slackerdb.protocol.context.ProtoContext;
 import org.slackerdb.server.ServerConfiguration;
 import org.slackerdb.server.TcpServer;
+import org.slackerdb.server.TcpServerHandler;
 import org.slackerdb.sql.jdbc.JdbcProxy;
 import org.slackerdb.utils.Sleeper;
 import org.apache.commons.cli.*;
@@ -38,12 +39,33 @@ public class Main {
         var proxy = new JdbcProxy("org.duckdb.DuckDBDriver", connectString);
         baseProtocol.setProxy(proxy);
         baseProtocol.initialize();
+
+        // 指定访问的协议
+        TcpServerHandler.protoDescriptor = baseProtocol;
+
         protocolServer = new TcpServer(baseProtocol);
         protocolServer.useCallDurationTimes(false);
         protocolServer.start();
 
+//        while (true)
+//        {
+//            ThreadGroup currentGroup = Thread.currentThread().getThreadGroup();
+//            System.out.println("activeThreads = " + currentGroup.activeCount());
+//            Sleeper.sleep(3000);
+//            if (false)
+//            {
+//                break;
+//            }
+//            Thread[] threads = new Thread[currentGroup.activeCount()];
+//            int count = currentGroup.enumerate(threads);
+//            for (int i = 0; i < count; i++) {
+//                Thread t = threads[i];
+//                System.out.println("Thread ID : " + t.getId() + " " + t.getName());
+//            }
+//        }
+//
         while (!protocolServer.isRunning()) {
-            Sleeper.sleep(100);
+            Sleeper.sleep(1000);
         }
     }
 

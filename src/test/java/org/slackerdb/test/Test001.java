@@ -10,10 +10,7 @@ import org.slackerdb.utils.Sleeper;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.*;
 import java.util.Properties;
 
 public class Test001 {
@@ -26,7 +23,7 @@ public class Test001 {
             try {
                 ServerConfiguration.LoadDefaultConfiguration();
 
-                Main.setLogLevel("TRACE");
+//                Main.setLogLevel("TRACE");
                 Main.start();
 
             } catch (Exception e) {
@@ -108,6 +105,181 @@ public class Test001 {
         }
         pgConn1.close();
         pgConn2.close();
+    }
+
+    @Test
+    void commitAndRollback() throws SQLException {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.createStatement().execute("Create TABLE commitAndRollback (id int)");
+        pgConn1.commit();
+
+        pgConn1.createStatement().execute("insert into commitAndRollback values(3)");
+
+        ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from commitAndRollback");
+
+        while (rs.next()) {
+            assert rs.getInt(1) == 3;
+        }
+        rs.close();
+        pgConn1.rollback();
+
+        rs = pgConn1.createStatement().executeQuery("SELECT COUNT(*) from commitAndRollback");
+        while (rs.next()) {
+            assert rs.getInt(1) == 0;
+        }
+        rs.close();
+
+        pgConn1.createStatement().execute("insert into commitAndRollback values(5)");
+
+        rs = pgConn1.createStatement().executeQuery("SELECT * from commitAndRollback");
+        while (rs.next()) {
+            assert rs.getInt(1) == 5;
+        }
+        rs.close();
+
+        pgConn1.commit();
+        pgConn1.close();
+    }
+
+    @Test
+    void lotsOfConnection() throws SQLException {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        int  MAX_THREADS = 100;
+
+        // 创建一个包含100个线程的数组
+        Thread[] threads = new Thread[MAX_THREADS];
+
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+        pgConn1.createStatement().execute("DROP TABLE IF EXISTS lotsOfConnection");
+
+        pgConn1.createStatement().execute("Create TABLE lotsOfConnection (id int)");
+        pgConn1.commit();
+
+        for (int i = 0; i < threads.length; i++) {
+            int finalI = i;
+            threads[i] = new Thread(() -> {
+                try {
+                    Connection pgConnX = DriverManager.getConnection(
+                            connectURL, "", "");
+                    pgConnX.setAutoCommit(false);
+                    pgConnX.createStatement().execute("insert into lotsOfConnection values(" + finalI + ")");
+                    pgConnX.commit();
+                    pgConnX.close();
+                } catch (SQLException se) {
+                    se.printStackTrace();
+                }
+            });
+        }
+
+        // 启动所有线程
+        for (Thread thread : threads) {
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException ie) {}
+            thread.start();
+        }
+
+        // 等待所有线程完成
+        for (Thread thread : threads) {
+            try {
+                thread.join();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+
+        int expectedSumValue = 0;
+        for (int i = 0; i < threads.length; i++) {
+            expectedSumValue = expectedSumValue + i;
+        }
+        ResultSet rs = pgConn1.createStatement().executeQuery("SELECT COUNT(*),SUM(id) from lotsOfConnection");
+        while (rs.next()) {
+            assert rs.getInt(1) == MAX_THREADS;
+            assert rs.getInt(2) == expectedSumValue;
+        }
+        rs.close();
+        pgConn1.commit();
+        pgConn1.close();
+    }
+
+    @Test
+    void testFailedHybridSQL() throws SQLException {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.createStatement().execute("Create TABLE testFailedHybridSQL (id int)");
+        pgConn1.commit();
+
+        pgConn1.createStatement().execute("insert into testFailedHybridSQL values(1)");
+
+        try {
+            pgConn1.createStatement().execute("insert into testFailedHybridSQLFake values(2)");
+        }
+        catch (SQLException se)
+        {
+            assert se.getClass().getSimpleName().equalsIgnoreCase("PSQLException");
+        }
+        pgConn1.createStatement().execute("insert into testFailedHybridSQL values(3)");
+
+        ResultSet rs = pgConn1.createStatement().executeQuery("SELECT Count(*),Sum(id) from testFailedHybridSQL");
+        while (rs.next()) {
+            assert rs.getInt(1) == 2;
+            assert rs.getInt(2) == 4;
+        }
+        rs.close();
+        pgConn1.close();
+    }
+
+    @Test
+    void variousDataTypeSelect() throws SQLException {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = "CREATE TABLE variousDataTypeSelect ( " +
+                "id INTEGER PRIMARY KEY," +
+                "name VARCHAR(100)," +
+                "birth_date DATE," +
+                "is_active BOOLEAN," +
+                "salary DECIMAL(10, 2)," +
+                "binary_data BLOB," +
+                "float_value FLOAT," +
+                "double_value DOUBLE," +
+                "numeric_value NUMERIC," +
+                "timestamp_value TIMESTAMP" +
+                ")";
+        pgConn1.createStatement().execute(sql);
+
+        sql = "INSERT INTO variousDataTypeSelect (id, name, birth_date, is_active, salary, binary_data, float_value, double_value, numeric_value, timestamp_value) " +
+                "VALUES " +
+                "(1, 'John Doe', '1990-01-01', TRUE, 50000.00, X'48454C4C', 3.14, 3.14159, 12345, '2022-01-01 00:00:00')," +
+                "(2, 'Jane Smith', '1995-05-15', FALSE, 60000.00, X'4A616E65', 2.71, 2.71828, 98765, '2023-06-30 12:00:00')";
+        pgConn1.createStatement().execute(sql);
+
+        ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from variousDataTypeSelect Where id = 2");
+        while (rs.next()) {
+            assert rs.getInt("id") == 2;
+            assert rs.getString("name").equals("Jane Smith");
+            assert rs.getDate("birth_date").toString().equals("1995-05-15");
+            assert !rs.getBoolean("is_active");
+            assert rs.getBigDecimal("salary").longValue() == 60000;
+//            Blob blob = rs.getBlob("binary_data");
+            assert Math.abs(rs.getFloat("float_value") - 2.71) < 0.001;
+            assert rs.getDouble("double_value") == 2.71828;
+            assert rs.getDouble("numeric_value") == 98765;
+            assert rs.getTimestamp("timestamp_value").toInstant().getEpochSecond() == 1688097600;
+        }
+        rs.close();
+        pgConn1.close();
     }
 
     @AfterAll

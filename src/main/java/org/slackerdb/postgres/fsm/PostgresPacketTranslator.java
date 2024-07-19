@@ -1,5 +1,6 @@
 package org.slackerdb.postgres.fsm;
 
+import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.exceptions.AskMoreDataException;
 import org.slackerdb.postgres.fsm.events.PostgresPacket;
 import org.slackerdb.protocol.context.NetworkProtoContext;
@@ -58,4 +59,18 @@ public class PostgresPacketTranslator extends ProtoState implements InterruptPro
         return iteratorOfEmpty();
     }
 
+    public Iterator<ProtoStep> execute(BytesEvent event, ChannelHandlerContext channelHandlerContext) {
+        var inputBuffer = event.getBuffer();
+        inputBuffer.setPosition(0);
+        var length = inputBuffer.getInt(1);
+        var bytes = inputBuffer.getBytes(0, length + 1);
+        inputBuffer.truncate(length + 1);
+        var bf = ((NetworkProtoContext) event.getContext()).buildBuffer();
+        bf.write(bytes);
+        bf.setPosition(0);
+        var pgPacket = new PostgresPacket(event.getContext(), event.getPrevState(),
+                bf);
+        event.getContext().send(pgPacket, channelHandlerContext);
+        return iteratorOfEmpty();
+    }
 }

@@ -122,7 +122,7 @@ public class ServerConfiguration extends Throwable {
         propValue = appProperties.getProperty("clientTimeout", "");
         if (propValue.trim().isEmpty())
         {
-            clientTimeout = 600;
+            clientTimeout = 20;
         }
         else
         {
