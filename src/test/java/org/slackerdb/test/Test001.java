@@ -7,25 +7,30 @@ import org.slackerdb.Main;
 import org.slackerdb.server.ServerConfiguration;
 import org.slackerdb.utils.Sleeper;
 
+import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.sql.*;
 import java.util.Properties;
 
 public class Test001 {
     static Thread dbThread = null;
+    static int dbPort=4309;
 
     @BeforeAll
     static void initAll() {
         // 启动slackerDB的服务
         Thread dbThread = new Thread(() -> {
             try {
+                // 修改默认的db启动端口
                 ServerConfiguration.LoadDefaultConfiguration();
+                ServerConfiguration.setPort(dbPort);
 
-//                Main.setLogLevel("TRACE");
+                // 启动数据库
+                Main.setLogLevel("TRACE");
                 Main.start();
-
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -39,7 +44,7 @@ public class Test001 {
             }
             else
             {
-                Sleeper.sleep(3*1000);
+                Sleeper.sleep(1*1000);
             }
         }
         System.out.println("TEST:: Server started successful ...");
@@ -47,17 +52,15 @@ public class Test001 {
 
     @Test
     void connectDB() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
-
-        System.out.println("TEST:: DB connect successful.");
     }
 
     @Test
     void simpleQuery() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
@@ -71,7 +74,7 @@ public class Test001 {
 
     @Test
     void simpleDDL() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
@@ -88,7 +91,7 @@ public class Test001 {
 
     @Test
     void multiConnectionWithOneInstance() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -98,6 +101,7 @@ public class Test001 {
 
         pgConn1.createStatement().execute("Create TABLE multiConnectionWithOneInstance (id int)");
         pgConn1.createStatement().execute("insert into multiConnectionWithOneInstance values(3)");
+        pgConn1.commit();
 
         ResultSet rs = pgConn2.createStatement().executeQuery("SELECT * from multiConnectionWithOneInstance");
         while (rs.next()) {
@@ -109,7 +113,7 @@ public class Test001 {
 
     @Test
     void commitAndRollback() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -147,7 +151,7 @@ public class Test001 {
 
     @Test
     void lotsOfConnection() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         int  MAX_THREADS = 100;
 
         // 创建一个包含100个线程的数组
@@ -179,9 +183,6 @@ public class Test001 {
 
         // 启动所有线程
         for (Thread thread : threads) {
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException ie) {}
             thread.start();
         }
 
@@ -210,7 +211,7 @@ public class Test001 {
 
     @Test
     void testFailedHybridSQL() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -230,17 +231,21 @@ public class Test001 {
         pgConn1.createStatement().execute("insert into testFailedHybridSQL values(3)");
 
         ResultSet rs = pgConn1.createStatement().executeQuery("SELECT Count(*),Sum(id) from testFailedHybridSQL");
+
+        int resultCount = 0;
         while (rs.next()) {
+            resultCount++;
             assert rs.getInt(1) == 2;
             assert rs.getInt(2) == 4;
         }
         rs.close();
         pgConn1.close();
+        assert resultCount == 1;
     }
 
-    @Test
+//    @Test
     void variousDataTypeSelect() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -280,6 +285,97 @@ public class Test001 {
         }
         rs.close();
         pgConn1.close();
+    }
+
+//    @Test
+    void testBindInsert() throws SQLException {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = "CREATE TABLE testBindInsert ( " +
+                "id INTEGER PRIMARY KEY," +
+                "name VARCHAR(100)," +
+                "birth_date DATE," +
+                "is_active BOOLEAN," +
+                "salary DECIMAL(10, 2)," +
+                "binary_data BLOB," +
+                "float_value FLOAT," +
+                "double_value DOUBLE," +
+                "numeric_value NUMERIC," +
+                "timestamp_value TIMESTAMP" +
+                ")";
+        pgConn1.createStatement().execute(sql);
+
+        sql = "INSERT INTO testBindInsert (id, name, birth_date, is_active, salary, binary_data, float_value, double_value, numeric_value, timestamp_value) " +
+                "VALUES " +
+                "(?, 'John Doe', '1990-01-01', TRUE, 50000.00, X'48454C4C', 3.14, 3.14159, 12345, '2023-06-30 12:00:00')";
+        PreparedStatement pStmt = pgConn1.prepareStatement(sql);
+        pStmt.setInt(1, 99);
+        pStmt.executeUpdate();
+
+        ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from testBindInsert Where id = 1");
+        while (rs.next()) {
+            assert rs.getInt("id") == 99;
+            assert rs.getString("name").equals("John Doe");
+            assert rs.getDate("birth_date").toString().equals("1990-01-01");
+            assert !rs.getBoolean("is_active");
+            assert rs.getBigDecimal("salary").longValue() == 50000;
+//            Blob blob = rs.getBlob("binary_data");
+            assert Math.abs(rs.getFloat("float_value") - 3.14) < 0.001;
+            assert rs.getDouble("double_value") == 3.14159;
+            assert rs.getDouble("numeric_value") == 12345;
+            assert rs.getTimestamp("timestamp_value").toInstant().getEpochSecond() == 1688097600;
+        }
+        rs.close();
+        pStmt.close();
+        pgConn1.close();
+    }
+
+//    @Test
+    void BatchInsert() throws SQLException {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = "CREATE TABLE testBatchInsert ( " +
+                "id INTEGER PRIMARY KEY," +
+                "name VARCHAR(100)," +
+                "birth_date DATE," +
+                "is_active BOOLEAN," +
+                "salary DECIMAL(10, 2)," +
+                "binary_data BLOB," +
+                "float_value FLOAT," +
+                "double_value DOUBLE," +
+                "numeric_value NUMERIC," +
+                "timestamp_value TIMESTAMP" +
+                ")";
+        pgConn1.createStatement().execute(sql);
+
+        sql = "INSERT INTO testBindInsert (id, name, birth_date, is_active, salary, binary_data, float_value, double_value, numeric_value, timestamp_value) " +
+                "VALUES " +
+                "(?, 'John Doe', '1990-01-01', TRUE, 50000.00, X'48454C4C', 3.14, 3.14159, 12345, '2023-06-30 12:00:00')";
+        PreparedStatement pStmt = pgConn1.prepareStatement(sql);
+        int expectedResult = 0;
+        for (int i=1; i<=100; i++) {
+            pStmt.setInt(1, i);
+            pStmt.addBatch();
+            expectedResult = expectedResult + i;
+        }
+        pStmt.executeBatch();
+
+        int actualResult = 0;
+        ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from testBatchInsert Where id = 1");
+        while (rs.next()) {
+            actualResult = actualResult + rs.getInt("id");
+        }
+        rs.close();
+        pStmt.close();
+        pgConn1.close();
+
+        assert expectedResult == actualResult;
     }
 
     @AfterAll

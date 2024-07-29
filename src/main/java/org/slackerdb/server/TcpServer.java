@@ -2,19 +2,19 @@ package org.slackerdb.server;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
-import io.netty.handler.codec.string.StringDecoder;
-import io.netty.handler.codec.string.StringEncoder;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.timeout.IdleStateHandler;
+import io.netty.util.AttributeKey;
+import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.logger.AppLogger;
+import org.slackerdb.protocol.*;
 import org.slackerdb.protocol.context.NetworkProtoContext;
 import org.slackerdb.protocol.descriptor.NetworkProtoDescriptor;
 import org.slackerdb.protocol.events.BytesEvent;
@@ -50,7 +50,6 @@ public class TcpServer {
      * Listener socket
      */
     private AsynchronousServerSocketChannel server;
-    private boolean callDurationTimes;
 
     public TcpServer(NetworkProtoDescriptor protoDescriptor) {
         this.protoDescriptor = protoDescriptor;
@@ -81,7 +80,7 @@ public class TcpServer {
     /**
      * Start the server
      */
-    public void start() {
+    public void start() throws ServerException {
         // 根据内存模式何文件模式打印日志信息
         if (ServerConfiguration.getData().isEmpty()) {
             AppLogger.logger.info("[SERVER] Data will saved in MEMORY.");
@@ -90,6 +89,9 @@ public class TcpServer {
         {
             AppLogger.logger.info("[SERVER] Data will saved at [{}].", ServerConfiguration.getData());
         }
+
+        // 初始化服务处理程序的后端数据库连接字符串
+        TcpServerHandler.setBackendConnectString();
 
         this.thread = new Thread(() -> {
             try {
@@ -103,26 +105,175 @@ public class TcpServer {
 
     // 自定义解码器，处理原始字节数据
     static class RawMessageDecoder extends ByteToMessageDecoder {
-        @Override
-        protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
-            // 在这里进行原始字节数据的解析处理
-            // 例如：解析消息头、消息体等
-            // 解析后的数据对象添加到 out 列表中，以传递给下一个处理器
-            int readableBytes = in.readableBytes();
-            byte[] data = new byte[readableBytes];
-            in.readBytes(data);
-
+        static void pushMsgObject(List<Object> out, Object obj)
+        {
             // 打印所有收到的字节内容（16进制）
             if (AppLogger.logger.getLevel().levelStr.equals("TRACE")) {
-                for (String dumpMessage : Utils.bytesToHexList(data)) {
+                PostgresRequest postgresRequest = (PostgresRequest)obj;
+                AppLogger.logger.trace("[SERVER][RX CONTENT ]: {},{}",
+                        obj.getClass().getSimpleName(), postgresRequest.encode().length);
+                for (String dumpMessage : Utils.bytesToHexList(postgresRequest.encode())) {
                     AppLogger.logger.trace("[SERVER][RX CONTENT ]: {}", dumpMessage);
                 }
             }
+            out.add(obj);
+        }
 
-            // 将字节数据转换为 ByteBuffer 对象
-            ByteBuffer byteBuffer = ByteBuffer.wrap(data);
+        @Override
+        protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
+            // 如果之前没有读取过任何协议，则读取前一个Int。可能是SSLRequest或者StartupMessage
+            String previousRequestProtocol;
+            previousRequestProtocol = (String) ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).get();
+            byte[] data;
 
-            out.add(byteBuffer);
+            // 在这里进行原始字节数据的解析处理
+            // 例如：解析消息头、消息体等
+            // 解析后的数据对象添加到 out 列表中，以传递给下一个处理器
+            while (in.readableBytes() > 0) {
+                // 处理SSLRequest
+                if (previousRequestProtocol.isEmpty()) {
+                    // 等待网络请求发送完毕，StartupMessage
+                    if (in.readableBytes() < 8) {
+                        return;
+                    }
+
+                    // SSLRequest
+                    data = new byte[8];
+                    in.readBytes(data);
+
+                    // 处理消息
+                    SSLRequest sslRequest = new SSLRequest();
+                    sslRequest.decode(data);
+                    pushMsgObject(out, sslRequest);
+
+                    // 标记当前步骤
+                    ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(SSLRequest.class.getSimpleName());
+                    previousRequestProtocol = SSLRequest.class.getSimpleName();
+                }
+
+                // 处理StartupMessage
+                if (previousRequestProtocol.equalsIgnoreCase(SSLRequest.class.getSimpleName())) {
+                    // 等待网络请求发送完毕，StartupMessage
+                    if (in.readableBytes() < 4) {
+                        return;
+                    }
+
+                    // 首字节为消息体的长度
+                    data = new byte[4];
+                    in.readBytes(data);
+                    ByteBuffer byteBuffer = ByteBuffer.wrap(data);
+                    int messageLen = byteBuffer.getInt();
+
+                    // 等待消息体发送结束, 4字节的字节长度也是消息体长度的一部分
+                    if (in.readableBytes() < (messageLen - 4)) {
+                        in.readerIndex(in.readerIndex() - 4); // 重置读取位置
+                        return;
+                    }
+                    data = new byte[messageLen - 4];
+                    in.readBytes(data);
+
+                    // 处理消息
+                    StartupRequest startupRequest = new StartupRequest();
+                    startupRequest.decode(data);
+                    pushMsgObject(out, startupRequest);
+
+                    // 标记当前步骤
+                    ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(StartupRequest.class.getSimpleName());
+                    previousRequestProtocol = StartupRequest.class.getSimpleName();
+                    continue;
+                }
+
+                // 处理其他消息
+                // 前5个字节为消息体的类别以及消息体的长度
+                if (in.readableBytes() < 5) {
+                    return;
+                }
+                data = new byte[5];
+                in.readBytes(data);
+                ByteBuffer byteBuffer = ByteBuffer.wrap(data);
+
+                char messageType = (char)byteBuffer.get();
+                int messageLen = byteBuffer.getInt();
+
+                // 等待消息体发送结束, 4字节的字节长度也是消息体长度的一部分
+                if (in.readableBytes() < (messageLen - 4)) {
+                    in.readerIndex(in.readerIndex() - 5); // 重置读取位置
+                    return;
+                }
+                data = new byte[messageLen - 4];
+                in.readBytes(data);
+
+                switch (messageType)
+                {
+                    case 'P':
+                        ParseRequest parseRequest = new ParseRequest();
+                        parseRequest.decode(data);
+
+                        // 处理消息
+                        pushMsgObject(out, parseRequest);
+
+                        // 标记当前步骤
+                        ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(ParseRequest.class.getSimpleName());
+                        previousRequestProtocol = ParseRequest.class.getSimpleName();
+                        break;
+                    case 'B':
+                        BindRequest bindRequest = new BindRequest();
+                        bindRequest.decode(data);
+
+                        // 处理消息
+                        pushMsgObject(out, bindRequest);
+
+                        // 标记当前步骤
+                        ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(BindRequest.class.getSimpleName());
+                        previousRequestProtocol = BindRequest.class.getSimpleName();
+                        break;
+                    case 'E':
+                        ExecuteRequest executeRequest = new ExecuteRequest();
+                        executeRequest.decode(data);
+
+                        // 处理消息
+                        pushMsgObject(out, executeRequest);
+
+                        // 标记当前步骤
+                        ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(ExecuteRequest.class.getSimpleName());
+                        previousRequestProtocol = ExecuteRequest.class.getSimpleName();
+                        break;
+                    case 'S':
+                        SyncRequest syncRequest = new SyncRequest();
+                        syncRequest.decode(data);
+
+                        // 处理消息
+                        pushMsgObject(out, syncRequest);
+
+                        // 标记当前步骤
+                        ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(SyncRequest.class.getSimpleName());
+                        previousRequestProtocol = SyncRequest.class.getSimpleName();
+                        break;
+                    case 'D':
+                        DescribeRequest describeRequest = new DescribeRequest();
+                        describeRequest.decode(data);
+
+                        // 处理消息
+                        pushMsgObject(out, describeRequest);
+
+                        // 标记当前步骤
+                        ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(DescribeRequest.class.getSimpleName());
+                        previousRequestProtocol = DescribeRequest.class.getSimpleName();
+                        break;
+                    case 'X':
+                        TerminateRequest terminateRequest = new TerminateRequest();
+                        terminateRequest.decode(data);
+
+                        // 处理消息
+                        pushMsgObject(out, terminateRequest);
+
+                        // 关闭连接
+                        ctx.close();
+                        break;
+                    default:
+                        AppLogger.logger.error("[SERVER] Unknown message type: {}", messageType);
+                }
+            }
         }
     }
 
@@ -131,26 +282,6 @@ public class TcpServer {
         @Override
         protected void encode(ChannelHandlerContext ctx, ByteBuffer msg, ByteBuf out) {
             out.writeBytes(msg);
-//            // 在这里进行原始字节数据的编码处理
-//            // 例如：将消息对象转换成字节流，写入到 ByteBuf 中
-//            // 在这里进行原始消息对象的编码处理
-//            // 例如：将 ByteBuffer 对象转换成字节流，写入到 ByteBuf 中
-//            byte[] buffer = new byte[1024]; // 根据实际情况调整大小
-//r
-//            System.out.println("1111");
-//            while (msg.hasRemaining()) {
-//                int length = Math.min(msg.remaining(), buffer.length);
-//                msg.get(buffer, 0, length); // 从 ByteBuffer 中读取数据到缓冲区
-//                if (AppLogger.logger.getLevel().levelStr.equals("TRACE")) {
-//                    for (String dumpMessage : Utils.bytesToHexList(buffer)) {
-//                        AppLogger.logger.error("[SERVER][TX CONTENT 2222]: {}", dumpMessage);
-//                    }
-//                }
-//                out.writeBytes(buffer, 0, length); // 将缓冲区中的数据写入到输出流
-//            }
-//
-//            // 发送编码后的消息到下一个处理器
-//            ctx.writeAndFlush(out);
         }
     }
 
@@ -187,7 +318,7 @@ public class TcpServer {
                     .handler(new LoggingHandler(LogLevel.INFO))
                     .childHandler(new ChannelInitializer<SocketChannel>() {
                         @Override
-                        protected void initChannel(SocketChannel ch) {
+                        protected void initChannel(SocketChannel ch) throws ServerException {
                             // 定义超时处理机制
                             ch.pipeline().addLast(new IdleStateHandler(60, 30, 0, TimeUnit.SECONDS));
                             // 定义消息处理
@@ -276,7 +407,6 @@ public class TcpServer {
                                 }
 
                                 var bb = context.buildBuffer();
-                                context.setUseCallDurationTimes(callDurationTimes);
                                 bb.write(byteArray);
                                 BytesEvent bytesEvent = new BytesEvent(context, null, bb);
 
@@ -334,8 +464,4 @@ public class TcpServer {
     public boolean isRunning() {
         return systemRunning;
     }
-    public void useCallDurationTimes(boolean callDurationTimes) {
-
-        this.callDurationTimes = callDurationTimes;
-    }
-}
+ }

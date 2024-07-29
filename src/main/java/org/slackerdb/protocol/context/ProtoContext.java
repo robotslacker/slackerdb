@@ -80,7 +80,6 @@ public abstract class ProtoContext {
      * The last state used
      */
     private ProtoState currentState;
-    private boolean useCallDurationTimes;
 
     public ProtoContext(ProtoDescriptor descriptor) {
         this.contextId = ProtoDescriptor.getCounter("CONTEXT_ID");
@@ -853,11 +852,4 @@ public abstract class ProtoContext {
                 .findFirst();
     }
 
-    public boolean isUseCallDurationTimes() {
-        return useCallDurationTimes;
-    }
-
-    public void setUseCallDurationTimes(boolean useCallDurationTimes) {
-        this.useCallDurationTimes = useCallDurationTimes;
-    }
 }

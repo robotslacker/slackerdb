@@ -200,9 +200,6 @@ public abstract class NetworkProxy<T extends Storage<JsonNode, JsonNode>> extend
             sendBackResponses(storage.readResponses(item.getIndex()));
 
             var out = item.getOutput();
-            if (context.isUseCallDurationTimes()) {
-                Sleeper.sleep(item.getDurationMs());
-            }
             return (T) buildState(context, out, toRead.getClass());
 
         }
@@ -263,9 +260,6 @@ public abstract class NetworkProxy<T extends Storage<JsonNode, JsonNode>> extend
             }
             sendBackResponses(storage.readResponses(item.getIndex()));
             var out = item.getOutput();
-            if (context.isUseCallDurationTimes()) {
-                Sleeper.sleep(item.getDurationMs());
-            }
             return (J) buildState(context, out, toRead.getClass());
 
         }

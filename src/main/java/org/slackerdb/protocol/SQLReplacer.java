@@ -1,4 +1,6 @@
-package org.slackerdb.sql.parser;
+package org.slackerdb.protocol;
+
+import org.slackerdb.sql.parser.QueryReplacerItem;
 
 import java.util.ArrayList;
 import java.util.regex.Matcher;

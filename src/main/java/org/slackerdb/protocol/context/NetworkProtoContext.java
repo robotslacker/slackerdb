@@ -40,7 +40,7 @@ public abstract class NetworkProtoContext extends ProtoContext {
     private static final Logger log = LoggerFactory.getLogger(NetworkProtoContext.class);
 
     /**
-     * If had sent the greeting message (to send data immediatly after connection without further ado)
+     * If had sent the greeting message (to send data immediately after connection without further ado)
      */
     private boolean greetingsSent = false;
 
@@ -157,7 +157,7 @@ public abstract class NetworkProtoContext extends ProtoContext {
             AppLogger.logger.trace("[SERVER][TX PROTOCOL]: {}",
                     returnMessage.getClass().getSimpleName());
             for (String dumpMessage : Utils.bytesToHexList(response.array())) {
-                AppLogger.logger.trace("[SERVER][TX CONTENT 22]: {}", dumpMessage);
+                AppLogger.logger.trace("[SERVER][TX CONTENT OLD]: {}", dumpMessage);
             }
         }
 

@@ -10,6 +10,7 @@ import ch.qos.logback.classic.Level;
 
 public class ServerConfiguration extends Throwable {
     private static String   data;
+    private static String   data_dir;
     private static String   log;
     private static Level    log_level;
     private static int      port;
@@ -31,15 +32,24 @@ public class ServerConfiguration extends Throwable {
     {
         String propValue;
 
-        // 数据目录
+        // 数据库名称
         propValue = appProperties.getProperty("data", "");
         if (propValue.trim().isEmpty())
         {
-            data = "";
+            data = "slackerdb";
         }
         else
         {
             data = propValue;
+        }
+        propValue = appProperties.getProperty("data_dir", "");
+        if (propValue.trim().isEmpty())
+        {
+            data_dir = ":memory:";
+        }
+        else
+        {
+            data_dir = propValue;
         }
 
         // 日志目录，默认为console，即不记录日志文件
@@ -184,6 +194,10 @@ public class ServerConfiguration extends Throwable {
     {
         return log_level;
     }
+    public static void setLog_level(Level plog_level)
+    {
+        log_level = plog_level;
+    }
 
     public static void setPort(int pPort)
     {
@@ -214,6 +228,10 @@ public class ServerConfiguration extends Throwable {
     public static String getData()
     {
         return data;
+    }
+    public static String getData_Dir()
+    {
+        return data_dir;
     }
     public static String getCurrentSchema()
     {

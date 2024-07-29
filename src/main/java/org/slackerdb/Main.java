@@ -1,9 +1,9 @@
 package org.slackerdb;
 
 import ch.qos.logback.classic.Level;
+import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.logger.AppLogger;
 import org.slackerdb.postgres.PostgresProtocol;
-import org.slackerdb.protocol.context.ProtoContext;
 import org.slackerdb.server.ServerConfiguration;
 import org.slackerdb.server.TcpServer;
 import org.slackerdb.server.TcpServerHandler;
@@ -11,9 +11,11 @@ import org.slackerdb.sql.jdbc.JdbcProxy;
 import org.slackerdb.utils.Sleeper;
 import org.apache.commons.cli.*;
 
+import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.regex.Pattern;
 
 public class Main {
     private static TcpServer protocolServer;
@@ -23,50 +25,49 @@ public class Main {
         return protocolServer.isRunning();
     }
 
-    public static void execute() throws Exception {
+    private static String checkAndGetConnectString() throws ServerException {
         String connectString = "jdbc:duckdb:";
-        if (ServerConfiguration.getData().isEmpty())
+
+        String instanceName = ServerConfiguration.getData().trim();
+        // 检查是否包含路径分隔符
+        if (instanceName.contains("/") || instanceName.contains("\\")) {
+            throw new ServerException(999,
+                    "Invalid instance name [" + instanceName + "]");
+        }
+        // 检查是否包含不合法字符
+        if (Pattern.compile("[\\\\/:*?\"<>|]").matcher(instanceName).find()) {
+            throw new ServerException(999,
+                    "Invalid instance name [" + instanceName + "]");
+        }
+        // 检查文件名长度（假设文件系统限制为255字符）
+        if (instanceName.isEmpty() || instanceName.length() > 255) {
+            throw new ServerException(999,
+                    "Invalid instance name [" + instanceName + "]");
+        }
+        if (ServerConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:"))
         {
-            connectString = connectString + ":memory:";
+            connectString = connectString + ":memory:" + instanceName;
         }
         else
         {
-            connectString = connectString + ServerConfiguration.getData();
+            if (!new File(ServerConfiguration.getData_Dir()).isDirectory())
+            {
+                throw new ServerException(999,
+                        "Data directory [" + ServerConfiguration.getData_Dir() + "] does not exist!");
+            }
+            File dataFile = new File(ServerConfiguration.getData_Dir(), instanceName + ".db");
+            if (!dataFile.canRead() && ServerConfiguration.getAccess_mode().equalsIgnoreCase("READ_ONLY"))
+            {
+                throw new ServerException(999,
+                        "Data [" + dataFile.getAbsolutePath() + "] can't be read!!");
+            }
+            if (!dataFile.canRead() && ServerConfiguration.getAccess_mode().equalsIgnoreCase("READ_WRITE"))
+            {
+                throw new ServerException(999,
+                        "Data [" + dataFile.getAbsolutePath() + "] can't be write!!");
+            }
         }
-        ProtoContext.setTimeout(30);
-
-        var baseProtocol = new PostgresProtocol(ServerConfiguration.getPort());
-        var proxy = new JdbcProxy("org.duckdb.DuckDBDriver", connectString);
-        baseProtocol.setProxy(proxy);
-        baseProtocol.initialize();
-
-        // 指定访问的协议
-        TcpServerHandler.protoDescriptor = baseProtocol;
-
-        protocolServer = new TcpServer(baseProtocol);
-        protocolServer.useCallDurationTimes(false);
-        protocolServer.start();
-
-//        while (true)
-//        {
-//            ThreadGroup currentGroup = Thread.currentThread().getThreadGroup();
-//            System.out.println("activeThreads = " + currentGroup.activeCount());
-//            Sleeper.sleep(3000);
-//            if (false)
-//            {
-//                break;
-//            }
-//            Thread[] threads = new Thread[currentGroup.activeCount()];
-//            int count = currentGroup.enumerate(threads);
-//            for (int i = 0; i < count; i++) {
-//                Thread t = threads[i];
-//                System.out.println("Thread ID : " + t.getId() + " " + t.getName());
-//            }
-//        }
-//
-        while (!protocolServer.isRunning()) {
-            Sleeper.sleep(1000);
-        }
+        return connectString;
     }
 
     public static void setLogLevel(String logLevel) {
@@ -84,8 +85,23 @@ public class Main {
         // 打开日志文件
         AppLogger.CreateLogger();
 
-        // 主程序
-        execute();
+        // 获取数据库的连接字符串
+        String connectString = checkAndGetConnectString();
+
+        PostgresProtocol baseProtocol = new PostgresProtocol(ServerConfiguration.getPort());
+        JdbcProxy proxy = new JdbcProxy("org.duckdb.DuckDBDriver", connectString);
+        baseProtocol.setProxy(proxy);
+        baseProtocol.initialize();
+
+        // 指定访问的协议
+        TcpServerHandler.protoDescriptor = baseProtocol;
+
+        protocolServer = new TcpServer(baseProtocol);
+        protocolServer.start();
+
+        while (!protocolServer.isRunning()) {
+            Sleeper.sleep(1000);
+        }
     }
 
 
@@ -163,6 +179,11 @@ public class Main {
         opOption2.setRequired(false);
         options.addOption(opOption2);
 
+        // 数据库实例名称
+        Option opOption3 = new Option("l", "log_level", true, "Log Level");
+        opOption1.setRequired(false);
+        options.addOption(opOption3);
+
         // 解析命令行
         CommandLineParser parser = new DefaultParser();
         HelpFormatter formatter = new HelpFormatter();
@@ -195,6 +216,9 @@ public class Main {
             if (cmd.hasOption("port")) {
                 ServerConfiguration.setPort(Integer.parseInt(cmd.getOptionValue("port")));
             }
+            if (cmd.hasOption("log_level")) {
+                ServerConfiguration.setLog_level(Level.valueOf(cmd.getOptionValue("log_level")));
+            }
             // 启动应用程序
             if (op.trim().equalsIgnoreCase("START")) {
                 start();
@@ -216,6 +240,7 @@ public class Main {
         }
         catch (Exception ex)
         {
+            AppLogger.logger.trace("[SERVER] Fatal exception.", ex);
             System.err.println(ex.getMessage());
             System.exit(1);
         }

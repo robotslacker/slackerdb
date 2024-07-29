@@ -10,7 +10,7 @@ import org.slackerdb.proxy.ProxyConnection;
 import org.slackerdb.server.ServerConfiguration;
 import org.slackerdb.sql.jdbc.storage.JdbcStorage;
 import org.slackerdb.sql.jdbc.storage.NullJdbcStorage;
-import org.slackerdb.sql.parser.SQLReplacer;
+import org.slackerdb.protocol.SQLReplacer;
 import org.slackerdb.sql.parser.SqlStringParser;
 
 import java.math.BigDecimal;
@@ -26,8 +26,8 @@ import java.util.stream.Collectors;
 public class JdbcProxy extends Proxy<JdbcStorage> {
     private final String driver;
     private final String connectionString;
-    private static Connection connection = null;
     private final Pattern shutDownClausePattern;
+    private boolean databaseCreated = false;
 
     public JdbcProxy(String driver, String connectionString) {
 
@@ -403,38 +403,44 @@ public class JdbcProxy extends Proxy<JdbcStorage> {
             return new ProxyConnection(null);
         }
         try {
-            if (connection == null) {
-                synchronized (JdbcProxy.class) {
-                    if (ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
-                        Properties readOnlyProperty = new Properties();
-                        readOnlyProperty.setProperty("duckdb.read_only", "true");
-                        AppLogger.logger.info("[SERVER] Create database in read only mode ...");
-                        connection = DriverManager.getConnection(getConnectionString(), readOnlyProperty);
-                    }
-                    else
-                    {
-                        AppLogger.logger.info("[SERVER] Create database in read write mode ...");
-                        connection = DriverManager.getConnection(getConnectionString());
-                    }
+            Connection connection;
 
-                    Statement statement = connection.createStatement();
-                    // 第一次创建连接，设置需要的相应参数到数据库中
-                    if (!ServerConfiguration.getCurrentSchema().isEmpty())
-                    {
-                        statement.execute("CREATE SCHEMA IF NOT EXISTS " + ServerConfiguration.getCurrentSchema());
-                        statement.execute("USE " + ServerConfiguration.getCurrentSchema());
-                    }
-                    if (!ServerConfiguration.getMemory_limit().equals("DEFAULT"))
-                    {
-                        statement.execute("SET MEMORY_LIMIT = " + ServerConfiguration.getMemory_limit());
-                    }
-                    if (ServerConfiguration.getThreads() != -1)
-                    {
-                        statement.execute("SET THREADS = " + ServerConfiguration.getThreads());
-                    }
-                    statement.close();
-                }
+            if (ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
+                Properties readOnlyProperty = new Properties();
+                readOnlyProperty.setProperty("duckdb.read_only", "true");
+                connection = DriverManager.getConnection(getConnectionString(), readOnlyProperty);
             }
+            else
+            {
+                connection = DriverManager.getConnection(getConnectionString());
+            }
+
+            if (!databaseCreated) {
+                if (ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
+                    AppLogger.logger.info("[SERVER] Create database in read only mode ...");
+                }
+                else
+                {
+                    AppLogger.logger.info("[SERVER] Create database in read write mode ...");
+                }
+                Statement statement = connection.createStatement();
+                // 第一次创建连接，设置需要的相应参数到数据库中
+                if (!ServerConfiguration.getCurrentSchema().isEmpty()) {
+                    statement.execute("CREATE SCHEMA IF NOT EXISTS " + ServerConfiguration.getCurrentSchema());
+                    statement.execute("USE " + ServerConfiguration.getCurrentSchema());
+                }
+                if (!ServerConfiguration.getMemory_limit().equals("DEFAULT")) {
+                    statement.execute("SET MEMORY_LIMIT = " + ServerConfiguration.getMemory_limit());
+                }
+                if (ServerConfiguration.getThreads() != -1) {
+                    statement.execute("SET THREADS = " + ServerConfiguration.getThreads());
+                }
+                statement.close();
+
+                // 不重复执行初始化语句
+                databaseCreated = true;
+            }
+
             return new ProxyConnection(connection);
         } catch (SQLException e) {
             throw new RuntimeException(e);
