@@ -1,10 +1,13 @@
 package org.slackerdb.protocol;
 
+import org.slackerdb.logger.AppLogger;
+
 // 数据来源： pg_type
 public class PostgresTypeOids {
     public static int getTypeOid(String columnTypeName)
     {
-        switch (columnTypeName.trim().toUpperCase())
+        columnTypeName = columnTypeName.trim().toUpperCase();
+        switch (columnTypeName)
         {
             case "BIGINT":
             case "HUGEINT":
@@ -41,6 +44,7 @@ public class PostgresTypeOids {
             case "INTERVAL":
                 // interval
                 return 1186;
+            case "FLOAT":
             case "REAL":
                 // float4
                 return 700;
@@ -63,6 +67,11 @@ public class PostgresTypeOids {
             case "ARRAY":
                 // anyArray
                 return 2277;
+            default:
+                if (columnTypeName.startsWith("DECIMAL"))
+                {
+                    return 1700;
+                }
         }
         return 0;
     }

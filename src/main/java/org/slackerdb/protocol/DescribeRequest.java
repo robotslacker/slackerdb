@@ -43,10 +43,20 @@ public class DescribeRequest  extends PostgresRequest {
                 field.dataTypeModifier = -1;
                 switch (columnTypeName) {
                     case "VARCHAR":
+                    case "TIMESTAMP":
                         field.formatCode = 0;
                         break;
                     default:
-                        field.formatCode = 1;
+                        if (columnTypeName.startsWith("DECIMAL"))
+                        {
+                            // DECIMAL 应该是二进制格式，但是目前分析二进制格式的结果总是不对
+                            // 所有这里用字符串进行返回
+                            field.formatCode = 0;
+                        }
+                        else
+                        {
+                            field.formatCode = 1;
+                        }
                 }
                 fields.add(field);
             }

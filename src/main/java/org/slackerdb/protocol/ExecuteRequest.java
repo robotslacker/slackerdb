@@ -7,10 +7,21 @@ import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.sql.*;
+import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.math.RoundingMode;
+
 
 public class ExecuteRequest extends PostgresRequest {
     @Override
@@ -71,8 +82,51 @@ public class ExecuteRequest extends PostgresRequest {
                                     column.columnLength = columnBytes.length;
                                     column.columnValue = columnBytes;
                                     break;
+                                case "DATE":
+                                    column.columnLength = 4;
+                                    long timeInterval =
+                                            ChronoUnit.DAYS.between(LocalDate.of(2000, 1, 1), rs.getDate(i).toLocalDate());
+                                    column.columnValue = Utils.int32ToBytes((int)timeInterval);
+                                    break;
+                                case "BOOLEAN":
+                                    column.columnLength = 1;
+                                    if (rs.getBoolean(i))
+                                    {
+                                        column.columnValue = new byte[]{(byte) 0x01};
+                                    }
+                                    else
+                                    {
+                                        column.columnValue = new byte[]{(byte) 0x00};
+                                    }
+                                    break;
+                                case "FLOAT":
+                                    column.columnLength = 4;
+                                    column.columnValue = Utils.int32ToBytes(Float.floatToIntBits(rs.getFloat(i)));
+                                    break;
+                                case "DOUBLE":
+                                    column.columnLength = 8;
+                                    column.columnValue = Utils.int64ToBytes(Double.doubleToLongBits(rs.getDouble(i)));
+                                    break;
+                                case "TIMESTAMP":
+                                    column.columnLength = 19;
+                                    column.columnValue =
+                                            new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(rs.getTimestamp(i)).getBytes(StandardCharsets.UTF_8);
+                                    break;
                                 default:
-                                    AppLogger.logger.error("Not implemented column type: {}", columnTypeName);
+                                    if (columnTypeName.toUpperCase().startsWith("DECIMAL"))
+                                    {
+                                        // DECIMAL 应该是二进制格式，但是目前分析二进制格式的结果总是不对
+                                        // 所有这里用字符串进行返回
+                                        String bigDecimal = rs.getBigDecimal(i).toPlainString();
+
+                                        // 获取整数部分和小数部分
+                                        column.columnLength = bigDecimal.length();
+                                        column.columnValue = bigDecimal.getBytes(StandardCharsets.US_ASCII);
+                                        break;
+                                    }
+                                    else {
+                                        AppLogger.logger.error("Not implemented column type: {}", columnTypeName);
+                                    }
                             }
                         }
                         columns.add(column);

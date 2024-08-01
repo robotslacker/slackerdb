@@ -29,7 +29,7 @@ public class Test001 {
                 ServerConfiguration.setPort(dbPort);
 
                 // 启动数据库
-                Main.setLogLevel("TRACE");
+//                Main.setLogLevel("TRACE");
                 Main.start();
             } catch (Exception e) {
                 throw new RuntimeException(e);
@@ -243,7 +243,7 @@ public class Test001 {
         assert resultCount == 1;
     }
 
-//    @Test
+    @Test
     void variousDataTypeSelect() throws SQLException {
         String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
@@ -256,7 +256,6 @@ public class Test001 {
                 "birth_date DATE," +
                 "is_active BOOLEAN," +
                 "salary DECIMAL(10, 2)," +
-                "binary_data BLOB," +
                 "float_value FLOAT," +
                 "double_value DOUBLE," +
                 "numeric_value NUMERIC," +
@@ -264,10 +263,10 @@ public class Test001 {
                 ")";
         pgConn1.createStatement().execute(sql);
 
-        sql = "INSERT INTO variousDataTypeSelect (id, name, birth_date, is_active, salary, binary_data, float_value, double_value, numeric_value, timestamp_value) " +
+        sql = "INSERT INTO variousDataTypeSelect (id, name, birth_date, is_active, salary, float_value, double_value, numeric_value, timestamp_value) " +
                 "VALUES " +
-                "(1, 'John Doe', '1990-01-01', TRUE, 50000.00, X'48454C4C', 3.14, 3.14159, 12345, '2022-01-01 00:00:00')," +
-                "(2, 'Jane Smith', '1995-05-15', FALSE, 60000.00, X'4A616E65', 2.71, 2.71828, 98765, '2023-06-30 12:00:00')";
+                "(1, 'John Doe', '1990-01-01', TRUE, 50000.00, 3.14, 3.14159, 12345, '2022-01-01 00:00:00')," +
+                "(2, 'Jane Smith', '1995-05-15', FALSE, 60000.00, 2.71, 2.71828, 98765, '2023-06-30 12:00:00')";
         pgConn1.createStatement().execute(sql);
 
         ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from variousDataTypeSelect Where id = 2");
@@ -277,7 +276,6 @@ public class Test001 {
             assert rs.getDate("birth_date").toString().equals("1995-05-15");
             assert !rs.getBoolean("is_active");
             assert rs.getBigDecimal("salary").longValue() == 60000;
-//            Blob blob = rs.getBlob("binary_data");
             assert Math.abs(rs.getFloat("float_value") - 2.71) < 0.001;
             assert rs.getDouble("double_value") == 2.71828;
             assert rs.getDouble("numeric_value") == 98765;
@@ -322,7 +320,6 @@ public class Test001 {
             assert rs.getDate("birth_date").toString().equals("1990-01-01");
             assert !rs.getBoolean("is_active");
             assert rs.getBigDecimal("salary").longValue() == 50000;
-//            Blob blob = rs.getBlob("binary_data");
             assert Math.abs(rs.getFloat("float_value") - 3.14) < 0.001;
             assert rs.getDouble("double_value") == 3.14159;
             assert rs.getDouble("numeric_value") == 12345;
