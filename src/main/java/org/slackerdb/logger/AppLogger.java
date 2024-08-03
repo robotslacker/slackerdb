@@ -8,7 +8,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.Appender;
 import ch.qos.logback.core.ConsoleAppender;
 import ch.qos.logback.core.FileAppender;
-import org.slackerdb.server.ServerConfiguration;
+import org.slackerdb.configuration.ServerConfiguration;
 import org.slf4j.LoggerFactory;
 
 import java.util.Iterator;
@@ -31,6 +31,11 @@ public class AppLogger {
 
         // 清除默认配置
         rootLogger.detachAndStopAllAppenders();
+
+        // 关闭Netty的日志
+        // Retrieve the logger for Netty's internal logging
+        Logger nettyLogger = (Logger) LoggerFactory.getLogger("io.netty");
+        nettyLogger.setLevel(Level.OFF);
 
         Iterator<Appender<ILoggingEvent>> iterator = logger.iteratorForAppenders();
         while (iterator.hasNext()) {

@@ -4,16 +4,13 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.slackerdb.Main;
-import org.slackerdb.server.ServerConfiguration;
+import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.utils.Sleeper;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.math.BigDecimal;
 import java.sql.*;
-import java.util.Properties;
+import java.util.Calendar;
+import java.util.TimeZone;
 
 public class Test001 {
     static Thread dbThread = null;
@@ -29,7 +26,7 @@ public class Test001 {
                 ServerConfiguration.setPort(dbPort);
 
                 // 启动数据库
-//                Main.setLogLevel("TRACE");
+                Main.setLogLevel("INFO");
                 Main.start();
             } catch (Exception e) {
                 throw new RuntimeException(e);
@@ -279,15 +276,46 @@ public class Test001 {
             assert Math.abs(rs.getFloat("float_value") - 2.71) < 0.001;
             assert rs.getDouble("double_value") == 2.71828;
             assert rs.getDouble("numeric_value") == 98765;
-            assert rs.getTimestamp("timestamp_value").toInstant().getEpochSecond() == 1688097600;
+            assert rs.getTimestamp("timestamp_value").toString().startsWith("2023-06-30 12:00:00");
         }
         rs.close();
         pgConn1.close();
     }
 
-//    @Test
+    @Test
+    void testMultiPreparedStmt() throws SQLException {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        PreparedStatement pstmt1 = pgConn1.prepareStatement("Select 3+4");
+        PreparedStatement pstmt2 = pgConn1.prepareStatement("Select 5+8");
+        ResultSet rs = pstmt1.executeQuery();
+        int resultCount = 0;
+        while (rs.next()) {
+            assert rs.getInt(1) == 7;
+            resultCount++;
+        }
+        assert resultCount == 1;
+        rs.close();
+
+        rs = pstmt2.executeQuery();
+        resultCount = 0;
+        while (rs.next()) {
+            assert rs.getInt(1) == 13;
+            resultCount++;
+        }
+        assert resultCount == 1;
+
+        pstmt1.close();
+        pstmt2.close();
+        pgConn1.close();
+    }
+
+    @Test
     void testBindInsert() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -298,7 +326,6 @@ public class Test001 {
                 "birth_date DATE," +
                 "is_active BOOLEAN," +
                 "salary DECIMAL(10, 2)," +
-                "binary_data BLOB," +
                 "float_value FLOAT," +
                 "double_value DOUBLE," +
                 "numeric_value NUMERIC," +
@@ -306,33 +333,101 @@ public class Test001 {
                 ")";
         pgConn1.createStatement().execute(sql);
 
-        sql = "INSERT INTO testBindInsert (id, name, birth_date, is_active, salary, binary_data, float_value, double_value, numeric_value, timestamp_value) " +
+        sql = "INSERT INTO testBindInsert (id, name, birth_date, is_active, salary, float_value, double_value, numeric_value, timestamp_value) " +
                 "VALUES " +
-                "(?, 'John Doe', '1990-01-01', TRUE, 50000.00, X'48454C4C', 3.14, 3.14159, 12345, '2023-06-30 12:00:00')";
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?)";
         PreparedStatement pStmt = pgConn1.prepareStatement(sql);
-        pStmt.setInt(1, 99);
-        pStmt.executeUpdate();
+        pStmt.setLong(1, 99);
+        pStmt.setString(2, "John Doe");
+        pStmt.setDate(3, Date.valueOf("1990-01-01"));
+        pStmt.setBoolean(4, true);
+        pStmt.setBigDecimal(5, new BigDecimal("50000"));
+        pStmt.setFloat(6, 3.14F);
+        pStmt.setDouble(7, 3.14159);
+        pStmt.setInt(8, 12345);
+        pStmt.setTimestamp(9, Timestamp.valueOf("2022-06-30 12:00:00"));
+        pStmt.execute();
 
-        ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from testBindInsert Where id = 1");
+        ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from testBindInsert Where id = 99");
+        int resultCount = 0;
         while (rs.next()) {
+            resultCount++;
             assert rs.getInt("id") == 99;
             assert rs.getString("name").equals("John Doe");
             assert rs.getDate("birth_date").toString().equals("1990-01-01");
-            assert !rs.getBoolean("is_active");
+            assert rs.getBoolean("is_active");
             assert rs.getBigDecimal("salary").longValue() == 50000;
             assert Math.abs(rs.getFloat("float_value") - 3.14) < 0.001;
             assert rs.getDouble("double_value") == 3.14159;
             assert rs.getDouble("numeric_value") == 12345;
-            assert rs.getTimestamp("timestamp_value").toInstant().getEpochSecond() == 1688097600;
+            assert rs.getTimestamp("timestamp_value", Calendar.getInstance(TimeZone.getTimeZone("UTC")))
+                    .toString().startsWith("2022-06-30 12:00:00");
         }
+        assert resultCount == 1;
         rs.close();
         pStmt.close();
         pgConn1.close();
     }
 
-//    @Test
+    @Test
+    void testBindInsertWithExecuteUpdate() throws SQLException {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = "CREATE TABLE testBindInsertWithExecuteUpdate ( " +
+                "id INTEGER PRIMARY KEY," +
+                "name VARCHAR(100)," +
+                "birth_date DATE," +
+                "is_active BOOLEAN," +
+                "salary DECIMAL(10, 2)," +
+                "float_value FLOAT," +
+                "double_value DOUBLE," +
+                "numeric_value NUMERIC," +
+                "timestamp_value TIMESTAMP" +
+                ")";
+        pgConn1.createStatement().execute(sql);
+
+        sql = "INSERT INTO testBindInsertWithExecuteUpdate (id, name, birth_date, is_active, salary, float_value, double_value, numeric_value, timestamp_value) " +
+                "VALUES " +
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        PreparedStatement pStmt = pgConn1.prepareStatement(sql);
+        pStmt.setLong(1, 99);
+        pStmt.setString(2, "John Doe");
+        pStmt.setDate(3, Date.valueOf("1990-01-01"));
+        pStmt.setBoolean(4, true);
+        pStmt.setBigDecimal(5, new BigDecimal("50000"));
+        pStmt.setFloat(6, 3.14F);
+        pStmt.setDouble(7, 3.14159);
+        pStmt.setInt(8, 12345);
+        pStmt.setTimestamp(9, Timestamp.valueOf("2022-06-30 12:00:00"));
+        pStmt.executeUpdate();
+
+        ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from testBindInsertWithExecuteUpdate Where id = 99");
+        int resultCount = 0;
+        while (rs.next()) {
+            resultCount++;
+            assert rs.getInt("id") == 99;
+            assert rs.getString("name").equals("John Doe");
+            assert rs.getDate("birth_date").toString().equals("1990-01-01");
+            assert rs.getBoolean("is_active");
+            assert rs.getBigDecimal("salary").longValue() == 50000;
+            assert Math.abs(rs.getFloat("float_value") - 3.14) < 0.001;
+            assert rs.getDouble("double_value") == 3.14159;
+            assert rs.getDouble("numeric_value") == 12345;
+            assert rs.getTimestamp("timestamp_value", Calendar.getInstance(TimeZone.getTimeZone("UTC")))
+                    .toString().startsWith("2022-06-30 12:00:00");
+        }
+        assert resultCount == 1;
+        rs.close();
+        pStmt.close();
+        pgConn1.close();
+    }
+
+    @Test
     void BatchInsert() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/mem";
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -343,7 +438,6 @@ public class Test001 {
                 "birth_date DATE," +
                 "is_active BOOLEAN," +
                 "salary DECIMAL(10, 2)," +
-                "binary_data BLOB," +
                 "float_value FLOAT," +
                 "double_value DOUBLE," +
                 "numeric_value NUMERIC," +
@@ -351,9 +445,9 @@ public class Test001 {
                 ")";
         pgConn1.createStatement().execute(sql);
 
-        sql = "INSERT INTO testBindInsert (id, name, birth_date, is_active, salary, binary_data, float_value, double_value, numeric_value, timestamp_value) " +
+        sql = "INSERT INTO testBatchInsert (id, name, birth_date, is_active, salary, float_value, double_value, numeric_value, timestamp_value) " +
                 "VALUES " +
-                "(?, 'John Doe', '1990-01-01', TRUE, 50000.00, X'48454C4C', 3.14, 3.14159, 12345, '2023-06-30 12:00:00')";
+                "(?, 'John Doe', '1990-01-01', TRUE, 50000.00, 3.14, 3.14159, 12345, '2023-06-30 12:00:00')";
         PreparedStatement pStmt = pgConn1.prepareStatement(sql);
         int expectedResult = 0;
         for (int i=1; i<=100; i++) {
@@ -364,7 +458,7 @@ public class Test001 {
         pStmt.executeBatch();
 
         int actualResult = 0;
-        ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from testBatchInsert Where id = 1");
+        ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from testBatchInsert");
         while (rs.next()) {
             actualResult = actualResult + rs.getInt("id");
         }
@@ -373,6 +467,35 @@ public class Test001 {
         pgConn1.close();
 
         assert expectedResult == actualResult;
+    }
+
+    @Test
+    void testConnectionAutoCommitOnClose() throws SQLException
+    {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.createStatement().execute("Create TABLE testConnectionAutoCommitOnClose (id int)");
+        pgConn1.commit();
+
+        pgConn1.createStatement().execute("insert into testConnectionAutoCommitOnClose values(3)");
+        pgConn1.close();
+
+        Connection pgConn2 = DriverManager.getConnection(connectURL, "", "");
+        pgConn2.setAutoCommit(false);
+
+        ResultSet rs = pgConn2.createStatement().executeQuery("SELECT * from testConnectionAutoCommitOnClose");
+        int recCount = 0;
+        while (rs.next()) {
+            recCount++;
+            assert rs.getInt(1) == 3;
+        }
+        assert recCount == 1;
+        rs.close();
+        pgConn2.close();
+
     }
 
     @AfterAll
