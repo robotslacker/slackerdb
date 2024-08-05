@@ -35,7 +35,7 @@ import java.util.regex.Pattern;
  * Multithreaded asynchronous server
  */
 public class PostgresServer {
-    private String backendConnectString = null;
+    private static String backendConnectString = null;
     private boolean systemRunning = false;
     protected static Connection backendSysConnection;
 
@@ -87,6 +87,11 @@ public class PostgresServer {
 
     }
 
+    public static String getBackendConnectString()
+    {
+        return backendConnectString;
+    }
+
     /**
      * Start the server
      */
@@ -102,7 +107,6 @@ public class PostgresServer {
 
         // 初始化服务处理程序的后端数据库连接字符串
         initBackendConnectString();
-        PostgresServerHandler.setBackendConnectString(this.backendConnectString);
 
         /*
           Listener thread
@@ -336,8 +340,8 @@ public class PostgresServer {
         }
 
         // Netty消息处理
-        EventLoopGroup bossGroup = new NioEventLoopGroup(2);
-        EventLoopGroup workerGroup = new NioEventLoopGroup(10);
+        EventLoopGroup bossGroup = new NioEventLoopGroup(1);
+        EventLoopGroup workerGroup = new NioEventLoopGroup(ServerConfiguration.getMax_Network_Workers());
 
         try {
             ServerBootstrap bootstrap = new ServerBootstrap();
@@ -346,22 +350,32 @@ public class PostgresServer {
                     .option(ChannelOption.SO_RCVBUF, 4096)
                     .option(ChannelOption.SO_REUSEADDR, true)
                     .option(ChannelOption.SO_BACKLOG, 128)
-                    .handler(new LoggingHandler(LogLevel.INFO))
+                    .option(ChannelOption.SO_KEEPALIVE, true)
+                    .handler(
+                            new LoggingHandler(LogLevel.valueOf(ServerConfiguration.getLog_level().levelStr))
+                    )
                     .childHandler(new ChannelInitializer<SocketChannel>() {
                         @Override
                         protected void initChannel(SocketChannel ch) {
                             // 定义超时处理机制
-                            ch.pipeline().addLast(new IdleStateHandler(60, 30, 0, TimeUnit.SECONDS));
+                            ch.pipeline().addLast(new IdleStateHandler(
+                                    ServerConfiguration.getClientTimeout(),
+                                    ServerConfiguration.getClientTimeout(),
+                                    ServerConfiguration.getClientTimeout(),
+                                    TimeUnit.SECONDS));
                             // 定义消息处理
                             ch.pipeline().addLast(new RawMessageDecoder());
                             ch.pipeline().addLast(new RawMessageEncoder());
                             // 定义消息处理
-                            ch.pipeline().addLast(new PostgresServerHandler());
+                            ch.pipeline().addLast(
+                                    new PostgresServerHandler()
+                            );
                             // 添加日志处理
                             ch.pipeline().addLast(new CustomLogHandler());
                         }
                     });
-            ChannelFuture future = bootstrap.bind(new InetSocketAddress(ServerConfiguration.getBindHost(), ServerConfiguration.getPort())).sync();
+            ChannelFuture future =
+                    bootstrap.bind(new InetSocketAddress(ServerConfiguration.getBindHost(), ServerConfiguration.getPort())).sync();
             AppLogger.logger.info("[SERVER] Listening on {}:{}",
                     ServerConfiguration.getBindHost(),
                     ServerConfiguration.getPort());

@@ -2,19 +2,23 @@ package org.slackerdb.protocol.postgres.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.AttributeKey;
+import org.slackerdb.configuration.ServerConfiguration;
+import org.slackerdb.logger.AppLogger;
 import org.slackerdb.protocol.postgres.message.*;
 import org.slackerdb.protocol.postgres.message.response.AuthenticationOk;
 import org.slackerdb.protocol.postgres.message.response.BackendKeyData;
 import org.slackerdb.protocol.postgres.message.response.ParameterStatus;
 import org.slackerdb.protocol.postgres.message.response.ReadyForQuery;
+import org.slackerdb.protocol.postgres.server.PostgresServer;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.TimeZone;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.time.LocalDateTime;
+import java.util.*;
 
 public class StartupRequest  extends PostgresRequest {
     //  StartupMessage (F)
@@ -39,7 +43,7 @@ public class StartupRequest  extends PostgresRequest {
     //    String
     //      The parameter value.
 
-    private Map<String, String> startupOptions = new HashMap<>();
+    private final Map<String, String> startupOptions = new HashMap<>();
 
     @Override
     public void decode(byte[] data) {
@@ -56,6 +60,25 @@ public class StartupRequest  extends PostgresRequest {
         ctx.channel().attr(AttributeKey.valueOf("OPTIONS")).set(startupOptions);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+        ctx.channel().attr(AttributeKey.valueOf("ConnectedTime")).set(LocalDateTime.now());
+        // 获取数据库连接
+        Connection backendDBConnection;
+        try {
+            if (ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
+                Properties readOnlyProperty = new Properties();
+                readOnlyProperty.setProperty("duckdb.read_only", "true");
+                backendDBConnection = DriverManager.getConnection(PostgresServer.getBackendConnectString(), readOnlyProperty);
+            } else {
+                backendDBConnection = DriverManager.getConnection(PostgresServer.getBackendConnectString());
+            }
+            ctx.channel().attr(AttributeKey.valueOf("Connection")).set(backendDBConnection);
+        }
+        catch (SQLException e) {
+            AppLogger.logger.error("[SERVER] Init backend connection error. ", e);
+            ctx.close();
+            return;
+        }
 
         // 总是回复认证成功
         AuthenticationOk authenticationOk = new AuthenticationOk();

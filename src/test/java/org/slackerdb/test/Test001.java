@@ -22,7 +22,7 @@ public class Test001 {
         Thread dbThread = new Thread(() -> {
             try {
                 // 修改默认的db启动端口
-                ServerConfiguration.LoadDefaultConfiguration();
+                ServerConfiguration.LoadConfiguration(null);
                 ServerConfiguration.setPort(dbPort);
 
                 // 启动数据库
@@ -370,7 +370,21 @@ public class Test001 {
     }
 
     @Test
-    void testBindInsertWithExecuteUpdate() throws SQLException {
+    void testBindInsertWithExecuteUpdate() throws Exception {
+//        String  connectURL = "jdbc:postgresql://192.168.40.132:5432/postgres";
+//        Connection pgConn1 = DriverManager.getConnection(
+//                connectURL, "postgres", "");
+//        pgConn1.setAutoCommit(false);
+//
+//        pgConn1.createStatement().execute("drop table if exists aaa");
+//        pgConn1.createStatement().execute("create table aaa (col1 timestamp with time zone)");
+//        pgConn1.createStatement().execute("insert into aaa values('2020-01-01 12:00:00 UTC')");
+//        Thread.sleep(20*1000);
+//        ResultSet rs = pgConn1.createStatement().executeQuery("select col1 from aaa");
+//        while (rs.next()) {
+//            System.out.println(rs.getTimestamp("col1"));
+//        }
+
         String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
@@ -385,13 +399,17 @@ public class Test001 {
                 "float_value FLOAT," +
                 "double_value DOUBLE," +
                 "numeric_value NUMERIC," +
-                "timestamp_value TIMESTAMP" +
+                "timestamp_value TIMESTAMP," +
+                "time_value TIME," +
+                "timestamp_tz_value TIMESTAMPTZ" +
                 ")";
         pgConn1.createStatement().execute(sql);
 
-        sql = "INSERT INTO testBindInsertWithExecuteUpdate (id, name, birth_date, is_active, salary, float_value, double_value, numeric_value, timestamp_value) " +
+        sql = "INSERT INTO testBindInsertWithExecuteUpdate " +
+                "(id, name, birth_date, is_active, salary, float_value, double_value, " +
+                "numeric_value, timestamp_value, time_value, timestamp_tz_value) " +
                 "VALUES " +
-                "(?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "(?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?)";
         PreparedStatement pStmt = pgConn1.prepareStatement(sql);
         pStmt.setLong(1, 99);
         pStmt.setString(2, "John Doe");
@@ -402,6 +420,9 @@ public class Test001 {
         pStmt.setDouble(7, 3.14159);
         pStmt.setInt(8, 12345);
         pStmt.setTimestamp(9, Timestamp.valueOf("2022-06-30 12:00:00"));
+        pStmt.setTime(10, Time.valueOf("13:35:06"));
+        pStmt.setTimestamp(11, Timestamp.valueOf("2022-07-30 12:00:00"), Calendar.getInstance(TimeZone.getDefault()));
+
         pStmt.executeUpdate();
 
         ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from testBindInsertWithExecuteUpdate Where id = 99");
@@ -418,6 +439,10 @@ public class Test001 {
             assert rs.getDouble("numeric_value") == 12345;
             assert rs.getTimestamp("timestamp_value", Calendar.getInstance(TimeZone.getTimeZone("UTC")))
                     .toString().startsWith("2022-06-30 12:00:00");
+            assert rs.getTime("time_value").toLocalTime().toString().equalsIgnoreCase("13:35:06");
+//            System.out.println(
+//                    rs.getTimestamp("timestamp_tz_value").toString()
+//            );
         }
         assert resultCount == 1;
         rs.close();

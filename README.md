@@ -1,7 +1,5 @@
 ![机器人小懒](robotslacker.jpg)
 
-#    ！！！代码开发中，目前不可使用！！！
-
 # SlackerDB (DUCKDB 封装器)
 ## 快速说明
 
@@ -24,9 +22,10 @@ tcpdump -v -i any \(src X.X.X.X and dst port 5432 \) or \( dst X.X.X.X and src p
 计划在本项目完成后，重写一个定制的客户端代码，便于后续扩展
 
 ## 时间表
-1. TimeStampTZ的支持
-2. TCP参数的优化和参数化
-3. Extensions的支持
+1. TimeStampTZ的支持(时区处理有问题)
+2. Extensions的支持
+3. 所有不支持的操作均要明确错误信息
+4. 文档处理
 
 
 ## Postgres通讯步序图

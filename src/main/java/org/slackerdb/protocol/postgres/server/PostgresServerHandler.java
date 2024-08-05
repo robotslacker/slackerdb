@@ -6,24 +6,14 @@ import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.util.AttributeKey;
 import org.slackerdb.protocol.postgres.message.request.BaseRequest;
-import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.logger.AppLogger;
 import java.net.InetSocketAddress;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.time.LocalDateTime;
-import java.util.Properties;
 
 public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
     // 为每个连接创建一个会话ID
     private static int sessionId = 1000;
-    private static String backendConnectString = null;
-
-    public static void setBackendConnectString(String backendConnectString)
-    {
-        PostgresServerHandler.backendConnectString = backendConnectString;
-    }
 
     public static void sessionClose(ChannelHandlerContext ctx)
     {
@@ -83,24 +73,6 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
         }
         ctx.channel().attr(AttributeKey.valueOf("SessionId")).set(currentSessionId);
         ctx.channel().attr(AttributeKey.valueOf("Client")).set(remoteAddress.toString());
-        ctx.channel().attr(AttributeKey.valueOf("ConnectedTime")).set(LocalDateTime.now());
-
-        // 获取数据库连接
-        Connection backendDBConnection;
-        try {
-            if (ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
-                Properties readOnlyProperty = new Properties();
-                readOnlyProperty.setProperty("duckdb.read_only", "true");
-                backendDBConnection = DriverManager.getConnection(backendConnectString, readOnlyProperty);
-            } else {
-                backendDBConnection = DriverManager.getConnection(backendConnectString);
-            }
-            ctx.channel().attr(AttributeKey.valueOf("Connection")).set(backendDBConnection);
-        }
-        catch (SQLException e) {
-            AppLogger.logger.error("[SERVER] Init backend connection error. ", e);
-            ctx.close();
-        }
 
         // 记录上一个请求的协议类型
         ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set("");

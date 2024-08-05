@@ -22,10 +22,7 @@ public class Main {
     public static void start() throws Exception
     {
         // 如果连初始化配置都没有，则首先加载默认配置
-        if (!ServerConfiguration.isLoaded())
-        {
-            ServerConfiguration.LoadDefaultConfiguration();
-        }
+        ServerConfiguration.LoadConfiguration(null);
 
         // 打开日志文件
         AppLogger.CreateLogger();
@@ -89,10 +86,6 @@ public class Main {
             // 配置文件
             if (cmd.hasOption("conf")) {
                 ServerConfiguration.LoadConfiguration(cmd.getOptionValue("conf"));
-            }
-            else
-            {
-                ServerConfiguration.LoadDefaultConfiguration();
             }
 
             // 根据参数覆盖默认的配置

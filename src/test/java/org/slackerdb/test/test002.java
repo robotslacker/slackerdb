@@ -1,5 +1,7 @@
 package org.slackerdb.test;
 
+import org.duckdb.DuckDBConnection;
+import org.duckdb.DuckDBResultSet;
 import org.slackerdb.utils.Sleeper;
 import org.slackerdb.utils.Utils;
 
@@ -9,27 +11,32 @@ import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.sql.*;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Calendar;
 import java.util.TimeZone;
 
 public class test002 {
 
     public static void main(String[] args) throws SQLException, ClassNotFoundException {
-         Connection conn = DriverManager.getConnection("jdbc:duckdb:c:\\temp\\aa.db");
-//        Connection conn = DriverManager.getConnection("jdbc:h2:");
+        Connection conn = DriverManager.getConnection("jdbc:duckdb:");
 
-        String sql = "CREATE TABLE aaa (id int, col1 Timestamp)";
-//        conn.createStatement().execute(sql);
-//        conn.createStatement().execute("SET TimeZone = 'Asia/Shanghai'");
+        String sql = "CREATE TABLE aaa (col1 timestamptz)";
+        conn.createStatement().execute(sql);
+        PreparedStatement preparedStatement = conn.prepareStatement("insert into aaa values(?)");
 
-        PreparedStatement preparedStatement = conn.prepareStatement("insert into aaa values(1,?)");
-
-        preparedStatement.setTimestamp(1, new Timestamp(System.currentTimeMillis()));
+        preparedStatement.setString(1, "2020-01-01 12:00:00 CST");
         preparedStatement.execute();
+
 
         ResultSet rs = conn.prepareStatement("select * from aaa").executeQuery();
         while (rs.next()) {
-            System.out.println(rs.getTimestamp("col1"));
+            DuckDBResultSet xxrs = (DuckDBResultSet) rs;
+            Instant instant = rs.getTimestamp("col1").toInstant();
+            ZonedDateTime zonedDateTime = instant.atZone(ZoneId.systemDefault());
+            System.out.println(zonedDateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS[XXX][ VV]")));
         }
     }
 }

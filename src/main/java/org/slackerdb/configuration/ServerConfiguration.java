@@ -5,10 +5,14 @@ import org.slackerdb.exceptions.ServerException;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.lang.management.ManagementFactory;
+import com.sun.management.OperatingSystemMXBean;
 import java.util.Properties;
 import ch.qos.logback.classic.Level;
 
 public class ServerConfiguration extends Throwable {
+    private static final Properties appProperties = new Properties();
+
     private static String   data;
     private static String   data_dir;
     private static String   log;
@@ -19,156 +23,69 @@ public class ServerConfiguration extends Throwable {
     private static String   memory_limit;
     private static int      threads;
     private static String   access_mode;
-    private static int      max_connections;
+    private static int      max_network_workers;
     private static int      clientTimeout;
-    private static boolean  loaded = false;
 
-    public static boolean isLoaded()
-    {
-        return loaded;
-    }
-
-    private static void LoadConfiguration(Properties appProperties)
+    private static int readOption(String optionName, int defaultValue)
     {
         String propValue;
-
-        // 数据库名称
-        propValue = appProperties.getProperty("data", "");
+        propValue = appProperties.getProperty(optionName, "");
         if (propValue.trim().isEmpty())
         {
-            data = "slackerdb";
+            return defaultValue;
         }
         else
         {
-            data = propValue;
-        }
-        propValue = appProperties.getProperty("data_dir", "");
-        if (propValue.trim().isEmpty())
-        {
-            data_dir = ":memory:";
-        }
-        else
-        {
-            data_dir = propValue;
-        }
-
-        // 日志目录，默认为console，即不记录日志文件
-        propValue = appProperties.getProperty("log", "");
-        if (propValue.trim().isEmpty())
-        {
-            log = "console";
-        }
-        else
-        {
-            log = propValue;
-        }
-
-        // 默认打印到INFO级别
-        propValue = appProperties.getProperty("log_level", "");
-        if (propValue.trim().isEmpty())
-        {
-            log_level = Level.INFO;
-        }
-        else
-        {
-            log_level = Level.valueOf(propValue);
-        }
-
-        // 默认开放全部地址访问
-        propValue = appProperties.getProperty("bind", "");
-        if (propValue.trim().isEmpty())
-        {
-            bind = "0.0.0.0";
-        }
-        else
-        {
-            bind = propValue;
-        }
-        propValue = appProperties.getProperty("port", "");
-        if (propValue.trim().isEmpty())
-        {
-            port = 4309;
-        }
-        else
-        {
-            port = Integer.parseInt(propValue);
-        }
-
-        // 默认使用主机内存的80%
-        propValue = appProperties.getProperty("memory_limit", "");
-        if (propValue.trim().isEmpty())
-        {
-            memory_limit = "DEFAULT";
-        }
-        else
-        {
-            memory_limit = propValue;
-        }
-
-        // 默认使用主机内核数量的80%
-        propValue = appProperties.getProperty("threads", "");
-        if (propValue.trim().isEmpty())
-        {
-            // -1表示不进行设置
-            threads = -1;
-        }
-        else
-        {
-            threads = Integer.parseInt(propValue);
-        }
-
-        // 数据库最大连接数
-        propValue = appProperties.getProperty("max_connections", "");
-        if (propValue.trim().isEmpty())
-        {
-            max_connections = 1000;
-        }
-        else
-        {
-            max_connections = Integer.parseInt(propValue);
-        }
-
-        // 客户端最大超时时间, 默认为10分钟
-        propValue = appProperties.getProperty("clientTimeout", "");
-        if (propValue.trim().isEmpty())
-        {
-            clientTimeout = 20;
-        }
-        else
-        {
-            clientTimeout = Integer.parseInt(propValue);
-        }
-
-        // 客户端最大超时时间, 默认为10分钟
-        propValue = appProperties.getProperty("access_mode", "");
-        if (propValue.trim().isEmpty())
-        {
-            access_mode = "READ_WRITE";
-        }
-        else
-        {
-            access_mode = propValue.trim().toUpperCase();
-        }
-        propValue = appProperties.getProperty("currentSchema", "");
-        if (propValue.trim().isEmpty())
-        {
-            currentSchema = "";
-        }
-        else
-        {
-            currentSchema = propValue.trim();
+            return Integer.parseInt(propValue);
         }
     }
 
-    public static void LoadDefaultConfiguration() throws ServerException
+    private static String readOption(String optionName, String defaultValue)
     {
-        LoadConfiguration((String) null);
+        String propValue;
+        propValue = appProperties.getProperty(optionName, "");
+        if (propValue.trim().isEmpty())
+        {
+            return defaultValue;
+        }
+        else
+        {
+            return propValue.trim();
+        }
+    }
+
+    private static void LoadConfiguration()
+    {
+        // 数据库名称
+        data = readOption("data", "slackerdb");
+        // 数据目录位置，默认存放在内存中
+        data_dir = readOption("data_dir", ":memory:");
+        // 日志目录，默认为console，即不记录日志文件
+        log = readOption("log", "console");
+        // 默认打印到INFO级别
+        log_level = Level.valueOf(readOption("log_level", "INFO"));
+        // 默认开放全部地址访问
+        bind = readOption("bind", "0.0.0.0");
+        port = readOption("port", 4309);
+        // 默认使用主机内存的80%
+        OperatingSystemMXBean osBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
+        String defaultPhysicalMemorySize = (int)(osBean.getTotalPhysicalMemorySize() / 1024 / 1024 / 1024 * 0.8) + "GB";
+        memory_limit = readOption("memory_limit", defaultPhysicalMemorySize);
+        // 默认使用主机内核数量的80%
+        threads = readOption("threads", (int)(Runtime.getRuntime().availableProcessors()*0.8));
+        // 数据库最大工作线程
+        max_network_workers = readOption("max_network_workers", (int)(threads*1.5));
+        // 客户端最大超时时间, 默认为10分钟
+        clientTimeout = readOption("client_timeout", 600);
+        // 客户端读写模式
+        access_mode = readOption("access_mode", "READ_WRITE");
+        // 默认用户Schema
+        currentSchema = readOption("current_schema", "");
     }
 
     // 读取参数配置文件
     public static void LoadConfiguration(String configurationFileName) throws ServerException {
         File configurationFile;
-        Properties appProperties = new Properties();
 
         // 首先读取参数配置里头的信息
         if (configurationFileName != null)
@@ -181,9 +98,9 @@ public class ServerConfiguration extends Throwable {
                 throw new ServerException(99, ex.getMessage());
             }
         }
+
         // 加载配置信息
-        LoadConfiguration(appProperties);
-        loaded = true;
+        LoadConfiguration();
     }
 
     public static String getLog()
@@ -245,8 +162,8 @@ public class ServerConfiguration extends Throwable {
     {
         return threads;
     }
-    public static int getMax_connections()
+    public static int getMax_Network_Workers()
     {
-        return max_connections;
+        return max_network_workers;
     }
 }

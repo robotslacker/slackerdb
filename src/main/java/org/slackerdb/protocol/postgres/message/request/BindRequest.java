@@ -194,7 +194,8 @@ public class BindRequest extends PostgresRequest {
                                     preparedStatement.setDouble(i + 1, ByteBuffer.wrap(bindParameters[i]).getDouble());
                                     break;
                                 default:
-                                    AppLogger.logger.error("Unknown parameter type: {}", columnTypeName);
+                                    AppLogger.logger.error("Not supported type in BindRequest: {}", columnTypeName);
+                                    break;
                             }
                         }
                     }

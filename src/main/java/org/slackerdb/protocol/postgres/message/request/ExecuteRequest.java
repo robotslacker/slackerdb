@@ -19,6 +19,10 @@ import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 
@@ -94,7 +98,9 @@ public class ExecuteRequest extends PostgresRequest {
                         field.dataTypeModifier = -1;
                         switch (columnTypeName) {
                             case "VARCHAR":
+                            case "TIME":
                             case "TIMESTAMP":
+                            case "TIMESTAMP WITH TIME ZONE":
                                 field.formatCode = 0;
                                 break;
                             default:
@@ -178,6 +184,16 @@ public class ExecuteRequest extends PostgresRequest {
                                     column.columnValue =
                                             new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
                                                     .format(rs.getTimestamp(i)).getBytes(StandardCharsets.UTF_8);
+                                    break;
+                                case "TIME":
+                                    column.columnLength = 8;
+                                    column.columnValue = rs.getTime(i).toLocalTime().toString().getBytes(StandardCharsets.US_ASCII);
+                                    break;
+                                case "TIMESTAMP WITH TIME ZONE":
+                                    ZonedDateTime zonedDateTime = rs.getTimestamp(i).toInstant().atZone(ZoneId.systemDefault());
+                                    String formattedTime = zonedDateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS[XXX]"));
+                                    column.columnLength = formattedTime.length();
+                                    column.columnValue = formattedTime.getBytes(StandardCharsets.US_ASCII);
                                     break;
                                 default:
                                     if (columnTypeName.toUpperCase().startsWith("DECIMAL"))
