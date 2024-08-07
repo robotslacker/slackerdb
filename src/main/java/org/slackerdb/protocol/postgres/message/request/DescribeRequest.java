@@ -5,6 +5,7 @@ import io.netty.util.AttributeKey;
 import org.slackerdb.protocol.postgres.message.PostgresRequest;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 
 public class DescribeRequest  extends PostgresRequest {
     //  Describe (F)
@@ -17,8 +18,12 @@ public class DescribeRequest  extends PostgresRequest {
     //    String
     //       The name of the prepared statement or portal
     //       to describe (an empty string selects the unnamed prepared statement or portal).
+    private String      portalName = "";
+
     @Override
     public void decode(byte[] data) {
+        portalName = new String(data, StandardCharsets.UTF_8);
+
         super.decode(data);
     }
 

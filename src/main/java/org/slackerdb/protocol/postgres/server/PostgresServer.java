@@ -17,6 +17,7 @@ import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.logger.AppLogger;
 import org.slackerdb.protocol.postgres.message.*;
 import org.slackerdb.protocol.postgres.message.request.*;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.File;
@@ -36,7 +37,6 @@ import java.util.regex.Pattern;
  */
 public class PostgresServer {
     private static String backendConnectString = null;
-    private boolean systemRunning = false;
     protected static Connection backendSysConnection;
 
     private void initBackendConnectString() throws ServerException {
@@ -82,9 +82,9 @@ public class PostgresServer {
                     throw new ServerException(999,
                             "Data [" + dataFile.getAbsolutePath() + "] can't be write!!");
                 }
+                backendConnectString = backendConnectString + dataFile.getAbsolutePath();
             }
         }
-
     }
 
     public static String getBackendConnectString()
@@ -96,25 +96,14 @@ public class PostgresServer {
      * Start the server
      */
     public void start() throws ServerException {
-        // 根据内存模式何文件模式打印日志信息
-        if (ServerConfiguration.getData().isEmpty()) {
-            AppLogger.logger.info("[SERVER] Data will saved in MEMORY.");
-        }
-        else
-        {
-            AppLogger.logger.info("[SERVER] Data will saved at [{}].", ServerConfiguration.getData());
-        }
-
-        // 初始化服务处理程序的后端数据库连接字符串
+         // 初始化服务处理程序的后端数据库连接字符串
         initBackendConnectString();
 
-        /*
-          Listener thread
-         */
+        // Listener thread
         Thread thread = new Thread(() -> {
             try {
                 run();
-            } catch (IOException | ExecutionException | InterruptedException e) {
+            } catch (IOException | ExecutionException | InterruptedException | ServerException e) {
                 throw new RuntimeException(e);
             }
         });
@@ -322,9 +311,8 @@ public class PostgresServer {
         }
     }
 
-    private void run() throws IOException, ExecutionException, InterruptedException {
+    private void run() throws IOException, ExecutionException, InterruptedException, ServerException {
         // 初始化一个DB连接，以保证即使所有客户端都断开连接，服务端会话仍然会继续存在
-
         try {
             if (ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
                 Properties readOnlyProperty = new Properties();
@@ -333,10 +321,12 @@ public class PostgresServer {
             } else {
                 backendSysConnection = DriverManager.getConnection(backendConnectString);
             }
-            assert backendSysConnection != null;
+            AppLogger.logger.info("[SERVER] Backend database [{}] opened.", backendConnectString);
         }
         catch (SQLException e) {
+            DBInstance.state = "STARTUP FAILED";
             AppLogger.logger.error("[SERVER] Init backend connection error. ", e);
+            throw new ServerException(e);
         }
 
         // Netty消息处理
@@ -379,15 +369,11 @@ public class PostgresServer {
             AppLogger.logger.info("[SERVER] Listening on {}:{}",
                     ServerConfiguration.getBindHost(),
                     ServerConfiguration.getPort());
-            systemRunning = true;
+            DBInstance.state = "RUNNING";
             future.channel().closeFuture().sync();
         } finally {
             bossGroup.shutdownGracefully();
             workerGroup.shutdownGracefully();
         }
-    }
-
-    public boolean isRunning() {
-        return systemRunning;
     }
  }

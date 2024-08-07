@@ -18,14 +18,20 @@ TCPDUMP工具:
 tcpdump -v -i any \(src X.X.X.X and dst port 5432 \) or \( dst X.X.X.X and src port 5432 \) -X
 
 ## 已知问题
-部分Duckdb的数据类型PG中并不存在，无法支持  
-计划在本项目完成后，重写一个定制的客户端代码，便于后续扩展
+#### TimeStamp的时区问题
+PG的客户端会恒定把系统当前时区作为参数出现在setTimeStamp中，duckdb的TimeStamp并无时区概念。
+这会导致使用setTimeStamp插入的数据在查询后相差一定数值。
+解决办法：
+    客户端恒定使用UTC时区
+
 
 ## 时间表
-1. TimeStampTZ的支持(时区处理有问题)
-2. Extensions的支持
-3. 所有不支持的操作均要明确错误信息
-4. 文档处理
+1. 缺少pg_database表（缺少dataloowconn, datistemplate)，导致dbeaver无法连接
+2. not implemented column type VARCHAR[]
+3. Extensions的支持
+4. DBEaver中看不到表名和字段信息
+5. 所有不支持的操作均要明确错误信息
+6. 文档处理
 
 
 ## Postgres通讯步序图

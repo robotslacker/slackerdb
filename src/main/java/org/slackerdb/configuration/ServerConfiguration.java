@@ -54,7 +54,7 @@ public class ServerConfiguration extends Throwable {
         }
     }
 
-    private static void LoadConfiguration()
+    public static void LoadDefaultConfiguration()
     {
         // 数据库名称
         data = readOption("data", "slackerdb");
@@ -84,7 +84,7 @@ public class ServerConfiguration extends Throwable {
     }
 
     // 读取参数配置文件
-    public static void LoadConfiguration(String configurationFileName) throws ServerException {
+    public static void LoadConfigurationFile(String configurationFileName) throws ServerException {
         File configurationFile;
 
         // 首先读取参数配置里头的信息
@@ -100,7 +100,7 @@ public class ServerConfiguration extends Throwable {
         }
 
         // 加载配置信息
-        LoadConfiguration();
+        LoadDefaultConfiguration();
     }
 
     public static String getLog()
@@ -113,6 +113,7 @@ public class ServerConfiguration extends Throwable {
     }
     public static void setLog_level(Level plog_level)
     {
+        appProperties.put("log_level", plog_level.levelStr);
         log_level = plog_level;
     }
 
@@ -139,6 +140,7 @@ public class ServerConfiguration extends Throwable {
     }
     public static void setData(String pData)
     {
+        appProperties.put("data", pData);
         data = pData;
     }
 

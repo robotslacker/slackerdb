@@ -17,7 +17,7 @@ import java.sql.SQLException;
 import java.util.Arrays;
 
 public class ParseRequest extends PostgresRequest {
-    private String      name = "";
+    private String      preparedStmtName = "";
     private String      sql = "";
     private short       numOfParameters = 0;
     private int[]       parameterDataTypeIds;
@@ -49,7 +49,11 @@ public class ParseRequest extends PostgresRequest {
 
         // 将ParseRequest中的信息进行分解
         byte[][] result = Utils.splitByteArray(data, (byte)0);
-        name = new String(result[0], StandardCharsets.UTF_8);
+        preparedStmtName = new String(result[0], StandardCharsets.UTF_8);
+        if (preparedStmtName.isEmpty())
+        {
+            preparedStmtName = "NONAME";
+        }
         sql = new String(result[1], StandardCharsets.UTF_8);
 
         int currentPos = result[0].length + 1 + result[1].length + 1;
@@ -100,17 +104,17 @@ public class ParseRequest extends PostgresRequest {
             parseComplete.process(ctx, request, out);
 
             // 记录PreparedStatement
-            ctx.channel().attr(AttributeKey.valueOf("PreparedStatement")).set(preparedStatement);
+            ctx.channel().attr(AttributeKey.valueOf("PreparedStatement" + "-" + preparedStmtName)).set(preparedStatement);
 
             // 记录PreparedStatement的参数类型
-            ctx.channel().attr(AttributeKey.valueOf("PreparedStatement-DataTypeIds")).set(parameterDataTypeIds);
+            ctx.channel().attr(AttributeKey.valueOf("PreparedStatement-DataTypeIds" + "-" + preparedStmtName)).set(parameterDataTypeIds);
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out);
         }
         catch (SQLException e) {
             // 清空PreparedStatement
-            ctx.channel().attr(AttributeKey.valueOf("PreparedStatement")).set(null);
+            ctx.channel().attr(AttributeKey.valueOf("PreparedStatement" + "-" + preparedStmtName)).set(null);
 
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse();

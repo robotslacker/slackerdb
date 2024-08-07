@@ -64,6 +64,10 @@ public class BindRequest extends PostgresRequest {
         byte[][] result = Utils.splitByteArray(data, (byte)0);
         portalName = new String(result[0], StandardCharsets.UTF_8);
         preparedStmtName = new String(result[1], StandardCharsets.UTF_8);
+        if (preparedStmtName.isEmpty())
+        {
+            preparedStmtName = "NONAME";
+        }
 
         int currentPos = result[0].length + 1 + result[1].length + 1;
         byte[] part = Arrays.copyOfRange(
@@ -138,12 +142,13 @@ public class BindRequest extends PostgresRequest {
         }
 
         try {
-            PreparedStatement preparedStatement = (PreparedStatement) ctx.channel().attr(AttributeKey.valueOf("PreparedStatement")).get();
+            PreparedStatement preparedStatement =
+                    (PreparedStatement) ctx.channel().attr(AttributeKey.valueOf("PreparedStatement" + "-" + preparedStmtName)).get();
             if (preparedStatement != null)
             {
                 if (preparedStatement.getParameterMetaData().getParameterCount() != 0) {
                     // 获取参数的类型
-                    int[] parameterDataTypeIds = (int[]) ctx.channel().attr(AttributeKey.valueOf("PreparedStatement-DataTypeIds")).get();
+                    int[] parameterDataTypeIds = (int[]) ctx.channel().attr(AttributeKey.valueOf("PreparedStatement-DataTypeIds" + "-" + preparedStmtName)).get();
                     for (int i = 0; i < bindParameters.length; i++) {
                         String columnTypeName = PostgresTypeOids.getTypeNameFromTypeOid(parameterDataTypeIds[i]);
                         if (formatCodes[i] == 0) {
@@ -201,6 +206,10 @@ public class BindRequest extends PostgresRequest {
                     }
                 }
             }
+
+            // 记录Bind后的PreparedStatement
+            ctx.channel().attr(AttributeKey.valueOf("Portal" + "-" + portalName)).set(preparedStatement);
+            ctx.channel().attr(AttributeKey.valueOf("Portal" + "-" + portalName + "-ResultSet")).set(null);
 
             BindComplete bindComplete = new BindComplete();
             bindComplete.process(ctx, request, out);

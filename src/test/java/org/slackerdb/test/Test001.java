@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.slackerdb.Main;
 import org.slackerdb.configuration.ServerConfiguration;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Sleeper;
 
 import java.math.BigDecimal;
@@ -22,12 +23,16 @@ public class Test001 {
         Thread dbThread = new Thread(() -> {
             try {
                 // 修改默认的db启动端口
-                ServerConfiguration.LoadConfiguration(null);
+                ServerConfiguration.LoadDefaultConfiguration();
                 ServerConfiguration.setPort(dbPort);
 
                 // 启动数据库
-                Main.setLogLevel("INFO");
+//                Main.setLogLevel("TRACE");
                 Main.start();
+
+                // 强制使用UTC时区，以避免时区问题在PG和后端数据库中不一致的行为
+                TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -35,13 +40,13 @@ public class Test001 {
         dbThread.start();
         while (true)
         {
-            if (Main.isRunning())
+            if (DBInstance.state.equalsIgnoreCase("RUNNING"))
             {
                 break;
             }
             else
             {
-                Sleeper.sleep(1*1000);
+                Sleeper.sleep(1000);
             }
         }
         System.out.println("TEST:: Server started successful ...");
@@ -371,20 +376,6 @@ public class Test001 {
 
     @Test
     void testBindInsertWithExecuteUpdate() throws Exception {
-//        String  connectURL = "jdbc:postgresql://192.168.40.132:5432/postgres";
-//        Connection pgConn1 = DriverManager.getConnection(
-//                connectURL, "postgres", "");
-//        pgConn1.setAutoCommit(false);
-//
-//        pgConn1.createStatement().execute("drop table if exists aaa");
-//        pgConn1.createStatement().execute("create table aaa (col1 timestamp with time zone)");
-//        pgConn1.createStatement().execute("insert into aaa values('2020-01-01 12:00:00 UTC')");
-//        Thread.sleep(20*1000);
-//        ResultSet rs = pgConn1.createStatement().executeQuery("select col1 from aaa");
-//        while (rs.next()) {
-//            System.out.println(rs.getTimestamp("col1"));
-//        }
-
         String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
@@ -421,7 +412,7 @@ public class Test001 {
         pStmt.setInt(8, 12345);
         pStmt.setTimestamp(9, Timestamp.valueOf("2022-06-30 12:00:00"));
         pStmt.setTime(10, Time.valueOf("13:35:06"));
-        pStmt.setTimestamp(11, Timestamp.valueOf("2022-07-30 12:00:00"), Calendar.getInstance(TimeZone.getDefault()));
+        pStmt.setTimestamp(11, Timestamp.valueOf("2022-07-30 12:00:00"));
 
         pStmt.executeUpdate();
 
@@ -437,12 +428,9 @@ public class Test001 {
             assert Math.abs(rs.getFloat("float_value") - 3.14) < 0.001;
             assert rs.getDouble("double_value") == 3.14159;
             assert rs.getDouble("numeric_value") == 12345;
-            assert rs.getTimestamp("timestamp_value", Calendar.getInstance(TimeZone.getTimeZone("UTC")))
-                    .toString().startsWith("2022-06-30 12:00:00");
+            assert rs.getTimestamp("timestamp_value").toString().startsWith("2022-06-30 12:00:00");
             assert rs.getTime("time_value").toLocalTime().toString().equalsIgnoreCase("13:35:06");
-//            System.out.println(
-//                    rs.getTimestamp("timestamp_tz_value").toString()
-//            );
+            assert rs.getTimestamp("timestamp_tz_value").toString().startsWith("2022-07-30 12:00:00");
         }
         assert resultCount == 1;
         rs.close();
@@ -523,6 +511,64 @@ public class Test001 {
 
     }
 
+    @Test
+    void testFetchSize() throws SQLException
+    {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = "CREATE TABLE testFetchSize ( " +
+                "id INTEGER PRIMARY KEY," +
+                "name VARCHAR(100)," +
+                "birth_date DATE," +
+                "is_active BOOLEAN," +
+                "salary DECIMAL(10, 2)," +
+                "float_value FLOAT," +
+                "double_value DOUBLE," +
+                "numeric_value NUMERIC," +
+                "timestamp_value TIMESTAMP" +
+                ")";
+        pgConn1.createStatement().execute(sql);
+
+        sql = "INSERT INTO testFetchSize (id, name, birth_date, is_active, salary, float_value, double_value, numeric_value, timestamp_value) " +
+                "VALUES " +
+                "(?, 'John Doe', '1990-01-01', TRUE, 50000.00, 3.14, 3.14159, 12345, '2023-06-30 12:00:00')";
+        PreparedStatement pStmt = pgConn1.prepareStatement(sql);
+        int expectedResult = 0;
+        for (int i=1; i<=10; i++) {
+            pStmt.setInt(1, i);
+            pStmt.addBatch();
+            expectedResult = expectedResult + i;
+        }
+        pStmt.executeBatch();
+        pStmt.close();
+
+        pStmt = pgConn1.prepareStatement("select * from testFetchSize order by 1");
+        pStmt.setFetchSize(5);
+        ResultSet rs = pStmt.executeQuery();
+        for (int i=1; i<=5;i++)
+        {
+            rs.next();
+            assert rs.getInt("id") == i;
+        }
+
+        // 中间打断一次查询
+        PreparedStatement pstmt2 = pgConn1.prepareStatement("select 3+5");
+        pstmt2.executeQuery();
+
+        for (int i=6; i<=10;i++)
+        {
+            rs.next();
+            assert rs.getInt("id") == i;
+        }
+
+        rs.close();
+        pStmt.close();
+        pgConn1.close();
+    }
+
     @AfterAll
     static void tearDownAll() {
         if (dbThread != null) {
@@ -530,3 +576,4 @@ public class Test001 {
         }
     }
 }
+
