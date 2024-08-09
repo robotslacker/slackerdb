@@ -43,7 +43,12 @@ public class SQLReplacer {
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        ".*pg_catalog.pg_get_partkeydef.*", "",true
+                        "(.*)pg_catalog.pg_get_partkeydef\\(c\\.oid\\)(.*)", "$1null$2",true
+                )
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "(.*)pg_catalog.pg_get_expr\\(ad\\.adbin, ad\\.adrelid, true\\)(.*)","$1null$2",true
                 )
         );
         SQLReplaceItems.add(

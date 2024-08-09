@@ -123,7 +123,10 @@ public class ExecuteRequest extends PostgresRequest {
                             column.columnValue = bigDecimal.getBytes(StandardCharsets.US_ASCII);
                             break;
                         } else {
-                            AppLogger.logger.error("Not implemented column type: {}", columnTypeName);
+                            // 不认识的字段类型, 告警后按照字符串来处理
+                            AppLogger.logger.warn("Not implemented column type: {}", columnTypeName);
+                            column.columnValue = rs.getString(i).getBytes(StandardCharsets.UTF_8);
+                            column.columnLength = column.columnValue.length;
                         }
                 }
             }
@@ -209,20 +212,27 @@ public class ExecuteRequest extends PostgresRequest {
                             field.dataTypeSize = (short) 2147483647;
                             field.dataTypeModifier = -1;
                             switch (columnTypeName) {
+                                case "INTEGER":
+                                case "BIGINT":
+                                case "HUGEINT":
+                                case "DATE":
+                                case "BOOLEAN":
+                                case "FLOAT":
+                                case "DOUBLE":
+                                    // 这些数据类型都是二进制类型返回
+                                    field.formatCode = 1;
+                                    break;
                                 case "VARCHAR":
                                 case "TIME":
                                 case "TIMESTAMP":
                                 case "TIMESTAMP WITH TIME ZONE":
+                                    // 这些数据类型都是文本类型返回
                                     field.formatCode = 0;
                                     break;
                                 default:
-                                    if (columnTypeName.startsWith("DECIMAL")) {
-                                        // DECIMAL 应该是二进制格式，但是目前分析二进制格式的结果总是不对
-                                        // 所有这里用字符串进行返回
-                                        field.formatCode = 0;
-                                    } else {
-                                        field.formatCode = 1;
-                                    }
+                                    // 不认识的类型一律文本返回
+                                    field.formatCode = 0;
+                                    break;
                             }
                             fields.add(field);
                         }

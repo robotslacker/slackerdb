@@ -5,26 +5,26 @@ import org.slackerdb.exceptions.ServerException;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
-import java.lang.management.ManagementFactory;
-import com.sun.management.OperatingSystemMXBean;
 import java.util.Properties;
 import ch.qos.logback.classic.Level;
 
 public class ServerConfiguration extends Throwable {
     private static final Properties appProperties = new Properties();
 
-    private static String   data;
-    private static String   data_dir;
+    private static String   data = "slackerdb";
+    private static String   data_dir = ":memory:";
+    private static String   temp_dir;
+    private static String   extension_dir;
     private static String   log;
     private static Level    log_level;
-    private static int      port;
-    private static String   bind;
+    private static int      port = 4309;
+    private static String   bind = "0.0.0.0";
     private static String   currentSchema;
     private static String   memory_limit;
-    private static int      threads;
+    private static int      threads = (int)(Runtime.getRuntime().availableProcessors() * 0.8);
     private static String   access_mode;
-    private static int      max_network_workers;
-    private static int      clientTimeout;
+    private static int      max_network_workers = (int)(threads * 1.5);
+    private static int      clientTimeout = 600;
 
     private static int readOption(String optionName, int defaultValue)
     {
@@ -57,30 +57,33 @@ public class ServerConfiguration extends Throwable {
     public static void LoadDefaultConfiguration()
     {
         // 数据库名称
-        data = readOption("data", "slackerdb");
+        data = readOption("data", data);
         // 数据目录位置，默认存放在内存中
-        data_dir = readOption("data_dir", ":memory:");
+        data_dir = readOption("data_dir", data_dir);
         // 日志目录，默认为console，即不记录日志文件
         log = readOption("log", "console");
         // 默认打印到INFO级别
         log_level = Level.valueOf(readOption("log_level", "INFO"));
         // 默认开放全部地址访问
-        bind = readOption("bind", "0.0.0.0");
-        port = readOption("port", 4309);
-        // 默认使用主机内存的80%
-        OperatingSystemMXBean osBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
-        String defaultPhysicalMemorySize = (int)(osBean.getTotalPhysicalMemorySize() / 1024 / 1024 / 1024 * 0.8) + "GB";
-        memory_limit = readOption("memory_limit", defaultPhysicalMemorySize);
+        bind = readOption("bind", bind);
+        port = readOption("port", port);
+        // 默认按照Duck自己的默认规则
+        // -1 表示无限制
+        memory_limit = readOption("memory_limit", "");
         // 默认使用主机内核数量的80%
-        threads = readOption("threads", (int)(Runtime.getRuntime().availableProcessors()*0.8));
+        threads = readOption("threads", threads);
         // 数据库最大工作线程
-        max_network_workers = readOption("max_network_workers", (int)(threads*1.5));
+        max_network_workers = readOption("max_network_workers", max_network_workers);
         // 客户端最大超时时间, 默认为10分钟
-        clientTimeout = readOption("client_timeout", 600);
+        clientTimeout = readOption("client_timeout", clientTimeout);
         // 客户端读写模式
         access_mode = readOption("access_mode", "READ_WRITE");
         // 默认用户Schema
         currentSchema = readOption("current_schema", "");
+        // 数据库临时文件目录，默认和data_dir相同
+        temp_dir = readOption("temp_dir", data_dir);
+        // 扩展文件目录， 默认不配置
+        extension_dir = readOption("extension_dir", "");
     }
 
     // 读取参数配置文件
@@ -113,7 +116,6 @@ public class ServerConfiguration extends Throwable {
     }
     public static void setLog_level(Level plog_level)
     {
-        appProperties.put("log_level", plog_level.levelStr);
         log_level = plog_level;
     }
 
@@ -138,12 +140,6 @@ public class ServerConfiguration extends Throwable {
     {
         return access_mode;
     }
-    public static void setData(String pData)
-    {
-        appProperties.put("data", pData);
-        data = pData;
-    }
-
     public static String getData()
     {
         return data;
@@ -167,5 +163,35 @@ public class ServerConfiguration extends Throwable {
     public static int getMax_Network_Workers()
     {
         return max_network_workers;
+    }
+
+    public static String getTemp_dir()
+    {
+        return temp_dir;
+    }
+
+    public static String getExtension_dir()
+    {
+        return extension_dir;
+    }
+    public static void setTemp_dir(String pTemp_dir)
+    {
+        temp_dir = pTemp_dir;
+    }
+    public static void setExtension_dir(String pExtension_dir)
+    {
+        extension_dir = pExtension_dir;
+    }
+    public static void setData(String pData)
+    {
+        data = pData;
+    }
+    public static void setData_dir(String pData_dir)
+    {
+        data_dir = pData_dir;
+    }
+    public static void setMax_network_workers(int pMax_network_workers)
+    {
+        max_network_workers = pMax_network_workers;
     }
 }

@@ -10,6 +10,7 @@ import org.slackerdb.logger.AppLogger;
 import java.net.InetSocketAddress;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 
 public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
     // 为每个连接创建一个会话ID
@@ -73,6 +74,7 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
         }
         ctx.channel().attr(AttributeKey.valueOf("SessionId")).set(currentSessionId);
         ctx.channel().attr(AttributeKey.valueOf("Client")).set(remoteAddress.toString());
+        ctx.channel().attr(AttributeKey.valueOf("Connected")).set(new Timestamp(System.currentTimeMillis()));
 
         // 记录上一个请求的协议类型
         ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set("");

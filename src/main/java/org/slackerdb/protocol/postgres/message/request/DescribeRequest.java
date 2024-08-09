@@ -28,7 +28,7 @@ public class DescribeRequest  extends PostgresRequest {
     }
 
     @Override
-    public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+    public void process(ChannelHandlerContext ctx, Object request) {
         // 无法做任何处理，因为只有在执行的时候才能决定是否要返回RwoDescription
         // 这里需要标记在后续的ExecuteRequest中要回应这个DescribeRequest请求
         ctx.channel().attr(AttributeKey.valueOf("DescribeRequest")).set(Boolean.TRUE);

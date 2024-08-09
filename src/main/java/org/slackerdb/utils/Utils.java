@@ -1,7 +1,5 @@
 package org.slackerdb.utils;
 
-import org.slackerdb.logger.AppLogger;
-
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.TextStyle;

@@ -8,7 +8,7 @@ import java.io.IOException;
 
 public class TerminateRequest extends PostgresRequest {
     @Override
-    public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+    public void process(ChannelHandlerContext ctx, Object request)  {
         PostgresServerHandler.sessionClose(ctx);
     }
 }

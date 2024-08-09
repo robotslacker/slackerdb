@@ -24,9 +24,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
+import java.sql.*;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.*;
@@ -37,7 +35,6 @@ import java.util.regex.Pattern;
  */
 public class PostgresServer {
     private static String backendConnectString = null;
-    protected static Connection backendSysConnection;
 
     private void initBackendConnectString() throws ServerException {
         if (backendConnectString == null) {
@@ -77,7 +74,12 @@ public class PostgresServer {
                     throw new ServerException(999,
                             "Data [" + dataFile.getAbsolutePath() + "] can't be read!!");
                 }
-                if (!dataFile.canRead() && ServerConfiguration.getAccess_mode().equalsIgnoreCase("READ_WRITE"))
+                if (!dataFile.exists() && !new File(ServerConfiguration.getData_Dir()).canWrite())
+                {
+                    throw new ServerException(999,
+                            "Data [" + dataFile.getAbsolutePath() + "] can't be create!!");
+                }
+                if (dataFile.exists() && !dataFile.canWrite() && ServerConfiguration.getAccess_mode().equalsIgnoreCase("READ_WRITE"))
                 {
                     throw new ServerException(999,
                             "Data [" + dataFile.getAbsolutePath() + "] can't be write!!");
@@ -85,11 +87,6 @@ public class PostgresServer {
                 backendConnectString = backendConnectString + dataFile.getAbsolutePath();
             }
         }
-    }
-
-    public static String getBackendConnectString()
-    {
-        return backendConnectString;
     }
 
     /**
@@ -317,9 +314,9 @@ public class PostgresServer {
             if (ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
                 Properties readOnlyProperty = new Properties();
                 readOnlyProperty.setProperty("duckdb.read_only", "true");
-                backendSysConnection = DriverManager.getConnection(backendConnectString, readOnlyProperty);
+                DBInstance.backendSysConnection = DriverManager.getConnection(backendConnectString, readOnlyProperty);
             } else {
-                backendSysConnection = DriverManager.getConnection(backendConnectString);
+                DBInstance.backendSysConnection = DriverManager.getConnection(backendConnectString);
             }
             AppLogger.logger.info("[SERVER] Backend database [{}] opened.", backendConnectString);
         }
@@ -327,6 +324,29 @@ public class PostgresServer {
             DBInstance.state = "STARTUP FAILED";
             AppLogger.logger.error("[SERVER] Init backend connection error. ", e);
             throw new ServerException(e);
+        }
+
+        // 处理初始化参数
+        try {
+            Statement stmt = DBInstance.backendSysConnection.createStatement();
+            if (!ServerConfiguration.getTemp_dir().isEmpty()) {
+                stmt.execute("SET temp_directory = '" + ServerConfiguration.getTemp_dir() + "'");
+            }
+            if (!ServerConfiguration.getExtension_dir().isEmpty()) {
+                stmt.execute("SET extension_directory = '" + ServerConfiguration.getExtension_dir() + "'");
+            }
+            if (!ServerConfiguration.getMemory_limit().isEmpty()) {
+                stmt.execute("SET memory_limit = '" + ServerConfiguration.getMemory_limit() + "'");
+            }
+            if (ServerConfiguration.getThreads() != 0) {
+                stmt.execute("SET threads = " + ServerConfiguration.getThreads());
+            }
+            stmt.close();
+        }
+        catch (SQLException se)
+        {
+            AppLogger.logger.error("[SERVER] Init backend parameter error. ", se);
+            throw new ServerException(se);
         }
 
         // Netty消息处理
@@ -340,7 +360,6 @@ public class PostgresServer {
                     .option(ChannelOption.SO_RCVBUF, 4096)
                     .option(ChannelOption.SO_REUSEADDR, true)
                     .option(ChannelOption.SO_BACKLOG, 128)
-                    .option(ChannelOption.SO_KEEPALIVE, true)
                     .handler(
                             new LoggingHandler(LogLevel.valueOf(ServerConfiguration.getLog_level().levelStr))
                     )

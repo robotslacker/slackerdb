@@ -13,7 +13,7 @@ import java.sql.*;
 import java.util.Calendar;
 import java.util.TimeZone;
 
-public class Test001 {
+public class Sanity01Test {
     static Thread dbThread = null;
     static int dbPort=4309;
 

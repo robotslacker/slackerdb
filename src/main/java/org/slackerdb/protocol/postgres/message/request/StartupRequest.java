@@ -2,20 +2,19 @@ package org.slackerdb.protocol.postgres.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.AttributeKey;
-import org.slackerdb.configuration.ServerConfiguration;
+import org.duckdb.DuckDBConnection;
 import org.slackerdb.logger.AppLogger;
 import org.slackerdb.protocol.postgres.message.*;
 import org.slackerdb.protocol.postgres.message.response.AuthenticationOk;
 import org.slackerdb.protocol.postgres.message.response.BackendKeyData;
 import org.slackerdb.protocol.postgres.message.response.ParameterStatus;
 import org.slackerdb.protocol.postgres.message.response.ReadyForQuery;
-import org.slackerdb.protocol.postgres.server.PostgresServer;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -62,23 +61,6 @@ public class StartupRequest  extends PostgresRequest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
         ctx.channel().attr(AttributeKey.valueOf("ConnectedTime")).set(LocalDateTime.now());
-        // 获取数据库连接
-        Connection backendDBConnection;
-        try {
-            if (ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
-                Properties readOnlyProperty = new Properties();
-                readOnlyProperty.setProperty("duckdb.read_only", "true");
-                backendDBConnection = DriverManager.getConnection(PostgresServer.getBackendConnectString(), readOnlyProperty);
-            } else {
-                backendDBConnection = DriverManager.getConnection(PostgresServer.getBackendConnectString());
-            }
-            ctx.channel().attr(AttributeKey.valueOf("Connection")).set(backendDBConnection);
-        }
-        catch (SQLException e) {
-            AppLogger.logger.error("[SERVER] Init backend connection error. ", e);
-            ctx.close();
-            return;
-        }
 
         // 总是回复认证成功
         AuthenticationOk authenticationOk = new AuthenticationOk();
@@ -89,32 +71,36 @@ public class StartupRequest  extends PostgresRequest {
         ParameterStatus parameterStatus = new ParameterStatus();
         parameterStatus.setKeyValue("server_version", "15");
         parameterStatus.process(ctx, request, out);
-        PostgresMessage.writeAndFlush(ctx, ParameterStatus.class.getSimpleName(), out);
 
         parameterStatus.setKeyValue("server_type", "JANUS");
         parameterStatus.process(ctx, request, out);
-        PostgresMessage.writeAndFlush(ctx, ParameterStatus.class.getSimpleName(), out);
 
         parameterStatus.setKeyValue("client_encoding", "UTF8");
         parameterStatus.process(ctx, request, out);
-        PostgresMessage.writeAndFlush(ctx, ParameterStatus.class.getSimpleName(), out);
 
         parameterStatus.setKeyValue("DateStyle", "ISO, YMD");
         parameterStatus.process(ctx, request, out);
-        PostgresMessage.writeAndFlush(ctx, ParameterStatus.class.getSimpleName(), out);
 
         parameterStatus.setKeyValue("TimeZone", TimeZone.getDefault().getID());
         parameterStatus.process(ctx, request, out);
-        PostgresMessage.writeAndFlush(ctx, ParameterStatus.class.getSimpleName(), out);
 
         parameterStatus.setKeyValue("is_superuser", "on");
         parameterStatus.process(ctx, request, out);
-        PostgresMessage.writeAndFlush(ctx, ParameterStatus.class.getSimpleName(), out);
 
         // 返回 BackendKeyData
         BackendKeyData backendKeyData = new BackendKeyData();
         backendKeyData.process(ctx, request, out);
-        PostgresMessage.writeAndFlush(ctx, BackendKeyData.class.getSimpleName(), out);
+
+        // 获取数据库连接
+        try {
+            Connection backendDBConnection = ((DuckDBConnection)DBInstance.backendSysConnection).duplicate();
+            ctx.channel().attr(AttributeKey.valueOf("Connection")).set(backendDBConnection);
+        }
+        catch (SQLException e) {
+            AppLogger.logger.error("[SERVER] Init backend connection error. ", e);
+            ctx.close();
+            return;
+        }
 
         // 做好准备，可以查询
         ReadyForQuery readyForQuery = new ReadyForQuery();
