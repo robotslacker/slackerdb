@@ -537,7 +537,7 @@ public class Sanity01Test {
                 "(?, 'John Doe', '1990-01-01', TRUE, 50000.00, 3.14, 3.14159, 12345, '2023-06-30 12:00:00')";
         PreparedStatement pStmt = pgConn1.prepareStatement(sql);
         int expectedResult = 0;
-        for (int i=1; i<=10; i++) {
+        for (int i=1; i<=15; i++) {
             pStmt.setInt(1, i);
             pStmt.addBatch();
             expectedResult = expectedResult + i;
@@ -558,7 +558,7 @@ public class Sanity01Test {
         PreparedStatement pstmt2 = pgConn1.prepareStatement("select 3+5");
         pstmt2.executeQuery();
 
-        for (int i=6; i<=10;i++)
+        for (int i=6; i<=15;i++)
         {
             rs.next();
             assert rs.getInt("id") == i;

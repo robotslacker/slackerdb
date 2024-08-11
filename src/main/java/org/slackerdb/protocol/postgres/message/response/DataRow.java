@@ -55,6 +55,5 @@ public class DataRow extends PostgresMessage {
                 out.write(column.columnValue);
             }
         }
-
     }
 }

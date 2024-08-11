@@ -1,5 +1,6 @@
 package org.slackerdb.test;
 
+import org.duckdb.DuckDBConnection;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -14,7 +15,7 @@ import java.sql.*;
 import java.util.*;
 
 
-public class TPCDSTest {
+public class TPCDSTest2 {
     static Thread dbThread = null;
     static int dbPort=4309;
     // 一共需要运行几轮
@@ -22,7 +23,7 @@ public class TPCDSTest {
     // 需要几个线程并发测试
     static int parallel = 2;
     // 数据集的规模， 1代表1G
-    static int scale = 10;
+    static int scale = 1;
     // 服务端工作线程数量
     static int threads = 2;
     // 工作最大内存限制
@@ -32,58 +33,28 @@ public class TPCDSTest {
 
     static int roundSuccessfulCount = 0;
     static int roundFailedCount = 0;
+    static Connection duckDBSysConnection;
 
     @BeforeAll
     static void initAll() throws SQLException {
         tpcdsSQLMap = TpcdsSQL.loadTPCDSSQLMap();
-
-        // 启动slackerDB的服务
-        Thread dbThread = new Thread(() -> {
-            try {
-                // 修改默认的db启动端口
-                ServerConfiguration.LoadDefaultConfiguration();
-                ServerConfiguration.setPort(dbPort);
-                ServerConfiguration.setData("tpcdstest");
-                ServerConfiguration.setData_dir(System.getProperty("java.io.tmpdir"));
-                ServerConfiguration.setThreads(threads);
-                ServerConfiguration.setMemory_limit(memory_limit);
-
-                File dbFile = new File(String.valueOf(Path.of(ServerConfiguration.getData_Dir(), ServerConfiguration.getData() + ".db")));
-                if (dbFile.exists())
-                {
-                    dbFile.delete();
-                }
-
-                // 启动数据库
-//                Main.setLogLevel("TRACE");
-                Main.start();
-
-                // 强制使用UTC时区，以避免时区问题在PG和后端数据库中不一致的行为
-                TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
-
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
-        dbThread.start();
-        while (true)
+        File dbFile = new File(String.valueOf(Path.of(System.getProperty("java.io.tmpdir"), "tpcdstest.db")));
+        if (dbFile.exists())
         {
-            if (DBInstance.state.equalsIgnoreCase("RUNNING"))
-            {
-                break;
-            }
-            else
-            {
-                Sleeper.sleep(1000);
-            }
+            dbFile.delete();
         }
+
+        duckDBSysConnection = DriverManager.getConnection("jdbc:duckdb:" + dbFile.getAbsolutePath());
+        duckDBSysConnection.createStatement().execute("SET THREADS=" + threads);
+        duckDBSysConnection.createStatement().execute("SET MEMORY_LIMIT='" + memory_limit + "'");
+
+        // 强制使用UTC时区，以避免时区问题在PG和后端数据库中不一致的行为
+        TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+
         System.out.println("TEST:: Server started successful ...");
 
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn = DriverManager.getConnection(
-                connectURL, "", "");
+        Connection pgConn = DriverManager.getConnection("jdbc:duckdb:" + dbFile.getAbsolutePath());
         pgConn.setAutoCommit(false);
-        System.out.println("TEST:: Server connected successful ...");
 
         // 生成数据
         pgConn.createStatement().execute("CALL dsdgen(sf = " + scale + ")");
@@ -96,7 +67,6 @@ public class TPCDSTest {
 
     void runSQL(String name, String sql)  {
         Thread.currentThread().setName("RUN-" + name + "-START..." );
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
 
         Timestamp start = new Timestamp(System.currentTimeMillis());
         int rowsReturned = 0;
@@ -108,12 +78,7 @@ public class TPCDSTest {
         // 偶发的网络连接Timeout问题
         for (int i=0;i<3;i++) {
             try {
-                Properties props = new Properties();
-                props.setProperty("user", "");
-                props.setProperty("password", "");
-                props.setProperty("connectTimeout", "10");      // 设置连接超时为10秒
-                props.setProperty("socketTimeout", "300");      // 设置socket读取超时为300秒
-                pgConn = DriverManager.getConnection(connectURL, props);
+                pgConn = ((DuckDBConnection)duckDBSysConnection).duplicate();
                 break;
             } catch (SQLException ignored) {}
             Sleeper.sleep(2*1000);

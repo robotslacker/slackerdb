@@ -2,12 +2,10 @@ package org.slackerdb.protocol.postgres.message;
 
 import io.netty.channel.ChannelHandlerContext;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
 public abstract class PostgresRequest {
     protected byte[] requestContent;
-    protected ByteArrayOutputStream out = new ByteArrayOutputStream();
 
     public void decode(byte[] data)
     {

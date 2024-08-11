@@ -5,6 +5,7 @@ import io.netty.util.AttributeKey;
 import org.slackerdb.protocol.postgres.message.*;
 import org.slackerdb.protocol.postgres.message.response.ErrorResponse;
 import org.slackerdb.protocol.postgres.message.response.ParseComplete;
+import org.slackerdb.protocol.postgres.server.PostgresServer;
 import org.slackerdb.protocol.postgres.sql.SQLReplacer;
 import org.slackerdb.utils.Utils;
 
@@ -84,7 +85,7 @@ public class ParseRequest extends PostgresRequest {
         String executeSQL = SQLReplacer.replaceSQL(parseRequest.sql);
 
         // 记录上次执行的SQL
-        ctx.channel().attr(AttributeKey.valueOf("SQL")).set(executeSQL.trim());
+        PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "SQL", executeSQL);
 
         // 对于空语句，直接返回结果
         if (executeSQL.isEmpty()) {
@@ -93,28 +94,29 @@ public class ParseRequest extends PostgresRequest {
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out);
+            out.close();
             return;
         }
 
         try {
-            Connection conn = (Connection) ctx.channel().attr(AttributeKey.valueOf("Connection")).get();
+            Connection conn = (Connection) PostgresServer.channelAttributeManager.getAttribute(ctx.channel(), "Connection");
             PreparedStatement preparedStatement = conn.prepareStatement(executeSQL);
 
             ParseComplete parseComplete = new ParseComplete();
             parseComplete.process(ctx, request, out);
 
-            // 记录PreparedStatement
-            ctx.channel().attr(AttributeKey.valueOf("PreparedStatement" + "-" + preparedStmtName)).set(preparedStatement);
-
-            // 记录PreparedStatement的参数类型
-            ctx.channel().attr(AttributeKey.valueOf("PreparedStatement-DataTypeIds" + "-" + preparedStmtName)).set(parameterDataTypeIds);
+            // 记录PreparedStatement,以及对应的参数类型
+            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreparedStatement" + "-" + preparedStmtName, preparedStatement);
+            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreparedStatement*DataTypeIds" + "-" + preparedStmtName,
+                    parameterDataTypeIds);
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out);
         }
         catch (SQLException e) {
             // 清空PreparedStatement
-            ctx.channel().attr(AttributeKey.valueOf("PreparedStatement" + "-" + preparedStmtName)).set(null);
+            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreparedStatement" + "-" + preparedStmtName, null);
+            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreparedStatement*DataTypeIds" + "-" + preparedStmtName, null);
 
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse();
@@ -123,6 +125,9 @@ public class ParseRequest extends PostgresRequest {
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+        }
+        finally {
+            out.close();
         }
     }
 }

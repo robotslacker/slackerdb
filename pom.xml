@@ -80,6 +80,10 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
                 <configuration>
+                    <systemPropertyVariables>
+                        <io.netty.noJemalloc>true</io.netty.noJemalloc>
+                        <io.netty.allocator.maxDirectMemory>0</io.netty.allocator.maxDirectMemory>
+                    </systemPropertyVariables>
                     <includes>
                         <include>**/Sanity01Test.java</include>
                     </includes>

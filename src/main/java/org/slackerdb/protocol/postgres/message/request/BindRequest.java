@@ -7,6 +7,7 @@ import org.slackerdb.protocol.postgres.entity.PostgresTypeOids;
 import org.slackerdb.protocol.postgres.message.*;
 import org.slackerdb.protocol.postgres.message.response.BindComplete;
 import org.slackerdb.protocol.postgres.message.response.ErrorResponse;
+import org.slackerdb.protocol.postgres.server.PostgresServer;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -137,18 +138,19 @@ public class BindRequest extends PostgresRequest {
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, BindComplete.class.getSimpleName(), out);
-
+            out.close();
             return;
         }
 
         try {
             PreparedStatement preparedStatement =
-                    (PreparedStatement) ctx.channel().attr(AttributeKey.valueOf("PreparedStatement" + "-" + preparedStmtName)).get();
+                    (PreparedStatement) PostgresServer.channelAttributeManager.getAttribute(ctx.channel(), "PreparedStatement" + "-" + preparedStmtName);
             if (preparedStatement != null)
             {
                 if (preparedStatement.getParameterMetaData().getParameterCount() != 0) {
                     // 获取参数的类型
-                    int[] parameterDataTypeIds = (int[]) ctx.channel().attr(AttributeKey.valueOf("PreparedStatement-DataTypeIds" + "-" + preparedStmtName)).get();
+                    int[] parameterDataTypeIds =
+                            (int[]) PostgresServer.channelAttributeManager.getAttribute(ctx.channel(), "PreparedStatement*DataTypeIds" + "-" + preparedStmtName);
                     for (int i = 0; i < bindParameters.length; i++) {
                         String columnTypeName = PostgresTypeOids.getTypeNameFromTypeOid(parameterDataTypeIds[i]);
                         if (formatCodes[i] == 0) {
@@ -159,7 +161,6 @@ public class BindRequest extends PostgresRequest {
                             switch (columnTypeName) {
                                 case "VARCHAR":
                                 case "UNKNOWN":
-                                    System.out.println("set " + new String(bindParameters[i], StandardCharsets.UTF_8));
                                     preparedStatement.setString(i + 1, new String(bindParameters[i], StandardCharsets.UTF_8));
                                     break;
                                 case "INTEGER":
@@ -208,8 +209,8 @@ public class BindRequest extends PostgresRequest {
             }
 
             // 记录Bind后的PreparedStatement
-            ctx.channel().attr(AttributeKey.valueOf("Portal" + "-" + portalName)).set(preparedStatement);
-            ctx.channel().attr(AttributeKey.valueOf("Portal" + "-" + portalName + "-ResultSet")).set(null);
+            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "Portal" + "-" + portalName, preparedStatement);
+            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "Portal" + "-" + portalName + "-ResultSet", null);
 
             BindComplete bindComplete = new BindComplete();
             bindComplete.process(ctx, request, out);
@@ -225,6 +226,9 @@ public class BindRequest extends PostgresRequest {
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+        }
+        finally {
+            out.close();
         }
 
     }

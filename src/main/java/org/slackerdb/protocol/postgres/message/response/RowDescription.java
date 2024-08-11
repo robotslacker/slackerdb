@@ -7,6 +7,7 @@ import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public class RowDescription extends PostgresMessage {
@@ -66,7 +67,7 @@ public class RowDescription extends PostgresMessage {
         out.write(Utils.int16ToBytes((short)fields.size()));
         for (Field field : fields)
         {
-            out.write(field.name);
+            out.write(field.name.getBytes(StandardCharsets.UTF_8));
             out.write((byte)0);
             out.write(Utils.int32ToBytes(field.objectIdOfTable));
             out.write(Utils.int16ToBytes(field.attributeNumberOfColumn));

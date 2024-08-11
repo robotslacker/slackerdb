@@ -18,5 +18,6 @@ public class SSLRequest extends PostgresRequest {
 
         // 发送并刷新返回消息
         PostgresMessage.writeAndFlush(ctx, NoticeMessage.class.getSimpleName(), out);
+        out.close();
     }
 }

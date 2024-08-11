@@ -8,6 +8,7 @@ import org.slackerdb.protocol.postgres.entity.Field;
 import org.slackerdb.protocol.postgres.entity.PostgresTypeOids;
 import org.slackerdb.protocol.postgres.message.*;
 import org.slackerdb.protocol.postgres.message.response.*;
+import org.slackerdb.protocol.postgres.server.PostgresServer;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -147,11 +148,11 @@ public class ExecuteRequest extends PostgresRequest {
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
+            out.close();
             return;
         }
-
         try {
-            ResultSet rs = (ResultSet) ctx.channel().attr(AttributeKey.valueOf("Portal" + "-" + portalName + "-ResultSet")).get();
+            ResultSet rs = (ResultSet) PostgresServer.channelAttributeManager.getAttribute(ctx.channel(), "Portal" + "-" + portalName + "-ResultSet");
             if (rs != null)
             {
                 ResultSetMetaData rsmd = rs.getMetaData();
@@ -172,26 +173,26 @@ public class ExecuteRequest extends PostgresRequest {
                         portalSuspended.process(ctx, request, out);
                         PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out);
 
-                        // 保留当前的ResultSet到Portal中
-                        ctx.channel().attr(AttributeKey.valueOf("Portal" + "-" + portalName + "-ResultSet")).set(rs);
                         return;
                     }
                 }
                 // 所有的记录查询完毕
                 rs.close();
-                ctx.channel().attr(AttributeKey.valueOf("Portal" + "-" + portalName + "-ResultSet")).set(null);
+                PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "Portal" + "-" + portalName + "-ResultSet", null);
             }
             else {
                 PreparedStatement preparedStatement =
                         (PreparedStatement) ctx.channel().attr(AttributeKey.valueOf("Portal" + "-" + portalName)).get();
                 if (preparedStatement == null)
                 {
-                    // 之前语句解析或者绑定出了错误
+                    // 之前语句解析或者绑定出了错误, 没有继续执行的必要
                     return;
                 }
                 boolean isResultSet = preparedStatement.execute();
                 int rowsReturned = 0;
                 if (isResultSet) {
+                    DataRow dataRow = new DataRow();
+
                     Boolean describeRequestExist = (Boolean) ctx.channel().attr(AttributeKey.valueOf("DescribeRequest")).get();
 
                     if (describeRequestExist != null && describeRequestExist) {
@@ -205,7 +206,7 @@ public class ExecuteRequest extends PostgresRequest {
                         for (int i = 1; i <= resultSetMetaData.getColumnCount(); i++) {
                             String columnTypeName = resultSetMetaData.getColumnTypeName(i);
                             Field field = new Field();
-                            field.name = resultSetMetaData.getColumnName(i).getBytes(StandardCharsets.UTF_8);
+                            field.name = resultSetMetaData.getColumnName(i);
                             field.objectIdOfTable = 0;
                             field.attributeNumberOfColumn = 0;
                             field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(columnTypeName);
@@ -240,6 +241,7 @@ public class ExecuteRequest extends PostgresRequest {
                         RowDescription rowDescription = new RowDescription();
                         rowDescription.setFields(fields);
                         rowDescription.process(ctx, request, out);
+                        rowDescription.setFields(null);
 
                         // 发送并刷新RowsDescription消息
                         PostgresMessage.writeAndFlush(ctx, RowDescription.class.getSimpleName(), out);
@@ -247,9 +249,9 @@ public class ExecuteRequest extends PostgresRequest {
                     rs = preparedStatement.getResultSet();
                     ResultSetMetaData rsmd = rs.getMetaData();
                     while (rs.next()) {
-                        DataRow dataRow = new DataRow();
                         dataRow.setColumns(processRow(rs, rsmd));
                         dataRow.process(ctx, request, out);
+                        dataRow.setColumns(null);
 
                         // 发送并刷新返回消息
                         PostgresMessage.writeAndFlush(ctx, DataRow.class.getSimpleName(), out);
@@ -262,12 +264,15 @@ public class ExecuteRequest extends PostgresRequest {
                             PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out);
 
                             // 保留当前的ResultSet到Portal中
-                            ctx.channel().attr(AttributeKey.valueOf("Portal" + "-" + portalName + "-ResultSet")).set(rs);
+                            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "Portal" + "-" + portalName + "-ResultSet", rs);
+
+                            // 返回等待下一次ExecuteRequest
+                            out.close();
                             return;
                         }
                     }
                     rs.close();
-                    ctx.channel().attr(AttributeKey.valueOf("Portal" + "-" + portalName + "-ResultSet")).set(null);
+                    PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "Portal" + "-" + portalName + "-ResultSet", null);
                 }
             }
 
@@ -301,6 +306,9 @@ public class ExecuteRequest extends PostgresRequest {
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+        }
+        finally {
+            out.close();
         }
     }
 }

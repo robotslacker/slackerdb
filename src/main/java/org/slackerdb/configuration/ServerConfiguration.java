@@ -1,10 +1,12 @@
 package org.slackerdb.configuration;
 
+import com.sun.management.OperatingSystemMXBean;
 import org.slackerdb.exceptions.ServerException;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.lang.management.ManagementFactory;
 import java.util.Properties;
 import ch.qos.logback.classic.Level;
 
@@ -20,10 +22,10 @@ public class ServerConfiguration extends Throwable {
     private static int      port = 4309;
     private static String   bind = "0.0.0.0";
     private static String   currentSchema;
-    private static String   memory_limit;
-    private static int      threads = (int)(Runtime.getRuntime().availableProcessors() * 0.8);
+    private static String   memory_limit = null;
+    private static int      threads = (int)(Runtime.getRuntime().availableProcessors() * 0.5);
     private static String   access_mode;
-    private static int      max_network_workers = (int)(threads * 1.5);
+    private static int      max_network_workers = 100;
     private static int      clientTimeout = 600;
 
     private static int readOption(String optionName, int defaultValue)
@@ -67,9 +69,16 @@ public class ServerConfiguration extends Throwable {
         // 默认开放全部地址访问
         bind = readOption("bind", bind);
         port = readOption("port", port);
-        // 默认按照Duck自己的默认规则
-        // -1 表示无限制
-        memory_limit = readOption("memory_limit", "");
+        // 最大容许的内存数量
+        if (memory_limit != null) {
+            memory_limit = readOption("memory_limit", memory_limit);
+        }
+        else
+        {
+            OperatingSystemMXBean osBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
+            String defaultPhysicalMemorySize = (int) (osBean.getTotalPhysicalMemorySize() / 1024 / 1024 / 1024 * 0.6) + "GB";
+            memory_limit = readOption("memory_limit", defaultPhysicalMemorySize);
+        }
         // 默认使用主机内核数量的80%
         threads = readOption("threads", threads);
         // 数据库最大工作线程
@@ -193,5 +202,14 @@ public class ServerConfiguration extends Throwable {
     public static void setMax_network_workers(int pMax_network_workers)
     {
         max_network_workers = pMax_network_workers;
+    }
+
+    public static void setThreads(int pThreads)
+    {
+        threads = pThreads;
+    }
+    public static void setMemory_limit(String pMemory_limit)
+    {
+        memory_limit = pMemory_limit;
     }
 }

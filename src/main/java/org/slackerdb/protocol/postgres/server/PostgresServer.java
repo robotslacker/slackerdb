@@ -2,6 +2,9 @@ package org.slackerdb.protocol.postgres.server;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.PooledByteBufAllocator;
+import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
@@ -11,7 +14,7 @@ import io.netty.handler.codec.MessageToByteEncoder;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.timeout.IdleStateHandler;
-import io.netty.util.AttributeKey;
+import io.netty.util.ReferenceCountUtil;
 import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.logger.AppLogger;
@@ -29,12 +32,12 @@ import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.*;
 import java.util.regex.Pattern;
-
 /**
  * Multithreaded asynchronous server
  */
 public class PostgresServer {
     private static String backendConnectString = null;
+    public static ChannelAttributeManager channelAttributeManager = new ChannelAttributeManager();
 
     private void initBackendConnectString() throws ServerException {
         if (backendConnectString == null) {
@@ -93,7 +96,7 @@ public class PostgresServer {
      * Start the server
      */
     public void start() throws ServerException {
-         // 初始化服务处理程序的后端数据库连接字符串
+        // 初始化服务处理程序的后端数据库连接字符串
         initBackendConnectString();
 
         // Listener thread
@@ -126,8 +129,8 @@ public class PostgresServer {
         @Override
         protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
             // 如果之前没有读取过任何协议，则读取前一个Int。可能是SSLRequest或者StartupMessage
-            String previousRequestProtocol;
-            previousRequestProtocol = (String) ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).get();
+            String previousRequestProtocol =
+                    (String) PostgresServer.channelAttributeManager.getAttribute(ctx.channel(), "PreviousRequestProtocol");
             byte[] data;
 
             // 在这里进行原始字节数据的解析处理
@@ -135,8 +138,8 @@ public class PostgresServer {
             // 解析后的数据对象添加到 out 列表中，以传递给下一个处理器
             while (in.readableBytes() > 0) {
                 // 处理SSLRequest
-                if (previousRequestProtocol.isEmpty()) {
-                    // 等待网络请求发送完毕，StartupMessage
+                if (previousRequestProtocol == null || previousRequestProtocol.isEmpty()) {
+                    // 等待网络请求发送完毕，SSLRequest
                     if (in.readableBytes() < 8) {
                         return;
                     }
@@ -151,8 +154,8 @@ public class PostgresServer {
                     pushMsgObject(out, sslRequest);
 
                     // 标记当前步骤
-                    ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(SSLRequest.class.getSimpleName());
                     previousRequestProtocol = SSLRequest.class.getSimpleName();
+                    PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
                 }
 
                 // 处理StartupMessage
@@ -165,8 +168,7 @@ public class PostgresServer {
                     // 首字节为消息体的长度
                     data = new byte[4];
                     in.readBytes(data);
-                    ByteBuffer byteBuffer = ByteBuffer.wrap(data);
-                    int messageLen = byteBuffer.getInt();
+                    int messageLen = Utils.bytesToInt32(data);
 
                     // 等待消息体发送结束, 4字节的字节长度也是消息体长度的一部分
                     if (in.readableBytes() < (messageLen - 4)) {
@@ -182,8 +184,8 @@ public class PostgresServer {
                     pushMsgObject(out, startupRequest);
 
                     // 标记当前步骤
-                    ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(StartupRequest.class.getSimpleName());
                     previousRequestProtocol = StartupRequest.class.getSimpleName();
+                    PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
                     continue;
                 }
 
@@ -196,7 +198,7 @@ public class PostgresServer {
                 in.readBytes(data);
                 ByteBuffer byteBuffer = ByteBuffer.wrap(data);
 
-                char messageType = (char)byteBuffer.get();
+                char messageType = (char) byteBuffer.get();
                 int messageLen = byteBuffer.getInt();
 
                 // 等待消息体发送结束, 4字节的字节长度也是消息体长度的一部分
@@ -207,8 +209,7 @@ public class PostgresServer {
                 data = new byte[messageLen - 4];
                 in.readBytes(data);
 
-                switch (messageType)
-                {
+                switch (messageType) {
                     case 'P':
                         ParseRequest parseRequest = new ParseRequest();
                         parseRequest.decode(data);
@@ -217,8 +218,8 @@ public class PostgresServer {
                         pushMsgObject(out, parseRequest);
 
                         // 标记当前步骤
-                        ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(ParseRequest.class.getSimpleName());
                         previousRequestProtocol = ParseRequest.class.getSimpleName();
+                        PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
                         break;
                     case 'B':
                         BindRequest bindRequest = new BindRequest();
@@ -228,8 +229,8 @@ public class PostgresServer {
                         pushMsgObject(out, bindRequest);
 
                         // 标记当前步骤
-                        ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(BindRequest.class.getSimpleName());
                         previousRequestProtocol = BindRequest.class.getSimpleName();
+                        PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
                         break;
                     case 'E':
                         ExecuteRequest executeRequest = new ExecuteRequest();
@@ -239,8 +240,8 @@ public class PostgresServer {
                         pushMsgObject(out, executeRequest);
 
                         // 标记当前步骤
-                        ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(ExecuteRequest.class.getSimpleName());
                         previousRequestProtocol = ExecuteRequest.class.getSimpleName();
+                        PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
                         break;
                     case 'S':
                         SyncRequest syncRequest = new SyncRequest();
@@ -250,8 +251,8 @@ public class PostgresServer {
                         pushMsgObject(out, syncRequest);
 
                         // 标记当前步骤
-                        ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(SyncRequest.class.getSimpleName());
                         previousRequestProtocol = SyncRequest.class.getSimpleName();
+                        PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
                         break;
                     case 'D':
                         DescribeRequest describeRequest = new DescribeRequest();
@@ -261,8 +262,8 @@ public class PostgresServer {
                         pushMsgObject(out, describeRequest);
 
                         // 标记当前步骤
-                        ctx.channel().attr(AttributeKey.valueOf("PreviousRequestProtocol")).set(DescribeRequest.class.getSimpleName());
                         previousRequestProtocol = DescribeRequest.class.getSimpleName();
+                        PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
                         break;
                     case 'X':
                         TerminateRequest terminateRequest = new TerminateRequest();
@@ -272,9 +273,15 @@ public class PostgresServer {
                         pushMsgObject(out, terminateRequest);
 
                         // 关闭连接
+                        PostgresServerHandler.sessionClose(ctx);
+
+                        // 清理会话
+                        PostgresServer.channelAttributeManager.clear(ctx.channel());
                         ctx.close();
                         break;
                     default:
+                        // 此时手工回收内存，消息没有意义
+                        ReferenceCountUtil.release(in);
                         AppLogger.logger.error("[SERVER] Unknown message type: {}", messageType);
                 }
             }
@@ -286,25 +293,6 @@ public class PostgresServer {
         @Override
         protected void encode(ChannelHandlerContext ctx, ByteBuffer msg, ByteBuf out) {
             out.writeBytes(msg);
-        }
-    }
-
-    // 自定义处理器示例
-    static class CustomLogHandler extends ChannelInboundHandlerAdapter {
-        @Override
-        public void channelRead(ChannelHandlerContext ctx, Object msg) {
-            // 处理接收到的消息
-            AppLogger.logger.info("[NETTY] Received message: {}", msg);
-
-            // 传递给下一个处理器
-            ctx.fireChannelRead(msg);
-        }
-
-        @Override
-        public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            // 异常处理逻辑
-            AppLogger.logger.error("[NETTY] Exception caught", cause);
-            ctx.close();
         }
     }
 
@@ -330,15 +318,19 @@ public class PostgresServer {
         try {
             Statement stmt = DBInstance.backendSysConnection.createStatement();
             if (!ServerConfiguration.getTemp_dir().isEmpty()) {
+                AppLogger.logger.debug("SET temp_directory = '{}'", ServerConfiguration.getTemp_dir());
                 stmt.execute("SET temp_directory = '" + ServerConfiguration.getTemp_dir() + "'");
             }
             if (!ServerConfiguration.getExtension_dir().isEmpty()) {
+                AppLogger.logger.debug("SET extension_directory = '{}'", ServerConfiguration.getExtension_dir());
                 stmt.execute("SET extension_directory = '" + ServerConfiguration.getExtension_dir() + "'");
             }
             if (!ServerConfiguration.getMemory_limit().isEmpty()) {
+                AppLogger.logger.debug("SET Memory_limit = '{}'", ServerConfiguration.getMemory_limit());
                 stmt.execute("SET memory_limit = '" + ServerConfiguration.getMemory_limit() + "'");
             }
             if (ServerConfiguration.getThreads() != 0) {
+                AppLogger.logger.debug("SET threads = '{}'", ServerConfiguration.getThreads());
                 stmt.execute("SET threads = " + ServerConfiguration.getThreads());
             }
             stmt.close();
@@ -355,8 +347,11 @@ public class PostgresServer {
 
         try {
             ServerBootstrap bootstrap = new ServerBootstrap();
+
+            // 开启Netty服务
             bootstrap.group(bossGroup, workerGroup)
                     .channel(NioServerSocketChannel.class)
+                    .option(ChannelOption.ALLOCATOR, UnpooledByteBufAllocator.DEFAULT)
                     .option(ChannelOption.SO_RCVBUF, 4096)
                     .option(ChannelOption.SO_REUSEADDR, true)
                     .option(ChannelOption.SO_BACKLOG, 128)
@@ -376,11 +371,8 @@ public class PostgresServer {
                             ch.pipeline().addLast(new RawMessageDecoder());
                             ch.pipeline().addLast(new RawMessageEncoder());
                             // 定义消息处理
-                            ch.pipeline().addLast(
-                                    new PostgresServerHandler()
+                            ch.pipeline().addLast(new PostgresServerHandler()
                             );
-                            // 添加日志处理
-                            ch.pipeline().addLast(new CustomLogHandler());
                         }
                     });
             ChannelFuture future =
@@ -395,4 +387,4 @@ public class PostgresServer {
             workerGroup.shutdownGracefully();
         }
     }
- }
+}

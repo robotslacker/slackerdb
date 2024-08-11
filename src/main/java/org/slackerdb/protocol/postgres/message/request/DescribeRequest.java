@@ -4,7 +4,6 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.AttributeKey;
 import org.slackerdb.protocol.postgres.message.PostgresRequest;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 public class DescribeRequest  extends PostgresRequest {

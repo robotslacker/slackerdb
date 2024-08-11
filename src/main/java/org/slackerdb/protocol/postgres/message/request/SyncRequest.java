@@ -22,5 +22,7 @@ public class SyncRequest extends PostgresRequest {
 
         // 发送并刷新返回消息
         PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out);
+
+        out.close();
     }
 }

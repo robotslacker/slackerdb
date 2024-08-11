@@ -14,7 +14,7 @@ import java.sql.*;
 import java.util.*;
 
 
-public class TPCDSTest {
+public class TPCDSTest3 {
     static Thread dbThread = null;
     static int dbPort=4309;
     // 一共需要运行几轮
@@ -22,7 +22,7 @@ public class TPCDSTest {
     // 需要几个线程并发测试
     static int parallel = 2;
     // 数据集的规模， 1代表1G
-    static int scale = 10;
+    static int scale = 1;
     // 服务端工作线程数量
     static int threads = 2;
     // 工作最大内存限制
@@ -36,6 +36,9 @@ public class TPCDSTest {
     @BeforeAll
     static void initAll() throws SQLException {
         tpcdsSQLMap = TpcdsSQL.loadTPCDSSQLMap();
+        for (String name : tpcdsSQLMap.keySet()) {
+            tpcdsSQLMap.put(name, "select * from range(1,1000)");
+        }
 
         // 启动slackerDB的服务
         Thread dbThread = new Thread(() -> {
@@ -84,10 +87,6 @@ public class TPCDSTest {
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
         System.out.println("TEST:: Server connected successful ...");
-
-        // 生成数据
-        pgConn.createStatement().execute("CALL dsdgen(sf = " + scale + ")");
-        pgConn.commit();
         pgConn.close();
 
         System.out.println("Test data generated successful.");

@@ -9,6 +9,8 @@ import org.slackerdb.protocol.postgres.message.response.AuthenticationOk;
 import org.slackerdb.protocol.postgres.message.response.BackendKeyData;
 import org.slackerdb.protocol.postgres.message.response.ParameterStatus;
 import org.slackerdb.protocol.postgres.message.response.ReadyForQuery;
+import org.slackerdb.protocol.postgres.server.PostgresServer;
+import org.slackerdb.protocol.postgres.server.PostgresServerHandler;
 import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
@@ -94,17 +96,22 @@ public class StartupRequest  extends PostgresRequest {
         // 获取数据库连接
         try {
             Connection backendDBConnection = ((DuckDBConnection)DBInstance.backendSysConnection).duplicate();
-            ctx.channel().attr(AttributeKey.valueOf("Connection")).set(backendDBConnection);
+            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "Connection", backendDBConnection);
         }
         catch (SQLException e) {
             AppLogger.logger.error("[SERVER] Init backend connection error. ", e);
+            PostgresServerHandler.sessionAbort(ctx);
             ctx.close();
             return;
+        }
+        finally {
+            out.close();
         }
 
         // 做好准备，可以查询
         ReadyForQuery readyForQuery = new ReadyForQuery();
         readyForQuery.process(ctx, request, out);
         PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out);
+        out.close();
     }
 }

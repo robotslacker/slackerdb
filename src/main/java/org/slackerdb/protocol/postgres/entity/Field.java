@@ -1,7 +1,9 @@
 package org.slackerdb.protocol.postgres.entity;
 
+import java.nio.charset.StandardCharsets;
+
 public class Field {
-    public byte[]  name;
+    public String  name;
     public int     objectIdOfTable = 0;
     public short   attributeNumberOfColumn = 0;
     public int     dataTypeId = 0;
@@ -12,6 +14,6 @@ public class Field {
     public int getFieldSize()
     {
         // name.length + terminator + int + short + int + short + int + short
-        return name.length + 1 + 4 + 2 + 4 + 2 + 4 + 2;
+        return name.getBytes(StandardCharsets.UTF_8).length + 1 + 4 + 2 + 4 + 2 + 4 + 2;
     }
 }
