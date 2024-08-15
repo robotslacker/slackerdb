@@ -1,7 +1,6 @@
 package org.slackerdb.protocol.postgres.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.util.AttributeKey;
 import org.duckdb.DuckDBConnection;
 import org.slackerdb.logger.AppLogger;
 import org.slackerdb.protocol.postgres.message.*;
@@ -9,14 +8,11 @@ import org.slackerdb.protocol.postgres.message.response.AuthenticationOk;
 import org.slackerdb.protocol.postgres.message.response.BackendKeyData;
 import org.slackerdb.protocol.postgres.message.response.ParameterStatus;
 import org.slackerdb.protocol.postgres.message.response.ReadyForQuery;
-import org.slackerdb.protocol.postgres.server.PostgresServer;
-import org.slackerdb.protocol.postgres.server.PostgresServerHandler;
 import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -58,11 +54,22 @@ public class StartupRequest  extends PostgresRequest {
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         // 记录登录时候客户端做的选项
-        ctx.channel().attr(AttributeKey.valueOf("OPTIONS")).set(startupOptions);
+        try {
+            int sessionId = getCurrentSessionId(ctx);
+            DBInstance.getSession(sessionId).dbConnection =
+                    ((DuckDBConnection)DBInstance.backendSysConnection).duplicate();
+            DBInstance.getSession(sessionId).dbConnectedTime = LocalDateTime.now();
+            DBInstance.getSession(sessionId).startupOptions = startupOptions;
+            DBInstance.getSession(sessionId).status = "DB-CONNECTED";
+        }
+        catch (SQLException se)
+        {
+            AppLogger.logger.error("[SERVER] Init backend connection error. ", se);
+            ctx.close();
+            return;
+        }
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-
-        ctx.channel().attr(AttributeKey.valueOf("ConnectedTime")).set(LocalDateTime.now());
 
         // 总是回复认证成功
         AuthenticationOk authenticationOk = new AuthenticationOk();
@@ -88,25 +95,12 @@ public class StartupRequest  extends PostgresRequest {
 
         parameterStatus.setKeyValue("is_superuser", "on");
         parameterStatus.process(ctx, request, out);
+        PostgresMessage.writeAndFlush(ctx, ParameterStatus.class.getSimpleName(), out);
 
         // 返回 BackendKeyData
         BackendKeyData backendKeyData = new BackendKeyData();
         backendKeyData.process(ctx, request, out);
-
-        // 获取数据库连接
-        try {
-            Connection backendDBConnection = ((DuckDBConnection)DBInstance.backendSysConnection).duplicate();
-            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "Connection", backendDBConnection);
-        }
-        catch (SQLException e) {
-            AppLogger.logger.error("[SERVER] Init backend connection error. ", e);
-            PostgresServerHandler.sessionAbort(ctx);
-            ctx.close();
-            return;
-        }
-        finally {
-            out.close();
-        }
+        PostgresMessage.writeAndFlush(ctx, BackendKeyData.class.getSimpleName(), out);
 
         // 做好准备，可以查询
         ReadyForQuery readyForQuery = new ReadyForQuery();

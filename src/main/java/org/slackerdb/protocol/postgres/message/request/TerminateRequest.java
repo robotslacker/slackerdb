@@ -1,14 +1,20 @@
 package org.slackerdb.protocol.postgres.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
+import org.slackerdb.logger.AppLogger;
 import org.slackerdb.protocol.postgres.message.PostgresRequest;
-import org.slackerdb.protocol.postgres.server.PostgresServerHandler;
+import org.slackerdb.server.DBInstance;
 
-import java.io.IOException;
+import java.sql.SQLException;
 
 public class TerminateRequest extends PostgresRequest {
     @Override
     public void process(ChannelHandlerContext ctx, Object request)  {
-        PostgresServerHandler.sessionClose(ctx);
+        // 关闭连接
+        try {
+            DBInstance.closeSession(getCurrentSessionId(ctx));
+        } catch (SQLException e) {
+            AppLogger.logger.error("[SERVER] Error closing session", e);
+        }
     }
 }

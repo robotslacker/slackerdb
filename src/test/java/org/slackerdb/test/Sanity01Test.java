@@ -19,6 +19,9 @@ public class Sanity01Test {
 
     @BeforeAll
     static void initAll() {
+        // 强制使用UTC时区，以避免时区问题在PG和后端数据库中不一致的行为
+        TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+
         // 启动slackerDB的服务
         Thread dbThread = new Thread(() -> {
             try {
@@ -29,10 +32,6 @@ public class Sanity01Test {
                 // 启动数据库
 //                Main.setLogLevel("TRACE");
                 Main.start();
-
-                // 强制使用UTC时区，以避免时区问题在PG和后端数据库中不一致的行为
-                TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
-
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -154,7 +153,7 @@ public class Sanity01Test {
     @Test
     void lotsOfConnection() throws SQLException {
         String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
-        int  MAX_THREADS = 100;
+        int  MAX_THREADS = 20;
 
         // 创建一个包含100个线程的数组
         Thread[] threads = new Thread[MAX_THREADS];

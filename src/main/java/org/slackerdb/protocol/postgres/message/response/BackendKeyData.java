@@ -26,8 +26,7 @@ public class BackendKeyData extends PostgresMessage {
         out.write(Utils.int32ToBytes(12));
 
         // 写入会话的ID信息
-        int sessionId = (int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get();
-        out.write(Utils.int32ToBytes(sessionId));
+        out.write(Utils.int32ToBytes(getCurrentSessionId(ctx)));
 
         // 写入密钥， 这里写入一个固定值
         out.write(Utils.int32ToBytes(FIXED_SECRET));

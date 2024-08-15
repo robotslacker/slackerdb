@@ -2,7 +2,6 @@ package org.slackerdb.protocol.postgres.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.protocol.postgres.message.PostgresRequest;
-import java.io.IOException;
 
 
 public class CloseRequest extends PostgresRequest {

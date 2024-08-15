@@ -3,6 +3,7 @@ package org.slackerdb.protocol.postgres.message.response;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.AttributeKey;
 import org.slackerdb.protocol.postgres.message.PostgresMessage;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -25,10 +26,6 @@ public class ReadyForQuery extends PostgresMessage {
         out.write((byte) 'Z');
         out.write(Utils.int32ToBytes(5));
 
-        boolean inTransaction = false;
-        if (ctx.channel().hasAttr(AttributeKey.valueOf("TRANSACTION"))) {
-            inTransaction = (boolean) ctx.channel().attr(AttributeKey.valueOf("TRANSACTION")).get();
-        }
-        out.write((byte) (inTransaction ? 'T' : 'I'));
+        out.write((byte) (DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction ? 'T' : 'I'));
     }
 }

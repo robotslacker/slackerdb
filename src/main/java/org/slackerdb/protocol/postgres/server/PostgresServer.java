@@ -2,8 +2,6 @@ package org.slackerdb.protocol.postgres.server;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufAllocator;
-import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -14,6 +12,7 @@ import io.netty.handler.codec.MessageToByteEncoder;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.timeout.IdleStateHandler;
+import io.netty.util.AttributeKey;
 import io.netty.util.ReferenceCountUtil;
 import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.exceptions.ServerException;
@@ -23,81 +22,23 @@ import org.slackerdb.protocol.postgres.message.request.*;
 import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
-import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.sql.*;
 import java.util.List;
-import java.util.Properties;
 import java.util.concurrent.*;
-import java.util.regex.Pattern;
+
 /**
  * Multithreaded asynchronous server
  */
 public class PostgresServer {
-    private static String backendConnectString = null;
-    public static ChannelAttributeManager channelAttributeManager = new ChannelAttributeManager();
-
-    private void initBackendConnectString() throws ServerException {
-        if (backendConnectString == null) {
-            // 获得连接字符串信息
-            backendConnectString = "jdbc:duckdb:";
-
-            String instanceName = ServerConfiguration.getData().trim();
-            // 检查是否包含路径分隔符
-            if (instanceName.contains("/") || instanceName.contains("\\")) {
-                throw new ServerException(999,
-                        "Invalid instance name [" + instanceName + "]");
-            }
-            // 检查是否包含不合法字符
-            if (Pattern.compile("[\\\\/:*?\"<>|]").matcher(instanceName).find()) {
-                throw new ServerException(999,
-                        "Invalid instance name [" + instanceName + "]");
-            }
-            // 检查文件名长度（假设文件系统限制为255字符）
-            if (instanceName.isEmpty() || instanceName.length() > 255) {
-                throw new ServerException(999,
-                        "Invalid instance name [" + instanceName + "]");
-            }
-            if (ServerConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:"))
-            {
-                backendConnectString = backendConnectString + ":memory:" + instanceName;
-            }
-            else
-            {
-                if (!new File(ServerConfiguration.getData_Dir()).isDirectory())
-                {
-                    throw new ServerException(999,
-                            "Data directory [" + ServerConfiguration.getData_Dir() + "] does not exist!");
-                }
-                File dataFile = new File(ServerConfiguration.getData_Dir(), instanceName + ".db");
-                if (!dataFile.canRead() && ServerConfiguration.getAccess_mode().equalsIgnoreCase("READ_ONLY"))
-                {
-                    throw new ServerException(999,
-                            "Data [" + dataFile.getAbsolutePath() + "] can't be read!!");
-                }
-                if (!dataFile.exists() && !new File(ServerConfiguration.getData_Dir()).canWrite())
-                {
-                    throw new ServerException(999,
-                            "Data [" + dataFile.getAbsolutePath() + "] can't be create!!");
-                }
-                if (dataFile.exists() && !dataFile.canWrite() && ServerConfiguration.getAccess_mode().equalsIgnoreCase("READ_WRITE"))
-                {
-                    throw new ServerException(999,
-                            "Data [" + dataFile.getAbsolutePath() + "] can't be write!!");
-                }
-                backendConnectString = backendConnectString + dataFile.getAbsolutePath();
-            }
-        }
-    }
-
     /**
      * Start the server
      */
     public void start() throws ServerException {
         // 初始化服务处理程序的后端数据库连接字符串
-        initBackendConnectString();
+        DBInstance.init();
 
         // Listener thread
         Thread thread = new Thread(() -> {
@@ -128,9 +69,10 @@ public class PostgresServer {
 
         @Override
         protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
+            int sessionId = (int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get();
+            String lastRequestCommand = DBInstance.getSession(sessionId).LastRequestCommand;
+
             // 如果之前没有读取过任何协议，则读取前一个Int。可能是SSLRequest或者StartupMessage
-            String previousRequestProtocol =
-                    (String) PostgresServer.channelAttributeManager.getAttribute(ctx.channel(), "PreviousRequestProtocol");
             byte[] data;
 
             // 在这里进行原始字节数据的解析处理
@@ -138,7 +80,7 @@ public class PostgresServer {
             // 解析后的数据对象添加到 out 列表中，以传递给下一个处理器
             while (in.readableBytes() > 0) {
                 // 处理SSLRequest
-                if (previousRequestProtocol == null || previousRequestProtocol.isEmpty()) {
+                if (lastRequestCommand == null || lastRequestCommand.isEmpty()) {
                     // 等待网络请求发送完毕，SSLRequest
                     if (in.readableBytes() < 8) {
                         return;
@@ -154,12 +96,12 @@ public class PostgresServer {
                     pushMsgObject(out, sslRequest);
 
                     // 标记当前步骤
-                    previousRequestProtocol = SSLRequest.class.getSimpleName();
-                    PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
+                    lastRequestCommand = SSLRequest.class.getSimpleName();
+                    DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
                 }
 
                 // 处理StartupMessage
-                if (previousRequestProtocol.equalsIgnoreCase(SSLRequest.class.getSimpleName())) {
+                if (lastRequestCommand.equalsIgnoreCase(SSLRequest.class.getSimpleName())) {
                     // 等待网络请求发送完毕，StartupMessage
                     if (in.readableBytes() < 4) {
                         return;
@@ -184,8 +126,8 @@ public class PostgresServer {
                     pushMsgObject(out, startupRequest);
 
                     // 标记当前步骤
-                    previousRequestProtocol = StartupRequest.class.getSimpleName();
-                    PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
+                    lastRequestCommand = StartupRequest.class.getSimpleName();
+                    DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
                     continue;
                 }
 
@@ -218,8 +160,8 @@ public class PostgresServer {
                         pushMsgObject(out, parseRequest);
 
                         // 标记当前步骤
-                        previousRequestProtocol = ParseRequest.class.getSimpleName();
-                        PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
+                        lastRequestCommand = ParseRequest.class.getSimpleName();
+                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
                         break;
                     case 'B':
                         BindRequest bindRequest = new BindRequest();
@@ -229,8 +171,8 @@ public class PostgresServer {
                         pushMsgObject(out, bindRequest);
 
                         // 标记当前步骤
-                        previousRequestProtocol = BindRequest.class.getSimpleName();
-                        PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
+                        lastRequestCommand = BindRequest.class.getSimpleName();
+                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
                         break;
                     case 'E':
                         ExecuteRequest executeRequest = new ExecuteRequest();
@@ -240,8 +182,8 @@ public class PostgresServer {
                         pushMsgObject(out, executeRequest);
 
                         // 标记当前步骤
-                        previousRequestProtocol = ExecuteRequest.class.getSimpleName();
-                        PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
+                        lastRequestCommand = ExecuteRequest.class.getSimpleName();
+                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
                         break;
                     case 'S':
                         SyncRequest syncRequest = new SyncRequest();
@@ -251,8 +193,8 @@ public class PostgresServer {
                         pushMsgObject(out, syncRequest);
 
                         // 标记当前步骤
-                        previousRequestProtocol = SyncRequest.class.getSimpleName();
-                        PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
+                        lastRequestCommand = SyncRequest.class.getSimpleName();
+                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
                         break;
                     case 'D':
                         DescribeRequest describeRequest = new DescribeRequest();
@@ -262,8 +204,8 @@ public class PostgresServer {
                         pushMsgObject(out, describeRequest);
 
                         // 标记当前步骤
-                        previousRequestProtocol = DescribeRequest.class.getSimpleName();
-                        PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreviousRequestProtocol", previousRequestProtocol);
+                        lastRequestCommand = DescribeRequest.class.getSimpleName();
+                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
                         break;
                     case 'X':
                         TerminateRequest terminateRequest = new TerminateRequest();
@@ -272,11 +214,7 @@ public class PostgresServer {
                         // 处理消息
                         pushMsgObject(out, terminateRequest);
 
-                        // 关闭连接
-                        PostgresServerHandler.sessionClose(ctx);
-
                         // 清理会话
-                        PostgresServer.channelAttributeManager.clear(ctx.channel());
                         ctx.close();
                         break;
                     default:
@@ -297,23 +235,6 @@ public class PostgresServer {
     }
 
     private void run() throws IOException, ExecutionException, InterruptedException, ServerException {
-        // 初始化一个DB连接，以保证即使所有客户端都断开连接，服务端会话仍然会继续存在
-        try {
-            if (ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
-                Properties readOnlyProperty = new Properties();
-                readOnlyProperty.setProperty("duckdb.read_only", "true");
-                DBInstance.backendSysConnection = DriverManager.getConnection(backendConnectString, readOnlyProperty);
-            } else {
-                DBInstance.backendSysConnection = DriverManager.getConnection(backendConnectString);
-            }
-            AppLogger.logger.info("[SERVER] Backend database [{}] opened.", backendConnectString);
-        }
-        catch (SQLException e) {
-            DBInstance.state = "STARTUP FAILED";
-            AppLogger.logger.error("[SERVER] Init backend connection error. ", e);
-            throw new ServerException(e);
-        }
-
         // 处理初始化参数
         try {
             Statement stmt = DBInstance.backendSysConnection.createStatement();
@@ -340,10 +261,9 @@ public class PostgresServer {
             AppLogger.logger.error("[SERVER] Init backend parameter error. ", se);
             throw new ServerException(se);
         }
-
         // Netty消息处理
         EventLoopGroup bossGroup = new NioEventLoopGroup(1);
-        EventLoopGroup workerGroup = new NioEventLoopGroup(ServerConfiguration.getMax_Network_Workers());
+        EventLoopGroup workerGroup = new NioEventLoopGroup(ServerConfiguration.getMax_Workers());
 
         try {
             ServerBootstrap bootstrap = new ServerBootstrap();
@@ -351,6 +271,7 @@ public class PostgresServer {
             // 开启Netty服务
             bootstrap.group(bossGroup, workerGroup)
                     .channel(NioServerSocketChannel.class)
+                    // 禁用堆外内存的池化以求获得更高的内存使用率
                     .option(ChannelOption.ALLOCATOR, UnpooledByteBufAllocator.DEFAULT)
                     .option(ChannelOption.SO_RCVBUF, 4096)
                     .option(ChannelOption.SO_REUSEADDR, true)

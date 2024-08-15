@@ -1,13 +1,12 @@
 package org.slackerdb.protocol.postgres.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.util.AttributeKey;
 import org.slackerdb.logger.AppLogger;
 import org.slackerdb.protocol.postgres.entity.PostgresTypeOids;
 import org.slackerdb.protocol.postgres.message.*;
 import org.slackerdb.protocol.postgres.message.response.BindComplete;
 import org.slackerdb.protocol.postgres.message.response.ErrorResponse;
-import org.slackerdb.protocol.postgres.server.PostgresServer;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -131,7 +130,7 @@ public class BindRequest extends PostgresRequest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
         // 取出上次解析的SQL，如果为空语句，则直接返回
-        String executeSQL = (String)ctx.channel().attr(AttributeKey.valueOf("SQL")).get();
+        String executeSQL = DBInstance.getSession(getCurrentSessionId(ctx)).executeSQL;
         if (executeSQL.isEmpty()) {
             BindComplete bindComplete = new BindComplete();
             bindComplete.process(ctx, request, out);
@@ -143,14 +142,13 @@ public class BindRequest extends PostgresRequest {
         }
 
         try {
-            PreparedStatement preparedStatement =
-                    (PreparedStatement) PostgresServer.channelAttributeManager.getAttribute(ctx.channel(), "PreparedStatement" + "-" + preparedStmtName);
+            PreparedStatement preparedStatement = DBInstance.getSession(getCurrentSessionId(ctx)).getPreparedStatement("PreparedStatement" + "-" + preparedStmtName);
             if (preparedStatement != null)
             {
                 if (preparedStatement.getParameterMetaData().getParameterCount() != 0) {
                     // 获取参数的类型
-                    int[] parameterDataTypeIds =
-                            (int[]) PostgresServer.channelAttributeManager.getAttribute(ctx.channel(), "PreparedStatement*DataTypeIds" + "-" + preparedStmtName);
+                    int[] parameterDataTypeIds = DBInstance.getSession(getCurrentSessionId(ctx))
+                                    .getPreparedStatementParameterDataTypeIds("PreparedStatement*DataTypeIds" + "-" + preparedStmtName);
                     for (int i = 0; i < bindParameters.length; i++) {
                         String columnTypeName = PostgresTypeOids.getTypeNameFromTypeOid(parameterDataTypeIds[i]);
                         if (formatCodes[i] == 0) {
@@ -209,8 +207,7 @@ public class BindRequest extends PostgresRequest {
             }
 
             // 记录Bind后的PreparedStatement
-            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "Portal" + "-" + portalName, preparedStatement);
-            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "Portal" + "-" + portalName + "-ResultSet", null);
+            DBInstance.getSession(getCurrentSessionId(ctx)).savePreparedStatement("Portal" + "-" + portalName, preparedStatement);
 
             BindComplete bindComplete = new BindComplete();
             bindComplete.process(ctx, request, out);

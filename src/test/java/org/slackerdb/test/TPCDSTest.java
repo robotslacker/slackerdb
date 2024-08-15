@@ -18,15 +18,18 @@ public class TPCDSTest {
     static Thread dbThread = null;
     static int dbPort=4309;
     // 一共需要运行几轮
-    static int round = 100;
+    static int round = 1000;
     // 需要几个线程并发测试
-    static int parallel = 2;
+    static int parallel = 8;
     // 数据集的规模， 1代表1G
-    static int scale = 10;
+    static int scale = 1;
     // 服务端工作线程数量
-    static int threads = 2;
+    static int threads = 4;
     // 工作最大内存限制
-    static String memory_limit = "16G";
+    static String memory_limit = "4G";
+
+    static int max_nio_workers = 2;
+
     static Map<String, String> tpcdsSQLMap = new HashMap<>();
     static List<String> tpcdsTestTaskList = new ArrayList<>();
 
@@ -47,6 +50,7 @@ public class TPCDSTest {
                 ServerConfiguration.setData_dir(System.getProperty("java.io.tmpdir"));
                 ServerConfiguration.setThreads(threads);
                 ServerConfiguration.setMemory_limit(memory_limit);
+                ServerConfiguration.setMax_workers(max_nio_workers);
 
                 File dbFile = new File(String.valueOf(Path.of(ServerConfiguration.getData_Dir(), ServerConfiguration.getData() + ".db")));
                 if (dbFile.exists())
@@ -122,12 +126,16 @@ public class TPCDSTest {
 
         if (pgConn == null)
         {
+            System.out.println("Connection to " + connectURL + " failed.");
             Thread.currentThread().setName("RUN-" + name + "-CONNECT FAILED." );
-            roundFailedCount++;
+            synchronized (this) {
+                roundFailedCount++;
+            }
             return;
         }
         try {
             pgConn.setAutoCommit(false);
+            // 结果做只读存储
             Statement stmt = pgConn.createStatement();
             Thread.currentThread().setName("RUN-" + name + "-EXECUTE ..." );
             ResultSet rs = stmt.executeQuery(sql);
@@ -140,11 +148,15 @@ public class TPCDSTest {
             stmt.close();
             pgConn.close();
             Thread.currentThread().setName("RUN-" + name + "-CLOSED." );
-            roundSuccessfulCount++;
+            synchronized (this) {
+                roundSuccessfulCount++;
+            }
         }
         catch (SQLException sqlException)
         {
-            roundFailedCount ++;
+            synchronized (this) {
+                roundFailedCount++;
+            }
             ret = -1;
             System.out.println("NAME:" + name);
             System.out.println("SQL :" + sql);

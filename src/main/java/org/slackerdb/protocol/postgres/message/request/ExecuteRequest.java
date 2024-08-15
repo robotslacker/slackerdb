@@ -1,14 +1,13 @@
 package org.slackerdb.protocol.postgres.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.util.AttributeKey;
 import org.slackerdb.logger.AppLogger;
 import org.slackerdb.protocol.postgres.entity.Column;
 import org.slackerdb.protocol.postgres.entity.Field;
 import org.slackerdb.protocol.postgres.entity.PostgresTypeOids;
 import org.slackerdb.protocol.postgres.message.*;
 import org.slackerdb.protocol.postgres.message.response.*;
-import org.slackerdb.protocol.postgres.server.PostgresServer;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -141,7 +140,7 @@ public class ExecuteRequest extends PostgresRequest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
         // 取出上次解析的SQL，如果为空语句，则直接返回
-        String executeSQL = (String)ctx.channel().attr(AttributeKey.valueOf("SQL")).get();
+        String executeSQL = DBInstance.getSession(getCurrentSessionId(ctx)).executeSQL;
         if (executeSQL.isEmpty()) {
             CommandComplete commandComplete = new CommandComplete();
             commandComplete.process(ctx, request, out);
@@ -152,16 +151,18 @@ public class ExecuteRequest extends PostgresRequest {
             return;
         }
         try {
-            ResultSet rs = (ResultSet) PostgresServer.channelAttributeManager.getAttribute(ctx.channel(), "Portal" + "-" + portalName + "-ResultSet");
+            ResultSet rs = DBInstance.getSession(getCurrentSessionId(ctx)).getResultSet("Portal" + "-" + portalName);
             if (rs != null)
             {
+                DataRow dataRow = new DataRow();
                 ResultSetMetaData rsmd = rs.getMetaData();
+
                 int rowsReturned = 0;
                 while (rs.next()) {
-                    DataRow dataRow = new DataRow();
-
+                    // 绑定列的信息
                     dataRow.setColumns(processRow(rs, rsmd));
                     dataRow.process(ctx, request, out);
+                    dataRow.setColumns(null);
 
                     // 发送并刷新返回消息
                     PostgresMessage.writeAndFlush(ctx, DataRow.class.getSimpleName(), out);
@@ -172,32 +173,31 @@ public class ExecuteRequest extends PostgresRequest {
                         PortalSuspended portalSuspended = new PortalSuspended();
                         portalSuspended.process(ctx, request, out);
                         PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out);
-
+                        out.close();
                         return;
                     }
                 }
                 // 所有的记录查询完毕
                 rs.close();
-                PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "Portal" + "-" + portalName + "-ResultSet", null);
+                DBInstance.getSession(getCurrentSessionId(ctx)).clearResultSet("Portal" + "-" + portalName);
             }
             else {
-                PreparedStatement preparedStatement =
-                        (PreparedStatement) ctx.channel().attr(AttributeKey.valueOf("Portal" + "-" + portalName)).get();
+                PreparedStatement preparedStatement = DBInstance.getSession(getCurrentSessionId(ctx)).getPreparedStatement("Portal" + "-" + portalName);
                 if (preparedStatement == null)
                 {
                     // 之前语句解析或者绑定出了错误, 没有继续执行的必要
                     return;
                 }
+
                 boolean isResultSet = preparedStatement.execute();
                 int rowsReturned = 0;
                 if (isResultSet) {
                     DataRow dataRow = new DataRow();
 
-                    Boolean describeRequestExist = (Boolean) ctx.channel().attr(AttributeKey.valueOf("DescribeRequest")).get();
-
-                    if (describeRequestExist != null && describeRequestExist) {
+                    boolean describeRequestExist = DBInstance.getSession(getCurrentSessionId(ctx)).hasDescribeRequest;
+                    if (describeRequestExist) {
                         // 如果之前有describeRequest， 则返回RowsDescription； 否则直接返回结果
-                        ctx.channel().attr(AttributeKey.valueOf("DescribeRequest")).set(Boolean.FALSE);
+                        DBInstance.getSession(getCurrentSessionId(ctx)).hasDescribeRequest = false;
 
                         List<Field> fields = new ArrayList<>();
 
@@ -246,9 +246,14 @@ public class ExecuteRequest extends PostgresRequest {
                         // 发送并刷新RowsDescription消息
                         PostgresMessage.writeAndFlush(ctx, RowDescription.class.getSimpleName(), out);
                     }
+
                     rs = preparedStatement.getResultSet();
+                    // 保留当前的ResultSet到Portal中
+                    DBInstance.getSession(getCurrentSessionId(ctx)).saveResultSet("Portal" + "-" + portalName, rs);
+
                     ResultSetMetaData rsmd = rs.getMetaData();
                     while (rs.next()) {
+                        // 绑定列的信息
                         dataRow.setColumns(processRow(rs, rsmd));
                         dataRow.process(ctx, request, out);
                         dataRow.setColumns(null);
@@ -263,26 +268,23 @@ public class ExecuteRequest extends PostgresRequest {
                             portalSuspended.process(ctx, request, out);
                             PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out);
 
-                            // 保留当前的ResultSet到Portal中
-                            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "Portal" + "-" + portalName + "-ResultSet", rs);
-
                             // 返回等待下一次ExecuteRequest
                             out.close();
                             return;
                         }
                     }
                     rs.close();
-                    PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "Portal" + "-" + portalName + "-ResultSet", null);
+                    DBInstance.getSession(getCurrentSessionId(ctx)).clearResultSet("Portal" + "-" + portalName);
                 }
             }
 
             // 设置语句的事务级别
             if (executeSQL.startsWith("BEGIN")) {
-                ctx.channel().attr(AttributeKey.valueOf("TRANSACTION")).set(true);
+                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = true;
             } else if (executeSQL.startsWith("COMMIT")) {
-                ctx.channel().attr(AttributeKey.valueOf("TRANSACTION")).set(false);
+                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             } else if (executeSQL.startsWith("ROLLBACK")) {
-                ctx.channel().attr(AttributeKey.valueOf("TRANSACTION")).set(false);
+                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             }
 
             CommandComplete commandComplete = new CommandComplete();
@@ -299,6 +301,7 @@ public class ExecuteRequest extends PostgresRequest {
             PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
         }
         catch (SQLException e) {
+            System.out.println("execute error .....");
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse();
             errorResponse.setErrorResponse(String.valueOf(e.getErrorCode()), e.getMessage());

@@ -1,12 +1,12 @@
 package org.slackerdb.protocol.postgres.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.util.AttributeKey;
+import org.slackerdb.logger.AppLogger;
 import org.slackerdb.protocol.postgres.message.*;
 import org.slackerdb.protocol.postgres.message.response.ErrorResponse;
 import org.slackerdb.protocol.postgres.message.response.ParseComplete;
-import org.slackerdb.protocol.postgres.server.PostgresServer;
 import org.slackerdb.protocol.postgres.sql.SQLReplacer;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -22,11 +22,6 @@ public class ParseRequest extends PostgresRequest {
     private String      sql = "";
     private short       numOfParameters = 0;
     private int[]       parameterDataTypeIds;
-
-    public String getSql()
-    {
-        return sql;
-    }
 
     @Override
     public void decode(byte[] data) {
@@ -85,7 +80,7 @@ public class ParseRequest extends PostgresRequest {
         String executeSQL = SQLReplacer.replaceSQL(parseRequest.sql);
 
         // 记录上次执行的SQL
-        PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "SQL", executeSQL);
+        DBInstance.getSession(getCurrentSessionId(ctx)).executeSQL = executeSQL;
 
         // 对于空语句，直接返回结果
         if (executeSQL.isEmpty()) {
@@ -99,24 +94,28 @@ public class ParseRequest extends PostgresRequest {
         }
 
         try {
-            Connection conn = (Connection) PostgresServer.channelAttributeManager.getAttribute(ctx.channel(), "Connection");
+            Connection conn = DBInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
             PreparedStatement preparedStatement = conn.prepareStatement(executeSQL);
 
             ParseComplete parseComplete = new ParseComplete();
             parseComplete.process(ctx, request, out);
 
             // 记录PreparedStatement,以及对应的参数类型
-            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreparedStatement" + "-" + preparedStmtName, preparedStatement);
-            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreparedStatement*DataTypeIds" + "-" + preparedStmtName,
-                    parameterDataTypeIds);
+            DBInstance.getSession(getCurrentSessionId(ctx)).savePreparedStatement("PreparedStatement" + "-" + preparedStmtName, preparedStatement);
+            DBInstance.getSession(getCurrentSessionId(ctx))
+                    .savePreparedStatementParameterDataTypeIds("PreparedStatement*DataTypeIds" + "-" + preparedStmtName, parameterDataTypeIds);
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out);
         }
         catch (SQLException e) {
             // 清空PreparedStatement
-            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreparedStatement" + "-" + preparedStmtName, null);
-            PostgresServer.channelAttributeManager.setAttribute(ctx.channel(), "PreparedStatement*DataTypeIds" + "-" + preparedStmtName, null);
+            try {
+                DBInstance.getSession(getCurrentSessionId(ctx)).clearPreparedStatement("PreparedStatement" + "-" + preparedStmtName);
+            } catch (Exception e2) {
+                AppLogger.logger.error("Error clearing prepared statement", e2);
+            }
+            DBInstance.getSession(getCurrentSessionId(ctx)).clearPreparedStatementParameterDataTypeIds("PreparedStatement*DataTypeIds" + "-" + preparedStmtName);
 
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse();
