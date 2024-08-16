@@ -6,7 +6,9 @@ import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.protocol.postgres.server.PostgresServer;
 import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Sleeper;
-import org.apache.commons.cli.*;
+
+import java.util.HashMap;
+import java.util.Map;
 
 public class Main {
     public static void setLogLevel(String logLevel) {
@@ -32,89 +34,58 @@ public class Main {
         }
     }
 
-
-    private static void printHelp(HelpFormatter formatter, Options options) {
-        String header = "SlackerDB - A duckdb proxy \n\n";
-        String footer = "\nExamples:\n" +
-                "  java -jar slackerdb-<version>.jar start\n" +
-                "  java -jar slackerdb-<version>.jar stop\n";
-        formatter.printHelp("SlackerDB [OPTIONS] <operation>", header, options, footer, true);
-    }
-
     public static void main(String[] args){
         // 标记数据库正在启动中
         DBInstance.state = "STARTING";
 
-        // 处理应用程序参数
-        // 配置文件信息
-        Options options = new Options();
-        Option confOption = new Option("c", "conf", true, "Configuration File");
-        confOption.setRequired(false);
-        options.addOption(confOption);
+        Map<String, String> appOptions = new HashMap<>();
+        String appCommand = null;
 
-        // 数据库实例名称
-        Option opOption1 = new Option("i", "instance", true, "Instance Name");
-        opOption1.setRequired(false);
-        options.addOption(opOption1);
-
-        // 数据库端口信息
-        Option opOption2 = new Option("p", "port", true, "Server Port");
-        opOption2.setRequired(false);
-        options.addOption(opOption2);
-
-        // 数据库实例名称
-        Option opOption3 = new Option("l", "log_level", true, "Log Level");
-        opOption1.setRequired(false);
-        options.addOption(opOption3);
-
-
-        // 解析命令行
-        CommandLineParser parser = new DefaultParser();
-        HelpFormatter formatter = new HelpFormatter();
+        String paramName = null;
+        String paramValue = null;
+        for (String arg : args) {
+            if (arg.startsWith("--")) {
+                paramName = arg.substring(2);
+            }
+            else
+            {
+                if (paramName == null)
+                {
+                    appCommand = paramValue;
+                    continue;
+                }
+                paramValue = arg;
+                appOptions.put(paramName, paramValue);
+                paramName = null;
+            }
+        }
 
         try
         {
-            CommandLine cmd = parser.parse(options, args);
-
-            // 获取未命名的参数
-            String[] remainingArgs = cmd.getArgs();
-            if (remainingArgs.length != 1) {
-                printHelp(formatter, options);
-                System.exit(1);
-            }
-            String op = remainingArgs[0];
-
             // 如果有配置文件，用配置文件中数据进行更新
-            if (cmd.hasOption("conf")) {
-                ServerConfiguration.LoadConfigurationFile(cmd.getOptionValue("conf"));
+            if (appOptions.containsKey("conf"))
+            {
+                ServerConfiguration.LoadConfigurationFile(appOptions.get("conf"));
+            }
+            if (appOptions.containsKey("log_level"))
+            {
+                ServerConfiguration.setLog_level(Level.valueOf(appOptions.get("log_level")));
+            }
+            if (appOptions.containsKey("port"))
+            {
+                ServerConfiguration.setPort(Integer.parseInt(appOptions.get("port")));
             }
 
-            // 根据参数覆盖默认的配置
-            if (cmd.hasOption("instance")) {
-                ServerConfiguration.setData(cmd.getOptionValue("instance"));
-            }
-            if (cmd.hasOption("port")) {
-                ServerConfiguration.setPort(Integer.parseInt(cmd.getOptionValue("port")));
-            }
-            if (cmd.hasOption("log_level")) {
-                ServerConfiguration.setLog_level(Level.valueOf(cmd.getOptionValue("log_level")));
-            }
 
             // 启动应用程序
-            if (op.trim().equalsIgnoreCase("START")) {
+            if (appCommand != null && appCommand.equalsIgnoreCase("START")) {
                 start();
             }
             else
             {
-                printHelp(formatter, options);
+                System.out.println("Usage: java -jar xxx.jar [--parameterName parameterValue] start");
                 System.exit(1);
             }
-        }
-        catch (ParseException e)
-        {
-            System.out.println(e.getMessage());
-            printHelp(formatter, options);
-            System.exit(1);
         }
         catch (Exception ex)
         {

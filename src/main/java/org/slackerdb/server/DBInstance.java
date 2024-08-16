@@ -1,5 +1,6 @@
 package org.slackerdb.server;
 
+import org.duckdb.DuckDBDriver;
 import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.logger.AppLogger;
@@ -88,13 +89,12 @@ public class DBInstance {
 
         // 初始化一个DB连接，以保证即使所有客户端都断开连接，服务端会话仍然会继续存在
         try {
+            Properties connectProperties = new Properties();
             if (ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
-                Properties readOnlyProperty = new Properties();
-                readOnlyProperty.setProperty("duckdb.read_only", "true");
-                backendSysConnection = DriverManager.getConnection(backendConnectString, readOnlyProperty);
-            } else {
-                backendSysConnection = DriverManager.getConnection(backendConnectString);
+                connectProperties.setProperty("duckdb.read_only", "true");
             }
+            connectProperties.setProperty(DuckDBDriver.JDBC_STREAM_RESULTS, String.valueOf(true));
+            backendSysConnection = DriverManager.getConnection(backendConnectString, connectProperties);
             AppLogger.logger.info("[SERVER] Backend database [{}:{}] opened.",
                     ServerConfiguration.getData_Dir(), ServerConfiguration.getData());
         }
