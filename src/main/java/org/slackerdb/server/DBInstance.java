@@ -1,6 +1,5 @@
 package org.slackerdb.server;
 
-import org.duckdb.DuckDBDriver;
 import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.logger.AppLogger;
@@ -41,7 +40,7 @@ public class DBInstance {
         // 建立基础数据库连接
         String backendConnectString = "jdbc:duckdb:";
 
-            String instanceName = ServerConfiguration.getData().trim();
+        String instanceName = ServerConfiguration.getData().trim();
         // 检查是否包含路径分隔符
         if (instanceName.contains("/") || instanceName.contains("\\")) {
             throw new ServerException(999,
@@ -93,7 +92,6 @@ public class DBInstance {
             if (ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
                 connectProperties.setProperty("duckdb.read_only", "true");
             }
-            connectProperties.setProperty(DuckDBDriver.JDBC_STREAM_RESULTS, String.valueOf(true));
             backendSysConnection = DriverManager.getConnection(backendConnectString, connectProperties);
             AppLogger.logger.info("[SERVER] Backend database [{}:{}] opened.",
                     ServerConfiguration.getData_Dir(), ServerConfiguration.getData());

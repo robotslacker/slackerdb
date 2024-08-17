@@ -51,7 +51,7 @@ public class Main {
             {
                 if (paramName == null)
                 {
-                    appCommand = paramValue;
+                    appCommand = arg;
                     continue;
                 }
                 paramValue = arg;

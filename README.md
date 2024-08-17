@@ -3,19 +3,13 @@
 # SlackerDB (DUCKDB 封装器)
 ## 快速说明
 
-这个程序是一个实现了POSTGRES的JDBC V3协议，模仿一个POSTGRES服务器。
-后面的SQL引擎实现是DUCKDB.
+这个程序是一个实现了PG的JDBC V3协议，一个PG数据库的高仿产品。
+后面的SQL引擎、存储引擎都是是OLAP新宠DUCKDB.
 
 这么做的目的是：
-1. 解决DUCKDB无法在运行过程中查看数据的问题
-2. 可以多个客户端（多个进程）并发访问同一个DUCKDB
-3. DUCKDB不一定要在某一个本机访问，也可以通过远程来访问
-
-## 文档
-PG协议文档参考：  
-https://www.postgresql.org/docs/15/protocol-message-formats.html
-TCPDUMP工具:  
-tcpdump -v -i any \(src X.X.X.X and dst port 5432 \) or \( dst X.X.X.X and src port 5432 \) -X
+1. 解决DUCKDB无法在运行过程中从外部查看数据的问题
+2. 解决DUCKDB不支持可以多个客户端（多个进程）并发访问的问题
+3. 解决DUCKDB不支持网络访问的问题
 
 ## 已知问题
 #### TimeStamp的时区问题
@@ -28,54 +22,10 @@ PG的客户端会恒定把系统当前时区作为参数出现在setTimeStamp中
 ## 时间表
 1. 缺少pg_database表（缺少dataloowconn, datistemplate)，导致dbeaver无法连接
 2. not implemented column type VARCHAR[]
-3. Extensions的支持
-4. DBEaver中看不到表名和字段信息
-5. 所有不支持的操作均要明确错误信息
-6. 文档处理
+3. DBEaver中看不到表名和字段信息
+4. 所有不支持的操作均要明确错误信息
+5. 文档处理
 
-
-## Postgres通讯步序图
-``` 
-客户端                             服务器
-  |                                  |
-  |------------StartupMessage------->|
-  |                                  |
-  |<--------AuthenticationRequest----|
-  |                                  |
-  |-----------PasswordMessage------->|
-  |                                  |
-  |---------AuthenticationOk---------|
-  |                                  |
-  |---------ParameterStatus----------|
-  |                                  |
-  |----------BackendKeyData----------|
-  |                                  |
-  |---------ReadyForQuery------------|
-  |                                  |
-  |--------------Parse-------------->|
-  |                                  |
-  |<----------ParseComplete----------|
-  |                                  |
-  |--------------Bind--------------->|
-  |                                  |
-  |<-----------BindComplete----------|
-  |                                  |
-  |------------Describe------------->|
-  |                                  |
-  |<---------RowDescription----------|
-  |                                  |
-  |------------Execute-------------->|
-  |                                  |
-  |<-----------DataRow---------------|
-  |                                  |
-  |<---------CommandComplete---------|
-  |                                  |
-  |--------------Sync--------------->|
-  |                                  |
-  |---------ReadyForQuery------------|
-  |                                  |
-
-```
 
 ## 使用方法
 ```

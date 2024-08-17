@@ -32,7 +32,11 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
-        BaseRequest.processMessage(ctx, msg);
+        try {
+            BaseRequest.processMessage(ctx, msg);
+        } catch (Exception e) {
+            AppLogger.logger.error("[SERVER] Error processing request", e);
+        }
     }
 
     @Override

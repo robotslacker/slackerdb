@@ -301,7 +301,6 @@ public class ExecuteRequest extends PostgresRequest {
             PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
         }
         catch (SQLException e) {
-            System.out.println("execute error .....");
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse();
             errorResponse.setErrorResponse(String.valueOf(e.getErrorCode()), e.getMessage());

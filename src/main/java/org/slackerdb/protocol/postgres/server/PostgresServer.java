@@ -22,7 +22,6 @@ import org.slackerdb.protocol.postgres.message.request.*;
 import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
-import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.sql.*;
@@ -44,7 +43,7 @@ public class PostgresServer {
         Thread thread = new Thread(() -> {
             try {
                 run();
-            } catch (IOException | ExecutionException | InterruptedException | ServerException e) {
+            } catch (InterruptedException | ServerException e) {
                 throw new RuntimeException(e);
             }
         });
@@ -207,6 +206,39 @@ public class PostgresServer {
                         lastRequestCommand = DescribeRequest.class.getSimpleName();
                         DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
                         break;
+                    case 'Q':
+                        QueryRequest queryRequest = new QueryRequest();
+                        queryRequest.decode(data);
+
+                        // 处理消息
+                        pushMsgObject(out, queryRequest);
+
+                        // 标记当前步骤
+                        lastRequestCommand = DescribeRequest.class.getSimpleName();
+                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        break;
+                    case 'd':
+                        CopyDataRequest copyDataRequest = new CopyDataRequest();
+                        copyDataRequest.decode(data);
+
+                        // 处理消息
+                        pushMsgObject(out, copyDataRequest);
+
+                        // 标记当前步骤
+                        lastRequestCommand = CopyDataRequest.class.getSimpleName();
+                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        break;
+                    case 'c':
+                        CopyDoneRequest copyDoneRequest = new CopyDoneRequest();
+                        copyDoneRequest.decode(data);
+
+                        // 处理消息
+                        pushMsgObject(out, copyDoneRequest);
+
+                        // 标记当前步骤
+                        lastRequestCommand = CopyDoneRequest.class.getSimpleName();
+                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        break;
                     case 'X':
                         TerminateRequest terminateRequest = new TerminateRequest();
                         terminateRequest.decode(data);
@@ -218,8 +250,6 @@ public class PostgresServer {
                         ctx.close();
                         break;
                     default:
-                        // 此时手工回收内存，消息没有意义
-                        ReferenceCountUtil.release(in);
                         AppLogger.logger.error("[SERVER] Unknown message type: {}", messageType);
                 }
             }
@@ -234,7 +264,7 @@ public class PostgresServer {
         }
     }
 
-    private void run() throws IOException, ExecutionException, InterruptedException, ServerException {
+    private void run() throws InterruptedException, ServerException {
         // 处理初始化参数
         try {
             Statement stmt = DBInstance.backendSysConnection.createStatement();

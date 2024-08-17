@@ -3,11 +3,15 @@ package org.slackerdb.test;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.postgresql.copy.CopyManager;
+import org.postgresql.core.BaseConnection;
 import org.slackerdb.Main;
 import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Sleeper;
 
+import java.io.IOException;
+import java.io.StringReader;
 import java.math.BigDecimal;
 import java.sql.*;
 import java.util.Calendar;
@@ -30,7 +34,7 @@ public class Sanity01Test {
                 ServerConfiguration.setPort(dbPort);
 
                 // 启动数据库
-//                Main.setLogLevel("TRACE");
+                Main.setLogLevel("INFO");
                 Main.start();
             } catch (Exception e) {
                 throw new RuntimeException(e);
@@ -566,6 +570,48 @@ public class Sanity01Test {
         rs.close();
         pStmt.close();
         pgConn1.close();
+    }
+
+    @Test
+    void testCopy() throws SQLException, IOException {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.createStatement().execute("create table testCopy(id int, first_name varchar(20), last_name varchar(20))");
+        String csvData = "1,John,Doe\n2,Jane,Smith"; // 示例数据
+
+        // 使用BaseConnection以便于进行COPY操作
+        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
+
+        // 执行COPY FROM STDIN操作
+        String copySql = "COPY testCopy (id, last_name, first_name) FROM STDIN WITH (FORMAT csv)";
+        copyManager.copyIn(copySql, new StringReader(csvData));
+        pgConn1.commit();
+
+        // 检查数据
+        PreparedStatement pstmt = pgConn1.prepareStatement("select * FROM testCopy order by id");
+        ResultSet rs = pstmt.executeQuery();
+        int expectedResult = 2;
+        int nRows = 0;
+        while (rs.next()) {
+            nRows = nRows + 1;
+            if (rs.getInt("id") == 1)
+            {
+                assert rs.getString("first_name").equals("Doe");
+                assert rs.getString("last_name").equals("John");
+            }
+            if (rs.getInt("id") == 2)
+            {
+                assert rs.getString("first_name").equals("Smith");
+                assert rs.getString("last_name").equals("Jane");
+            }
+        }
+        pstmt.close();
+        pgConn1.close();
+
+        assert nRows == expectedResult;
     }
 
     @AfterAll

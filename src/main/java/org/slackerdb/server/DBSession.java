@@ -1,28 +1,55 @@
 package org.slackerdb.server;
 
+import org.duckdb.DuckDBAppender;
+
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class DBSession {
+    // 数据库连接
     public Connection dbConnection = null;
+    // 客户端连接建立时间
     public LocalDateTime connectedTime;
+    // 数据库连接创建时间
     public LocalDateTime dbConnectedTime;
+    // 客户端连接时候的选项
     public Map<String, String> startupOptions;
+    // 当前是否处于事务当中
     public boolean inTransaction = false;
+    // 当前正在执行的SQL
     public String executeSQL;
+    // 当前会话状态  connected, dbConnected
     public String status = "N/A";
+    // 客户端的IP地址
     public String clientAddress = "";
+    // 最后一次服务请求的命令
     public String LastRequestCommand = null;
 
+    // 保存的语句解析信息
     private final Map<String, PreparedStatement> preparedStatements = new HashMap<>();
+    // 保存的语句解析信息，绑定的数据类型
     private final Map<String, int[]> preparedStatementParameterDataTypeIds = new HashMap<>();
+    // 保存的结果集，便于分批查询的返回
     private final Map<String, ResultSet> resultSets = new HashMap<>();
+    // 标记客户端是否请求了描述信息（如果请求需要返回RowDescription, 反之不返回)
     public boolean hasDescribeRequest = false;
+
+    // 记录当前COPY操作的表名
+    public String copyTableName = "";
+    // 记录当前COPY的文件格式
+    public String copyTableFormat = "";
+    // 记录当前COPY的Appender
+    public DuckDBAppender copyTableAppender = null;
+    // 记录这个目标表在数据库的实际列名
+    public List<Integer> copyTableDbColumnMapPos;
+    // 上次由于不完整而没有复制的Copy剩余命令
+    public String copyLastRemained = "";
 
     public ResultSet getResultSet(String portalName) {
         return resultSets.get(portalName);
@@ -47,6 +74,10 @@ public class DBSession {
             if (!preparedStatement.isClosed()) {
                 preparedStatement.close();
             }
+        }
+        if (copyTableAppender != null)
+        {
+            copyTableAppender.close();
         }
         if (dbConnection != null && !dbConnection.isClosed())
         {
@@ -83,6 +114,10 @@ public class DBSession {
                 preparedStatement.close();
             }
         }
+        if (copyTableAppender != null)
+        {
+            copyTableAppender.close();
+        }
         if (dbConnection != null && !dbConnection.isClosed())
         {
             if (!dbConnection.isReadOnly())
@@ -102,7 +137,7 @@ public class DBSession {
         }
     }
 
-    public void savePreparedStatement(String portalName, PreparedStatement preparedStatement) throws SQLException
+    public void savePreparedStatement(String portalName, PreparedStatement preparedStatement)
     {
         preparedStatements.put(portalName, preparedStatement);
     }
