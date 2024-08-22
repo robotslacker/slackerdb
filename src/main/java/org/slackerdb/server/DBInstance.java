@@ -95,6 +95,9 @@ public class DBInstance {
             backendSysConnection = DriverManager.getConnection(backendConnectString, connectProperties);
             AppLogger.logger.info("[SERVER] Backend database [{}:{}] opened.",
                     ServerConfiguration.getData_Dir(), ServerConfiguration.getData());
+            if (!ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
+                SlackerCatalog.createFakeCatalog(backendSysConnection);
+            }
         }
         catch (SQLException e) {
             DBInstance.state = "STARTUP FAILED";

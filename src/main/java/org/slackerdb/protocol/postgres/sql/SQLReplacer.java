@@ -13,47 +13,60 @@ public class SQLReplacer {
     {
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "SET\\s+extra_float_digits.*","",true
+                        "pg_catalog.pg_roles","duck_catalog.pg_roles",true, true
+                )
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem("pg_catalog.pg_shdescription", "duck_catalog.pg_shdescription",
+                        true, true)
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem("pg_catalog.pg_namespace", "duck_catalog.pg_namespace",
+                        true, true)
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "SET\\s+extra_float_digits.*","",true,false
                 )
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "SET\\s+application_name.*","",true
+                        "SET\\s+application_name.*","",true,false
                 )
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "(.*)::regclass(.*)", "$1$2", true
+                        "(.*)::regclass(.*)", "$1$2", true,false
                 )
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "SHOW search_path", "SELECT current_setting('search_path') as search_path", false
+                        "SHOW search_path", "SELECT current_setting('search_path') as search_path", false,false
                 )
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "set search_path = (.*),", "set search_path = $1", true
+                        "set search_path = (.*),", "set search_path = $1", true,false
                 )
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        ".*pg_catalog.pg_get_keywords.*", "",true
+                        ".*pg_catalog.pg_get_keywords.*", "",true,false
                 )
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "(.*)pg_catalog.pg_get_partkeydef\\(c\\.oid\\)(.*)", "$1null$2",true
+                        "(.*)pg_catalog.pg_get_partkeydef\\(c\\.oid\\)(.*)", "$1null$2",true,false
                 )
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "(.*)pg_catalog.pg_get_expr\\(ad\\.adbin, ad\\.adrelid, true\\)(.*)","$1null$2",true
+                        "(.*)pg_catalog.pg_get_expr\\(ad\\.adbin, ad\\.adrelid, true\\)(.*)","$1null$2",true,false
                 )
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        ".*pg_catalog.pg_event_trigger.*", "",true
+                        ".*pg_catalog.pg_event_trigger.*", "",true,false
                 )
         );
         isLoaded = true;
@@ -67,6 +80,11 @@ public class SQLReplacer {
             return sql;
         }
         for (QueryReplacerItem item : SQLReplaceItems) {
+            if (item.isSampleReplace())
+            {
+                sql = sql.replaceAll(item.getToFind(), item.getToReplace());
+                continue;
+            }
             var find = item.getToFind().replaceAll("\r\n", "\n").trim();
             var repl = item.getToReplace().replaceAll("\r\n", "\n").trim();
             if (item.isRegex())

@@ -13,7 +13,9 @@ import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -56,8 +58,28 @@ public class StartupRequest  extends PostgresRequest {
         // 记录登录时候客户端做的选项
         try {
             int sessionId = getCurrentSessionId(ctx);
-            DBInstance.getSession(sessionId).dbConnection =
+            Connection conn =
                     ((DuckDBConnection)DBInstance.backendSysConnection).duplicate();
+            if (!conn.isReadOnly())
+            {
+                // 建立对应的schema，并且把查询路径指向新的schema
+                String defaultSearchPath;
+                if (startupOptions.containsKey("user") && !startupOptions.get("user").trim().isEmpty())
+                {
+                    defaultSearchPath = startupOptions.get("user").trim();
+                }
+                else
+                {
+                    defaultSearchPath = "public";
+                }
+                Statement stmt = conn.createStatement();
+                if (!defaultSearchPath.equalsIgnoreCase("public")) {
+                    stmt.execute("create schema if not exists " + defaultSearchPath);
+                }
+                stmt.execute("set search_path = " + defaultSearchPath);
+                stmt.close();
+            }
+            DBInstance.getSession(sessionId).dbConnection = conn;
             DBInstance.getSession(sessionId).dbConnectedTime = LocalDateTime.now();
             DBInstance.getSession(sessionId).startupOptions = startupOptions;
             DBInstance.getSession(sessionId).status = "DB-CONNECTED";
