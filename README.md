@@ -18,15 +18,6 @@ PG的客户端会恒定把系统当前时区作为参数出现在setTimeStamp中
 解决办法：
     客户端恒定使用UTC时区
 
-
-## 时间表
-1. 缺少pg_database表（缺少dataloowconn, datistemplate)，导致dbeaver无法连接
-2. not implemented column type VARCHAR[]
-3. DBEaver中看不到表名和字段信息
-4. 所有不支持的操作均要明确错误信息
-5. 文档处理
-
-
 ## 使用方法
 ```
     git clone ...

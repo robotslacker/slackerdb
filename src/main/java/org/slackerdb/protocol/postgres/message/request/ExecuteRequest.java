@@ -210,6 +210,10 @@ public class ExecuteRequest extends PostgresRequest {
                             field.objectIdOfTable = 0;
                             field.attributeNumberOfColumn = 0;
                             field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(columnTypeName);
+                            if (field.dataTypeId == -1 )
+                            {
+                                AppLogger.logger.error("executeSQL: {}" , executeSQL);
+                            }
                             field.dataTypeSize = (short) 2147483647;
                             field.dataTypeModifier = -1;
                             switch (columnTypeName) {

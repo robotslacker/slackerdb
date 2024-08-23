@@ -33,11 +33,54 @@ public class SlackerCatalog {
                 "    objoid oid,\n" +
                 "    classoid oid,\n" +
                 "    description text\n" +
-                ");\n");
+                ")");
         fakeCatalogDDLList.add("create or replace view duck_catalog.pg_namespace \n" +
                 "as\n" +
                 "select * FROM pg_catalog.pg_namespace \n" +
-                "where nspname not in ('main', 'duck_catalog', 'pg_catalog', 'information_schema');\n");
+                "where nspname not in ('main', 'duck_catalog', 'pg_catalog', 'information_schema')");
+        fakeCatalogDDLList.add("create or replace view duck_catalog.pg_database \n" +
+                " as\n" +
+                " select oid, oid as datlastsysoid,datname, 0 as dattablespace, " +
+                "   null as datacl, false as datistemplate, true as datallowconn," +
+                "   'en_US.utf8' as datcollate,'en_US.utf8' as datctype, -1 as datconnlimit," +
+                "  6 as encoding,   \n" +
+                " FROM \tpg_catalog.pg_database\n" +
+                " where datname not in ('system', 'temp')");
+        fakeCatalogDDLList.add("create table duck_catalog.pg_proc\n" +
+                "(\n" +
+                " oid             int          ,\n" +
+                " proname         text         ,\n" +
+                " pronamespace    int          ,\n" +
+                " proowner        int          ,\n" +
+                " prolang         int          ,\n" +
+                " procost         real         ,\n" +
+                " prorows         real         ,\n" +
+                " provariadic     int          ,\n" +
+                " prosupport      text         ,\n" +
+                " prokind         char         ,\n" +
+                " prosecdef       boolean      ,\n" +
+                " proleakproof    boolean      ,\n" +
+                " proisstrict     boolean      ,\n" +
+                " proretset       boolean      ,\n" +
+                " provolatile     char         ,\n" +
+                " proparallel     char         ,\n" +
+                " pronargs        smallint     ,\n" +
+                " pronargdefaults smallint     ,\n" +
+                " prorettype      int          ,\n" +
+                " proargtypes     text         ,\n" +
+                " proallargtypes  int          ,\n" +
+                " proargmodes     text         ,\n" +
+                " proargnames     text         ,\n" +
+                " proargdefaults  text         ,\n" +
+                " protrftypes     int          ,\n" +
+                " prosrc          text         ,\n" +
+                " probin          text         ,\n" +
+                " prosqlbody      text         ,\n" +
+                " proconfig       text         ,\n" +
+                " proacl          text\n" +
+                ");\n");
+        fakeCatalogDDLList.add("CREATE MACRO pg_get_userbyid(a) AS (select 'system')");
+        fakeCatalogDDLList.add("CREATE MACRO pg_encoding_to_char(a) AS (select 'UTF8')");
         Statement stmt = conn.createStatement();
         for (String sql : fakeCatalogDDLList)
         {

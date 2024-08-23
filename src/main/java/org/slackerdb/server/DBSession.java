@@ -65,13 +65,13 @@ public class DBSession {
         // 默认close的时候要执行Commit操作
         for (ResultSet resultSet : resultSets.values())
         {
-            if (!resultSet.isClosed()) {
+            if (resultSet != null && !resultSet.isClosed()) {
                 resultSet.close();
             }
         }
         for (PreparedStatement preparedStatement : preparedStatements.values())
         {
-            if (!preparedStatement.isClosed()) {
+            if (preparedStatement != null && !preparedStatement.isClosed()) {
                 preparedStatement.close();
             }
         }
@@ -104,13 +104,13 @@ public class DBSession {
         // 默认abort的时候要执行Rollback操作
         for (ResultSet resultSet : resultSets.values())
         {
-            if (!resultSet.isClosed()) {
+            if (resultSet != null && !resultSet.isClosed()) {
                 resultSet.close();
             }
         }
         for (PreparedStatement preparedStatement : preparedStatements.values())
         {
-            if (!preparedStatement.isClosed()) {
+            if (preparedStatement != null && !preparedStatement.isClosed()) {
                 preparedStatement.close();
             }
         }

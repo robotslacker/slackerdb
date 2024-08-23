@@ -13,15 +13,28 @@ public class SQLReplacer {
     {
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "pg_catalog.pg_roles","duck_catalog.pg_roles",true, true
+                        "pg_catalog.pg_roles","duck_catalog.pg_roles",
+                        true, true
                 )
         );
         SQLReplaceItems.add(
-                new QueryReplacerItem("pg_catalog.pg_shdescription", "duck_catalog.pg_shdescription",
+                new QueryReplacerItem(
+                        "pg_catalog.pg_shdescription", "duck_catalog.pg_shdescription",
                         true, true)
         );
         SQLReplaceItems.add(
-                new QueryReplacerItem("pg_catalog.pg_namespace", "duck_catalog.pg_namespace",
+                new QueryReplacerItem(
+                        "pg_catalog.pg_namespace", "duck_catalog.pg_namespace",
+                        true, true)
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_proc", "duck_catalog.pg_proc",
+                        true, true)
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_database", "duck_catalog.pg_database",
                         true, true)
         );
         SQLReplaceItems.add(
@@ -36,12 +49,23 @@ public class SQLReplacer {
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
+                        "SET\\s+client_encoding.*","",true,false
+                )
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
                         "(.*)::regclass(.*)", "$1$2", true,false
                 )
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
                         "SHOW search_path", "SELECT current_setting('search_path') as search_path", false,false
+                )
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "SHOW datestyle", "SELECT 'ISO, MDY' as DateStyle",
+                        false,true
                 )
         );
         SQLReplaceItems.add(

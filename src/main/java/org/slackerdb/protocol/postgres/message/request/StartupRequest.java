@@ -76,7 +76,7 @@ public class StartupRequest  extends PostgresRequest {
                 if (!defaultSearchPath.equalsIgnoreCase("public")) {
                     stmt.execute("create schema if not exists " + defaultSearchPath);
                 }
-                stmt.execute("set search_path = " + defaultSearchPath);
+                stmt.execute("set search_path = '" + defaultSearchPath + ",duck_catalog'");
                 stmt.close();
             }
             DBInstance.getSession(sessionId).dbConnection = conn;
