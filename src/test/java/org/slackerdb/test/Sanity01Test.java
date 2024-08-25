@@ -35,7 +35,7 @@ public class Sanity01Test {
 
                 // 启动数据库
                 Main.setLogLevel("INFO");
-                Main.start();
+                Main.serverStart();
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

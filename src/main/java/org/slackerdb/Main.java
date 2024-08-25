@@ -1,9 +1,10 @@
 package org.slackerdb;
 
 import ch.qos.logback.classic.Level;
+import org.slackerdb.client.AdminClient;
 import org.slackerdb.logger.AppLogger;
 import org.slackerdb.configuration.ServerConfiguration;
-import org.slackerdb.protocol.postgres.server.PostgresServer;
+import org.slackerdb.server.PostgresServer;
 import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Sleeper;
 
@@ -15,7 +16,7 @@ public class Main {
         AppLogger.setLogLevel(Level.valueOf(logLevel));
     }
 
-    public static void start() throws Exception
+    public static void serverStart() throws Exception
     {
         // 加载默认的配置信息，不会覆盖配置文件中的内容或者命令行参数指定的内容
         ServerConfiguration.LoadDefaultConfiguration();
@@ -24,8 +25,8 @@ public class Main {
         AppLogger.CreateLogger();
 
         // 启动服务器
-        PostgresServer protocolServer = new PostgresServer();
-        protocolServer.start();
+        DBInstance.protocolServer = new PostgresServer();
+        DBInstance.protocolServer.start();
 
         // 等待服务进程启动
         while (!DBInstance.state.equalsIgnoreCase("RUNNING") &&
@@ -34,15 +35,27 @@ public class Main {
         }
     }
 
+    public static void serverAdmin(String appCommand)
+    {
+        // 加载默认的配置信息，不会覆盖配置文件中的内容或者命令行参数指定的内容
+        ServerConfiguration.LoadDefaultConfiguration();
+
+        // 打开日志文件
+        AppLogger.CreateLogger();
+
+        // 执行命令请求
+        AdminClient.doCommand(appCommand);
+    }
+
     public static void main(String[] args){
         // 标记数据库正在启动中
         DBInstance.state = "STARTING";
 
         Map<String, String> appOptions = new HashMap<>();
-        String appCommand = null;
+        StringBuilder appCommand = null;
 
         String paramName = null;
-        String paramValue = null;
+        String paramValue;
         for (String arg : args) {
             if (arg.startsWith("--")) {
                 paramName = arg.substring(2);
@@ -51,8 +64,13 @@ public class Main {
             {
                 if (paramName == null)
                 {
-                    appCommand = arg;
-                    continue;
+                    if (appCommand == null) {
+                        appCommand = new StringBuilder(arg);
+                    }
+                    else
+                    {
+                        appCommand.append(" ").append(arg);
+                    }
                 }
                 paramValue = arg;
                 appOptions.put(paramName, paramValue);
@@ -75,22 +93,24 @@ public class Main {
             {
                 ServerConfiguration.setPort(Integer.parseInt(appOptions.get("port")));
             }
-
+            if (appCommand == null)
+            {
+                AppLogger.logger.error("[SERVER] Invalid command. \n Usage: java -jar slackerdb-xxx.jar [--option value, ]  command.");
+                System.exit(1);
+            }
 
             // 启动应用程序
-            if (appCommand != null && appCommand.equalsIgnoreCase("START")) {
-                start();
+            if (appCommand.toString().toUpperCase().startsWith("START")) {
+                serverStart();
             }
             else
             {
-                System.out.println("Usage: java -jar xxx.jar [--parameterName parameterValue] start");
-                System.exit(1);
+                serverAdmin(appCommand.toString());
             }
         }
         catch (Exception ex)
         {
-            AppLogger.logger.trace("[SERVER] Fatal exception.", ex);
-            System.err.println(ex.getMessage());
+            AppLogger.logger.error("[SERVER] Fatal exception.", ex);
             System.exit(1);
         }
     }

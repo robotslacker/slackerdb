@@ -60,7 +60,7 @@ public class TPCDSTest {
 
                 // 启动数据库
 //                Main.setLogLevel("TRACE");
-                Main.start();
+                Main.serverStart();
 
                 // 强制使用UTC时区，以避免时区问题在PG和后端数据库中不一致的行为
                 TimeZone.setDefault(TimeZone.getTimeZone("UTC"));

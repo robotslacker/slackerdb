@@ -3,14 +3,17 @@ package org.slackerdb.server;
 import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.logger.AppLogger;
-import org.slackerdb.protocol.postgres.server.PostgresServerHandler;
 
 import java.io.File;
 import java.sql.*;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.regex.Pattern;
 
 public class DBInstance {
+    public static PostgresServer protocolServer;
+    public static LocalDateTime bootTime = LocalDateTime.now();
+
     public static String state = "";
     public static Connection backendSysConnection;
     // 为每个连接创建一个会话ID
@@ -21,19 +24,21 @@ public class DBInstance {
     public static void abortSession(int sessionId) throws SQLException {
         // 销毁会话保持的数据库信息
         DBSession dbSession = dbSessions.get(sessionId);
-        dbSession.abortSession();
-
-        // 移除会话信息
-        dbSessions.remove(sessionId);
+        if (dbSession != null) {
+            dbSession.abortSession();
+            // 移除会话信息
+            dbSessions.remove(sessionId);
+        }
     }
 
     public static void closeSession(int sessionId) throws SQLException {
         // 销毁会话保持的数据库信息
         DBSession dbSession = dbSessions.get(sessionId);
-        dbSession.closeSession();
-
-        // 移除会话信息
-        dbSessions.remove(sessionId);
+        if (dbSession != null) {
+            dbSession.closeSession();
+            // 移除会话信息
+            dbSessions.remove(sessionId);
+        }
     }
 
     public static void init() throws ServerException {
