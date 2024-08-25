@@ -6,21 +6,20 @@
 This program implements the JDBC V3 protocol of PG.
 The SQL engine and storage engine behind it are both DUCKDB, the new favorite of OLAP.
 
-Problems that need to be solved in software design:
-1. Solve the problem that DUCKDB cannot view data from the outside during sql executing.
-2. Solve the problem that DUCKDB does not support concurrent access by multiple clients (multiple processes).
-3. Solve the problem that DUCKDB does not support network remote access.
+What we do in this project:
+1. make we can view and update duckdb data from the outside process.
+2. make we can view and update duckdb data from the network.
 
 ## Known Issues
 ### Time Zone Issues with TimeStamp
-  PG clients will always use the current system time zone as a parameter in setTimeStamp, and duckdb's TimeStamp has no concept of time zone.  
-  This will cause the data inserted using api setTimeStamp() is different with your inserted.  
-  Workaround:   
-  The client always uses the UTC time zone
+PG clients will always use the current system time zone as a parameter in setTimeStamp, and duckdb's TimeStamp has no concept of time zone.  
+This will cause the data inserted using api setTimeStamp() is different with your inserted.  
+Workaround:   
+The client always uses the UTC time zone
 ### User and password authorization
-  We do not support user password authentication, just for compatibility, keep these two options.  
-  you can fill in the password part as you like, it doesn't make sense.  
-  The user part will be used by the default schema of the user connection.
+We do not support user password authentication, just for compatibility, keep these two options.  
+you can fill in the password part as you like, it doesn't make sense.  
+The user part will be used by the default schema of the user connection.
 
 
 ## How to use
