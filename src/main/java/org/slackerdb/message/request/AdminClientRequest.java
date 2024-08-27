@@ -1,6 +1,7 @@
 package org.slackerdb.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
+import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.message.PostgresMessage;
 import org.slackerdb.message.PostgresRequest;
 import org.slackerdb.message.response.AdminClientResp;
@@ -57,8 +58,24 @@ public class AdminClientRequest  extends PostgresRequest {
             );
             feedBackMsg.append("  Run : ").append(readableTimeDifference).append("\n");
 
+            // 打印服务器的运行参数
+            feedBackMsg.append("SERVER PARAMETER: \n");
+            feedBackMsg.append(String.format("%-20s", "  Data:")).append(ServerConfiguration.getData()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Data_Dir:")).append(ServerConfiguration.getData_Dir()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Temp_Dir:")).append(ServerConfiguration.getTemp_dir()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Extension_Dir:")).append(ServerConfiguration.getExtension_dir()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Threads:")).append(ServerConfiguration.getThreads()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Memory_Limit:")).append(ServerConfiguration.getMemory_limit()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Max_Workers:")).append(ServerConfiguration.getMax_Workers()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Access_mode:")).append(ServerConfiguration.getAccess_mode()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Log:")).append(ServerConfiguration.getLog()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Log_Level:")).append(ServerConfiguration.getLog_level().levelStr).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Bind_Host:")).append(ServerConfiguration.getBindHost()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Port:")).append(ServerConfiguration.getPort()).append("\n");
+
             // 显示当前的数据库连接情况
-            feedBackMsg.append("  Sessions: total ").append(DBInstance.dbSessions.size()).append(" clients connected.\n");
+            feedBackMsg.append("SERVER SESSIONS: \n");
+            feedBackMsg.append("  Total ").append(DBInstance.dbSessions.size()).append(" clients connected.\n");
             for (Integer sessionId : DBInstance.dbSessions.keySet())
             {
                 DBSession dbSession = DBInstance.getSession(sessionId);

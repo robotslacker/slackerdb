@@ -275,6 +275,17 @@ public class PostgresServer {
                         lastRequestCommand = CopyDoneRequest.class.getSimpleName();
                         DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
                         break;
+                    case 'C':
+                        CloseRequest closeRequest = new CloseRequest();
+                        closeRequest.decode(data);
+
+                        // 处理消息
+                        pushMsgObject(out, closeRequest);
+
+                        // 标记当前步骤
+                        lastRequestCommand = CloseRequest.class.getSimpleName();
+                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        break;
                     case 'X':
                         TerminateRequest terminateRequest = new TerminateRequest();
                         terminateRequest.decode(data);

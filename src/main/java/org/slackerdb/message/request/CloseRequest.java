@@ -1,7 +1,13 @@
 package org.slackerdb.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
+import org.slackerdb.entity.ParsedStatement;
+import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresRequest;
+import org.slackerdb.server.DBInstance;
+
+import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 
 
 public class CloseRequest extends PostgresRequest {
@@ -15,13 +21,40 @@ public class CloseRequest extends PostgresRequest {
     //    String
     //      The name of the prepared statement or portal to close
     //      (an empty string selects the unnamed prepared statement or portal).
+
+    public char closeType;
+    public String portalName;
+
     @Override
     public void decode(byte[] data) {
+        portalName = new String(data, StandardCharsets.UTF_8);
+        closeType = portalName.charAt(0);
+        portalName = portalName.substring(1);
+
         super.decode(data);
     }
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) {
-        // 目前标准JDBC并未实现该协议
+        String closePortal;
+        if (closeType == 'S') {
+            closePortal = "PreparedStatement" + "-" + portalName;
+        }
+        else
+        {
+            // (closeType == 'P')
+            closePortal = "Portal" + "-" + portalName;
+        }
+        try {
+            ParsedStatement parsedPreparedStatement =
+                    DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement(closePortal);
+            if (parsedPreparedStatement != null && parsedPreparedStatement.preparedStatement != null) {
+                parsedPreparedStatement.preparedStatement.close();
+            }
+            DBInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement(closePortal);
+        }
+        catch(SQLException e) {
+            AppLogger.logger.error("Failed to close prepared statement", e);
+        }
     }
 }

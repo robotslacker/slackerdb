@@ -1,6 +1,7 @@
 package org.slackerdb.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
+import org.slackerdb.entity.ParsedStatement;
 import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresMessage;
 import org.slackerdb.message.PostgresRequest;
@@ -102,21 +103,23 @@ public class ParseRequest extends PostgresRequest {
             parseComplete.process(ctx, request, out);
 
             // 记录PreparedStatement,以及对应的参数类型
-            DBInstance.getSession(getCurrentSessionId(ctx)).savePreparedStatement("PreparedStatement" + "-" + preparedStmtName, preparedStatement);
-            DBInstance.getSession(getCurrentSessionId(ctx))
-                    .savePreparedStatementParameterDataTypeIds("PreparedStatement*DataTypeIds" + "-" + preparedStmtName, parameterDataTypeIds);
-
+            ParsedStatement parsedPrepareStatement = new ParsedStatement();
+            parsedPrepareStatement.sql = executeSQL.trim();
+            parsedPrepareStatement.preparedStatement = preparedStatement;
+            parsedPrepareStatement.parameterDataTypeIds = parameterDataTypeIds;
+            DBInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+                    "PreparedStatement" + "-" + preparedStmtName, parsedPrepareStatement);
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out);
         }
         catch (SQLException e) {
             // 清空PreparedStatement
             try {
-                DBInstance.getSession(getCurrentSessionId(ctx)).clearPreparedStatement("PreparedStatement" + "-" + preparedStmtName);
+                DBInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement(
+                        "PreparedStatement" + "-" + preparedStmtName);
             } catch (Exception e2) {
                 AppLogger.logger.error("Error clearing prepared statement", e2);
             }
-            DBInstance.getSession(getCurrentSessionId(ctx)).clearPreparedStatementParameterDataTypeIds("PreparedStatement*DataTypeIds" + "-" + preparedStmtName);
 
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse();

@@ -1,6 +1,7 @@
 package org.slackerdb.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
+import org.slackerdb.entity.ParsedStatement;
 import org.slackerdb.entity.PostgresTypeOids;
 import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresMessage;
@@ -143,13 +144,14 @@ public class BindRequest extends PostgresRequest {
         }
 
         try {
-            PreparedStatement preparedStatement = DBInstance.getSession(getCurrentSessionId(ctx)).getPreparedStatement("PreparedStatement" + "-" + preparedStmtName);
-            if (preparedStatement != null)
+            ParsedStatement parsedPreparedStatement =
+                    DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("PreparedStatement" + "-" + preparedStmtName);
+            if (parsedPreparedStatement != null)
             {
+                PreparedStatement preparedStatement = parsedPreparedStatement.preparedStatement;
                 if (preparedStatement.getParameterMetaData().getParameterCount() != 0) {
                     // 获取参数的类型
-                    int[] parameterDataTypeIds = DBInstance.getSession(getCurrentSessionId(ctx))
-                                    .getPreparedStatementParameterDataTypeIds("PreparedStatement*DataTypeIds" + "-" + preparedStmtName);
+                    int[] parameterDataTypeIds = parsedPreparedStatement.parameterDataTypeIds;
                     for (int i = 0; i < bindParameters.length; i++) {
                         String columnTypeName = PostgresTypeOids.getTypeNameFromTypeOid(parameterDataTypeIds[i]);
                         if (formatCodes[i] == 0) {
@@ -205,10 +207,14 @@ public class BindRequest extends PostgresRequest {
                         }
                     }
                 }
-            }
 
-            // 记录Bind后的PreparedStatement
-            DBInstance.getSession(getCurrentSessionId(ctx)).savePreparedStatement("Portal" + "-" + portalName, preparedStatement);
+                // 记录Bind后的PreparedStatement
+                ParsedStatement parsedBindPreparedStatement = new ParsedStatement();
+                parsedBindPreparedStatement.sql = executeSQL;
+                parsedBindPreparedStatement.preparedStatement = preparedStatement;
+                DBInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+                        "Portal" + "-" + portalName, parsedBindPreparedStatement);
+            }
 
             BindComplete bindComplete = new BindComplete();
             bindComplete.process(ctx, request, out);

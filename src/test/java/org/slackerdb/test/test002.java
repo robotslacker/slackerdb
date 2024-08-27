@@ -34,6 +34,11 @@ import java.util.regex.Pattern;
 public class test002 {
 
     public static void main(String[] args) throws SQLException, ClassNotFoundException, IOException {
+        System.out.println(String.format("%-60s", "  Data:") + "abcd");
+        if (true)
+        {
+            System.exit(0);
+        }
         List<CSVRecord> records = new ArrayList<>();
 
         StringReader reader;

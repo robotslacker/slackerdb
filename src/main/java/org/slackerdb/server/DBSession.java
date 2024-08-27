@@ -1,10 +1,10 @@
 package org.slackerdb.server;
 
 import org.duckdb.DuckDBAppender;
+import org.slackerdb.entity.ParsedStatement;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -32,11 +32,8 @@ public class DBSession {
     public String LastRequestCommand = null;
 
     // 保存的语句解析信息
-    private final Map<String, PreparedStatement> preparedStatements = new HashMap<>();
-    // 保存的语句解析信息，绑定的数据类型
-    private final Map<String, int[]> preparedStatementParameterDataTypeIds = new HashMap<>();
-    // 保存的结果集，便于分批查询的返回
-    private final Map<String, ResultSet> resultSets = new HashMap<>();
+    private final Map<String, ParsedStatement> parsedStatements = new HashMap<>();
+
     // 标记客户端是否请求了描述信息（如果请求需要返回RowDescription, 反之不返回)
     public boolean hasDescribeRequest = false;
 
@@ -51,28 +48,21 @@ public class DBSession {
     // 上次由于不完整而没有复制的Copy剩余命令
     public String copyLastRemained = "";
 
-    public ResultSet getResultSet(String portalName) {
-        return resultSets.get(portalName);
-    }
-
-    public PreparedStatement getPreparedStatement(String portalName) {
-        return preparedStatements.get(portalName);
+    public ParsedStatement getParsedStatement(String portalName) {
+        return parsedStatements.get(portalName);
     }
 
     public void closeSession() throws SQLException
     {
         // 关闭所有连接，并释放所有资源
         // 默认close的时候要执行Commit操作
-        for (ResultSet resultSet : resultSets.values())
+        for (ParsedStatement parsedStatement : parsedStatements.values())
         {
-            if (resultSet != null && !resultSet.isClosed()) {
-                resultSet.close();
+            if (parsedStatement.preparedStatement != null && !parsedStatement.preparedStatement.isClosed()) {
+                parsedStatement.preparedStatement.close();
             }
-        }
-        for (PreparedStatement preparedStatement : preparedStatements.values())
-        {
-            if (preparedStatement != null && !preparedStatement.isClosed()) {
-                preparedStatement.close();
+            if (parsedStatement.resultSet != null && !parsedStatement.resultSet.isClosed()) {
+                parsedStatement.resultSet.close();
             }
         }
         if (copyTableAppender != null)
@@ -102,16 +92,13 @@ public class DBSession {
     {
         // 关闭所有连接，并释放所有资源
         // 默认abort的时候要执行Rollback操作
-        for (ResultSet resultSet : resultSets.values())
+        for (ParsedStatement parsedStatement : parsedStatements.values())
         {
-            if (resultSet != null && !resultSet.isClosed()) {
-                resultSet.close();
+            if (parsedStatement.preparedStatement != null && !parsedStatement.preparedStatement.isClosed()) {
+                parsedStatement.preparedStatement.close();
             }
-        }
-        for (PreparedStatement preparedStatement : preparedStatements.values())
-        {
-            if (preparedStatement != null && !preparedStatement.isClosed()) {
-                preparedStatement.close();
+            if (parsedStatement.resultSet != null && !parsedStatement.resultSet.isClosed()) {
+                parsedStatement.resultSet.close();
             }
         }
         if (copyTableAppender != null)
@@ -137,61 +124,20 @@ public class DBSession {
         }
     }
 
-    public void savePreparedStatement(String portalName, PreparedStatement preparedStatement)
+    public void saveParsedStatement(String portalName, ParsedStatement parsedPrepareStatement)
     {
-        preparedStatements.put(portalName, preparedStatement);
+        parsedStatements.put(portalName, parsedPrepareStatement);
     }
-
-    public void clearPreparedStatement(String portalName) throws SQLException
+    public void clearParsedStatement(String portalName) throws SQLException
     {
-        if (preparedStatements.containsKey(portalName))
+        if (parsedStatements.containsKey(portalName))
         {
-            PreparedStatement preparedStatement = preparedStatements.get(portalName);
+            PreparedStatement preparedStatement = parsedStatements.get(portalName).preparedStatement;
             if (!preparedStatement.isClosed()) {
                 preparedStatement.close();
             }
-            preparedStatements.remove(portalName);
+            parsedStatements.remove(portalName);
         }
     }
 
-    public void saveResultSet(String portalName, ResultSet resultSet) throws SQLException
-    {
-        if (resultSets.containsKey(portalName))
-        {
-            ResultSet oldResultSet = resultSets.get(portalName);
-            if (!oldResultSet.isClosed()) {
-                oldResultSet.close();
-            }
-            oldResultSet.close();
-        }
-        resultSets.put(portalName, resultSet);
-    }
-
-    public void clearResultSet(String portalName) throws SQLException
-    {
-        if (resultSets.containsKey(portalName))
-        {
-            ResultSet oldResultSet = resultSets.get(portalName);
-            if (!oldResultSet.isClosed()) {
-                oldResultSet.close();
-            }
-            oldResultSet.close();
-            resultSets.remove(portalName);
-        }
-    }
-
-    public void savePreparedStatementParameterDataTypeIds(String portalName, int[] dataTypeIds)
-    {
-        preparedStatementParameterDataTypeIds.put(portalName, dataTypeIds);
-    }
-
-    public void clearPreparedStatementParameterDataTypeIds(String portalName)
-    {
-        preparedStatementParameterDataTypeIds.remove(portalName);
-    }
-
-    public int[] getPreparedStatementParameterDataTypeIds(String portalName)
-    {
-        return preparedStatementParameterDataTypeIds.get(portalName);
-    }
 }

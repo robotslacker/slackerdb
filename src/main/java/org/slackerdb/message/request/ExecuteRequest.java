@@ -3,6 +3,7 @@ package org.slackerdb.message.request;
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.entity.Column;
 import org.slackerdb.entity.Field;
+import org.slackerdb.entity.ParsedStatement;
 import org.slackerdb.entity.PostgresTypeOids;
 import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresMessage;
@@ -152,9 +153,17 @@ public class ExecuteRequest extends PostgresRequest {
             return;
         }
         try {
-            ResultSet rs = DBInstance.getSession(getCurrentSessionId(ctx)).getResultSet("Portal" + "-" + portalName);
-            if (rs != null)
+            ParsedStatement parsedStatement = DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("Portal" + "-" + portalName);
+            if (parsedStatement == null || parsedStatement.preparedStatement == null)
             {
+                // 之前语句解析或者绑定出了错误, 没有继续执行的必要
+                return;
+            }
+
+            // 之前有缓存记录
+            if (parsedStatement.resultSet != null)
+            {
+                ResultSet rs = parsedStatement.resultSet;
                 DataRow dataRow = new DataRow();
                 ResultSetMetaData rsmd = rs.getMetaData();
 
@@ -180,17 +189,11 @@ public class ExecuteRequest extends PostgresRequest {
                 }
                 // 所有的记录查询完毕
                 rs.close();
-                DBInstance.getSession(getCurrentSessionId(ctx)).clearResultSet("Portal" + "-" + portalName);
+                DBInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
             }
-            else {
-                PreparedStatement preparedStatement = DBInstance.getSession(getCurrentSessionId(ctx)).getPreparedStatement("Portal" + "-" + portalName);
-                if (preparedStatement == null)
-                {
-                    // 之前语句解析或者绑定出了错误, 没有继续执行的必要
-                    return;
-                }
-
-                boolean isResultSet = preparedStatement.execute();
+            else
+            {
+                boolean isResultSet = parsedStatement.preparedStatement.execute();
                 int rowsReturned = 0;
                 if (isResultSet) {
                     DataRow dataRow = new DataRow();
@@ -203,7 +206,7 @@ public class ExecuteRequest extends PostgresRequest {
                         List<Field> fields = new ArrayList<>();
 
                         // 获取返回的结构信息
-                        ResultSetMetaData resultSetMetaData = preparedStatement.getMetaData();
+                        ResultSetMetaData resultSetMetaData = parsedStatement.preparedStatement.getMetaData();
                         for (int i = 1; i <= resultSetMetaData.getColumnCount(); i++) {
                             String columnTypeName = resultSetMetaData.getColumnTypeName(i);
                             Field field = new Field();
@@ -252,9 +255,10 @@ public class ExecuteRequest extends PostgresRequest {
                         PostgresMessage.writeAndFlush(ctx, RowDescription.class.getSimpleName(), out);
                     }
 
-                    rs = preparedStatement.getResultSet();
+                    ResultSet rs = parsedStatement.preparedStatement.getResultSet();
+                    parsedStatement.resultSet = rs;
                     // 保留当前的ResultSet到Portal中
-                    DBInstance.getSession(getCurrentSessionId(ctx)).saveResultSet("Portal" + "-" + portalName, rs);
+                    DBInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement("Portal" + "-" + portalName, parsedStatement);
 
                     ResultSetMetaData rsmd = rs.getMetaData();
                     while (rs.next()) {
@@ -272,14 +276,13 @@ public class ExecuteRequest extends PostgresRequest {
                             PortalSuspended portalSuspended = new PortalSuspended();
                             portalSuspended.process(ctx, request, out);
                             PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out);
-
                             // 返回等待下一次ExecuteRequest
                             out.close();
                             return;
                         }
                     }
                     rs.close();
-                    DBInstance.getSession(getCurrentSessionId(ctx)).clearResultSet("Portal" + "-" + portalName);
+                    DBInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
                 }
             }
 
