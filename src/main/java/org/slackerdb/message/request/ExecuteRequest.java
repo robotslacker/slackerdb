@@ -140,6 +140,7 @@ public class ExecuteRequest extends PostgresRequest {
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
+        long  nRowsAffected;
 
         // 取出上次解析的SQL，如果为空语句，则直接返回
         String executeSQL = DBInstance.getSession(getCurrentSessionId(ctx)).executeSQL;
@@ -184,11 +185,13 @@ public class ExecuteRequest extends PostgresRequest {
                         portalSuspended.process(ctx, request, out);
                         PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out);
                         out.close();
+                        parsedStatement.nRowsAffected += rowsReturned;
                         return;
                     }
                 }
                 // 所有的记录查询完毕
                 rs.close();
+                nRowsAffected = parsedStatement.nRowsAffected + rowsReturned;
                 DBInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
             }
             else
@@ -278,11 +281,18 @@ public class ExecuteRequest extends PostgresRequest {
                             PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out);
                             // 返回等待下一次ExecuteRequest
                             out.close();
+                            parsedStatement.nRowsAffected += rowsReturned;
                             return;
                         }
                     }
                     rs.close();
+                    nRowsAffected = parsedStatement.nRowsAffected + rowsReturned;
                     DBInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
+                }
+                else
+                {
+                    // 记录更新的行数
+                    nRowsAffected = parsedStatement.preparedStatement.getUpdateCount();
                 }
             }
 
@@ -299,9 +309,13 @@ public class ExecuteRequest extends PostgresRequest {
             if (executeSQL.toUpperCase().startsWith("BEGIN")) {
                 commandComplete.setCommandResult("BEGIN");
             } else if (executeSQL.toUpperCase().startsWith("SELECT")) {
-                commandComplete.setCommandResult("SELECT 0");
+                commandComplete.setCommandResult("SELECT " + nRowsAffected);
             } else if (executeSQL.toUpperCase().startsWith("INSERT")) {
-                commandComplete.setCommandResult("INSERT 0 0");
+                commandComplete.setCommandResult("INSERT 0 " + nRowsAffected);
+            }
+            else
+            {
+                commandComplete.setCommandResult("UPDATE " + nRowsAffected);
             }
             commandComplete.process(ctx, request, out);
 

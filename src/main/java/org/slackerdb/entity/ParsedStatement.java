@@ -8,4 +8,5 @@ public class ParsedStatement {
     public PreparedStatement preparedStatement;
     public ResultSet resultSet;
     public int[] parameterDataTypeIds;
+    public long nRowsAffected = 0;
 }

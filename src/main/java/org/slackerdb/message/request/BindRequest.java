@@ -19,6 +19,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.Arrays;
 
 public class BindRequest extends PostgresRequest {
@@ -100,11 +101,18 @@ public class BindRequest extends PostgresRequest {
                         currentPos, currentPos + 4);
                 currentPos += 4;
                 int parameterByteLength = Utils.bytesToInt32(part);
-                part = Arrays.copyOfRange(
-                        data,
-                        currentPos, currentPos + parameterByteLength);
-                bindParameters[i] = part;
-                currentPos += parameterByteLength;
+                if (parameterByteLength == -1)
+                {
+                    // As a special case, -1 indicates a NULL parameter value
+                    bindParameters[i] = null;
+                }
+                else {
+                    part = Arrays.copyOfRange(
+                            data,
+                            currentPos, currentPos + parameterByteLength);
+                    bindParameters[i] = part;
+                    currentPos += parameterByteLength;
+                }
             }
             if (numberOfFormatCodes == 0)
             {
@@ -154,6 +162,11 @@ public class BindRequest extends PostgresRequest {
                     int[] parameterDataTypeIds = parsedPreparedStatement.parameterDataTypeIds;
                     for (int i = 0; i < bindParameters.length; i++) {
                         String columnTypeName = PostgresTypeOids.getTypeNameFromTypeOid(parameterDataTypeIds[i]);
+                        if (bindParameters[i] == null)
+                        {
+                            preparedStatement.setNull(i+1, Types.NULL);
+                            continue;
+                        }
                         if (formatCodes[i] == 0) {
                             // Text mode
                             preparedStatement.setString(i + 1, new String(bindParameters[i], StandardCharsets.UTF_8));

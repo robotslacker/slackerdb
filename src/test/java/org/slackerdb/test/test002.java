@@ -34,7 +34,14 @@ import java.util.regex.Pattern;
 public class test002 {
 
     public static void main(String[] args) throws SQLException, ClassNotFoundException, IOException {
-        System.out.println(String.format("%-60s", "  Data:") + "abcd");
+        byte[][] xxx;
+        xxx = new byte[10][];
+
+        xxx[1] = null;
+        if (xxx[1] == null)
+        {
+            System.out.println("OOKK");
+        }
         if (true)
         {
             System.exit(0);

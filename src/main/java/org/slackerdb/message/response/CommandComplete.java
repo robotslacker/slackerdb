@@ -25,7 +25,7 @@ public class CommandComplete extends PostgresMessage {
     //      For a FETCH command, the tag is FETCH rows where rows is the number of rows that have been retrieved from the cursor.
     //      For a COPY command, the tag is COPY rows where rows is the number of rows copied. (Note: the row count appears only in PostgreSQL 8.2 and later.)
 
-    private String commandResult = "UPDATE 0";
+    private String commandResult = "";
     public void setCommandResult(String commandResult)
     {
         this.commandResult = commandResult;
