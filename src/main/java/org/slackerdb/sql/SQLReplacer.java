@@ -54,7 +54,13 @@ public class SQLReplacer {
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "(.*)::regclass(.*)", "$1$2", true,false
+                        "set\\s+search_path\\s*=\\s*([^'\"].*[^'\"])",
+                        "set search_path = '$1'",true,false
+                )
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "::regclass", "", false,true
                 )
         );
         SQLReplaceItems.add(
@@ -66,11 +72,6 @@ public class SQLReplacer {
                 new QueryReplacerItem(
                         "SHOW datestyle", "SELECT 'ISO, MDY' as DateStyle",
                         false,true
-                )
-        );
-        SQLReplaceItems.add(
-                new QueryReplacerItem(
-                        "set search_path = (.*),", "set search_path = $1", true,false
                 )
         );
         SQLReplaceItems.add(
@@ -103,6 +104,7 @@ public class SQLReplacer {
         if (SQLReplaceItems.isEmpty()) {
             return sql;
         }
+        sql = sql.trim();
         for (QueryReplacerItem item : SQLReplaceItems) {
             if (item.isSampleReplace())
             {

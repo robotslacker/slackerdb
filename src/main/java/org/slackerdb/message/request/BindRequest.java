@@ -160,62 +160,63 @@ public class BindRequest extends PostgresRequest {
                 if (preparedStatement.getParameterMetaData().getParameterCount() != 0) {
                     // 获取参数的类型
                     int[] parameterDataTypeIds = parsedPreparedStatement.parameterDataTypeIds;
-                    for (int i = 0; i < bindParameters.length; i++) {
-                        String columnTypeName = PostgresTypeOids.getTypeNameFromTypeOid(parameterDataTypeIds[i]);
-                        if (bindParameters[i] == null)
-                        {
-                            preparedStatement.setNull(i+1, Types.NULL);
-                            continue;
-                        }
-                        if (formatCodes[i] == 0) {
-                            // Text mode
-                            preparedStatement.setString(i + 1, new String(bindParameters[i], StandardCharsets.UTF_8));
-                        } else {
-                            // Binary mode
-                            switch (columnTypeName) {
-                                case "VARCHAR":
-                                case "UNKNOWN":
-                                    preparedStatement.setString(i + 1, new String(bindParameters[i], StandardCharsets.UTF_8));
-                                    break;
-                                case "INTEGER":
-                                    preparedStatement.setInt(i + 1, Utils.bytesToInt32(bindParameters[i]));
-                                    break;
-                                case "BIGINT":
-                                    preparedStatement.setLong(i + 1, Utils.bytesToInt64(bindParameters[i]));
-                                    break;
-                                case "BOOLEAN":
-                                    preparedStatement.setBoolean(i + 1, bindParameters[i][0] == (byte) 0);
-                                    break;
-                                case "DECIMAL":
-                                    ByteBuffer buffer = ByteBuffer.wrap(bindParameters[i]);
-                                    short nDigits = buffer.getShort();
-                                    short weight = buffer.getShort();
-                                    short sign = buffer.getShort();
-                                    short dScale = buffer.getShort();
-                                    int[] digits = new int[nDigits];
-                                    for (int j = 0; j < nDigits; j++) {
-                                        digits[j] = buffer.getShort();
-                                    }
-                                    BigDecimal result = BigDecimal.ZERO;
-                                    BigDecimal base = BigDecimal.valueOf(10000); // 每个短整数表示4位十进制数字
-                                    for (int j = 0; j < nDigits; j++) {
-                                        BigDecimal digitValue = BigDecimal.valueOf(digits[j]);
-                                        result = result.add(digitValue.multiply(base.pow(weight - j)));
-                                    }
-                                    if (sign == 1) {
-                                        result = result.negate();
-                                    }
-                                    preparedStatement.setBigDecimal(i + 1, result.setScale(dScale, RoundingMode.UNNECESSARY));
-                                    break;
-                                case "FLOAT":
-                                    preparedStatement.setFloat(i + 1, ByteBuffer.wrap(bindParameters[i]).getFloat());
-                                    break;
-                                case "DOUBLE":
-                                    preparedStatement.setDouble(i + 1, ByteBuffer.wrap(bindParameters[i]).getDouble());
-                                    break;
-                                default:
-                                    AppLogger.logger.error("Not supported type in BindRequest: {}", columnTypeName);
-                                    break;
+                    if (bindParameters != null) {
+                        for (int i = 0; i < bindParameters.length; i++) {
+                            String columnTypeName = PostgresTypeOids.getTypeNameFromTypeOid(parameterDataTypeIds[i]);
+                            if (bindParameters[i] == null) {
+                                preparedStatement.setNull(i + 1, Types.NULL);
+                                continue;
+                            }
+                            if (formatCodes[i] == 0) {
+                                // Text mode
+                                preparedStatement.setString(i + 1, new String(bindParameters[i], StandardCharsets.UTF_8));
+                            } else {
+                                // Binary mode
+                                switch (columnTypeName) {
+                                    case "VARCHAR":
+                                    case "UNKNOWN":
+                                        preparedStatement.setString(i + 1, new String(bindParameters[i], StandardCharsets.UTF_8));
+                                        break;
+                                    case "INTEGER":
+                                        preparedStatement.setInt(i + 1, Utils.bytesToInt32(bindParameters[i]));
+                                        break;
+                                    case "BIGINT":
+                                        preparedStatement.setLong(i + 1, Utils.bytesToInt64(bindParameters[i]));
+                                        break;
+                                    case "BOOLEAN":
+                                        preparedStatement.setBoolean(i + 1, bindParameters[i][0] == (byte) 0);
+                                        break;
+                                    case "DECIMAL":
+                                        ByteBuffer buffer = ByteBuffer.wrap(bindParameters[i]);
+                                        short nDigits = buffer.getShort();
+                                        short weight = buffer.getShort();
+                                        short sign = buffer.getShort();
+                                        short dScale = buffer.getShort();
+                                        int[] digits = new int[nDigits];
+                                        for (int j = 0; j < nDigits; j++) {
+                                            digits[j] = buffer.getShort();
+                                        }
+                                        BigDecimal result = BigDecimal.ZERO;
+                                        BigDecimal base = BigDecimal.valueOf(10000); // 每个短整数表示4位十进制数字
+                                        for (int j = 0; j < nDigits; j++) {
+                                            BigDecimal digitValue = BigDecimal.valueOf(digits[j]);
+                                            result = result.add(digitValue.multiply(base.pow(weight - j)));
+                                        }
+                                        if (sign == 1) {
+                                            result = result.negate();
+                                        }
+                                        preparedStatement.setBigDecimal(i + 1, result.setScale(dScale, RoundingMode.UNNECESSARY));
+                                        break;
+                                    case "FLOAT":
+                                        preparedStatement.setFloat(i + 1, ByteBuffer.wrap(bindParameters[i]).getFloat());
+                                        break;
+                                    case "DOUBLE":
+                                        preparedStatement.setDouble(i + 1, ByteBuffer.wrap(bindParameters[i]).getDouble());
+                                        break;
+                                    default:
+                                        AppLogger.logger.error("Not supported type in BindRequest: {}", columnTypeName);
+                                        break;
+                                }
                             }
                         }
                     }

@@ -297,11 +297,13 @@ public class ExecuteRequest extends PostgresRequest {
             }
 
             // 设置语句的事务级别
-            if (executeSQL.startsWith("BEGIN")) {
+            if (executeSQL.toUpperCase().startsWith("BEGIN")) {
                 DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = true;
-            } else if (executeSQL.startsWith("COMMIT")) {
+            } else if (executeSQL.toUpperCase().startsWith("END")) {
                 DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
-            } else if (executeSQL.startsWith("ROLLBACK")) {
+            } else if (executeSQL.toUpperCase().startsWith("COMMIT")) {
+                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
+            } else if (executeSQL.toUpperCase().startsWith("ROLLBACK")) {
                 DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             }
 

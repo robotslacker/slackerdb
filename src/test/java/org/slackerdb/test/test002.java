@@ -9,6 +9,7 @@ import org.duckdb.DuckDBResultSet;
 import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
 import org.slackerdb.server.DBInstance;
+import org.slackerdb.sql.SQLReplacer;
 import org.slackerdb.utils.Sleeper;
 import org.slackerdb.utils.Utils;
 
@@ -32,16 +33,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class test002 {
-
     public static void main(String[] args) throws SQLException, ClassNotFoundException, IOException {
-        byte[][] xxx;
-        xxx = new byte[10][];
-
-        xxx[1] = null;
-        if (xxx[1] == null)
-        {
-            System.out.println("OOKK");
-        }
+        System.out.println(SQLReplacer.replaceSQL("set search_path=public,duck_catalog\r\n".trim()));
         if (true)
         {
             System.exit(0);
