@@ -472,6 +472,13 @@ public class Sanity01Test {
             expectedResult = expectedResult + i;
         }
         pStmt.executeBatch();
+        for (int i=1; i<=100; i++) {
+            pStmt.setInt(1, i+100);
+            pStmt.addBatch();
+            expectedResult = expectedResult + i+100;
+        }
+        pStmt.executeBatch();
+        pgConn1.commit();
 
         int actualResult = 0;
         ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from testBatchInsert");
@@ -480,6 +487,7 @@ public class Sanity01Test {
         }
         rs.close();
         pStmt.close();
+        pgConn1.commit();
         pgConn1.close();
 
         assert expectedResult == actualResult;

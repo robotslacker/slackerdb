@@ -21,7 +21,6 @@ public class ServerConfiguration extends Throwable {
     private static Level    log_level = Level.INFO;
     private static int      port = 4309;
     private static String   bind = "0.0.0.0";
-    private static String   currentSchema;
     private static String   memory_limit = null;
     private static int      threads = (int)(Runtime.getRuntime().availableProcessors() * 0.5);
     private static String   access_mode = "READ_WRITE";
@@ -87,8 +86,6 @@ public class ServerConfiguration extends Throwable {
         clientTimeout = readOption("client_timeout", clientTimeout);
         // 客户端读写模式
         access_mode = readOption("access_mode", access_mode);
-        // 默认用户Schema
-        currentSchema = readOption("current_schema", "");
         // 数据库临时文件目录，默认和data_dir相同
         temp_dir = readOption("temp_dir", temp_dir);
         // 扩展文件目录， 默认不配置
@@ -118,6 +115,10 @@ public class ServerConfiguration extends Throwable {
     public static String getLog()
     {
         return log;
+    }
+    public static void setLog(String pLog)
+    {
+        log = pLog.trim();
     }
     public static Level getLog_level()
     {
@@ -156,10 +157,6 @@ public class ServerConfiguration extends Throwable {
     public static String getData_Dir()
     {
         return data_dir;
-    }
-    public static String getCurrentSchema()
-    {
-        return currentSchema;
     }
     public static String getMemory_limit()
     {

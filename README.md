@@ -24,7 +24,10 @@ What we do in this project:
   Only some duckdb data types are supported, mainly simple types, such as int, number, double, varchar, ... 
   For complex types, some are still under development, and some are not supported by the PG protocol, such as blob, list, map...
   You can refer to sanity01.java to see what we currently support.
-
+### DBeaver issue
+  In some DBeaver versions, When running queries, the Discover Owner Entity task takes 30+ seconds to complete.  
+  As a workaround you can disable Read table metadata and Read Table references options in Preferences:  
+     Preferences -> Editors -> Data Editor -> Disable "Read table metadata" and "Read table references".
 ## How to use
 ### Build from source:
 ```
@@ -32,7 +35,6 @@ What we do in this project:
     git clone ...
     cd slackerdb
     mvn clean compile package
-    java -jar target\slackerdb-0.0.3.jar --conf <your configuration file> start  
 ```
 
 ### create a configuration file

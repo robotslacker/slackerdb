@@ -34,8 +34,8 @@ public class ExecuteRequest extends PostgresRequest {
     //    String
     //      The name of the portal to execute (an empty string selects the unnamed portal).
     //    Int32
-    //      Maximum number of rows to return, if portal contains a query that returns rows (ignored otherwise). Zero denotes “no limit”.
-
+    //      Maximum number of rows to return, if portal contains a query that returns rows (ignored otherwise).
+    //      Zero denotes “no limit”.
     private String portalName;
     private int    maximumRowsReturned;
 
@@ -142,22 +142,22 @@ public class ExecuteRequest extends PostgresRequest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         long  nRowsAffected;
 
-        // 取出上次解析的SQL，如果为空语句，则直接返回
-        String executeSQL = DBInstance.getSession(getCurrentSessionId(ctx)).executeSQL;
-        if (executeSQL.isEmpty()) {
-            CommandComplete commandComplete = new CommandComplete();
-            commandComplete.process(ctx, request, out);
-
-            // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
-            out.close();
-            return;
-        }
         try {
             ParsedStatement parsedStatement = DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("Portal" + "-" + portalName);
             if (parsedStatement == null || parsedStatement.preparedStatement == null)
             {
                 // 之前语句解析或者绑定出了错误, 没有继续执行的必要
+                return;
+            }
+            // 取出上次解析的SQL，如果为空语句，则直接返回
+            String executeSQL = DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("Portal" + "-" + portalName).sql;
+            if (executeSQL.isEmpty()) {
+                CommandComplete commandComplete = new CommandComplete();
+                commandComplete.process(ctx, request, out);
+
+                // 发送并刷新返回消息
+                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
+                out.close();
                 return;
             }
 

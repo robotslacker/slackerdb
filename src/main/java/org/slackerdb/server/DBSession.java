@@ -22,8 +22,6 @@ public class DBSession {
     public Map<String, String> startupOptions;
     // 当前是否处于事务当中
     public boolean inTransaction = false;
-    // 当前正在执行的SQL
-    public String executeSQL;
     // 当前会话状态  connected, dbConnected
     public String status = "N/A";
     // 客户端的IP地址

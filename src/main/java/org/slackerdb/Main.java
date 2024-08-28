@@ -89,9 +89,29 @@ public class Main {
             {
                 ServerConfiguration.setLog_level(Level.valueOf(appOptions.get("log_level")));
             }
+            if (appOptions.containsKey("log"))
+            {
+                ServerConfiguration.setLog(appOptions.get("log"));
+            }
             if (appOptions.containsKey("port"))
             {
                 ServerConfiguration.setPort(Integer.parseInt(appOptions.get("port")));
+            }
+            if (appOptions.containsKey("data"))
+            {
+                ServerConfiguration.setData(appOptions.get("data"));
+            }
+            if (appOptions.containsKey("data_dir"))
+            {
+                ServerConfiguration.setData_dir(appOptions.get("data_dir"));
+            }
+            if (appOptions.containsKey("temp_dir"))
+            {
+                ServerConfiguration.setTemp_dir(appOptions.get("temp_dir"));
+            }
+            if (appOptions.containsKey("extension_dir"))
+            {
+                ServerConfiguration.setExtension_dir(appOptions.get("extension_dir"));
             }
             if (appCommand == null)
             {

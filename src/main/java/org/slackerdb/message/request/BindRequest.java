@@ -139,27 +139,28 @@ public class BindRequest extends PostgresRequest {
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
-        // 取出上次解析的SQL，如果为空语句，则直接返回
-        String executeSQL = DBInstance.getSession(getCurrentSessionId(ctx)).executeSQL;
-        if (executeSQL.isEmpty()) {
-            BindComplete bindComplete = new BindComplete();
-            bindComplete.process(ctx, request, out);
-
-            // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, BindComplete.class.getSimpleName(), out);
-            out.close();
-            return;
-        }
-
         try {
-            ParsedStatement parsedPreparedStatement =
+            ParsedStatement parsedStatement =
                     DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("PreparedStatement" + "-" + preparedStmtName);
-            if (parsedPreparedStatement != null)
+            if (parsedStatement != null)
             {
-                PreparedStatement preparedStatement = parsedPreparedStatement.preparedStatement;
+
+                // 取出上次解析的SQL，如果为空语句，则直接返回
+                String executeSQL = parsedStatement.sql;
+                if (executeSQL.isEmpty()) {
+                    BindComplete bindComplete = new BindComplete();
+                    bindComplete.process(ctx, request, out);
+
+                    // 发送并刷新返回消息
+                    PostgresMessage.writeAndFlush(ctx, BindComplete.class.getSimpleName(), out);
+                    out.close();
+                    return;
+                }
+
+                PreparedStatement preparedStatement = parsedStatement.preparedStatement;
                 if (preparedStatement.getParameterMetaData().getParameterCount() != 0) {
                     // 获取参数的类型
-                    int[] parameterDataTypeIds = parsedPreparedStatement.parameterDataTypeIds;
+                    int[] parameterDataTypeIds = parsedStatement.parameterDataTypeIds;
                     if (bindParameters != null) {
                         for (int i = 0; i < bindParameters.length; i++) {
                             String columnTypeName = PostgresTypeOids.getTypeNameFromTypeOid(parameterDataTypeIds[i]);

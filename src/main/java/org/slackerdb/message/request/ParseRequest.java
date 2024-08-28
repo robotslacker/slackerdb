@@ -81,9 +81,6 @@ public class ParseRequest extends PostgresRequest {
         // 由于PG驱动程序内置的一些语句在目标数据库上无法执行，所以这里要进行转换
         String executeSQL = SQLReplacer.replaceSQL(parseRequest.sql);
 
-        // 记录上次执行的SQL
-        DBInstance.getSession(getCurrentSessionId(ctx)).executeSQL = executeSQL;
-
         // 对于空语句，直接返回结果
         if (executeSQL.isEmpty()) {
             ParseComplete parseComplete = new ParseComplete();

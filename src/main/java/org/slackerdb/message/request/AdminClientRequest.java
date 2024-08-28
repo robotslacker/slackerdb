@@ -83,7 +83,6 @@ public class AdminClientRequest  extends PostgresRequest {
                 feedBackMsg.append("    ").append(" Connected: ").append(dbSession.connectedTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
                 feedBackMsg.append("    ").append(" Client IP: ").append(dbSession.clientAddress).append("\n");
                 feedBackMsg.append("    ").append("    Status: ").append(dbSession.status).append("\n");
-                feedBackMsg.append("    ").append("ExecuteSQL: ").append(dbSession.executeSQL).append("\n");
                 feedBackMsg.append("\n");
             }
         }
