@@ -310,10 +310,16 @@ public class ExecuteRequest extends PostgresRequest {
             CommandComplete commandComplete = new CommandComplete();
             if (executeSQL.toUpperCase().startsWith("BEGIN")) {
                 commandComplete.setCommandResult("BEGIN");
+            } else if (executeSQL.toUpperCase().startsWith("END")) {
+                commandComplete.setCommandResult("COMMIT");
             } else if (executeSQL.toUpperCase().startsWith("SELECT")) {
                 commandComplete.setCommandResult("SELECT " + nRowsAffected);
             } else if (executeSQL.toUpperCase().startsWith("INSERT")) {
                 commandComplete.setCommandResult("INSERT 0 " + nRowsAffected);
+            } else if (executeSQL.toUpperCase().startsWith("COMMIT")) {
+                commandComplete.setCommandResult("COMMIT");
+            } else if (executeSQL.toUpperCase().startsWith("ROLLBACK")) {
+                commandComplete.setCommandResult("ROLLBACK");
             }
             else
             {

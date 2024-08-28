@@ -162,7 +162,7 @@ public class QueryRequest  extends PostgresRequest {
                 }
                 DuckDBConnection conn = (DuckDBConnection) DBInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
                 DBInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = conn.createAppender(targetSchemaName, targetTableName);
-
+                DBInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows = 0;
                 // 获取表名的实际表名，DUCK并不支持部分字段的Appender操作。所以要追加列表中不存在的相关信息
                 List<Integer> copyTableDbColumnMapPos = new ArrayList<>();
                 String executeSql;
@@ -218,6 +218,7 @@ public class QueryRequest  extends PostgresRequest {
             }
 
             // 理解为简单查询
+            long nAffectedRows = 0;
             PreparedStatement preparedStatement =
                     DBInstance.getSession(getCurrentSessionId(ctx)).dbConnection.prepareStatement(sql);
             boolean isResultSet = preparedStatement.execute();
@@ -278,28 +279,43 @@ public class QueryRequest  extends PostgresRequest {
                     dataRow.process(ctx, request, out);
                     dataRow.setColumns(null);
 
+                    nAffectedRows ++;
                     // 发送并刷新返回消息
                     PostgresMessage.writeAndFlush(ctx, DataRow.class.getSimpleName(), out);
                 }
                 rs.close();
             }
+            else
+            {
+                nAffectedRows = preparedStatement.getUpdateCount();
+            }
 
             // 设置语句的事务级别
-            if (sql.startsWith("BEGIN")) {
+            if (sql.toUpperCase().startsWith("BEGIN")) {
                 DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = true;
-            } else if (sql.startsWith("COMMIT")) {
+            } else if (sql.toUpperCase().startsWith("COMMIT")) {
                 DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
-            } else if (sql.startsWith("ROLLBACK")) {
+            } else if (sql.toUpperCase().startsWith("ROLLBACK")) {
                 DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             }
 
             CommandComplete commandComplete = new CommandComplete();
             if (sql.toUpperCase().startsWith("BEGIN")) {
                 commandComplete.setCommandResult("BEGIN");
+            } else if (sql.toUpperCase().startsWith("END")) {
+                commandComplete.setCommandResult("COMMIT");
             } else if (sql.toUpperCase().startsWith("SELECT")) {
-                commandComplete.setCommandResult("SELECT 0");
+                commandComplete.setCommandResult("SELECT " + nAffectedRows);
             } else if (sql.toUpperCase().startsWith("INSERT")) {
-                commandComplete.setCommandResult("INSERT 0 0");
+                commandComplete.setCommandResult("INSERT 0 " + nAffectedRows);
+            } else if (sql.toUpperCase().startsWith("COMMIT")) {
+                commandComplete.setCommandResult("COMMIT");
+            } else if (sql.toUpperCase().startsWith("ROLLBACK")) {
+                commandComplete.setCommandResult("ROLLBACK");
+            }
+            else
+            {
+                commandComplete.setCommandResult("UPDATE " + nAffectedRows);
             }
             commandComplete.process(ctx, request, out);
 

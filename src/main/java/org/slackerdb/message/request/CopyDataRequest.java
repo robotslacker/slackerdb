@@ -39,7 +39,7 @@ public class CopyDataRequest extends PostgresRequest {
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-
+        long nCopiedRows = 0;
         try {
             if (DBInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat.equalsIgnoreCase("CSV")) {
                 List<CSVRecord> records = new ArrayList<>();
@@ -77,6 +77,7 @@ public class CopyDataRequest extends PostgresRequest {
                         }
                     }
                     duckDBAppender.endRow();
+                    nCopiedRows ++;
                 }
             } else {
                 // 不认识的查询语句， 生成一个错误消息
@@ -88,6 +89,7 @@ public class CopyDataRequest extends PostgresRequest {
                 // 发送并刷新返回消息
                 PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
             }
+            DBInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows += nCopiedRows;
         } catch (SQLException se) {
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse();

@@ -12,15 +12,18 @@ What we do in this project:
 
 ## Known Issues
 ### Time Zone Issues with TimeStamp
-PG clients will always use the current system time zone as a parameter in setTimeStamp, and duckdb's TimeStamp has no concept of time zone.  
-This will cause the data inserted using api setTimeStamp() is different with your inserted.  
-Workaround:   
-The client always uses the UTC time zone
+  PG clients will always use the current system time zone as a parameter in setTimeStamp, and duckdb's TimeStamp has no concept of time zone.  
+  This will cause the data inserted using api setTimeStamp() is different with your inserted.  
+  Workaround:   
+  The client always uses the UTC time zone
 ### User and password authorization
-We do not support user password authentication, just for compatibility, keep these two options.  
-you can fill in the password part as you like, it doesn't make sense.  
-The user part will be used by the default schema of the user connection.
-
+  We do not support user password authentication, just for compatibility, keep these two options.  
+  you can fill in the password part as you like, it doesn't make sense.  
+  The user part will be used by the default schema of the user connection.
+### Limited support for duckdb datatype
+  Only some duckdb data types are supported, mainly simple types, such as int, number, double, varchar, ... 
+  For complex types, some are still under development, and some are not supported by the PG protocol, such as blob, list, map...
+  You can refer to sanity01.java to see what we currently support.
 
 ## How to use
 ### Build from source:
@@ -112,3 +115,7 @@ java -jar slacker_xxx.jar --conf <your configuration file> status
 Currently, DBeaver is supported to connect to the database by configuring the JDBC driver.  
 When configuring the driver, just select the Postgres driver.  
 Navicat tool is not supported yet, and other tools have not been tested.  
+
+
+## Next plan
+...

@@ -31,7 +31,7 @@ public class CopyDoneRequest extends PostgresRequest {
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-
+        long nCopiedRows = 0;
         try {
             DuckDBAppender duckDBAppender = DBInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
 
@@ -52,14 +52,17 @@ public class CopyDoneRequest extends PostgresRequest {
                         }
                     }
                     duckDBAppender.endRow();
+                    nCopiedRows++;
                 }
             }
             duckDBAppender.close();
             DBInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = null;
+            nCopiedRows = DBInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows + nCopiedRows;
+            DBInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows = 0;
 
             // 发送CommandComplete
             CommandComplete commandComplete = new CommandComplete();
-            commandComplete.setCommandResult("COPY 0");
+            commandComplete.setCommandResult("COPY " + nCopiedRows);
             commandComplete.process(ctx, request, out);
             PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
 

@@ -47,6 +47,7 @@ public class DBSession {
     public List<Integer> copyTableDbColumnMapPos;
     // 上次由于不完整而没有复制的Copy剩余命令
     public String copyLastRemained = "";
+    public long copyAffectedRows = 0;
 
     public ParsedStatement getParsedStatement(String portalName) {
         return parsedStatements.get(portalName);
