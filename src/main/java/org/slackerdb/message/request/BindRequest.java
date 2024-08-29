@@ -144,7 +144,6 @@ public class BindRequest extends PostgresRequest {
                     DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("PreparedStatement" + "-" + preparedStmtName);
             if (parsedStatement != null)
             {
-
                 // 取出上次解析的SQL，如果为空语句，则直接返回
                 String executeSQL = parsedStatement.sql;
                 if (executeSQL.isEmpty()) {

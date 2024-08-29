@@ -37,19 +37,24 @@ public class SQLReplacer {
                         "pg_catalog.pg_database", "duck_catalog.pg_database",
                         true, true)
         );
+
+        // 以下的这几个set， Duck都不支持，但是第三方IDE工具总是查询，所以指向空语句
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "SET\\s+extra_float_digits.*","",true,false
+                        "set\\s+application_name.*",
+                        "set user = dummy",true,false
                 )
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "SET\\s+application_name.*","",true,false
+                        "set\\s+extra_float_digits.*",
+                        "set user = dummy",true,false
                 )
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "SET\\s+client_encoding.*","",true,false
+                        "set\\s+client_encoding.*",
+                        "set user = dummy",true,false
                 )
         );
         SQLReplaceItems.add(

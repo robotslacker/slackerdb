@@ -53,6 +53,9 @@ public class PostgresTypeOids {
 
         postgresTypeAndOid.put("ARRAY", 2277);
 
+        // VARCHAR[] 目前按照字符串返回，原1015，目前返回1043
+        postgresTypeAndOid.put("VARCHAR[]", 1043);
+
         postgresTypeAndOid.put("UNKNOWN", 0);
     }
 
@@ -87,6 +90,8 @@ public class PostgresTypeOids {
         postgresOidAndType.put(1184, "TIMESTAMP WITH TIME ZONE");
 
         postgresOidAndType.put(2950, "UUID");
+
+        postgresOidAndType.put(1015, "VARCHAR[]");
 
         postgresOidAndType.put(1043, "VARCHAR");
 

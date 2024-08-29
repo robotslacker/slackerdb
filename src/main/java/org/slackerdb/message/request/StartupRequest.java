@@ -84,7 +84,6 @@ public class StartupRequest  extends PostgresRequest {
                 String querySchemaList =
                         "select schema_name from information_schema.schemata " +
                                 "where schema_name = '" + connectedUser + "' LIMIT 1";
-                System.out.println(querySchemaList);
 
                 Statement querySchemaStmt = DBInstance.backendSysConnection.createStatement();
                 ResultSet rs = querySchemaStmt.executeQuery(querySchemaList);

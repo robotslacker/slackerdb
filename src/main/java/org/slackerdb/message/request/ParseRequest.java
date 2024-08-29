@@ -89,6 +89,13 @@ public class ParseRequest extends PostgresRequest {
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out);
             out.close();
+
+            // 即使是空语句，也要更新缓存中记录的语句信息
+            // 一些第三方工具用发送空语句解析来检测数据库状态
+            ParsedStatement parsedPrepareStatement = new ParsedStatement();
+            parsedPrepareStatement.sql = "";
+            DBInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+                    "PreparedStatement" + "-" + preparedStmtName, parsedPrepareStatement);
             return;
         }
 
