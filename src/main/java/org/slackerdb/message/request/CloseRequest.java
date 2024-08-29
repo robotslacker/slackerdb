@@ -3,9 +3,14 @@ package org.slackerdb.message.request;
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.entity.ParsedStatement;
 import org.slackerdb.logger.AppLogger;
+import org.slackerdb.message.PostgresMessage;
 import org.slackerdb.message.PostgresRequest;
+import org.slackerdb.message.response.CloseComplete;
+import org.slackerdb.message.response.ReadyForQuery;
 import org.slackerdb.server.DBInstance;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 
@@ -35,7 +40,9 @@ public class CloseRequest extends PostgresRequest {
     }
 
     @Override
-    public void process(ChannelHandlerContext ctx, Object request) {
+    public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+
         String closePortal;
         if (closeType == 'S') {
             closePortal = "PreparedStatement" + "-" + portalName;
@@ -52,9 +59,17 @@ public class CloseRequest extends PostgresRequest {
                 parsedPreparedStatement.preparedStatement.close();
             }
             DBInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement(closePortal);
+
+            // 标记Close完成
+            CloseComplete closeComplete = new CloseComplete();
+            closeComplete.process(ctx, request, out);
+            PostgresMessage.writeAndFlush(ctx, CloseComplete.class.getSimpleName(), out);
         }
-        catch(SQLException e) {
+        catch(Exception e) {
             AppLogger.logger.error("Failed to close prepared statement", e);
+        }
+        finally {
+            out.close();
         }
     }
 }

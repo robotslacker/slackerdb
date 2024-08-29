@@ -37,7 +37,7 @@ What we do in this project:
     mvn clean compile package
 ```
 
-### create a configuration file
+### Create a configuration file
 ``` 
 # Database name
 data=slackerdb
@@ -111,6 +111,24 @@ java -jar slacker_xxx.jar --conf <your configuration file> stop
 ### check the status of database:
 ```
 java -jar slacker_xxx.jar --conf <your configuration file> status
+```
+### jdbc program
+``` 
+    // "db1" is your database name in your configuration file.
+    // 3175  is your database port in your configuration file.
+    // If you are connecting for the first time, there will be no other users except the default public
+    String  connectURL = "jdbc:postgresql://127.0.0.1:3175/db1";
+    Connection pgConn = DriverManager.getConnection(connectURL, "public", "");
+    pgConn.setAutoCommit(false);
+
+    ResultSet rs = pgConn.createStatement().executeQuery("SELECT 3+4");
+    while (rs.next()) {
+        assert rs.getInt(1) == 7;
+    }
+    pgConn.createStatement().execute("CREATE SCHEMA IF NOT EXISTS myuser");
+    pgConn.close();
+    
+    // .... Now, you can connect database again with your new created user "myuser".
 ```
 
 ## Use IDE tools to connect to the database

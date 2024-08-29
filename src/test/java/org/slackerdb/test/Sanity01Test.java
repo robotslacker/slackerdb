@@ -32,6 +32,7 @@ public class Sanity01Test {
                 // 修改默认的db启动端口
                 ServerConfiguration.LoadDefaultConfiguration();
                 ServerConfiguration.setPort(dbPort);
+                ServerConfiguration.setData("mem");
 
                 // 启动数据库
                 Main.setLogLevel("INFO");

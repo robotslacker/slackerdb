@@ -101,7 +101,12 @@ public class DBInstance {
             AppLogger.logger.info("[SERVER] Backend database [{}:{}] opened.",
                     ServerConfiguration.getData_Dir(), ServerConfiguration.getData());
             if (!ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
+                // 虚构一些PG的数据字典，以满足后续各种工具对数据字典的查找
                 SlackerCatalog.createFakeCatalog(backendSysConnection);
+                // 创建一个Public用户，以保证用户的首次连接
+                Statement stmt = backendSysConnection.createStatement();
+                stmt.execute("CREATE SCHEMA IF NOT EXISTS public");
+                stmt.close();
             }
         }
         catch (SQLException e) {

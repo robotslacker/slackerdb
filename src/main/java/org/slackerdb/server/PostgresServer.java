@@ -54,7 +54,7 @@ public class PostgresServer {
 
     public void stop(String clientInfo)
     {
-        AppLogger.logger.info("[SERVER] Received stop request from [" + clientInfo + "].");
+        AppLogger.logger.info("[SERVER] Received stop request from [{}].", clientInfo);
         AppLogger.logger.info("[SERVER] Server will stop now.");
         DBInstance.state = "SHUTTING DOWN";
         if (workerGroup != null) {

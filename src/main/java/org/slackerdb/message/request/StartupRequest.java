@@ -2,13 +2,11 @@ package org.slackerdb.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.duckdb.DuckDBConnection;
+import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresMessage;
 import org.slackerdb.message.PostgresRequest;
-import org.slackerdb.message.response.AuthenticationOk;
-import org.slackerdb.message.response.BackendKeyData;
-import org.slackerdb.message.response.ParameterStatus;
-import org.slackerdb.message.response.ReadyForQuery;
+import org.slackerdb.message.response.*;
 import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
@@ -56,6 +54,30 @@ public class StartupRequest  extends PostgresRequest {
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+        //  检查登录选项中的数据库名称和文件名称是否匹配，如果不匹配，直接拒绝
+        if (!ServerConfiguration.getData().equalsIgnoreCase(startupOptions.get("database")))
+        {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            // 生成一个错误消息
+            ErrorResponse errorResponse = new ErrorResponse();
+            errorResponse.setErrorResponse("SLACKER-0099",
+                    "Database [" + startupOptions.get("database") + "] does not exist! Connect refused. ");
+            errorResponse.process(ctx, request, out);
+
+            // 发送并刷新返回消息
+            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+
+            // 关闭连接
+            out.close();
+            ctx.close();
+            return;
+        }
+        if (!startupOptions.containsKey("user") || startupOptions.get("user").trim().isEmpty())
+        {
+            // 没有指定用户就默认为public
+            startupOptions.put("user", "public");
+        }
+
         // 记录登录时候客户端做的选项
         try {
             int sessionId = getCurrentSessionId(ctx);
@@ -63,22 +85,26 @@ public class StartupRequest  extends PostgresRequest {
                     ((DuckDBConnection)DBInstance.backendSysConnection).duplicate();
             if (!conn.isReadOnly())
             {
-                // 建立对应的schema，并且把查询路径指向新的schema
-                String defaultSearchPath;
-                if (startupOptions.containsKey("user") && !startupOptions.get("user").trim().isEmpty())
-                {
-                    defaultSearchPath = startupOptions.get("user").trim();
-                }
-                else
-                {
-                    defaultSearchPath = "public";
-                }
+                // 把查询路径指向新的schema
+                String defaultSearchPath = startupOptions.get("user").trim();
                 Statement stmt = conn.createStatement();
-                if (!defaultSearchPath.equalsIgnoreCase("public")) {
-                    stmt.execute("create schema if not exists " + defaultSearchPath);
+                try {
+                    stmt.execute("set search_path = '" + defaultSearchPath + ",duck_catalog'");
                 }
-                stmt.execute("set search_path = '" + defaultSearchPath + ",duck_catalog'");
-                stmt.close();
+                catch (SQLException se)
+                {
+                    if (!se.getMessage().contains("No catalog"))
+                    {
+                        throw se;
+                    }
+                    else
+                    {
+                        stmt.execute("set search_path = 'public,duck_catalog'");
+                    }
+                }
+                finally {
+                    stmt.close();
+                }
             }
             DBInstance.getSession(sessionId).dbConnection = conn;
             DBInstance.getSession(sessionId).dbConnectedTime = LocalDateTime.now();
