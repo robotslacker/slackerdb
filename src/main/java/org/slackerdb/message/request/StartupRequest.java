@@ -12,9 +12,7 @@ import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.sql.Connection;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -54,58 +52,74 @@ public class StartupRequest  extends PostgresRequest {
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
-        //  检查登录选项中的数据库名称和文件名称是否匹配，如果不匹配，直接拒绝
-        if (!ServerConfiguration.getData().equalsIgnoreCase(startupOptions.get("database")))
-        {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            // 生成一个错误消息
-            ErrorResponse errorResponse = new ErrorResponse();
-            errorResponse.setErrorResponse("SLACKER-0099",
-                    "Database [" + startupOptions.get("database") + "] does not exist! Connect refused. ");
-            errorResponse.process(ctx, request, out);
-
-            // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
-
-            // 关闭连接
-            out.close();
-            ctx.close();
-            return;
-        }
-        if (!startupOptions.containsKey("user") || startupOptions.get("user").trim().isEmpty())
-        {
-            // 没有指定用户就默认为public
-            startupOptions.put("user", "public");
-        }
-
-        // 记录登录时候客户端做的选项
         try {
-            int sessionId = getCurrentSessionId(ctx);
-            Connection conn =
-                    ((DuckDBConnection)DBInstance.backendSysConnection).duplicate();
-            if (!conn.isReadOnly())
+            //  检查登录选项中的数据库名称和文件名称是否匹配，如果不匹配，直接拒绝
+            if (!ServerConfiguration.getData().equalsIgnoreCase(startupOptions.get("database")))
             {
-                // 把查询路径指向新的schema
-                String defaultSearchPath = startupOptions.get("user").trim();
-                Statement stmt = conn.createStatement();
-                try {
-                    stmt.execute("set search_path = '" + defaultSearchPath + ",duck_catalog'");
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                // 生成一个错误消息
+                ErrorResponse errorResponse = new ErrorResponse();
+                errorResponse.setErrorResponse("SLACKER-0099",
+                        "Database [" + startupOptions.get("database") + "] does not exist! Connect refused. ");
+                errorResponse.process(ctx, request, out);
+
+                // 发送并刷新返回消息
+                PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+
+                // 关闭连接
+                out.close();
+                ctx.close();
+                return;
+            }
+            if (!startupOptions.containsKey("user") || startupOptions.get("user").trim().isEmpty())
+            {
+                // 没有指定用户就默认为public
+                startupOptions.put("user", "public");
+            }
+            String connectedUser =  startupOptions.get("user").trim();
+
+            // 检查登录的用户
+            if (!connectedUser.equalsIgnoreCase("public")) {
+                boolean existUser = false;
+                String querySchemaList =
+                        "select schema_name from information_schema.schemata " +
+                                "where schema_name = '" + connectedUser + "' LIMIT 1";
+                System.out.println(querySchemaList);
+
+                Statement querySchemaStmt = DBInstance.backendSysConnection.createStatement();
+                ResultSet rs = querySchemaStmt.executeQuery(querySchemaList);
+                if (rs.next()) {
+                    existUser = true;
                 }
-                catch (SQLException se)
-                {
-                    if (!se.getMessage().contains("No catalog"))
-                    {
-                        throw se;
-                    }
-                    else
-                    {
-                        stmt.execute("set search_path = 'public,duck_catalog'");
-                    }
-                }
-                finally {
-                    stmt.close();
+                rs.close();
+                querySchemaStmt.close();
+                if (!existUser) {
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+                    ErrorResponse errorResponse = new ErrorResponse();
+                    errorResponse.setErrorResponse("SLACKER-0099",
+                            "User [" + startupOptions.get("user") + "] does not exist! Connect refused. ");
+                    errorResponse.process(ctx, request, out);
+
+                    // 发送并刷新返回消息
+                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+
+                    // 关闭连接
+                    out.close();
+                    ctx.close();
+                    return;
                 }
             }
+
+            // 把查询路径指向新的schema
+            Connection conn =
+                    ((DuckDBConnection) DBInstance.backendSysConnection).duplicate();
+            Statement stmt = conn.createStatement();
+            stmt.execute("set search_path = '" + connectedUser + ",duck_catalog'");
+            stmt.close();
+
+            // 记录会话信息
+            int sessionId = getCurrentSessionId(ctx);
             DBInstance.getSession(sessionId).dbConnection = conn;
             DBInstance.getSession(sessionId).dbConnectedTime = LocalDateTime.now();
             DBInstance.getSession(sessionId).startupOptions = startupOptions;
