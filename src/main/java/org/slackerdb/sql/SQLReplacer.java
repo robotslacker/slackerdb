@@ -65,7 +65,16 @@ public class SQLReplacer {
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "SHOW search_path", "SELECT current_setting('search_path') as search_path", false,false
+                        "SHOW search_path",
+                        "SELECT current_setting('search_path') as search_path", false,
+                        true
+                )
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "show transaction isolation level",
+                        "select 'read committed' as transaction_isolation",
+                        false,true
                 )
         );
         SQLReplaceItems.add(
