@@ -34,11 +34,22 @@ import java.util.regex.Pattern;
 
 public class test002 {
     public static void main(String[] args) throws SQLException, ClassNotFoundException, IOException {
-        System.out.println(SQLReplacer.replaceSQL("set search_path=public,duck_catalog\r\n".trim()));
+        DuckDBConnection duckDBConnection =
+                (DuckDBConnection) DriverManager.getConnection("jdbc:duckdb:", "", "");
+        Statement statement = duckDBConnection.createStatement();
+        statement.executeQuery("select 3+4");
+        statement.cancel();
+        ResultSet resultSet = statement.getResultSet();
+        while (resultSet.next())
+        {
+            System.out.println(resultSet.getInt(1));
+        }
+
         if (true)
         {
             System.exit(0);
         }
+
         List<CSVRecord> records = new ArrayList<>();
 
         StringReader reader;

@@ -117,7 +117,8 @@ public class SQLReplacer {
         for (QueryReplacerItem item : SQLReplaceItems) {
             if (item.isSampleReplace())
             {
-                sql = sql.replaceAll(item.getToFind(), item.getToReplace());
+                String regex = "(?i)" + Pattern.quote(item.getToFind());
+                sql = sql.replaceAll(regex, item.getToReplace());
                 continue;
             }
             var find = item.getToFind().replaceAll("\r\n", "\n").trim();

@@ -83,7 +83,7 @@ public class TPCDSTest {
         }
         System.out.println("TEST:: Server started successful ...");
 
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/tpcdstest";
         Connection pgConn = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
@@ -100,7 +100,7 @@ public class TPCDSTest {
 
     void runSQL(String name, String sql)  {
         Thread.currentThread().setName("RUN-" + name + "-START..." );
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/tpcdstest";
 
         Timestamp start = new Timestamp(System.currentTimeMillis());
         int rowsReturned = 0;

@@ -30,7 +30,7 @@ public class DBSession {
     public String LastRequestCommand = null;
 
     // 保存的语句解析信息
-    private final Map<String, ParsedStatement> parsedStatements = new HashMap<>();
+    public Map<String, ParsedStatement> parsedStatements = new HashMap<>();
 
     // 标记客户端是否请求了描述信息（如果请求需要返回RowDescription, 反之不返回)
     public boolean hasDescribeRequest = false;

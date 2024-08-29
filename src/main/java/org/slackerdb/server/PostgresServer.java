@@ -296,6 +296,17 @@ public class PostgresServer {
                         // 清理会话
                         ctx.close();
                         break;
+                    case 'F':
+                        CancelRequest cancelRequest = new CancelRequest();
+                        cancelRequest.decode(data);
+
+                        // 处理消息
+                        pushMsgObject(out, cancelRequest);
+
+                        // 标记当前步骤
+                        lastRequestCommand = CancelRequest.class.getSimpleName();
+                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        break;
                     case '!':
                         AdminClientRequest adminClientRequest = new AdminClientRequest();
                         adminClientRequest.decode(data);

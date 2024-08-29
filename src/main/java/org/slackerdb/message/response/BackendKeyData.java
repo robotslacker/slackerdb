@@ -8,7 +8,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
 public class BackendKeyData extends PostgresMessage {
-    private static final int FIXED_SECRET = 5678;
+    public static final int FIXED_SECRET = 5678;
     // BackendKeyData (B) #
     //   Byte1('K')
     //     Identifies the message as cancellation key data.

@@ -1,5 +1,7 @@
 package org.slackerdb.test;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -9,6 +11,9 @@ import org.slackerdb.Main;
 import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Sleeper;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.StringReader;
@@ -579,6 +584,45 @@ public class Sanity01Test {
         rs.close();
         pStmt.close();
         pgConn1.close();
+    }
+
+    @Test
+    void testHikariCP() throws SQLException
+    {
+        // 忽略hakiri的日志，避免刷屏
+        Logger hakiriLogger = (Logger) LoggerFactory.getLogger("com.zaxxer");
+        hakiriLogger.setLevel(Level.OFF);
+
+        // 创建HikariConfig实例并配置数据库连接信息
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl("jdbc:postgresql://127.0.0.1:" + dbPort + "/mem");
+        config.setUsername("");
+        config.setPassword("");
+
+        // 创建HikariDataSource实例
+        HikariDataSource hikariDataSource = new HikariDataSource(config);
+
+        // 从连接池获取一个连接
+        Connection connection = hikariDataSource.getConnection();
+
+        // 使用获取到的连接进行操作...
+        Statement stmt = connection.createStatement();
+        ResultSet rs = stmt.executeQuery("Select 3+4");
+        boolean hasValidResult = false;
+        if (rs.next())
+        {
+            assert rs.getInt(1) == 7;
+            hasValidResult = true;
+        }
+        assert hasValidResult;
+        rs.close();
+        stmt.cancel();
+
+        // 关闭连接
+        connection.close();
+
+        // 关闭数据源（通常在应用程序关闭时进行）
+        hikariDataSource.close();
     }
 
     @Test
