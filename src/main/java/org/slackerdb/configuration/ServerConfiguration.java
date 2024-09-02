@@ -26,6 +26,7 @@ public class ServerConfiguration extends Throwable {
     private static String   access_mode = "READ_WRITE";
     private static int      max_workers = Runtime.getRuntime().availableProcessors();
     private static int      clientTimeout = 600;
+    private static String   init_schema = "";
 
     private static int readOption(String optionName, int defaultValue)
     {
@@ -90,6 +91,8 @@ public class ServerConfiguration extends Throwable {
         temp_dir = readOption("temp_dir", temp_dir);
         // 扩展文件目录， 默认不配置
         extension_dir = readOption("extension_dir", extension_dir);
+        // 初始化脚本的位置
+        init_schema = readOption("init_schema", init_schema);
     }
 
     // 读取参数配置文件
@@ -116,28 +119,11 @@ public class ServerConfiguration extends Throwable {
     {
         return log;
     }
-    public static void setLog(String pLog)
-    {
-        log = pLog.trim();
-    }
-    public static Level getLog_level()
-    {
-        return log_level;
-    }
-    public static void setLog_level(Level plog_level)
-    {
-        log_level = plog_level;
-    }
-
-    public static void setPort(int pPort)
-    {
-        port = pPort;
-    }
+    public static Level getLog_level() { return log_level;}
     public static int getPort()
     {
         return port;
     }
-
     public static String getBindHost()
     {
         return bind;
@@ -170,20 +156,26 @@ public class ServerConfiguration extends Throwable {
     {
         return max_workers;
     }
-
     public static String getTemp_dir()
     {
         return temp_dir;
     }
-
     public static String getExtension_dir()
     {
         return extension_dir;
     }
-    public static void setTemp_dir(String pTemp_dir)
+    public static String getInit_schema()
     {
-        temp_dir = pTemp_dir;
+        return init_schema;
     }
+
+    public static void setLog_level(Level plog_level) { log_level = plog_level;}
+    public static void setLog(String pLog) { log = pLog.trim();}
+    public static void setPort(int pPort)
+    {
+        port = pPort;
+    }
+    public static void setTemp_dir(String pTemp_dir) { temp_dir = pTemp_dir;}
     public static void setExtension_dir(String pExtension_dir)
     {
         extension_dir = pExtension_dir;
@@ -200,7 +192,6 @@ public class ServerConfiguration extends Throwable {
     {
         max_workers = pMax_workers;
     }
-
     public static void setThreads(int pThreads)
     {
         threads = pThreads;
@@ -208,5 +199,9 @@ public class ServerConfiguration extends Throwable {
     public static void setMemory_limit(String pMemory_limit)
     {
         memory_limit = pMemory_limit;
+    }
+    public static void setInit_schema(String pInit_schema)
+    {
+        init_schema = pInit_schema;
     }
 }

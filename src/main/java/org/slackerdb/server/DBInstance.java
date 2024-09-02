@@ -5,6 +5,9 @@ import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.logger.AppLogger;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -41,7 +44,39 @@ public class DBInstance {
         }
     }
 
+    private static void executeScript(String scriptFileName) throws IOException, SQLException {
+        AppLogger.logger.info("Init schema, Executing script {} ...", scriptFileName);
+
+        // 从文件中读取所有内容到字符串
+        String sqlFileContents = new String(Files.readAllBytes(Path.of(scriptFileName)));
+        // 去除多行注释
+        sqlFileContents = sqlFileContents.replaceAll("/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/", "");
+        // 去除单行注释
+        sqlFileContents = sqlFileContents.replaceAll("--.*", "");
+        // 去除多余的空白字符（包括多余的换行符和空格）
+        sqlFileContents = sqlFileContents.replaceAll("\\s+", " ").trim();
+
+        // 按分号分隔语句
+        String[] statements = sqlFileContents.split(";");
+        Statement stmt = backendSysConnection.createStatement();
+        for (String sql: statements)
+        {
+            try {
+                AppLogger.logger.trace("Init schema, executing sql: {} ...", sql);
+                stmt.execute(sql);
+            }
+            catch (SQLException e) {
+                AppLogger.logger.error("Init schema, SQL Error: {}", sql);
+                throw e;
+            }
+        }
+        stmt.close();
+    }
+
     public static void init() throws ServerException {
+        // 文件是否为第一次打开
+        boolean databaseFirstOpened = false;
+
         // 建立基础数据库连接
         String backendConnectString = "jdbc:duckdb:";
 
@@ -64,6 +99,7 @@ public class DBInstance {
         if (ServerConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:"))
         {
             backendConnectString = backendConnectString + ":memory:" + instanceName;
+            databaseFirstOpened = true;
         }
         else
         {
@@ -88,6 +124,11 @@ public class DBInstance {
                 throw new ServerException(999,
                         "Data [" + dataFile.getAbsolutePath() + "] can't be write!!");
             }
+            if (!dataFile.exists())
+            {
+                // 文件的第一次被使用
+                databaseFirstOpened = true;
+            }
             backendConnectString = backendConnectString + dataFile.getAbsolutePath();
         }
 
@@ -107,14 +148,39 @@ public class DBInstance {
                 Statement stmt = backendSysConnection.createStatement();
                 stmt.execute("CREATE SCHEMA IF NOT EXISTS public");
                 stmt.close();
+
+                // 执行初始化脚本，如果有必要的话
+                if (databaseFirstOpened && !ServerConfiguration.getInit_schema().trim().isEmpty())
+                {
+                    List<String>  initScriptFiles = new ArrayList<>();
+                    if (new File(ServerConfiguration.getInit_schema()).isFile()) {
+                        initScriptFiles.add(new File(ServerConfiguration.getInit_schema()).getAbsolutePath());
+                    } else if (new File(ServerConfiguration.getInit_schema()).isDirectory()) {
+                        File[] files = new File(ServerConfiguration.getInit_schema()).listFiles();
+                        if (files != null) {
+                            for (File file : files) {
+                                initScriptFiles.add(file.getAbsolutePath());
+                            }
+                        }
+                    } else {
+                        throw new ServerException(999,
+                                "Init schema [" + ServerConfiguration.getInit_schema() + "] does not exist!");
+                    }
+                    Collections.sort(initScriptFiles);
+                    for (String initScriptFile : initScriptFiles) {
+                        executeScript(initScriptFile);
+                    }
+                    AppLogger.logger.info("Init schema completed.");
+                }
             }
         }
-        catch (SQLException e) {
+        catch (SQLException|IOException e) {
             DBInstance.state = "STARTUP FAILED";
             AppLogger.logger.error("[SERVER] Init backend connection error. ", e);
             throw new ServerException(e);
         }
     }
+
 
     public static int newSession(DBSession dbSession)
     {

@@ -87,6 +87,13 @@ threads=
 # Maximum memory size used
 # Default is 60% of available memory
 memory_limit=
+
+# Initialization Script. Maybe file or directory.
+# If it is a file, the file will be used.
+# If it is a directory, all files with the .sql suffix in the directory will be used.
+# The script(s in the directory) will be executed only when the in-memory database or file database is opened for the first time.
+init_schema=
+
 ```
 Note: All parameters are optional.   
 You can keep only the parameters you need to modify.   
@@ -120,22 +127,18 @@ java -jar slacker_xxx.jar --conf <your configuration file> status
     String  connectURL = "jdbc:postgresql://127.0.0.1:3175/db1";
     Connection pgConn = DriverManager.getConnection(connectURL, "public", "");
     pgConn.setAutoCommit(false);
-
-    ResultSet rs = pgConn.createStatement().executeQuery("SELECT 3+4");
-    while (rs.next()) {
-        assert rs.getInt(1) == 7;
-    }
-    pgConn.createStatement().execute("CREATE SCHEMA IF NOT EXISTS myuser");
-    pgConn.close();
-    
-    // .... Now, you can connect database again with your new created user "myuser".
+   
+    // .... Now you can execute your business logic.
+```
+### odbc program
+``` 
+    We also support ODBC connection. the same way as using PG's ODBC.
 ```
 
 ## Use IDE tools to connect to the database
 Currently, DBeaver is supported to connect to the database by configuring the JDBC driver.  
 When configuring the driver, just select the Postgres driver.  
 Navicat tool is not supported yet, and other tools have not been tested.  
-
 
 ## Next plan
 ...

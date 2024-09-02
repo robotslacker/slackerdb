@@ -25,6 +25,10 @@ public class Main {
         AppLogger.CreateLogger();
 
         // 启动服务器
+        AppLogger.logger.info("Starting SlackerDB server ...");
+        // 初始化服务处理程序的后端数据库连接字符串
+        DBInstance.init();
+
         DBInstance.protocolServer = new PostgresServer();
         DBInstance.protocolServer.start();
 
@@ -112,6 +116,10 @@ public class Main {
             if (appOptions.containsKey("extension_dir"))
             {
                 ServerConfiguration.setExtension_dir(appOptions.get("extension_dir"));
+            }
+            if (appOptions.containsKey("init_schema"))
+            {
+                ServerConfiguration.setInit_schema(appOptions.get("init_schema"));
             }
             if (appCommand == null)
             {

@@ -38,9 +38,6 @@ public class PostgresServer {
      * Start the server
      */
     public void start() throws ServerException {
-        // 初始化服务处理程序的后端数据库连接字符串
-        DBInstance.init();
-
         // Listener thread
         Thread thread = new Thread(() -> {
             try {
@@ -102,7 +99,7 @@ public class PostgresServer {
                         return;
                     }
 
-                    // SSLRequest
+                    // 首先推断为SSLRequest，或者是管理客户端的请求
                     data = new byte[8];
                     in.readBytes(data);
 
@@ -127,16 +124,14 @@ public class PostgresServer {
                     }
                     else
                     {
-                        // 无效的通讯消息头, 直接关闭，不再响应
-                        ctx.channel().close();
-                        ctx.close();
-                        return;
+                        // 都不是，则重置指针读取位置
+                        in.readerIndex(in.readerIndex() - 8);
                     }
 
                 }
 
                 // 处理StartupMessage
-                if (lastRequestCommand.equalsIgnoreCase(SSLRequest.class.getSimpleName())) {
+                if (lastRequestCommand == null || lastRequestCommand.equalsIgnoreCase(SSLRequest.class.getSimpleName())) {
                     // 等待网络请求发送完毕，StartupMessage
                     if (in.readableBytes() < 4) {
                         return;

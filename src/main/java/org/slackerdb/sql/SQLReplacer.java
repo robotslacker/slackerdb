@@ -1,6 +1,7 @@
 package org.slackerdb.sql;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -53,6 +54,12 @@ public class SQLReplacer {
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
+                        "set\\s+DateStyle.*",
+                        "set user = dummy",true,false
+                )
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
                         "set\\s+client_encoding.*",
                         "set user = dummy",true,false
                 )
@@ -78,6 +85,13 @@ public class SQLReplacer {
         SQLReplaceItems.add(
                 new QueryReplacerItem(
                         "show transaction isolation level",
+                        "select 'read committed' as transaction_isolation",
+                        false,true
+                )
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "show transaction_isolation",
                         "select 'read committed' as transaction_isolation",
                         false,true
                 )
@@ -119,31 +133,42 @@ public class SQLReplacer {
             return sql;
         }
         sql = sql.trim();
-        for (QueryReplacerItem item : SQLReplaceItems) {
-            if (item.isSampleReplace())
-            {
-                String regex = "(?i)" + Pattern.quote(item.getToFind());
-                sql = sql.replaceAll(regex, item.getToReplace());
-                continue;
-            }
-            var find = item.getToFind().replaceAll("\r\n", "\n").trim();
-            var repl = item.getToReplace().replaceAll("\r\n", "\n").trim();
-            if (item.isRegex())
-            {
-                Pattern pattern = Pattern.compile(find, Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
-                Matcher matcher = pattern.matcher(sql);
-                if (matcher.matches())
+        List<String> sqlItems = new ArrayList<>(List.of(sql.split(";")));
+        for (int i=0; i<sqlItems.size(); i++) {
+            String oldSql = sqlItems.get(i);
+            String newSql = oldSql;
+            for (QueryReplacerItem item : SQLReplaceItems) {
+                if (item.isSampleReplace())
                 {
-                    sql = matcher.replaceAll(repl);
+                    String regex = "(?i)" + Pattern.quote(item.getToFind());
+                    newSql = newSql.replaceAll(regex, item.getToReplace());
+                    continue;
+                }
+                var find = item.getToFind().replaceAll("\r\n", "\n").trim();
+                var repl = item.getToReplace().replaceAll("\r\n", "\n").trim();
+                if (item.isRegex())
+                {
+                    Pattern pattern = Pattern.compile(find, Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+                    Matcher matcher = pattern.matcher(newSql);
+                    if (matcher.matches())
+                    {
+                        newSql = matcher.replaceAll(repl);
+                    }
+                }
+                else
+                {
+                    if (find.equalsIgnoreCase(newSql)) {
+                        newSql = repl;
+                    }
                 }
             }
-            else
+            if (!oldSql.equals(newSql))
             {
-                if (find.equalsIgnoreCase(sql)) {
-                    sql = repl;
-                }
+                // SQL已经发生了变化
+                sqlItems.set(i, newSql);
             }
         }
+        sql = String.join(";", sqlItems);
         return sql;
     }
 }
