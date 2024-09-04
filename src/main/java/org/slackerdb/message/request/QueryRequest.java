@@ -5,24 +5,16 @@ import org.duckdb.DuckDBConnection;
 import org.slackerdb.entity.Column;
 import org.slackerdb.entity.Field;
 import org.slackerdb.entity.PostgresTypeOids;
-import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresRequest;
 import org.slackerdb.message.response.*;
 import org.slackerdb.message.PostgresMessage;
 import org.slackerdb.sql.SQLReplacer;
 import org.slackerdb.server.DBInstance;
-import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.*;
-import java.text.SimpleDateFormat;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -240,9 +232,14 @@ public class QueryRequest  extends PostgresRequest {
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out);
         } catch (SQLException se) {
+            StackTraceElement[] stackTrace = se.getStackTrace();
+
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse();
             errorResponse.setErrorResponse(String.valueOf(se.getErrorCode()), se.getMessage());
+            errorResponse.setErrorSeverity("ERROR");
+            errorResponse.setErrorFile(stackTrace[0].getFileName());
+            errorResponse.setErrorLine(String.valueOf(stackTrace[0].getLineNumber()));
             errorResponse.process(ctx, request, out);
 
             // 发送并刷新返回消息
