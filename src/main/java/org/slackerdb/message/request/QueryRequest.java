@@ -53,77 +53,9 @@ public class QueryRequest  extends PostgresRequest {
                 column.columnLength = -1;
             } else
             {
-                String columnTypeName = rsmd.getColumnTypeName(i);
-                switch (columnTypeName.toUpperCase()) {
-                    case "INTEGER":
-                        column.columnLength = 4;
-                        column.columnValue = Utils.int32ToBytes(rs.getInt(i));
-                        break;
-                    case "BIGINT":
-                    case "HUGEINT":
-                        column.columnLength = 8;
-                        column.columnValue = Utils.int64ToBytes(rs.getLong(i));
-                        break;
-                    case "VARCHAR":
-                        byte[] columnBytes = rs.getString(i).getBytes(StandardCharsets.UTF_8);
-                        column.columnLength = columnBytes.length;
-                        column.columnValue = columnBytes;
-                        break;
-                    case "DATE":
-                        column.columnLength = 4;
-                        long timeInterval =
-                                ChronoUnit.DAYS.between(LocalDate.of(2000, 1, 1), rs.getDate(i).toLocalDate());
-                        column.columnValue = Utils.int32ToBytes((int) timeInterval);
-                        break;
-                    case "BOOLEAN":
-                        column.columnLength = 1;
-                        if (rs.getBoolean(i)) {
-                            column.columnValue = new byte[]{(byte) 0x01};
-                        } else {
-                            column.columnValue = new byte[]{(byte) 0x00};
-                        }
-                        break;
-                    case "FLOAT":
-                        column.columnLength = 4;
-                        column.columnValue = Utils.int32ToBytes(Float.floatToIntBits(rs.getFloat(i)));
-                        break;
-                    case "DOUBLE":
-                        column.columnLength = 8;
-                        column.columnValue = Utils.int64ToBytes(Double.doubleToLongBits(rs.getDouble(i)));
-                        break;
-                    case "TIMESTAMP":
-                        column.columnLength = 19;
-                        column.columnValue =
-                                new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-                                        .format(rs.getTimestamp(i)).getBytes(StandardCharsets.UTF_8);
-                        break;
-                    case "TIME":
-                        column.columnLength = 8;
-                        column.columnValue = rs.getTime(i).toLocalTime().toString().getBytes(StandardCharsets.US_ASCII);
-                        break;
-                    case "TIMESTAMP WITH TIME ZONE":
-                        ZonedDateTime zonedDateTime = rs.getTimestamp(i).toInstant().atZone(ZoneId.systemDefault());
-                        String formattedTime = zonedDateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSx"));
-                        column.columnLength = formattedTime.length();
-                        column.columnValue = formattedTime.getBytes(StandardCharsets.US_ASCII);
-                        break;
-                    default:
-                        if (columnTypeName.toUpperCase().startsWith("DECIMAL")) {
-                            // DECIMAL 应该是二进制格式，但是目前分析二进制格式的结果总是不对
-                            // 所有这里用字符串进行返回
-                            String bigDecimal = rs.getBigDecimal(i).toPlainString();
-
-                            // 获取整数部分和小数部分
-                            column.columnLength = bigDecimal.length();
-                            column.columnValue = bigDecimal.getBytes(StandardCharsets.US_ASCII);
-                            break;
-                        } else {
-                            // 不认识的字段类型, 告警后按照字符串来处理
-                            AppLogger.logger.warn("Not implemented column type: {}", columnTypeName);
-                            column.columnValue = rs.getString(i).getBytes(StandardCharsets.UTF_8);
-                            column.columnLength = column.columnValue.length;
-                        }
-                }
+                byte[] columnBytes = rs.getString(i).getBytes(StandardCharsets.UTF_8);
+                column.columnLength = columnBytes.length;
+                column.columnValue = columnBytes;
             }
             columns.add(column);
         }
@@ -236,29 +168,8 @@ public class QueryRequest  extends PostgresRequest {
                     field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(columnTypeName);
                     field.dataTypeSize = (short) 2147483647;
                     field.dataTypeModifier = -1;
-                    switch (columnTypeName) {
-                        case "INTEGER":
-                        case "BIGINT":
-                        case "HUGEINT":
-                        case "DATE":
-                        case "BOOLEAN":
-                        case "FLOAT":
-                        case "DOUBLE":
-                            // 这些数据类型都是二进制类型返回
-                            field.formatCode = 1;
-                            break;
-                        case "VARCHAR":
-                        case "TIME":
-                        case "TIMESTAMP":
-                        case "TIMESTAMP WITH TIME ZONE":
-                            // 这些数据类型都是文本类型返回
-                            field.formatCode = 0;
-                            break;
-                        default:
-                            // 不认识的类型一律文本返回
-                            field.formatCode = 0;
-                            break;
-                    }
+                    // 一律文本返回
+                    field.formatCode = 0;
                     fields.add(field);
                 }
 
@@ -336,6 +247,13 @@ public class QueryRequest  extends PostgresRequest {
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+
+            // 发送ReadyForQuery
+            ReadyForQuery readyForQuery = new ReadyForQuery();
+            readyForQuery.process(ctx, request, out);
+
+            // 发送并刷新返回消息
+            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out);
         } finally {
             out.close();
         }
