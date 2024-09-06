@@ -320,6 +320,8 @@ public class ExecuteRequest extends PostgresRequest {
                 DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             } else if (executeSQL.toUpperCase().startsWith("ROLLBACK")) {
                 DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
+            } else if (executeSQL.toUpperCase().startsWith("ABORT")) {
+                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             }
 
             CommandComplete commandComplete = new CommandComplete();
