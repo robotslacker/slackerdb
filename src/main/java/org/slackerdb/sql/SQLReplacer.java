@@ -60,6 +60,19 @@ public class SQLReplacer {
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
+                        "set\\s+IntervalStyle.*",
+                        "set user = dummy",true,false
+                )
+        );
+        // 目前不打算支持事务级别
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "START\\s+TRANSACTION.*",
+                        "set user = dummy",true,false
+                )
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
                         "set\\s+client_encoding.*",
                         "set user = dummy",true,false
                 )

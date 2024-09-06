@@ -145,7 +145,16 @@ public class QueryRequest  extends PostgresRequest {
             long nAffectedRows = 0;
             PreparedStatement preparedStatement =
                     DBInstance.getSession(getCurrentSessionId(ctx)).dbConnection.prepareStatement(sql);
-            boolean isResultSet = preparedStatement.execute();
+            boolean isResultSet = false;
+            try {
+                isResultSet = preparedStatement.execute();
+            }
+            catch (SQLException e) {
+                if (!e.getMessage().contains("no transaction is active"))
+                {
+                    throw e;
+                }
+            }
             if (isResultSet) {
                 List<Field> fields = new ArrayList<>();
 
@@ -190,7 +199,13 @@ public class QueryRequest  extends PostgresRequest {
             }
             else
             {
-                nAffectedRows = preparedStatement.getUpdateCount();
+                if (preparedStatement.isClosed()) {
+                    nAffectedRows = -1;
+                }
+                else
+                {
+                    nAffectedRows = preparedStatement.getUpdateCount();
+                }
             }
 
             // 设置语句的事务级别
@@ -214,6 +229,8 @@ public class QueryRequest  extends PostgresRequest {
             } else if (sql.toUpperCase().startsWith("COMMIT")) {
                 commandComplete.setCommandResult("COMMIT");
             } else if (sql.toUpperCase().startsWith("ROLLBACK")) {
+                commandComplete.setCommandResult("ROLLBACK");
+            } else if (sql.toUpperCase().startsWith("ABORT")) {
                 commandComplete.setCommandResult("ROLLBACK");
             }
             else

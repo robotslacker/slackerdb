@@ -196,7 +196,16 @@ public class ExecuteRequest extends PostgresRequest {
             }
             else
             {
-                boolean isResultSet = parsedStatement.preparedStatement.execute();
+                boolean isResultSet = false;
+                try {
+                    isResultSet = parsedStatement.preparedStatement.execute();
+                }
+                catch (SQLException e) {
+                    if (!e.getMessage().contains("no transaction is active"))
+                    {
+                        throw e;
+                    }
+                }
                 int rowsReturned = 0;
                 if (isResultSet) {
                     DataRow dataRow = new DataRow();
@@ -292,7 +301,13 @@ public class ExecuteRequest extends PostgresRequest {
                 else
                 {
                     // 记录更新的行数
-                    nRowsAffected = parsedStatement.preparedStatement.getUpdateCount();
+                    if (parsedStatement.preparedStatement.isClosed())
+                    {
+                        nRowsAffected = -1;
+                    }
+                    else {
+                        nRowsAffected = parsedStatement.preparedStatement.getUpdateCount();
+                    }
                 }
             }
 
@@ -320,6 +335,8 @@ public class ExecuteRequest extends PostgresRequest {
                 commandComplete.setCommandResult("COMMIT");
             } else if (executeSQL.toUpperCase().startsWith("ROLLBACK")) {
                 commandComplete.setCommandResult("ROLLBACK");
+            } else if (executeSQL.toUpperCase().startsWith("ABORT")) {
+                    commandComplete.setCommandResult("ROLLBACK");
             }
             else
             {
@@ -333,6 +350,7 @@ public class ExecuteRequest extends PostgresRequest {
         catch (SQLException e) {
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse();
+            errorResponse.setErrorFile("ExecuteRequest");
             errorResponse.setErrorResponse(String.valueOf(e.getErrorCode()), e.getMessage());
             errorResponse.process(ctx, request, out);
 

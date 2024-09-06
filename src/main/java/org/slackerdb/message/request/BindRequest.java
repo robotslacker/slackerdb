@@ -239,6 +239,7 @@ public class BindRequest extends PostgresRequest {
         catch (SQLException e) {
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse();
+            errorResponse.setErrorFile("BindRequest");
             errorResponse.setErrorResponse(String.valueOf(e.getErrorCode()), e.getMessage());
             errorResponse.process(ctx, request, out);
 

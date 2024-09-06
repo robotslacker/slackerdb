@@ -117,6 +117,7 @@ public class ParseRequest extends PostgresRequest {
             PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out);
         }
         catch (SQLException e) {
+            System.out.println(e.getMessage());
             // 清空PreparedStatement
             try {
                 DBInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement(
@@ -127,6 +128,7 @@ public class ParseRequest extends PostgresRequest {
 
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse();
+            errorResponse.setErrorFile("ParseRequest");
             errorResponse.setErrorResponse(String.valueOf(e.getErrorCode()), e.getMessage());
             errorResponse.process(ctx, request, out);
 
