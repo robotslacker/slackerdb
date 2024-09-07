@@ -57,9 +57,7 @@ public class BindRequest extends PostgresRequest {
 
     private String      portalName = "";
     private String      preparedStmtName = "";
-    private short       numberOfFormatCodes = 0;
     private short[]     formatCodes;
-    private short       numberOfParameters = 0;
     private byte[][]    bindParameters;
 
     @Override
@@ -76,11 +74,11 @@ public class BindRequest extends PostgresRequest {
         byte[] part = Arrays.copyOfRange(
                 data,
                 currentPos, currentPos + 2);
-        numberOfFormatCodes = Utils.bytesToInt16(part);
+        short numberOfFormatCodes = Utils.bytesToInt16(part);
         currentPos += 2;
         if (numberOfFormatCodes != 0) {
             formatCodes = new short[numberOfFormatCodes];
-            for (int i=0; i<numberOfFormatCodes; i++) {
+            for (int i = 0; i< numberOfFormatCodes; i++) {
                 part = Arrays.copyOfRange(
                         data,
                         currentPos, currentPos + 2);
@@ -91,11 +89,11 @@ public class BindRequest extends PostgresRequest {
         part = Arrays.copyOfRange(
                 data,
                 currentPos, currentPos + 2);
-        numberOfParameters = Utils.bytesToInt16(part);
+        short numberOfParameters = Utils.bytesToInt16(part);
         currentPos += 2;
         if (numberOfParameters != 0) {
             bindParameters = new byte[numberOfParameters][];
-            for (int i=0; i<numberOfParameters; i++) {
+            for (int i = 0; i< numberOfParameters; i++) {
                 part = Arrays.copyOfRange(
                         data,
                         currentPos, currentPos + 4);
@@ -117,7 +115,7 @@ public class BindRequest extends PostgresRequest {
             if (numberOfFormatCodes == 0)
             {
                 formatCodes = new short[numberOfParameters];
-                for (int i=0; i<numberOfParameters; i++) {
+                for (int i = 0; i< numberOfParameters; i++) {
                     // 所有的解析变量都使用默认格式，即Text
                     formatCodes[i] = 0;
                 }
@@ -126,7 +124,7 @@ public class BindRequest extends PostgresRequest {
             {
                 short firstFormatCode = formatCodes[0];
                 formatCodes = new short[numberOfParameters];
-                for (int i=0; i<numberOfParameters; i++) {
+                for (int i = 0; i< numberOfParameters; i++) {
                     // 所有的解析变量都使用同一个格式
                     formatCodes[i] = firstFormatCode;
                 }
@@ -162,7 +160,15 @@ public class BindRequest extends PostgresRequest {
                     int[] parameterDataTypeIds = parsedStatement.parameterDataTypeIds;
                     if (bindParameters != null) {
                         for (int i = 0; i < bindParameters.length; i++) {
-                            String columnTypeName = PostgresTypeOids.getTypeNameFromTypeOid(parameterDataTypeIds[i]);
+                            String columnTypeName;
+                            if (parameterDataTypeIds.length == 0) {
+                                // 没有指定字段类型，按照默认的VARCHAR处理
+                                columnTypeName = "VARCHAR";
+                            }
+                            else
+                            {
+                                columnTypeName = PostgresTypeOids.getTypeNameFromTypeOid(parameterDataTypeIds[i]);
+                            }
                             if (bindParameters[i] == null) {
                                 preparedStatement.setNull(i + 1, Types.NULL);
                                 continue;

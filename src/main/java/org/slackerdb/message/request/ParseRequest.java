@@ -22,7 +22,6 @@ import java.util.Arrays;
 public class ParseRequest extends PostgresRequest {
     private String      preparedStmtName = "";
     private String      sql = "";
-    private short       numOfParameters = 0;
     private int[]       parameterDataTypeIds;
 
     @Override
@@ -54,12 +53,14 @@ public class ParseRequest extends PostgresRequest {
         }
         sql = new String(result[1], StandardCharsets.UTF_8);
 
+        // 前面两个部分是SQL的名字和SQL的具体内容
         int currentPos = result[0].length + 1 + result[1].length + 1;
+
         if (result.length > 2) {
             byte[] part = Arrays.copyOfRange(
                     data,
                     currentPos, currentPos + 2);
-            numOfParameters = Utils.bytesToInt16(part);
+            short numOfParameters = Utils.bytesToInt16(part);
             currentPos += 2;
 
             parameterDataTypeIds = new int[numOfParameters];
