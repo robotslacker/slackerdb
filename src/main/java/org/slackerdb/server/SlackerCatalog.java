@@ -7,6 +7,7 @@ public class SlackerCatalog {
     public static void createFakeCatalog(Connection conn) throws SQLException
     {
         List<String> fakeCatalogDDLList = new ArrayList<>();
+
         // 创建一个默认的新Schema，不使用默认的main
         fakeCatalogDDLList.add("create schema if not exists public");
 
@@ -46,7 +47,7 @@ public class SlackerCatalog {
                 "  6 as encoding,   \n" +
                 " FROM \tpg_catalog.pg_database\n" +
                 " where datname not in ('system', 'temp')");
-        fakeCatalogDDLList.add("create table duck_catalog.pg_proc\n" +
+        fakeCatalogDDLList.add("create or replace table duck_catalog.pg_proc\n" +
                 "(\n" +
                 " oid             int          ,\n" +
                 " proname         text         ,\n" +
@@ -79,8 +80,8 @@ public class SlackerCatalog {
                 " proconfig       text         ,\n" +
                 " proacl          text\n" +
                 ");\n");
-        fakeCatalogDDLList.add("CREATE MACRO pg_get_userbyid(a) AS (select 'system')");
-        fakeCatalogDDLList.add("CREATE MACRO pg_encoding_to_char(a) AS (select 'UTF8')");
+        fakeCatalogDDLList.add("CREATE or replace MACRO pg_get_userbyid(a) AS (select 'system')");
+        fakeCatalogDDLList.add("CREATE or replace MACRO pg_encoding_to_char(a) AS (select 'UTF8')");
         Statement stmt = conn.createStatement();
         for (String sql : fakeCatalogDDLList)
         {

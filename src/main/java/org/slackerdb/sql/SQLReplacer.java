@@ -64,19 +64,21 @@ public class SQLReplacer {
                         "set user = dummy",true,false
                 )
         );
-        // 目前不打算支持事务级别
+        // duckdb不支持事务级别
         SQLReplaceItems.add(
                 new QueryReplacerItem(
                         "START\\s+TRANSACTION.*",
                         "set user = dummy",true,false
                 )
         );
+        // duckdb的客户端字符集无法设置
         SQLReplaceItems.add(
                 new QueryReplacerItem(
                         "set\\s+client_encoding.*",
                         "set user = dummy",true,false
                 )
         );
+        // PG的search_path可以不加引号，但是duckdb不可以
         SQLReplaceItems.add(
                 new QueryReplacerItem(
                         "set\\s+search_path\\s*=\\s*([^'\"].*[^'\"])",

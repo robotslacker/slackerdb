@@ -128,6 +128,7 @@ public class DBInstance {
             {
                 // 文件的第一次被使用
                 databaseFirstOpened = true;
+                AppLogger.logger.info("[SERVER] Database first opened, will execute init script if you have ...");
             }
             backendConnectString = backendConnectString + dataFile.getAbsolutePath();
         }
@@ -144,9 +145,10 @@ public class DBInstance {
             if (!ServerConfiguration.getAccess_mode().equals("READ_ONLY")) {
                 // 虚构一些PG的数据字典，以满足后续各种工具对数据字典的查找
                 SlackerCatalog.createFakeCatalog(backendSysConnection);
-                // 创建一个Public用户，以保证用户的首次连接
+
                 Statement stmt = backendSysConnection.createStatement();
-                stmt.execute("CREATE SCHEMA IF NOT EXISTS public");
+                // 强制约定在程序推出的时候保存检查点
+                stmt.execute("PRAGMA enable_checkpoint_on_shutdown");
                 stmt.close();
 
                 // 执行初始化脚本，如果有必要的话
@@ -181,7 +183,6 @@ public class DBInstance {
         }
     }
 
-
     public static int newSession(DBSession dbSession)
     {
         int currentSessionId;
@@ -196,5 +197,19 @@ public class DBInstance {
     public static DBSession getSession(int sessionId)
     {
         return dbSessions.get(sessionId);
+    }
+
+    public static void forceCheckPoint()
+    {
+        try {
+            if (backendSysConnection != null && !backendSysConnection.isClosed() && !backendSysConnection.isReadOnly()) {
+                Statement stmt = backendSysConnection.createStatement();
+                stmt.execute("FORCE CHECKPOINT");
+                stmt.close();
+            }
+        }
+        catch (SQLException e) {
+            AppLogger.logger.error("Force checkpoint failed.", e);
+        }
     }
 }

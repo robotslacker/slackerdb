@@ -25,7 +25,8 @@ public class Main {
         AppLogger.CreateLogger();
 
         // 启动服务器
-        AppLogger.logger.info("Starting SlackerDB server ...");
+        AppLogger.logger.info("[SERVER] SlackerDB server starting ...");
+
         // 初始化服务处理程序的后端数据库连接字符串
         DBInstance.init();
 

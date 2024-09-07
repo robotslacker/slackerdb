@@ -2,6 +2,7 @@ package org.slackerdb.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.configuration.ServerConfiguration;
+import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresMessage;
 import org.slackerdb.message.PostgresRequest;
 import org.slackerdb.message.response.AdminClientResp;
@@ -11,6 +12,7 @@ import org.slackerdb.server.DBSession;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -31,8 +33,16 @@ public class AdminClientRequest  extends PostgresRequest {
         StringBuilder feedBackMsg;
         if (clientRequestCommand.trim().equalsIgnoreCase("STOP"))
         {
-            // 停止服务
+            // 停止网络服务
             DBInstance.protocolServer.stop(ctx.channel().remoteAddress().toString());
+            // 数据库强制进行检查点操作
+            DBInstance.forceCheckPoint();
+            // 关闭数据库
+            try {
+                DBInstance.backendSysConnection.close();
+            } catch (SQLException e) {
+                AppLogger.logger.error("Error closing backend connection", e);
+            }
             feedBackMsg = new StringBuilder("Server stop successful.");
         }
         else if (clientRequestCommand.trim().equalsIgnoreCase("STATUS"))
