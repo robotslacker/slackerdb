@@ -1,4 +1,6 @@
 package org.slackerdb.server;
+import org.slackerdb.configuration.ServerConfiguration;
+
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -37,11 +39,15 @@ public class SlackerCatalog {
                 ")");
         fakeCatalogDDLList.add("create or replace view duck_catalog.pg_namespace \n" +
                 "as\n" +
-                "select * FROM pg_catalog.pg_namespace \n" +
-                "where nspname not in ('main', 'duck_catalog', 'pg_catalog', 'information_schema')");
+                "select oid, schema_name as nspname, 0 as nspowner, null as nspacl, null as description \n" +
+                "FROM   duckdb_schemas \n" +
+                "where  database_name = getvariable('current_database') \n" +
+                "and    schema_name not in ('duck_catalog', 'SCHEMA_NAME_UPPER_FOR_EXT', 'pg_catalog')");
         fakeCatalogDDLList.add("create or replace view duck_catalog.pg_database \n" +
                 " as\n" +
-                " select oid, oid as datlastsysoid,datname, 0 as dattablespace, " +
+                " select oid, oid as datlastsysoid, " +
+                "        case when datname='memory' then '" + ServerConfiguration.getData().toLowerCase() + "' else datname end as datname," +
+                "        0 as dattablespace, " +
                 "   null as datacl, false as datistemplate, true as datallowconn," +
                 "   'en_US.utf8' as datcollate,'en_US.utf8' as datctype, -1 as datconnlimit," +
                 "  6 as encoding,   \n" +

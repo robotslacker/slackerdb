@@ -37,49 +37,8 @@ public class test002 {
         DuckDBConnection duckDBConnection =
                 (DuckDBConnection) DriverManager.getConnection("jdbc:duckdb:", "", "");
         Statement statement = duckDBConnection.createStatement();
-        statement.executeQuery("select 3+4");
-        statement.cancel();
-        ResultSet resultSet = statement.getResultSet();
-        while (resultSet.next())
-        {
-            System.out.println(resultSet.getInt(1));
-        }
-
-        if (true)
-        {
-            System.exit(0);
-        }
-
-        List<CSVRecord> records = new ArrayList<>();
-
-        StringReader reader;
-        String       sourceStr;
-        String copyLastRemained = "fdasfasd,";
-        byte[] copyData = "xx,yy\nxxx,yyy,zzz\nabc\\\"aa".getBytes();
-
-        // 和上次没有解析完全的字符串要拼接起来
-        if (!copyLastRemained.isEmpty())
-        {
-            sourceStr = copyLastRemained + new String(copyData);
-        }
-        else
-        {
-            sourceStr = new String(copyData);
-        }
-        Iterable<CSVRecord> parsedRecords = CSVFormat.DEFAULT.parse(new StringReader(sourceStr));
-        for (CSVRecord record : parsedRecords) {
-            System.out.println(record);
-            System.out.println("ready");
-            System.out.println(record.getCharacterPosition());
-            System.out.println(sourceStr.substring((int)record.getCharacterPosition()));
-            records.add(record);
-            copyLastRemained = "";
-        }
-//            System.out.println(record.get(1));
-//            System.out.println(record.get(2));
-//            System.out.println(record.get(3));
-//        }
-
+        statement.execute("ATTACH 'dbname=testdb user=postgres host=192.168.40.132 port=5432 password=12345678' AS testdb (TYPE POSTGRES, READ_ONLY)");
+        System.out.println("OK");
     }
 }
 

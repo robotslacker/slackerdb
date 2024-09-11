@@ -56,20 +56,35 @@ public class StartupRequest  extends PostgresRequest {
             //  检查登录选项中的数据库名称和文件名称是否匹配，如果不匹配，直接拒绝
             if (!ServerConfiguration.getData().equalsIgnoreCase(startupOptions.get("database")))
             {
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                // 生成一个错误消息
-                ErrorResponse errorResponse = new ErrorResponse();
-                errorResponse.setErrorResponse("SLACKER-0099",
-                        "Database [" + startupOptions.get("database") + "] does not exist! Connect refused. ");
-                errorResponse.process(ctx, request, out);
+                boolean existDatabase = false;
+                String querySchemaList =
+                        "select catalog_name from information_schema.schemata " +
+                                "where catalog_name = '" + startupOptions.get("database") + "' LIMIT 1";
 
-                // 发送并刷新返回消息
-                PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+                Statement querySchemaStmt = DBInstance.backendSysConnection.createStatement();
+                ResultSet rs = querySchemaStmt.executeQuery(querySchemaList);
+                if (rs.next()) {
+                    existDatabase = true;
+                }
+                rs.close();
+                querySchemaStmt.close();
 
-                // 关闭连接
-                out.close();
-                ctx.close();
-                return;
+                if (!existDatabase) {
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    // 生成一个错误消息
+                    ErrorResponse errorResponse = new ErrorResponse();
+                    errorResponse.setErrorResponse("SLACKER-0099",
+                            "Database [" + startupOptions.get("database") + "] does not exist! Connect refused. ");
+                    errorResponse.process(ctx, request, out);
+
+                    // 发送并刷新返回消息
+                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+
+                    // 关闭连接
+                    out.close();
+                    ctx.close();
+                    return;
+                }
             }
             if (!startupOptions.containsKey("user") || startupOptions.get("user").trim().isEmpty())
             {
@@ -114,6 +129,7 @@ public class StartupRequest  extends PostgresRequest {
             Connection conn =
                     ((DuckDBConnection) DBInstance.backendSysConnection).duplicate();
             Statement stmt = conn.createStatement();
+            stmt.execute("set variable current_database = '" + startupOptions.get("database") + "'");
             stmt.execute("set search_path = '" + connectedUser + ",duck_catalog'");
             stmt.close();
 
