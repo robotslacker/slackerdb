@@ -161,7 +161,9 @@ public class DBInstance {
                         File[] files = new File(ServerConfiguration.getInit_schema()).listFiles();
                         if (files != null) {
                             for (File file : files) {
-                                initScriptFiles.add(file.getAbsolutePath());
+                                if (file.isFile() && file.getName().endsWith(".sql")) {
+                                    initScriptFiles.add(file.getAbsolutePath());
+                                }
                             }
                         }
                     } else {

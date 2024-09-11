@@ -7,32 +7,37 @@ This program implements the JDBC V3 protocol of PG.
 The SQL engine and storage engine behind it are both DUCKDB, the new favorite of OLAP.
 
 What we do in this project:
-1. make we can view and update duckdb data from the outside process.
+1. make we can view and update duckdb data from the process outside.
 2. make we can view and update duckdb data from the network.
 
 ## Known Issues
-### Time Zone Issues with TimeStamp
-  PG clients will always use the current system time zone as a parameter in setTimeStamp, and duckdb's TimeStamp has no concept of time zone.  
+### 1. Time Zone Issues with TimeStamp
+  PG clients will always use the current system time zone as a parameter in setTimeStamp, and duckdb TimeStamp has no concept of time zone.  
   This will cause the data inserted using api setTimeStamp() is different with your inserted.  
   Workaround:   
   The client always uses the UTC time zone
-### User and password authorization
+### 2. User and password authorization
   We do not support user password authentication, just for compatibility, keep these two options.  
   you can fill in the password part as you like, it doesn't make sense.  
   The user part will be used by the default schema of the user connection.
-### Limited support for duckdb datatype
+### 3. Limited support for duckdb datatype
   Only some duckdb data types are supported, mainly simple types, such as int, number, double, varchar, ... 
   For complex types, some are still under development, and some are not supported by the PG protocol, such as blob, list, map...
   You can refer to sanity01.java to see what we currently support.
-### DBeaver issue
+### 4. DBeaver issue
   In some DBeaver versions, When running queries, the Discover Owner Entity task takes 30+ seconds to complete.  
   As a workaround you can disable Read table metadata and Read Table references options in Preferences:  
      Preferences -> Editors -> Data Editor -> Disable "Read table metadata" and "Read table references".
+### 5. postgresql-fdw
+  fdw will use "Declare CURSOR" to fetch remote data, while duck doesn't support this.
+
 ## How to use
 ### Build from source:
 ```
     # Download JDK11 and maven 3.6+, and install them.
+    # Download source code
     git clone ...
+    # compile it
     cd slackerdb
     mvn clean compile package
 ```
@@ -97,7 +102,7 @@ init_schema=
 ```
 Note: All parameters are optional.   
 You can keep only the parameters you need to modify.   
-For parameters that are not configured, means that the default values  will be used.
+For parameters that are not configured, means default values  will be used.
 
 For max_workers, there are some empirical test results for reference.  
 Based on TPCDS 10G, at 20 concurrency, about 110G memory will be consumed.   
@@ -105,21 +110,21 @@ At 4 concurrency, about 20G memory will be consumed.
 The actual consumption is related to the size and complexity of the data.   
 Due to the characteristics of OLAP queries, too high concurrency will not have practical significance.
 
-### start the database:
+### Start the database:
 ``` 
-java -jar slacker_xxx.jar --conf <your configuration file> start
+java -jar slacker_xxx.jar [--conf <your configuration file>] start
 ```
 
-### stop the database:
+### Stop the database:
 ```
-java -jar slacker_xxx.jar --conf <your configuration file> stop
+java -jar slacker_xxx.jar [--conf <your configuration file>] stop
 ```
 
-### check the status of database:
+### Check the status of database:
 ```
-java -jar slacker_xxx.jar --conf <your configuration file> status
+java -jar slacker_xxx.jar [--conf <your configuration file>] status
 ```
-### jdbc program
+### Jdbc program
 ``` 
     // "db1" is your database name in your configuration file.
     // 3175  is your database port in your configuration file.
@@ -130,9 +135,9 @@ java -jar slacker_xxx.jar --conf <your configuration file> status
    
     // .... Now you can execute your business logic.
 ```
-### odbc program
+### Odbc and python program
 ``` 
-    We also support ODBC connection. the same way as using PG's ODBC.
+    It also support ODBC and Python connection. 
 ```
 
 ## Use IDE tools to connect to the database
