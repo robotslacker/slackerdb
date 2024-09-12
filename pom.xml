@@ -4,7 +4,7 @@
 
     <groupId>org.robotslacker</groupId>
     <artifactId>slackerdb</artifactId>
-    <version>0.0.4</version>
+    <version>0.0.5</version>
 
     <properties>
         <maven.compiler.target>11</maven.compiler.target>

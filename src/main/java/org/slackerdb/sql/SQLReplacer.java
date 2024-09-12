@@ -1,5 +1,7 @@
 package org.slackerdb.sql;
 
+import org.slackerdb.configuration.ServerConfiguration;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -12,30 +14,40 @@ public class SQLReplacer {
 
     private static void load()
     {
+        String   catalogName;
+
+        if (ServerConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:"))
+        {
+            catalogName = "memory";
+        }
+        else
+        {
+            catalogName = ServerConfiguration.getData().trim().toLowerCase();
+        }
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "pg_catalog.pg_roles","duck_catalog.pg_roles",
+                        "pg_catalog.pg_roles",catalogName + ".duck_catalog.pg_roles",
                         true, true
                 )
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "pg_catalog.pg_shdescription", "duck_catalog.pg_shdescription",
+                        "pg_catalog.pg_shdescription", catalogName + ".duck_catalog.pg_shdescription",
                         true, true)
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "pg_catalog.pg_namespace", "duck_catalog.pg_namespace",
+                        "pg_catalog.pg_namespace", catalogName + ".duck_catalog.pg_namespace",
                         true, true)
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "pg_catalog.pg_proc", "duck_catalog.pg_proc",
+                        "pg_catalog.pg_proc", catalogName + ".duck_catalog.pg_proc",
                         true, true)
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "pg_catalog.pg_database", "duck_catalog.pg_database",
+                        "pg_catalog.pg_database", catalogName + ".duck_catalog.pg_database",
                         true, true)
         );
 
