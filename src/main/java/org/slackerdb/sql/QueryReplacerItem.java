@@ -1,10 +1,10 @@
 package org.slackerdb.sql;
 
 public class QueryReplacerItem {
-    private String toFind;
-    private String toReplace;
-    private boolean regex;
-    private boolean sampleReplace;
+    private final String toFind;
+    private final String toReplace;
+    private final boolean regex;
+    private final boolean sampleReplace;
 
     public QueryReplacerItem(String toFind, String toReplace, boolean regex, boolean sampleReplace) {
         this.toFind = toFind;

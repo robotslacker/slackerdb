@@ -126,8 +126,14 @@ public class StartupRequest  extends PostgresRequest {
             }
 
             // 把查询路径指向新的schema
-            Connection conn =
-                    ((DuckDBConnection) DBInstance.backendSysConnection).duplicate();
+            Connection conn;
+            synchronized (this) {
+                conn = DBInstance.connectionPool.poll();
+                if (conn == null)
+                {
+                    conn = ((DuckDBConnection) DBInstance.backendSysConnection).duplicate();
+                }
+            }
             Statement stmt = conn.createStatement();
             stmt.execute("set variable current_database = '" + startupOptions.get("database") + "'");
             stmt.execute("set search_path = '" + connectedUser + ",duck_catalog'");

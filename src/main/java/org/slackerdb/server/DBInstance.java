@@ -11,18 +11,21 @@ import java.nio.file.Path;
 import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.regex.Pattern;
 
 public class DBInstance {
     public static PostgresServer protocolServer;
-    public static LocalDateTime bootTime = LocalDateTime.now();
+    public static final LocalDateTime bootTime = LocalDateTime.now();
+    public static final Queue<Connection> connectionPool = new ConcurrentLinkedQueue<>();
 
     public static String state = "";
     public static Connection backendSysConnection;
+
     // 为每个连接创建一个会话ID
     private static int maxSessionId = 1000;
     // 记录会话列表
-    public static Map<Integer, DBSession> dbSessions = new HashMap<>();
+    public static final Map<Integer, DBSession> dbSessions = new HashMap<>();
 
     public static void abortSession(int sessionId) throws SQLException {
         // 销毁会话保持的数据库信息

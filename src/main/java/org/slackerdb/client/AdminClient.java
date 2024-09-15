@@ -12,9 +12,7 @@ import io.netty.handler.logging.LoggingHandler;
 import org.slackerdb.configuration.ServerConfiguration;
 import io.netty.buffer.Unpooled;
 import org.slackerdb.logger.AppLogger;
-import org.slackerdb.message.PostgresRequest;
 import org.slackerdb.message.request.AdminClientRequest;
-import org.slackerdb.utils.Utils;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -32,7 +30,7 @@ public class AdminClient {
     // Decoder to convert ByteBuf to byte[]
     static class ByteArrayDecoder extends ByteToMessageDecoder {
         @Override
-        protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) throws Exception {
+        protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
             while (in.readableBytes() > 0) {
                 if (in.readableBytes() < 5) {
                     // 等待发送完毕，前5个字节为标识符和消息体长度

@@ -8,7 +8,6 @@ import org.slackerdb.server.DBInstance;
 import org.slackerdb.server.DBSession;
 import org.slackerdb.utils.Utils;
 
-import java.io.IOException;
 import java.sql.SQLException;
 import java.util.Arrays;
 
@@ -35,7 +34,7 @@ public class CancelRequest  extends PostgresRequest {
 
 
     @Override
-    public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+    public void process(ChannelHandlerContext ctx, Object request) {
         if (secretKey != BackendKeyData.FIXED_SECRET)
         {
             return;

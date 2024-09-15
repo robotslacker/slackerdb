@@ -9,7 +9,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
 public class SSLRequest extends PostgresRequest {
-    public static byte[] SSLRequestHeader = {0x00, 0x00, 0x00, 0x08, 0x04, (byte)0xd2, 0x16, 0x2F};
+    public static final byte[] SSLRequestHeader = {0x00, 0x00, 0x00, 0x08, 0x04, (byte)0xd2, 0x16, 0x2F};
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {

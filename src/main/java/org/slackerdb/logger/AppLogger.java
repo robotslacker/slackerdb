@@ -14,7 +14,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Iterator;
 
 public class AppLogger {
-    public static Logger logger = (Logger) LoggerFactory.getLogger("SlackerDB");
+    public static final Logger logger = (Logger) LoggerFactory.getLogger("SlackerDB");
     private static Level log_level = null;
 
     public static void setLogLevel(Level  level) {

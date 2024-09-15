@@ -1,6 +1,7 @@
 package org.slackerdb.sql;
 
 import org.slackerdb.configuration.ServerConfiguration;
+import org.slackerdb.utils.LRUCache;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -8,9 +9,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class SQLReplacer {
-    public static ArrayList<QueryReplacerItem> SQLReplaceItems = new ArrayList<>();
+    public static final ArrayList<QueryReplacerItem> SQLReplaceItems = new ArrayList<>();
 
     private static boolean isLoaded = false;
+
+    private static final LRUCache lruCache = new LRUCache();
 
     private static void load()
     {
@@ -156,9 +159,15 @@ public class SQLReplacer {
         if (!isLoaded) {
             load();
         }
-        if (SQLReplaceItems.isEmpty()) {
-            return sql;
+
+        // 如果有缓存的SQL记录，则读取缓存的内容
+        String sourceSQL = sql;
+        String replacedSQL = lruCache.getReplacedSql(sql);
+        if (replacedSQL != null)
+        {
+            return replacedSQL;
         }
+
         sql = sql.trim();
         List<String> sqlItems = new ArrayList<>(List.of(sql.split(";")));
         for (int i=0; i<sqlItems.size(); i++) {
@@ -195,7 +204,8 @@ public class SQLReplacer {
                 sqlItems.set(i, newSql);
             }
         }
-        sql = String.join(";", sqlItems);
-        return sql;
+        replacedSQL = String.join(";", sqlItems);
+        lruCache.put(sourceSQL, replacedSQL);
+        return replacedSQL;
     }
 }

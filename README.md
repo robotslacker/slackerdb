@@ -82,7 +82,6 @@ access_mode=READ_WRITE
 
 # The maximum number of threads that the service layer can process at the same time
 # The default is the number of CPU cores
-# Since Netty does not recycle the content of each processing thread, setting this value too large will cause memory overflow
 max_workers=
 
 # Maximum number of threads used on the DB side
@@ -103,12 +102,6 @@ init_schema=
 Note: All parameters are optional.   
 You can keep only the parameters you need to modify.   
 For parameters that are not configured, means default values  will be used.
-
-For max_workers, there are some empirical test results for reference.  
-Based on TPCDS 10G, at 20 concurrency, about 110G memory will be consumed.   
-At 4 concurrency, about 20G memory will be consumed.   
-The actual consumption is related to the size and complexity of the data.   
-Due to the characteristics of OLAP queries, too high concurrency will not have practical significance.
 
 ### Start the database:
 ``` 

@@ -7,21 +7,21 @@ import org.slackerdb.server.DBInstance;
 import java.nio.charset.StandardCharsets;
 
 public class DescribeRequest  extends PostgresRequest {
-    //  Describe (F)
-    //    Byte1('D')
-    //      Identifies the message as a Describe command.
-    //    Int32
-    //      Length of message contents in bytes, including self.
-    //    Byte1
-    //      'S' to describe a prepared statement; or 'P' to describe a portal.
-    //    String
-    //       The name of the prepared statement or portal
-    //       to describe (an empty string selects the unnamed prepared statement or portal).
-    private String      portalName = "";
 
     @Override
     public void decode(byte[] data) {
-        portalName = new String(data, StandardCharsets.UTF_8);
+        //  Describe (F)
+        //    Byte1('D')
+        //      Identifies the message as a Describe command.
+        //    Int32
+        //      Length of message contents in bytes, including self.
+        //    Byte1
+        //      'S' to describe a prepared statement; or 'P' to describe a portal.
+        //    String
+        //       The name of the prepared statement or portal
+        //       to describe (an empty string selects the unnamed prepared statement or portal).
+
+        //        String portalName = new String(data, StandardCharsets.UTF_8);
 
         super.decode(data);
     }

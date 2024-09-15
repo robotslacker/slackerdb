@@ -6,13 +6,11 @@ import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresMessage;
 import org.slackerdb.message.PostgresRequest;
 import org.slackerdb.message.response.CloseComplete;
-import org.slackerdb.message.response.ReadyForQuery;
 import org.slackerdb.server.DBInstance;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.sql.SQLException;
 
 
 public class CloseRequest extends PostgresRequest {

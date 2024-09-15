@@ -76,7 +76,7 @@ public class ServerConfiguration extends Throwable {
         else
         {
             OperatingSystemMXBean osBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
-            String defaultPhysicalMemorySize = (int) (osBean.getTotalPhysicalMemorySize() / 1024 / 1024 / 1024 * 0.6) + "GB";
+            String defaultPhysicalMemorySize = (int) ((double) osBean.getTotalPhysicalMemorySize() / 1024 / 1024 / 1024 * 0.6) + "GB";
             memory_limit = readOption("memory_limit", defaultPhysicalMemorySize);
         }
         // 默认使用主机内核数量的80%

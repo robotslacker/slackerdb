@@ -37,7 +37,15 @@ public class test002 {
         DuckDBConnection duckDBConnection =
                 (DuckDBConnection) DriverManager.getConnection("jdbc:duckdb:", "", "");
         Statement statement = duckDBConnection.createStatement();
-        statement.execute("ATTACH 'dbname=testdb user=postgres host=192.168.40.132 port=5432 password=12345678' AS testdb (TYPE POSTGRES, READ_ONLY)");
+        statement.execute("create table xxx (id int, col1 blob)");
+        statement.execute("insert into xxx values(10, 'abcdef')");
+
+        DuckDBResultSet rs = (DuckDBResultSet) statement.executeQuery("select * from xxx");
+        rs.next();
+        Blob blob1 = rs.getBlob(2);
+        blob1.getBinaryStream();
+
+        //        statement.execute("ATTACH 'dbname=testdb user=postgres host=192.168.40.132 port=5432 password=12345678' AS testdb (TYPE POSTGRES, READ_ONLY)");
         System.out.println("OK");
     }
 }

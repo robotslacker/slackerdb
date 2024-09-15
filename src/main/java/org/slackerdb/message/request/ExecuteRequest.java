@@ -243,13 +243,6 @@ public class ExecuteRequest extends PostgresRequest {
                                     // 这些数据类型都是二进制类型返回
                                     field.formatCode = 1;
                                     break;
-                                case "VARCHAR":
-                                case "TIME":
-                                case "TIMESTAMP":
-                                case "TIMESTAMP WITH TIME ZONE":
-                                    // 这些数据类型都是文本类型返回
-                                    field.formatCode = 0;
-                                    break;
                                 default:
                                     // 不认识的类型一律文本返回
                                     field.formatCode = 0;

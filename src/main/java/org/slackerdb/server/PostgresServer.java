@@ -37,7 +37,7 @@ public class PostgresServer {
     /**
      * Start the server
      */
-    public void start() throws ServerException {
+    public void start() {
         // Listener thread
         Thread thread = new Thread(() -> {
             try {
