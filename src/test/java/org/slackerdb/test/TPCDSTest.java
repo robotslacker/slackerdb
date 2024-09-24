@@ -55,11 +55,11 @@ public class TPCDSTest {
                 File dbFile = new File(String.valueOf(Path.of(ServerConfiguration.getData_Dir(), ServerConfiguration.getData() + ".db")));
                 if (dbFile.exists())
                 {
-                    dbFile.delete();
+                    var ignored = dbFile.delete();
                 }
 
                 // 启动数据库
-//                Main.setLogLevel("TRACE");
+                Main.setLogLevel("INFO");
                 Main.serverStart();
 
                 // 强制使用UTC时区，以避免时区问题在PG和后端数据库中不一致的行为
@@ -96,6 +96,19 @@ public class TPCDSTest {
 
         System.out.println("Test data generated successful.");
 
+    }
+
+    @AfterAll
+    static void tearDownAll() throws Exception {
+        Main.serverStop();
+        if (dbThread != null) {
+            dbThread.interrupt();
+        }
+        File dbFile = new File(String.valueOf(Path.of(ServerConfiguration.getData_Dir(), ServerConfiguration.getData() + ".db")));
+        if (dbFile.exists())
+        {
+            var ignored = dbFile.delete();
+        }
     }
 
     void runSQL(String name, String sql)  {
@@ -244,16 +257,5 @@ public class TPCDSTest {
         System.out.println("TEST:: testTPCDS");
     }
 
-    @AfterAll
-    static void tearDownAll() {
-        if (dbThread != null) {
-            dbThread.interrupt();
-        }
-        File dbFile = new File(String.valueOf(Path.of(ServerConfiguration.getData_Dir(), ServerConfiguration.getData() + ".db")));
-        if (dbFile.exists())
-        {
-            dbFile.delete();
-        }
-    }
 }
 

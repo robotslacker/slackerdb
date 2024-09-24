@@ -61,6 +61,15 @@ public class Sanity01Test {
         System.out.println("TEST:: Server started successful ...");
     }
 
+
+    @AfterAll
+    static void tearDownAll() throws Exception{
+        Main.serverStop();
+        if (dbThread != null) {
+            dbThread.interrupt();
+        }
+    }
+
     @Test
     void connectDB() throws SQLException {
         String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
@@ -716,13 +725,6 @@ public class Sanity01Test {
         pgConn1.close();
 
         assert nRows == expectedResult;
-    }
-
-    @AfterAll
-    static void tearDownAll() {
-        if (dbThread != null) {
-            dbThread.interrupt();
-        }
     }
 }
 

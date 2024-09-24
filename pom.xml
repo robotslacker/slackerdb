@@ -4,7 +4,7 @@
 
     <groupId>org.robotslacker</groupId>
     <artifactId>slackerdb</artifactId>
-    <version>0.0.5</version>
+    <version>0.0.6</version>
 
     <properties>
         <maven.compiler.target>11</maven.compiler.target>
@@ -45,6 +45,16 @@
             <version>1.11.0</version>
         </dependency>
         <dependency>
+            <groupId>org.antlr</groupId>
+            <artifactId>antlr4-runtime</artifactId>
+            <version>4.13.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.groovy</groupId>
+            <artifactId>groovy</artifactId>
+            <version>4.0.23</version>
+        </dependency>
+        <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <version>${postgres.version}</version>
@@ -77,6 +87,14 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/java</directory>
+                <includes>
+                    <include>**/*.groovy</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -98,7 +116,10 @@
                 <configuration>
                     <includes>
                         <include>**/Sanity01Test.java</include>
+                        <include>**/PlSqlTest.java</include>
                     </includes>
+                    <parallel>none</parallel> <!-- Disable parallel execution -->
+                    <forkCount>1</forkCount>  <!-- Execute tests in a single process -->
                 </configuration>
             </plugin>
             <plugin>

@@ -8,6 +8,7 @@ import org.slackerdb.server.PostgresServer;
 import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Sleeper;
 
+import java.sql.Connection;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -38,6 +39,26 @@ public class Main {
                 !DBInstance.state.equalsIgnoreCase("STARTUP FAILED")) {
             Sleeper.sleep(1000);
         }
+    }
+
+    public static void serverStop() throws Exception
+    {
+        // 停止网络服务
+        DBInstance.protocolServer.stop(null);
+
+        // 数据库强制进行检查点操作
+        DBInstance.forceCheckPoint();
+
+        // 关闭数据库
+        for (Connection conn : DBInstance.connectionPool)
+        {
+            if (!conn.isClosed()) {
+                conn.close();
+            }
+        }
+        DBInstance.connectionPool.clear();
+        // 关闭BackendSysConnection
+        DBInstance.backendSysConnection.close();
     }
 
     public static void serverAdmin(String appCommand)
@@ -121,6 +142,10 @@ public class Main {
             if (appOptions.containsKey("init_schema"))
             {
                 ServerConfiguration.setInit_schema(appOptions.get("init_schema"));
+            }
+            if (appOptions.containsKey("plsql_func_dir"))
+            {
+                ServerConfiguration.setPlsql_func_dir(appOptions.get("plsql_func_dir"));
             }
             if (appCommand == null)
             {

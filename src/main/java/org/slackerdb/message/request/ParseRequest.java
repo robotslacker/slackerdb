@@ -18,11 +18,15 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.Arrays;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class ParseRequest extends PostgresRequest {
     private String      preparedStmtName = "";
     private String      sql = "";
     private int[]       parameterDataTypeIds;
+    private static final Pattern plsqlPattern =
+            Pattern.compile("\\$\\$(.*)\\$\\$.*",Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
 
     @Override
     public void decode(byte[] data) {
@@ -79,6 +83,27 @@ public class ParseRequest extends PostgresRequest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ParseRequest parseRequest = (ParseRequest) request;
 
+        // 处理PLSQL语句
+        Matcher matcher = plsqlPattern.matcher(parseRequest.sql);
+        if (matcher.matches())
+        {
+            // 这是一个PLSQL语句，不再解析，直接返回，等待Execute执行
+            ParseComplete parseComplete = new ParseComplete();
+            parseComplete.process(ctx, request, out);
+
+            // 发送并刷新返回消息
+            PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out);
+            out.close();
+
+            // 记录SQL语句
+            ParsedStatement parsedPrepareStatement = new ParsedStatement();
+            parsedPrepareStatement.sql = matcher.group(1).trim();
+            parsedPrepareStatement.isPlSql = true;
+            DBInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+                    "PreparedStatement" + "-" + preparedStmtName, parsedPrepareStatement);
+            return;
+        }
+
         // 由于PG驱动程序内置的一些语句在目标数据库上无法执行，所以这里要进行转换
         String executeSQL = SQLReplacer.replaceSQL(parseRequest.sql);
 
@@ -95,6 +120,7 @@ public class ParseRequest extends PostgresRequest {
             // 一些第三方工具用发送空语句解析来检测数据库状态
             ParsedStatement parsedPrepareStatement = new ParsedStatement();
             parsedPrepareStatement.sql = "";
+            parsedPrepareStatement.isPlSql = false;
             DBInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
                     "PreparedStatement" + "-" + preparedStmtName, parsedPrepareStatement);
             return;

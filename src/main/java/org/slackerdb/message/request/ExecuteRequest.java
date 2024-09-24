@@ -9,7 +9,9 @@ import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresMessage;
 import org.slackerdb.message.PostgresRequest;
 import org.slackerdb.message.response.*;
+import org.slackerdb.plsql.PlSqlVisitor;
 import org.slackerdb.server.DBInstance;
+import org.slackerdb.server.GroovyInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -143,12 +145,30 @@ public class ExecuteRequest extends PostgresRequest {
         long  nRowsAffected;
 
         try {
-            ParsedStatement parsedStatement = DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("Portal" + "-" + portalName);
+            ParsedStatement parsedStatement =
+                    DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("Portal" + "-" + portalName);
+            if (parsedStatement != null && parsedStatement.isPlSql)
+            {
+                // PLSQL处理
+                Connection conn = DBInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
+                GroovyInstance groovyInstance = DBInstance.getSession(getCurrentSessionId(ctx)).groovyInstance;
+                PlSqlVisitor.runPlSql(conn, groovyInstance, parsedStatement.sql);
+
+                CommandComplete commandComplete = new CommandComplete();
+                commandComplete.setCommandResult("UPDATE 0");
+                commandComplete.process(ctx, request, out);
+
+                // 发送并刷新返回消息
+                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
+
+                return;
+            }
             if (parsedStatement == null || parsedStatement.preparedStatement == null)
             {
                 // 之前语句解析或者绑定出了错误, 没有继续执行的必要
                 return;
             }
+
             // 取出上次解析的SQL，如果为空语句，则直接返回
             String executeSQL = DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("Portal" + "-" + portalName).sql;
             if (executeSQL.isEmpty()) {

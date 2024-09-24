@@ -17,6 +17,7 @@ public class ServerConfiguration extends Throwable {
     private static String   data_dir = ":memory:";
     private static String   temp_dir = System.getProperty("java.io.tmpdir");
     private static String   extension_dir = "";
+    private static String   plsql_func_dir = "";
     private static String   log = "console";
     private static Level    log_level = Level.INFO;
     private static int      port = 4309;
@@ -93,6 +94,8 @@ public class ServerConfiguration extends Throwable {
         extension_dir = readOption("extension_dir", extension_dir);
         // 初始化脚本的位置
         init_schema = readOption("init_schema", init_schema);
+        // PLSQL中函数外部声明文件的位置
+        plsql_func_dir = readOption("plsql_func_dir", plsql_func_dir);
     }
 
     // 读取参数配置文件
@@ -168,6 +171,10 @@ public class ServerConfiguration extends Throwable {
     {
         return init_schema;
     }
+    public static String getPlsql_func_dir()
+    {
+        return plsql_func_dir;
+    }
 
     public static void setLog_level(Level plog_level) { log_level = plog_level;}
     public static void setLog(String pLog) { log = pLog.trim();}
@@ -203,5 +210,9 @@ public class ServerConfiguration extends Throwable {
     public static void setInit_schema(String pInit_schema)
     {
         init_schema = pInit_schema;
+    }
+    public static void setPlsql_func_dir(String pPlsql_func_dir)
+    {
+        plsql_func_dir = pPlsql_func_dir;
     }
 }

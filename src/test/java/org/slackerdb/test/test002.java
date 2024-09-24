@@ -4,6 +4,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVRecord;
+import org.duckdb.DuckDBAppender;
 import org.duckdb.DuckDBConnection;
 import org.duckdb.DuckDBResultSet;
 import org.postgresql.copy.CopyManager;
@@ -36,16 +37,33 @@ public class test002 {
     public static void main(String[] args) throws SQLException, ClassNotFoundException, IOException {
         DuckDBConnection duckDBConnection =
                 (DuckDBConnection) DriverManager.getConnection("jdbc:duckdb:", "", "");
-        Statement statement = duckDBConnection.createStatement();
-        statement.execute("create table xxx (id int, col1 blob)");
-        statement.execute("insert into xxx values(10, 'abcdef')");
 
-        DuckDBResultSet rs = (DuckDBResultSet) statement.executeQuery("select * from xxx");
-        rs.next();
-        Blob blob1 = rs.getBlob(2);
-        blob1.getBinaryStream();
+        class testClass extends Thread
+        {
+            @Override
+            public void run()
+            {
+                try {
+                    Connection conn = duckDBConnection.duplicate();
+                    Statement stmt = conn.createStatement();
+//                    stmt.execute("DETACH DATABASE IF EXISTS db");
+                    stmt.execute("ATTACH IF NOT EXISTS 'dbname=postgres user=postgres password=123456 port=5432 host=192.168.11.120' AS db (TYPE POSTGRES, READ_ONLY, SCHEMA test1)");
+                    stmt.close();
+                    conn.close();
+                    System.out.println("test OK");
+                }
+                catch (SQLException se)
+                {
+                    System.out.println(se.getMessage());
+                }
+            }
+        };
 
-        //        statement.execute("ATTACH 'dbname=testdb user=postgres host=192.168.40.132 port=5432 password=12345678' AS testdb (TYPE POSTGRES, READ_ONLY)");
+        for (int i=0;i<10;i++)
+        {
+            testClass t = new testClass();
+            t.start();
+        }
         System.out.println("OK");
     }
 }
