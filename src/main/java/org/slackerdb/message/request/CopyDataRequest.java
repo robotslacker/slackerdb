@@ -11,6 +11,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.StringReader;
 import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -38,6 +39,10 @@ public class CopyDataRequest extends PostgresRequest {
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+        // 记录会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         long nCopiedRows = 0;
         try {
@@ -101,5 +106,9 @@ public class CopyDataRequest extends PostgresRequest {
         } finally {
             out.close();
         }
+
+        // 取消会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

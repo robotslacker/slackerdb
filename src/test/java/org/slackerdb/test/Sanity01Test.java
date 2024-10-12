@@ -64,7 +64,10 @@ public class Sanity01Test {
 
     @AfterAll
     static void tearDownAll() throws Exception{
+        System.out.println("TEST:: Will shutdown server ...");
+        System.out.println("TEST:: Active sessions : " + DBInstance.activeSessions);
         Main.serverStop();
+        System.out.println("TEST:: Server stopped successful.");
         if (dbThread != null) {
             dbThread.interrupt();
         }

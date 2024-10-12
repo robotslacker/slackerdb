@@ -1,14 +1,13 @@
 package org.slackerdb.configuration;
 
-import com.sun.management.OperatingSystemMXBean;
 import org.slackerdb.exceptions.ServerException;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
-import java.lang.management.ManagementFactory;
 import java.util.Properties;
 import ch.qos.logback.classic.Level;
+import oshi.SystemInfo;
+import oshi.hardware.GlobalMemory;
 
 public class ServerConfiguration extends Throwable {
     private static final Properties appProperties = new Properties();
@@ -76,8 +75,10 @@ public class ServerConfiguration extends Throwable {
         }
         else
         {
-            OperatingSystemMXBean osBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
-            String defaultPhysicalMemorySize = (int) ((double) osBean.getTotalPhysicalMemorySize() / 1024 / 1024 / 1024 * 0.6) + "GB";
+            SystemInfo systemInfo = new SystemInfo();
+            GlobalMemory memory = systemInfo.getHardware().getMemory();
+            String defaultPhysicalMemorySize =
+                    (int) ((double) memory.getTotal() / 1024 / 1024 / 1024 * 0.6) + "GB";
             memory_limit = readOption("memory_limit", defaultPhysicalMemorySize);
         }
         // 默认使用主机内核数量的80%

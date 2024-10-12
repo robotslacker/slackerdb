@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 
 public class BindRequest extends PostgresRequest {
@@ -135,8 +136,13 @@ public class BindRequest extends PostgresRequest {
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+        // 记录会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
+        tryBlock:
         try {
             ParsedStatement parsedStatement =
                     DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("PreparedStatement" + "-" + preparedStmtName);
@@ -150,7 +156,7 @@ public class BindRequest extends PostgresRequest {
                     // 发送并刷新返回消息
                     PostgresMessage.writeAndFlush(ctx, BindComplete.class.getSimpleName(), out);
                     out.close();
-                    return;
+                    break tryBlock;
                 }
 
                 //  如果是PLSQL，则不需要Bind
@@ -267,5 +273,8 @@ public class BindRequest extends PostgresRequest {
             out.close();
         }
 
+        // 取消会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

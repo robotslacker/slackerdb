@@ -21,6 +21,7 @@ public class DBInstance {
 
     public static String state = "";
     public static Connection backendSysConnection;
+    public static int    activeSessions = 0;
 
     // 为每个连接创建一个会话ID
     private static int maxSessionId = 1000;

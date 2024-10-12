@@ -15,6 +15,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.*;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -56,8 +57,14 @@ public class QueryRequest  extends PostgresRequest {
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+        // 记录会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = sql;
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
+        tryBlock:
         try {
             String copyInClausePattern = "^(\\s+)?COPY\\s+(.*?)((\\s+)?\\((.*)\\))?\\s+FROM\\s+STDIN\\s+WITH\\s+\\((\\s+)?FORMAT\\s+(.*)\\).*";
             Pattern copyInPattern = Pattern.compile(copyInClausePattern, Pattern.CASE_INSENSITIVE);
@@ -115,7 +122,7 @@ public class QueryRequest  extends PostgresRequest {
                 PostgresMessage.writeAndFlush(ctx, CopyInResponse.class.getSimpleName(), out);
 
                 out.close();
-                return;
+                break tryBlock;
             }
 
             // 在执行之前需要做替换
@@ -138,7 +145,7 @@ public class QueryRequest  extends PostgresRequest {
 
                 out.close();
 
-                return;
+                break tryBlock;
             }
 
             // 理解为简单查询
@@ -275,5 +282,10 @@ public class QueryRequest  extends PostgresRequest {
         } finally {
             out.close();
         }
+
+        // 取消会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = "";
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

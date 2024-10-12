@@ -9,6 +9,7 @@ import org.slackerdb.server.DBSession;
 import org.slackerdb.utils.Utils;
 
 import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 
 public class CancelRequest  extends PostgresRequest {
@@ -39,6 +40,11 @@ public class CancelRequest  extends PostgresRequest {
         {
             return;
         }
+
+        // 记录会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+
         if (DBInstance.getSession(processId) != null)
         {
             DBSession dbSession = DBInstance.getSession(processId);
@@ -54,5 +60,9 @@ public class CancelRequest  extends PostgresRequest {
                 }
             }
         }
+
+        // 取消会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

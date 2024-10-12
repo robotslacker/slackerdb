@@ -31,6 +31,11 @@ public class AdminClientRequest  extends PostgresRequest {
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+        // 记录会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = clientRequestCommand;
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+
         StringBuilder feedBackMsg;
         if (clientRequestCommand.trim().equalsIgnoreCase("STOP"))
         {
@@ -96,6 +101,7 @@ public class AdminClientRequest  extends PostgresRequest {
             // 显示数据库基本信息
             feedBackMsg.append("SERVER USAGE: \n");
             feedBackMsg.append("  Max Connections(High water mark): ").append(DBInstance.connectionPool.size()).append("\n");
+            feedBackMsg.append("  Active Sessions: ").append(DBInstance.activeSessions).append("\n");
 
             // 显示当前的数据库会话情况
             feedBackMsg.append("SERVER SESSIONS: \n");
@@ -107,6 +113,15 @@ public class AdminClientRequest  extends PostgresRequest {
                 feedBackMsg.append("    ").append(" Connected: ").append(dbSession.connectedTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
                 feedBackMsg.append("    ").append(" Client IP: ").append(dbSession.clientAddress).append("\n");
                 feedBackMsg.append("    ").append("    Status: ").append(dbSession.status).append("\n");
+                feedBackMsg.append("    ").append("Executing Function  :").append(dbSession.executingFunction).append("\n");
+                feedBackMsg.append("    ").append("Executing SQL       :").append(dbSession.executingSQL).append("\n");
+                if (dbSession.executingTime == null) {
+                    feedBackMsg.append("    ").append("Executing Time      : N/A").append("\n");
+                }
+                else
+                {
+                    feedBackMsg.append("    ").append("Executing Time      :").append(dbSession.executingTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
+                }
                 feedBackMsg.append("\n");
             }
         }
@@ -123,5 +138,11 @@ public class AdminClientRequest  extends PostgresRequest {
         // 发送并刷新返回消息
         PostgresMessage.writeAndFlush(ctx, AdminClientResp.class.getSimpleName(), out);
         out.close();
+
+
+        // 取消会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = "";
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

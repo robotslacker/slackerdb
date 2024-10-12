@@ -46,6 +46,13 @@ public class DBSession {
     public String copyLastRemained = "";
     public long copyAffectedRows = 0;
 
+    // 当前执行任务的语句
+    public String executingSQL = "";
+    // 当前所处的业务请求
+    public String executingFunction = "";
+    // 当前调用的开始时间
+    public LocalDateTime executingTime = null;
+
     public ParsedStatement getParsedStatement(String portalName) {
         return parsedStatements.get(portalName);
     }

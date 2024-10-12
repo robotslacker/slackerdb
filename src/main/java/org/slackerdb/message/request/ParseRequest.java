@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -126,6 +127,11 @@ public class ParseRequest extends PostgresRequest {
             return;
         }
 
+        // 记录会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = executeSQL;
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+
         try {
             Connection conn = DBInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
             PreparedStatement preparedStatement = conn.prepareStatement(executeSQL);
@@ -164,5 +170,10 @@ public class ParseRequest extends PostgresRequest {
         finally {
             out.close();
         }
+
+        // 取消会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = "";
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

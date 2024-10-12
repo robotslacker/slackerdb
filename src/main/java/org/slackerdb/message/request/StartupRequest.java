@@ -52,7 +52,43 @@ public class StartupRequest  extends PostgresRequest {
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+        // 记录会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+
         try {
+//            boolean hasFreeSession = false;
+//            for (int i=0;i<1000;i++)
+//            {
+//                if (DBInstance.activeSessions > (ServerConfiguration.getMax_Workers() - 2))
+//                {
+//                    System.out.println("No free connection. will wait ..." + DBInstance.activeSessions);
+//                    // 任何时候都要考虑给admin的status保留至少2个连接会话，否则管理操作无法进行
+//                    Sleeper.sleep(500);
+//                    continue;
+//                }
+//                hasFreeSession = true;
+//                break;
+//            }
+//            if (!hasFreeSession)
+//            {
+//                ByteArrayOutputStream out = new ByteArrayOutputStream();
+//                // 生成一个错误消息
+//                ErrorResponse errorResponse = new ErrorResponse();
+//                errorResponse.setErrorResponse("SLACKER-0099",
+//                        "The maximum number of connections (" +
+//                                ServerConfiguration.getMax_Workers() +
+//                                ") has been exceeded. Connect refused. ");
+//                errorResponse.process(ctx, request, out);
+//
+//                // 发送并刷新返回消息
+//                PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+//
+//                // 关闭连接
+//                out.close();
+//                ctx.close();
+//                return;
+//            }
             //  检查登录选项中的数据库名称和文件名称是否匹配，如果不匹配，直接拒绝
             if (!ServerConfiguration.getData().equalsIgnoreCase(startupOptions.get("database")))
             {
@@ -191,5 +227,9 @@ public class StartupRequest  extends PostgresRequest {
         readyForQuery.process(ctx, request, out);
         PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out);
         out.close();
+
+        // 取消会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

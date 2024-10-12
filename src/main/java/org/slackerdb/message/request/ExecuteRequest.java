@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -141,9 +142,14 @@ public class ExecuteRequest extends PostgresRequest {
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+        // 记录会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         long  nRowsAffected;
 
+        tryBlock:
         try {
             ParsedStatement parsedStatement =
                     DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("Portal" + "-" + portalName);
@@ -161,12 +167,12 @@ public class ExecuteRequest extends PostgresRequest {
                 // 发送并刷新返回消息
                 PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
 
-                return;
+                break tryBlock;
             }
             if (parsedStatement == null || parsedStatement.preparedStatement == null)
             {
                 // 之前语句解析或者绑定出了错误, 没有继续执行的必要
-                return;
+                break tryBlock;
             }
 
             // 取出上次解析的SQL，如果为空语句，则直接返回
@@ -178,8 +184,9 @@ public class ExecuteRequest extends PostgresRequest {
                 // 发送并刷新返回消息
                 PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
                 out.close();
-                return;
+                break tryBlock;
             }
+            DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = executeSQL;
 
             // 之前有缓存记录
             if (parsedStatement.resultSet != null)
@@ -206,7 +213,7 @@ public class ExecuteRequest extends PostgresRequest {
                         PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out);
                         out.close();
                         parsedStatement.nRowsAffected += rowsReturned;
-                        return;
+                        break tryBlock;
                     }
                 }
                 // 所有的记录查询完毕
@@ -304,7 +311,7 @@ public class ExecuteRequest extends PostgresRequest {
                             // 返回等待下一次ExecuteRequest
                             out.close();
                             parsedStatement.nRowsAffected += rowsReturned;
-                            return;
+                            break tryBlock;
                         }
                     }
                     rs.close();
@@ -375,5 +382,10 @@ public class ExecuteRequest extends PostgresRequest {
         finally {
             out.close();
         }
+
+        // 取消会话的开始时间，以及业务类型
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = "";
+        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }
