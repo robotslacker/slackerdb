@@ -58,7 +58,7 @@ public class StartupRequest  extends PostgresRequest {
 
         try {
 //            boolean hasFreeSession = false;
-//            for (int i=0;i<1000;i++)
+//            for (int i=0;i<100;i++)
 //            {
 //                if (DBInstance.activeSessions > (ServerConfiguration.getMax_Workers() - 2))
 //                {

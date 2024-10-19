@@ -174,18 +174,18 @@ public class Sanity01Test {
     }
 
     @Test
-    void duplicateCcommitAndRollback() throws SQLException {
+    void duplicateCommitAndRollback() throws SQLException {
         String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
 
-        pgConn1.createStatement().execute("Create TABLE duplicateCcommitAndRollback (id int)");
+        pgConn1.createStatement().execute("Create TABLE duplicateCommitAndRollback (id int)");
         pgConn1.commit();
 
-        pgConn1.createStatement().execute("insert into duplicateCcommitAndRollback values(3)");
+        pgConn1.createStatement().execute("insert into duplicateCommitAndRollback values(3)");
 
-        ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from duplicateCcommitAndRollback");
+        ResultSet rs = pgConn1.createStatement().executeQuery("SELECT * from duplicateCommitAndRollback");
 
         while (rs.next()) {
             assert rs.getInt(1) == 3;
@@ -199,15 +199,15 @@ public class Sanity01Test {
         pgConn1.commit();
         pgConn1.rollback();
 
-        rs = pgConn1.createStatement().executeQuery("SELECT COUNT(*) from duplicateCcommitAndRollback");
+        rs = pgConn1.createStatement().executeQuery("SELECT COUNT(*) from duplicateCommitAndRollback");
         while (rs.next()) {
             assert rs.getInt(1) == 0;
         }
         rs.close();
 
-        pgConn1.createStatement().execute("insert into duplicateCcommitAndRollback values(5)");
+        pgConn1.createStatement().execute("insert into duplicateCommitAndRollback values(5)");
 
-        rs = pgConn1.createStatement().executeQuery("SELECT * from duplicateCcommitAndRollback");
+        rs = pgConn1.createStatement().executeQuery("SELECT * from duplicateCommitAndRollback");
         while (rs.next()) {
             assert rs.getInt(1) == 5;
         }

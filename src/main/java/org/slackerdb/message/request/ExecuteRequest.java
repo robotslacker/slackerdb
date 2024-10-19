@@ -140,6 +140,69 @@ public class ExecuteRequest extends PostgresRequest {
         return columns;
     }
 
+    public long insertSqlHistory(ChannelHandlerContext ctx)
+    {
+        long sqlHistoryId = -1;
+        if (DBInstance.backendSqlHistoryConnection == null)
+        {
+            // 没有开始日志服务
+            return sqlHistoryId;
+        }
+        String historySQL = "Insert INTO SQL_HISTORY(ID, SessionId, ClientIP, SQL, SqlId, StartTime) " +
+                "VALUES(?,?,?,?,?, current_timestamp)";
+        try {
+            Statement stmt = DBInstance.backendSqlHistoryConnection.createStatement();
+            ResultSet rs = stmt.executeQuery("SELECT nextval('sql_history_id')");
+            rs.next();
+            sqlHistoryId = rs.getLong(1);
+            rs.close();
+            stmt.close();
+            PreparedStatement preparedStatement =
+                    DBInstance.backendSqlHistoryConnection.prepareStatement(historySQL);
+            preparedStatement.setLong(1, sqlHistoryId);
+            preparedStatement.setLong(2, getCurrentSessionId(ctx));
+            preparedStatement.setString(3, DBInstance.getSession(getCurrentSessionId(ctx)).clientAddress);
+            preparedStatement.setString(4, DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL);
+            preparedStatement.setLong(5, DBInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.get());
+            preparedStatement.execute();
+            preparedStatement.close();
+        }
+        catch (SQLException se)
+        {
+            AppLogger.logger.warn("[SERVER] Save to sql history failed.", se);
+        }
+        return sqlHistoryId;
+    }
+
+    public void updateSqlHistory(long sqlHistoryId, int sqlCode, long affectedRows, String errorMsg)
+    {
+        if (DBInstance.backendSqlHistoryConnection == null)
+        {
+            // 没有开始日志服务
+            return;
+        }
+        String historySQL = "Update SQL_HISTORY " +
+                "SET   EndTime = current_timestamp," +
+                "      SqlCode = ?, " +
+                "      AffectedRows = ?, " +
+                "      ErrorMsg = ? " +
+                "WHERE ID = ?";
+        try {
+            PreparedStatement preparedStatement =
+                    DBInstance.backendSqlHistoryConnection.prepareStatement(historySQL);
+            preparedStatement.setInt(1, sqlCode);
+            preparedStatement.setLong(2, affectedRows);
+            preparedStatement.setString(3, errorMsg);
+            preparedStatement.setLong(4, sqlHistoryId);
+            preparedStatement.execute();
+            preparedStatement.close();
+        }
+        catch (SQLException se)
+        {
+            AppLogger.logger.warn("[SERVER] Save to sql history failed.", se);
+        }
+    }
+
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         // 记录会话的开始时间，以及业务类型
@@ -147,10 +210,12 @@ public class ExecuteRequest extends PostgresRequest {
         DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        long  nRowsAffected;
+        long  nRowsAffected = 0;
+        long  nSqlHistoryId = -1;
 
         tryBlock:
         try {
+            // 开始处理
             ParsedStatement parsedStatement =
                     DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("Portal" + "-" + portalName);
             if (parsedStatement != null && parsedStatement.isPlSql)
@@ -166,6 +231,11 @@ public class ExecuteRequest extends PostgresRequest {
 
                 // 发送并刷新返回消息
                 PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
+
+                // PLSQL的记录保存到SQL历史中
+                DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = parsedStatement.sql;
+                DBInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.incrementAndGet();
+                nSqlHistoryId = insertSqlHistory(ctx);
 
                 break tryBlock;
             }
@@ -187,10 +257,13 @@ public class ExecuteRequest extends PostgresRequest {
                 break tryBlock;
             }
             DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = executeSQL;
-
             // 之前有缓存记录
             if (parsedStatement.resultSet != null)
             {
+                // 保留原有SqlId不变
+                // 记录到SQL历史中
+                nSqlHistoryId = insertSqlHistory(ctx);
+
                 ResultSet rs = parsedStatement.resultSet;
                 DataRow dataRow = new DataRow();
                 ResultSetMetaData rsmd = rs.getMetaData();
@@ -223,6 +296,11 @@ public class ExecuteRequest extends PostgresRequest {
             }
             else
             {
+                // 记录一个新的SqlID
+                DBInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.incrementAndGet();
+                // 记录到SQL历史中
+                nSqlHistoryId = insertSqlHistory(ctx);
+
                 boolean isResultSet = false;
                 try {
                     isResultSet = parsedStatement.preparedStatement.execute();
@@ -368,6 +446,12 @@ public class ExecuteRequest extends PostgresRequest {
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
+
+            // 更新SQL历史信息
+            if (nSqlHistoryId != -1)
+            {
+                updateSqlHistory(nSqlHistoryId, 0, nRowsAffected, "");
+            }
         }
         catch (SQLException e) {
             // 生成一个错误消息
@@ -378,6 +462,12 @@ public class ExecuteRequest extends PostgresRequest {
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+
+            // 更新SQL历史信息
+            if (nSqlHistoryId != -1)
+            {
+                updateSqlHistory(nSqlHistoryId, e.getErrorCode(), nRowsAffected, e.getMessage());
+            }
         }
         finally {
             out.close();

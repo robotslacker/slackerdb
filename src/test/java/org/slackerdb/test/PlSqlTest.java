@@ -69,7 +69,7 @@ public class PlSqlTest {
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
         Statement stmt = pgConn.createStatement();
-        stmt.execute("$$Declare\n" +
+        stmt.execute("DO $$\nDeclare\n" +
                 "   x  int;\n" +
                 "begin\n" +
                 "\tpass;\n" +

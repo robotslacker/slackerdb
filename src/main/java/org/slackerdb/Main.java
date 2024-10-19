@@ -46,8 +46,9 @@ public class Main {
         // 停止网络服务
         DBInstance.protocolServer.stop(null);
 
-        // 数据库强制进行检查点操作
+        // 数据库强制进行检查点操作,保存SQL历史信息
         DBInstance.forceCheckPoint();
+        DBInstance.saveSqlHistory();
 
         // 关闭数据库
         for (Connection conn : DBInstance.connectionPool)
@@ -147,6 +148,14 @@ public class Main {
             {
                 ServerConfiguration.setPlsql_func_dir(appOptions.get("plsql_func_dir"));
             }
+            if (appOptions.containsKey("sql_history"))
+            {
+                ServerConfiguration.setSqlHistory(appOptions.get("sql_history"));
+            }
+            if (appOptions.containsKey("sql_history_dir"))
+            {
+                ServerConfiguration.setSqlHistoryDir(appOptions.get("sql_history_dir"));
+            }
             if (appCommand == null)
             {
                 AppLogger.logger.error("[SERVER] Invalid command. \n Usage: java -jar slackerdb-xxx.jar [--option value, ]  command.");
@@ -156,10 +165,12 @@ public class Main {
             // 启动应用程序
             if (appCommand.toString().toUpperCase().startsWith("START")) {
                 serverStart();
+                // 永远等待，并不会退出
             }
             else
             {
                 serverAdmin(appCommand.toString());
+                System.exit(0);
             }
         }
         catch (Exception ex)

@@ -114,13 +114,30 @@ public class AdminClientRequest  extends PostgresRequest {
                 feedBackMsg.append("    ").append(" Client IP: ").append(dbSession.clientAddress).append("\n");
                 feedBackMsg.append("    ").append("    Status: ").append(dbSession.status).append("\n");
                 feedBackMsg.append("    ").append("Executing Function  :").append(dbSession.executingFunction).append("\n");
-                feedBackMsg.append("    ").append("Executing SQL       :").append(dbSession.executingSQL).append("\n");
+                dbSession.executingSQL = "create table abcd \n xdfasdfasd \n xxx";
+                String[] executingSQLasList = dbSession.executingSQL.split("\n");
+                for (int i=0;i<executingSQLasList.length;i++)
+                {
+                    if (i==0)
+                    {
+                        feedBackMsg.append("    ").append("Executing SQL       : ").append(executingSQLasList[i]).append("\n");
+                    }
+                    else
+                    {
+                        feedBackMsg.append("    ").append("                     " ).append(executingSQLasList[i]).append("\n");
+                    }
+                }
+
                 if (dbSession.executingTime == null) {
                     feedBackMsg.append("    ").append("Executing Time      : N/A").append("\n");
                 }
                 else
                 {
-                    feedBackMsg.append("    ").append("Executing Time      :").append(dbSession.executingTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
+                    feedBackMsg.append("    ").append("Executing Time      :")
+                            .append(dbSession.executingTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+                    // 计算时间差
+                    feedBackMsg.append("  (").append(Duration.between(dbSession.executingTime, currentTime).getSeconds()).append(" seconds)\n");
+
                 }
                 feedBackMsg.append("\n");
             }
@@ -138,7 +155,6 @@ public class AdminClientRequest  extends PostgresRequest {
         // 发送并刷新返回消息
         PostgresMessage.writeAndFlush(ctx, AdminClientResp.class.getSimpleName(), out);
         out.close();
-
 
         // 取消会话的开始时间，以及业务类型
         DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";

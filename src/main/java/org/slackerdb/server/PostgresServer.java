@@ -22,7 +22,6 @@ import org.slackerdb.utils.Utils;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.sql.*;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.*;
@@ -325,32 +324,6 @@ public class PostgresServer {
     }
 
     private void run() throws InterruptedException, ServerException {
-        // 处理初始化参数
-        try {
-            Statement stmt = DBInstance.backendSysConnection.createStatement();
-            if (!ServerConfiguration.getTemp_dir().isEmpty()) {
-                AppLogger.logger.debug("SET temp_directory = '{}'", ServerConfiguration.getTemp_dir());
-                stmt.execute("SET temp_directory = '" + ServerConfiguration.getTemp_dir() + "'");
-            }
-            if (!ServerConfiguration.getExtension_dir().isEmpty()) {
-                AppLogger.logger.debug("SET extension_directory = '{}'", ServerConfiguration.getExtension_dir());
-                stmt.execute("SET extension_directory = '" + ServerConfiguration.getExtension_dir() + "'");
-            }
-            if (!ServerConfiguration.getMemory_limit().isEmpty()) {
-                AppLogger.logger.debug("SET Memory_limit = '{}'", ServerConfiguration.getMemory_limit());
-                stmt.execute("SET memory_limit = '" + ServerConfiguration.getMemory_limit() + "'");
-            }
-            if (ServerConfiguration.getThreads() != 0) {
-                AppLogger.logger.debug("SET threads = '{}'", ServerConfiguration.getThreads());
-                stmt.execute("SET threads = " + ServerConfiguration.getThreads());
-            }
-            stmt.close();
-        }
-        catch (SQLException se)
-        {
-            AppLogger.logger.error("[SERVER] Init backend parameter error. ", se);
-            throw new ServerException(se);
-        }
         // Netty消息处理
         bossGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup(ServerConfiguration.getMax_Workers());

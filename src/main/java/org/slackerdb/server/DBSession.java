@@ -10,6 +10,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class DBSession {
     // 数据库连接
@@ -52,6 +53,7 @@ public class DBSession {
     public String executingFunction = "";
     // 当前调用的开始时间
     public LocalDateTime executingTime = null;
+    public AtomicLong executingSqlId = new AtomicLong();
 
     public ParsedStatement getParsedStatement(String portalName) {
         return parsedStatements.get(portalName);

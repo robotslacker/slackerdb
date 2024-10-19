@@ -27,7 +27,7 @@ public class ParseRequest extends PostgresRequest {
     private String      sql = "";
     private int[]       parameterDataTypeIds;
     private static final Pattern plsqlPattern =
-            Pattern.compile("\\$\\$(.*)\\$\\$.*",Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+            Pattern.compile("DO\\s+\\$\\$(.*)\\$\\$.*",Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
 
     @Override
     public void decode(byte[] data) {

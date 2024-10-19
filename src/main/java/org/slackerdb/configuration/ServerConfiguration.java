@@ -27,6 +27,8 @@ public class ServerConfiguration extends Throwable {
     private static int      max_workers = Runtime.getRuntime().availableProcessors();
     private static int      clientTimeout = 600;
     private static String   init_schema = "";
+    private static String   sqlHistory = "";
+    private static String   sqlHistoryDir = "";
 
     private static int readOption(String optionName, int defaultValue)
     {
@@ -97,6 +99,8 @@ public class ServerConfiguration extends Throwable {
         init_schema = readOption("init_schema", init_schema);
         // PLSQL中函数外部声明文件的位置
         plsql_func_dir = readOption("plsql_func_dir", plsql_func_dir);
+        sqlHistory = readOption("sql_history", sqlHistory);
+        sqlHistoryDir = readOption("sql_history_dir", sqlHistoryDir);
     }
 
     // 读取参数配置文件
@@ -176,6 +180,14 @@ public class ServerConfiguration extends Throwable {
     {
         return plsql_func_dir;
     }
+    public static String getSqlHistory()
+    {
+        return sqlHistory;
+    }
+    public static String getSqlHistoryDir()
+    {
+        return sqlHistoryDir;
+    }
 
     public static void setLog_level(Level plog_level) { log_level = plog_level;}
     public static void setLog(String pLog) { log = pLog.trim();}
@@ -215,5 +227,13 @@ public class ServerConfiguration extends Throwable {
     public static void setPlsql_func_dir(String pPlsql_func_dir)
     {
         plsql_func_dir = pPlsql_func_dir;
+    }
+    public static void setSqlHistory(String pSQLHistory)
+    {
+        sqlHistory = pSQLHistory;
+    }
+    public static void setSqlHistoryDir(String pSQLHistoryDir)
+    {
+        sqlHistoryDir = pSQLHistoryDir;
     }
 }
