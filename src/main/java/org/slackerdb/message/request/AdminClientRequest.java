@@ -114,7 +114,6 @@ public class AdminClientRequest  extends PostgresRequest {
                 feedBackMsg.append("    ").append(" Client IP: ").append(dbSession.clientAddress).append("\n");
                 feedBackMsg.append("    ").append("    Status: ").append(dbSession.status).append("\n");
                 feedBackMsg.append("    ").append("Executing Function  :").append(dbSession.executingFunction).append("\n");
-                dbSession.executingSQL = "create table abcd \n xdfasdfasd \n xxx";
                 String[] executingSQLasList = dbSession.executingSQL.split("\n");
                 for (int i=0;i<executingSQLasList.length;i++)
                 {
