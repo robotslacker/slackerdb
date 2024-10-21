@@ -120,6 +120,14 @@ public class Main {
             {
                 ServerConfiguration.setLog(appOptions.get("log"));
             }
+            if (appOptions.containsKey("bind"))
+            {
+                ServerConfiguration.setBindHost(appOptions.get("bind"));
+            }
+            if (appOptions.containsKey("host"))
+            {
+                ServerConfiguration.setBindHost(appOptions.get("host"));
+            }
             if (appOptions.containsKey("port"))
             {
                 ServerConfiguration.setPort(Integer.parseInt(appOptions.get("port")));
@@ -155,6 +163,17 @@ public class Main {
             if (appOptions.containsKey("sql_history_dir"))
             {
                 ServerConfiguration.setSqlHistoryDir(appOptions.get("sql_history_dir"));
+            }
+            if (appOptions.containsKey("help") || (appCommand != null && appCommand.toString().equalsIgnoreCase("HELP")))
+            {
+                System.out.println("Usage:  java -jar slackerdb-xxx.jar [--option value, ]  command.");
+                System.out.println();
+                System.out.println("        COMMAND:   START");
+                System.out.println("        COMMAND:   STOP");
+                System.out.println("        COMMAND:   STATUS");
+                System.out.println("        COMMAND:   KILL <sessionId>");
+                System.out.println();
+                System.exit(0);
             }
             if (appCommand == null)
             {

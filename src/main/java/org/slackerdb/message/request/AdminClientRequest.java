@@ -36,7 +36,7 @@ public class AdminClientRequest  extends PostgresRequest {
         DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = clientRequestCommand;
         DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
 
-        StringBuilder feedBackMsg;
+        StringBuilder feedBackMsg = new StringBuilder();
         if (clientRequestCommand.trim().equalsIgnoreCase("STOP"))
         {
             // 停止网络服务
@@ -58,14 +58,14 @@ public class AdminClientRequest  extends PostgresRequest {
             } catch (SQLException e) {
                 AppLogger.logger.error("Error closing backend connection", e);
             }
-            feedBackMsg = new StringBuilder("Server stop successful.");
+            feedBackMsg.append("Server stop successful.");
         }
         else if (clientRequestCommand.trim().equalsIgnoreCase("STATUS"))
         {
             LocalDateTime currentTime = LocalDateTime.now();
 
             // 显示当前服务状态
-            feedBackMsg = new StringBuilder("SERVER STATUS: \n");
+            feedBackMsg.append("SERVER STATUS: \n");
             feedBackMsg.append("  Now : ").append(currentTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
             feedBackMsg.append("  Boot: ").append(DBInstance.bootTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
 
@@ -141,9 +141,40 @@ public class AdminClientRequest  extends PostgresRequest {
                 feedBackMsg.append("\n");
             }
         }
+        else if (clientRequestCommand.trim().toUpperCase().startsWith("KILL"))
+        {
+            String targetSessionIdStr = clientRequestCommand.trim().toUpperCase().replace("KILL", "").trim();
+            int targetSessionId = 0;
+            try
+            {
+                targetSessionId = Integer.parseInt(targetSessionIdStr);
+            }
+            catch (NumberFormatException ignored) {}
+            if (DBInstance.dbSessions.containsKey(targetSessionId))
+            {
+                AppLogger.logger.info("[KILL SESSION] Will kill session [{}] ...", targetSessionIdStr);
+                feedBackMsg.append("[KILL SESSION] Will kill session [").append(targetSessionIdStr).append("] ...");
+                try
+                {
+                    DBInstance.dbSessions.get(targetSessionId).executingPreparedStatement.cancel();
+                }
+                catch (SQLException ignored) {}
+                try
+                {
+                    DBInstance.dbSessions.get(targetSessionId).abortSession();
+                }
+                catch (SQLException ignored) {}
+                AppLogger.logger.info("[KILL SESSION] Session [{}] has been killed.", targetSessionIdStr);
+                feedBackMsg.append("[KILL SESSION] Session [").append(targetSessionIdStr).append("] has been killed.");
+            }
+            else
+            {
+                feedBackMsg.append("[KILL SESSION] Unknown sessionID [").append(targetSessionIdStr).append("].");
+            }
+        }
         else
         {
-            feedBackMsg = new StringBuilder("Unknown command [" + clientRequestCommand + "].");
+            feedBackMsg.append("[ADMIN CMD] Unknown command [").append(clientRequestCommand).append("].");
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 

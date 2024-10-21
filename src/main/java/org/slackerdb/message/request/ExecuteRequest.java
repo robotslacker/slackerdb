@@ -296,8 +296,10 @@ public class ExecuteRequest extends PostgresRequest {
             }
             else
             {
-                // 记录一个新的SqlID
+                // 记录一个新的SqlID, 和当前正在执行的句柄（便于取消）
                 DBInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.incrementAndGet();
+                DBInstance.getSession(getCurrentSessionId(ctx)).executingPreparedStatement = parsedStatement.preparedStatement;
+
                 // 记录到SQL历史中
                 nSqlHistoryId = insertSqlHistory(ctx);
 

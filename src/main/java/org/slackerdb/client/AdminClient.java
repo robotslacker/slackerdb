@@ -83,7 +83,7 @@ public class AdminClient {
 
             // 连接服务器
             ChannelFuture future =
-                    client.connect("localhost", ServerConfiguration.getPort()).sync();
+                    client.connect(ServerConfiguration.getBindHost(), ServerConfiguration.getPort()).sync();
 
             // 发送消息头，并等待回应标志
             ByteBuf buffer = Unpooled.wrappedBuffer(AdminClientRequest.AdminClientRequestHeader);

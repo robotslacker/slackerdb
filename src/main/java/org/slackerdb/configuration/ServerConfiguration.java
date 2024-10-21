@@ -191,6 +191,10 @@ public class ServerConfiguration extends Throwable {
 
     public static void setLog_level(Level plog_level) { log_level = plog_level;}
     public static void setLog(String pLog) { log = pLog.trim();}
+    public static void setBindHost(String pHost)
+    {
+        bind = pHost;
+    }
     public static void setPort(int pPort)
     {
         port = pPort;

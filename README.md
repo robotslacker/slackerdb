@@ -98,6 +98,17 @@ memory_limit=
 # The script(s in the directory) will be executed only when the in-memory database or file database is opened for the first time.
 init_schema=
 
+
+# SQL execution history
+# Client IP/Port, Execution start time, execution duration, SQL statement, execution result code, number of affected rows
+# True will save it in a separated db file, default is blank, means disable this feature.
+# default placed directory is same with data_dir
+sql_history=
+
+# SQL execution history file default placed directory
+# default same with data_dir
+sql_history_dir=
+
 ```
 Note: All parameters are optional.   
 You can keep only the parameters you need to modify.   
@@ -105,18 +116,24 @@ For parameters that are not configured, means default values  will be used.
 
 ### Start the database:
 ``` 
-java -jar slacker_xxx.jar [--conf <your configuration file>] start
+java -jar slacker_xxx.jar start
 ```
 
 ### Stop the database:
 ```
-java -jar slacker_xxx.jar [--conf <your configuration file>] stop
+java -jar slacker_xxx.jar stop
 ```
 
 ### Check the status of database:
 ```
-java -jar slacker_xxx.jar [--conf <your configuration file>] status
+java -jar slacker_xxx.jar status
 ```
+
+### Kill running session:
+```
+java -jar slacker_xxx.jar kill <sessionId>
+```
+
 ### Jdbc program
 ``` 
     // "db1" is your database name in your configuration file.

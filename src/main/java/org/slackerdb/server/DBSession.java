@@ -53,6 +53,9 @@ public class DBSession {
     public String executingFunction = "";
     // 当前调用的开始时间
     public LocalDateTime executingTime = null;
+    // 当前正在执行的句柄
+    public PreparedStatement executingPreparedStatement = null;
+    // SqlId, 考虑到SQL的分批执行情况，这里用SqlId来表示对应的信息
     public AtomicLong executingSqlId = new AtomicLong();
 
     public ParsedStatement getParsedStatement(String portalName) {
