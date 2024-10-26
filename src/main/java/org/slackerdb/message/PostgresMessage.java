@@ -1,15 +1,27 @@
 package org.slackerdb.message;
 
+import ch.qos.logback.classic.Logger;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.AttributeKey;
-import org.slackerdb.logger.AppLogger;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.text.MessageFormat;
+import java.util.MissingResourceException;
 
 public abstract class PostgresMessage {
+    // 数据库实例
+    protected DBInstance dbInstance;
+
+
+    public  PostgresMessage(DBInstance pDbInstance)
+    {
+        this.dbInstance = pDbInstance;
+    }
+
     public  int getCurrentSessionId(ChannelHandlerContext ctx)
     {
         if (ctx.channel().hasAttr(AttributeKey.valueOf("SessionId")))
@@ -23,17 +35,39 @@ public abstract class PostgresMessage {
     }
 
     public abstract void process(ChannelHandlerContext ctx, Object request, ByteArrayOutputStream out)
-            throws IOException;
+        throws IOException;
+
+    public String getMessage(String code, Object... contents) {
+        StringBuilder content;
+        String pattern;
+        try {
+            pattern = this.dbInstance.resourceBundle.getString(code);
+            content = new StringBuilder(MessageFormat.format(pattern, contents));
+        } catch (MissingResourceException me)
+        {
+            content = new StringBuilder("MSG-" + code + ":");
+            for (Object object : contents) {
+                if (object != null) {
+                    content.append(object).append("|");
+                }
+                else {
+                    content.append("null|");
+                }
+            }
+        }
+        return content.toString();
+    }
 
     public static void writeAndFlush(ChannelHandlerContext ctx,
                                      String messageTag,
-                                     ByteArrayOutputStream out)
+                                     ByteArrayOutputStream out,
+                                     Logger logger)
     {
         byte[] data = out.toByteArray();
-        if (AppLogger.logger.getLevel().levelStr.equals("TRACE")) {
-            AppLogger.logger.trace("[SERVER][TX CONTENT ]: {},{}", messageTag, data.length);
+        if (logger.getLevel().levelStr.equals("TRACE")) {
+            logger.trace("[SERVER][TX CONTENT ]: {},{}", messageTag, data.length);
             for (String dumpMessage : Utils.bytesToHexList(data)) {
-                AppLogger.logger.trace("[SERVER][TX CONTENT ]: {}", dumpMessage);
+                logger.trace("[SERVER][TX CONTENT ]: {}", dumpMessage);
             }
         }
 

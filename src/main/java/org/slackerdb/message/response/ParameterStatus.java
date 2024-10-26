@@ -2,6 +2,7 @@ package org.slackerdb.message.response;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.message.PostgresMessage;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -11,6 +12,10 @@ import java.nio.charset.StandardCharsets;
 public class ParameterStatus extends PostgresMessage {
     private String parameterKey;
     private String parameterValue;
+
+    public ParameterStatus(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
 
     // ParameterStatus (B)
     //   Byte1('S')

@@ -2,7 +2,6 @@ package org.slackerdb.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.entity.ParsedStatement;
-import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresMessage;
 import org.slackerdb.message.PostgresRequest;
 import org.slackerdb.message.response.CloseComplete;
@@ -29,6 +28,10 @@ public class CloseRequest extends PostgresRequest {
     public char closeType;
     public String portalName;
 
+    public CloseRequest(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
+
     @Override
     public void decode(byte[] data) {
         portalName = new String(data, StandardCharsets.UTF_8);
@@ -41,8 +44,8 @@ public class CloseRequest extends PostgresRequest {
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         // 记录会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
@@ -57,26 +60,26 @@ public class CloseRequest extends PostgresRequest {
         }
         try {
             ParsedStatement parsedPreparedStatement =
-                    DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement(closePortal);
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement(closePortal);
             if (parsedPreparedStatement != null && parsedPreparedStatement.preparedStatement != null) {
                 parsedPreparedStatement.preparedStatement.close();
             }
-            DBInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement(closePortal);
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement(closePortal);
 
             // 标记Close完成
-            CloseComplete closeComplete = new CloseComplete();
+            CloseComplete closeComplete = new CloseComplete(this.dbInstance);
             closeComplete.process(ctx, request, out);
-            PostgresMessage.writeAndFlush(ctx, CloseComplete.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, CloseComplete.class.getSimpleName(), out, this.dbInstance.logger);
         }
         catch(Exception e) {
-            AppLogger.logger.error("Failed to close prepared statement", e);
+            this.dbInstance.logger.error("Failed to close prepared statement", e);
         }
         finally {
             out.close();
         }
 
         // 取消会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

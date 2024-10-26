@@ -2,6 +2,7 @@ package org.slackerdb.message.response;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.message.PostgresMessage;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -26,6 +27,11 @@ public class CommandComplete extends PostgresMessage {
     //      For a COPY command, the tag is COPY rows where rows is the number of rows copied. (Note: the row count appears only in PostgreSQL 8.2 and later.)
 
     private String commandResult = "";
+
+    public CommandComplete(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
+
     public void setCommandResult(String commandResult)
     {
         this.commandResult = commandResult;

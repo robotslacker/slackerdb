@@ -16,6 +16,10 @@ public class CancelRequest  extends PostgresRequest {
     public int processId;
     public int secretKey;
 
+    public CancelRequest(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
+
     @Override
     public void decode(byte[] data) {
         //  CancelRequest (F)
@@ -42,12 +46,12 @@ public class CancelRequest  extends PostgresRequest {
         }
 
         // 记录会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
 
-        if (DBInstance.getSession(processId) != null)
+        if (this.dbInstance.getSession(processId) != null)
         {
-            DBSession dbSession = DBInstance.getSession(processId);
+            DBSession dbSession = this.dbInstance.getSession(processId);
             for (String portalName : dbSession.parsedStatements.keySet()) {
                 ParsedStatement parsedStatement = dbSession.parsedStatements.get(portalName);
                 if (parsedStatement.preparedStatement != null) {
@@ -62,7 +66,7 @@ public class CancelRequest  extends PostgresRequest {
         }
 
         // 取消会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

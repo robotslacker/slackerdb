@@ -1,5 +1,6 @@
 package org.slackerdb.test;
 
+import ch.qos.logback.classic.Level;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import org.apache.commons.csv.CSVFormat;
@@ -34,37 +35,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class test002 {
-    public static void main(String[] args) throws SQLException, ClassNotFoundException, IOException {
-        DuckDBConnection duckDBConnection =
-                (DuckDBConnection) DriverManager.getConnection("jdbc:duckdb:", "", "");
-
-        class testClass extends Thread
-        {
-            @Override
-            public void run()
-            {
-                try {
-                    Connection conn = duckDBConnection.duplicate();
-                    Statement stmt = conn.createStatement();
-//                    stmt.execute("DETACH DATABASE IF EXISTS db");
-                    stmt.execute("ATTACH IF NOT EXISTS 'dbname=postgres user=postgres password=123456 port=5432 host=192.168.11.120' AS db (TYPE POSTGRES, READ_ONLY, SCHEMA test1)");
-                    stmt.close();
-                    conn.close();
-                    System.out.println("test OK");
-                }
-                catch (SQLException se)
-                {
-                    System.out.println(se.getMessage());
-                }
-            }
-        };
-
-        for (int i=0;i<10;i++)
-        {
-            testClass t = new testClass();
-            t.start();
-        }
-        System.out.println("OK");
+    public static void main(String[] args)  {
+        System.out.println(Utils.toLocale(null
+        ));
     }
 }
 

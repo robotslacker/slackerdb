@@ -3,6 +3,7 @@ package org.slackerdb.message.response;
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.entity.Field;
 import org.slackerdb.message.PostgresMessage;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -50,6 +51,11 @@ public class RowDescription extends PostgresMessage {
     //           对于其他数据类型，atttypmod 的值可能会有所不同。对于没有附加修饰符的类型，atttypmod 的值通常为 -1。
 
     private List<Field>  fields;
+
+    public RowDescription(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
+
     public void setFields(List<Field> fields)
     {
         this.fields = fields;

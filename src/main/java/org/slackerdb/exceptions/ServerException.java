@@ -2,28 +2,38 @@ package org.slackerdb.exceptions;
 
 public class ServerException extends Exception
 {
-    private final int    errorCode;
-
-    public ServerException(int errorCode, String errorMessage)
-    {
-        super(errorMessage);
-        this.errorCode = errorCode;
-    }
-
-    public ServerException(int errorCode, String errorMessage, Throwable cause)
-    {
-        super(errorMessage, cause);
-        this.errorCode = errorCode;
-    }
+    private String errorCode;
+    private String errorMessage;
 
     public ServerException(Throwable cause)
     {
         super(cause);
-        this.errorCode = -1;
     }
 
-    public int getErrorCode()
+    public ServerException(String errorMessage)
     {
-        return this.errorCode;
+        super(errorMessage);
+    }
+
+    public ServerException(String errorCode, String errorMessage)
+    {
+        super(errorMessage);
+        this.errorCode = errorCode;
+        this.errorMessage = errorMessage;
+    }
+
+    public String getErrorCode()
+    {
+        return errorCode;
+    }
+
+    public String getErrorMessage()
+    {
+        return getMessage();
+    }
+
+    public ServerException(String errorMessage, Throwable cause)
+    {
+        super(errorMessage, cause);
     }
 }

@@ -3,7 +3,6 @@ package org.slackerdb.message.request;
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.entity.ParsedStatement;
 import org.slackerdb.entity.PostgresTypeOids;
-import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresMessage;
 import org.slackerdb.message.PostgresRequest;
 import org.slackerdb.message.response.BindComplete;
@@ -60,6 +59,10 @@ public class BindRequest extends PostgresRequest {
     private String      preparedStmtName = "";
     private short[]     formatCodes;
     private byte[][]    bindParameters;
+
+    public BindRequest(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
 
     @Override
     public void decode(byte[] data) {
@@ -137,24 +140,24 @@ public class BindRequest extends PostgresRequest {
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         // 记录会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
         tryBlock:
         try {
             ParsedStatement parsedStatement =
-                    DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("PreparedStatement" + "-" + preparedStmtName);
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("PreparedStatement" + "-" + preparedStmtName);
             if (parsedStatement != null)
             {
                 // 取出上次解析的SQL，如果为空语句，则直接返回
                 if (parsedStatement.sql.isEmpty()) {
-                    BindComplete bindComplete = new BindComplete();
+                    BindComplete bindComplete = new BindComplete(this.dbInstance);
                     bindComplete.process(ctx, request, out);
 
                     // 发送并刷新返回消息
-                    PostgresMessage.writeAndFlush(ctx, BindComplete.class.getSimpleName(), out);
+                    PostgresMessage.writeAndFlush(ctx, BindComplete.class.getSimpleName(), out, this.dbInstance.logger);
                     out.close();
                     break tryBlock;
                 }
@@ -167,7 +170,7 @@ public class BindRequest extends PostgresRequest {
                     parsedBindPreparedStatement.sql = parsedStatement.sql;
                     parsedBindPreparedStatement.isPlSql = true;
                     parsedBindPreparedStatement.preparedStatement = null;
-                    DBInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
                             "Portal" + "-" + portalName, parsedBindPreparedStatement);
                 }
                 else {
@@ -184,7 +187,7 @@ public class BindRequest extends PostgresRequest {
                                     // 没有指定字段类型，按照默认的VARCHAR处理
                                     columnTypeName = "VARCHAR";
                                 } else {
-                                    columnTypeName = PostgresTypeOids.getTypeNameFromTypeOid(parameterDataTypeIds[i]);
+                                    columnTypeName = PostgresTypeOids.getTypeNameFromTypeOid(dbInstance, parameterDataTypeIds[i]);
                                 }
                                 if (bindParameters[i] == null) {
                                     preparedStatement.setNull(i + 1, Types.NULL);
@@ -237,7 +240,7 @@ public class BindRequest extends PostgresRequest {
                                             preparedStatement.setDouble(i + 1, ByteBuffer.wrap(bindParameters[i]).getDouble());
                                             break;
                                         default:
-                                            AppLogger.logger.error("Not supported type in BindRequest: {}", columnTypeName);
+                                            this.dbInstance.logger.error("Not supported type in BindRequest: {}", columnTypeName);
                                             break;
                                     }
                                 }
@@ -249,32 +252,32 @@ public class BindRequest extends PostgresRequest {
                     ParsedStatement parsedBindPreparedStatement = new ParsedStatement();
                     parsedBindPreparedStatement.sql = executeSQL;
                     parsedBindPreparedStatement.preparedStatement = preparedStatement;
-                    DBInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
                             "Portal" + "-" + portalName, parsedBindPreparedStatement);
                 }
             }
-            BindComplete bindComplete = new BindComplete();
+            BindComplete bindComplete = new BindComplete(this.dbInstance);
             bindComplete.process(ctx, request, out);
 
             // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, BindComplete.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, BindComplete.class.getSimpleName(), out, this.dbInstance.logger);
         }
         catch (SQLException e) {
             // 生成一个错误消息
-            ErrorResponse errorResponse = new ErrorResponse();
+            ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
             errorResponse.setErrorFile("BindRequest");
             errorResponse.setErrorResponse(String.valueOf(e.getErrorCode()), e.getMessage());
             errorResponse.process(ctx, request, out);
 
             // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
         }
         finally {
             out.close();
         }
 
         // 取消会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

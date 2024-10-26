@@ -2,7 +2,6 @@ package org.slackerdb.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.entity.ParsedStatement;
-import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresMessage;
 import org.slackerdb.message.PostgresRequest;
 import org.slackerdb.message.response.ErrorResponse;
@@ -28,6 +27,10 @@ public class ParseRequest extends PostgresRequest {
     private int[]       parameterDataTypeIds;
     private static final Pattern plsqlPattern =
             Pattern.compile("DO\\s+\\$\\$(.*)\\$\\$.*",Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+
+    public ParseRequest(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
 
     @Override
     public void decode(byte[] data) {
@@ -89,32 +92,32 @@ public class ParseRequest extends PostgresRequest {
         if (matcher.matches())
         {
             // 这是一个PLSQL语句，不再解析，直接返回，等待Execute执行
-            ParseComplete parseComplete = new ParseComplete();
+            ParseComplete parseComplete = new ParseComplete(this.dbInstance);
             parseComplete.process(ctx, request, out);
 
             // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out, this.dbInstance.logger);
             out.close();
 
             // 记录SQL语句
             ParsedStatement parsedPrepareStatement = new ParsedStatement();
             parsedPrepareStatement.sql = matcher.group(1).trim();
             parsedPrepareStatement.isPlSql = true;
-            DBInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
                     "PreparedStatement" + "-" + preparedStmtName, parsedPrepareStatement);
             return;
         }
 
         // 由于PG驱动程序内置的一些语句在目标数据库上无法执行，所以这里要进行转换
-        String executeSQL = SQLReplacer.replaceSQL(parseRequest.sql);
+        String executeSQL = SQLReplacer.replaceSQL(this.dbInstance, parseRequest.sql);
 
         // 对于空语句，直接返回结果
         if (executeSQL.isEmpty()) {
-            ParseComplete parseComplete = new ParseComplete();
+            ParseComplete parseComplete = new ParseComplete(this.dbInstance);
             parseComplete.process(ctx, request, out);
 
             // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out, this.dbInstance.logger);
             out.close();
 
             // 即使是空语句，也要更新缓存中记录的语句信息
@@ -122,21 +125,21 @@ public class ParseRequest extends PostgresRequest {
             ParsedStatement parsedPrepareStatement = new ParsedStatement();
             parsedPrepareStatement.sql = "";
             parsedPrepareStatement.isPlSql = false;
-            DBInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
                     "PreparedStatement" + "-" + preparedStmtName, parsedPrepareStatement);
             return;
         }
 
         // 记录会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = executeSQL;
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = executeSQL;
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
 
         try {
-            Connection conn = DBInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
+            Connection conn = this.dbInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
             PreparedStatement preparedStatement = conn.prepareStatement(executeSQL);
 
-            ParseComplete parseComplete = new ParseComplete();
+            ParseComplete parseComplete = new ParseComplete(this.dbInstance);
             parseComplete.process(ctx, request, out);
 
             // 记录PreparedStatement,以及对应的参数类型
@@ -144,36 +147,36 @@ public class ParseRequest extends PostgresRequest {
             parsedPrepareStatement.sql = executeSQL.trim();
             parsedPrepareStatement.preparedStatement = preparedStatement;
             parsedPrepareStatement.parameterDataTypeIds = parameterDataTypeIds;
-            DBInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
                     "PreparedStatement" + "-" + preparedStmtName, parsedPrepareStatement);
             // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out, this.dbInstance.logger);
         }
         catch (SQLException e) {
             // 清空PreparedStatement
             try {
-                DBInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement(
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement(
                         "PreparedStatement" + "-" + preparedStmtName);
             } catch (Exception e2) {
-                AppLogger.logger.error("Error clearing prepared statement", e2);
+                this.dbInstance.logger.error("Error clearing prepared statement", e2);
             }
 
             // 生成一个错误消息
-            ErrorResponse errorResponse = new ErrorResponse();
+            ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
             errorResponse.setErrorFile("ParseRequest");
             errorResponse.setErrorResponse(String.valueOf(e.getErrorCode()), e.getMessage());
             errorResponse.process(ctx, request, out);
 
             // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
         }
         finally {
             out.close();
         }
 
         // 取消会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = "";
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = "";
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

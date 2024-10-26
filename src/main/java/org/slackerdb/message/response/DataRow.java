@@ -3,6 +3,7 @@ package org.slackerdb.message.response;
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.entity.Column;
 import org.slackerdb.message.PostgresMessage;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -25,6 +26,11 @@ public class DataRow extends PostgresMessage {
     //      Byte(n)
     //        The value of the column, in the format indicated by the associated format code. n is the above length.
     private List<Column> columns;
+
+    public DataRow(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
+
     public void setColumns(List<Column> columns)
     {
         this.columns = columns;

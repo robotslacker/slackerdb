@@ -2,6 +2,7 @@ package org.slackerdb.message.response;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.message.PostgresMessage;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -24,6 +25,10 @@ public class CopyInResponse extends PostgresMessage {
     //      All must be zero if the overall copy format is textual.
 
     public short copyColumnCount = 0;
+
+    public CopyInResponse(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request, ByteArrayOutputStream out) throws IOException {

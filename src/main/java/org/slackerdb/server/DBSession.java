@@ -13,6 +13,8 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class DBSession {
+    // 数据库实例
+    private final DBInstance dbInstance;
     // 数据库连接
     public Connection dbConnection = null;
     // 客户端连接建立时间
@@ -27,8 +29,6 @@ public class DBSession {
     public String status = "N/A";
     // 客户端的IP地址
     public String clientAddress = "";
-    // 最后一次服务请求的命令
-    public String LastRequestCommand = null;
     // Groovy引擎，用来执行PLSQL中的表达式计算
     public GroovyInstance groovyInstance = null;
     // 保存的语句解析信息
@@ -57,6 +57,11 @@ public class DBSession {
     public PreparedStatement executingPreparedStatement = null;
     // SqlId, 考虑到SQL的分批执行情况，这里用SqlId来表示对应的信息
     public AtomicLong executingSqlId = new AtomicLong();
+
+    public DBSession(DBInstance pDbInstance)
+    {
+        dbInstance = pDbInstance;
+    }
 
     public ParsedStatement getParsedStatement(String portalName) {
         return parsedStatements.get(portalName);
@@ -93,7 +98,7 @@ public class DBSession {
                     }
                 }
             }
-            DBInstance.connectionPool.add(dbConnection);
+            dbInstance.connectionPool.add(dbConnection);
             dbConnection = null;
         }
     }
@@ -129,7 +134,7 @@ public class DBSession {
                     }
                 }
             }
-            DBInstance.connectionPool.add(dbConnection);
+            dbInstance.connectionPool.add(dbConnection);
             dbConnection = null;
         }
     }

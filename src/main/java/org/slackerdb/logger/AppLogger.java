@@ -8,23 +8,16 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.Appender;
 import ch.qos.logback.core.ConsoleAppender;
 import ch.qos.logback.core.FileAppender;
-import org.slackerdb.configuration.ServerConfiguration;
 import org.slf4j.LoggerFactory;
 
 import java.util.Iterator;
 
 public class AppLogger {
-    public static final Logger logger = (Logger) LoggerFactory.getLogger("SlackerDB");
-    private static Level log_level = null;
-
-    public static void setLogLevel(Level  level) {
-        // 设置日志级别
-        log_level = level;
-    }
-
-    public static void CreateLogger()
+    public static Logger CreateLogger(String loggerName, String pLogLevel, String pLogsStr)
     {
-        String[] logs = ServerConfiguration.getLog().split(",");
+        Logger logger = (Logger) LoggerFactory.getLogger(loggerName);
+        Level log_level = Level.valueOf(pLogLevel);
+        String[] logs = pLogsStr.split(",");
 
         LoggerContext context = (LoggerContext) LoggerFactory.getILoggerFactory();
         Logger rootLogger = context.getLogger(Logger.ROOT_LOGGER_NAME);
@@ -82,13 +75,14 @@ public class AppLogger {
         }
         else
         {
-            logger.setLevel(ServerConfiguration.getLog_level());
-            if (ServerConfiguration.getLog_level().levelStr.equals("TRACE")) {
-                AppLogger.logger.trace("[LOGGER] Logger level has been set to TRACE.");
+            logger.setLevel(Level.valueOf(pLogLevel));
+            if (pLogLevel.equalsIgnoreCase("TRACE")) {
+                logger.trace("[LOGGER] Logger level has been set to TRACE.");
             }
-            if (ServerConfiguration.getLog_level().levelStr.equals("DEBUG")) {
-                AppLogger.logger.trace("[LOGGER] Logger level has been set to DEBUG.");
+            if (pLogLevel.equalsIgnoreCase("DEBUG")) {
+                logger.trace("[LOGGER] Logger level has been set to DEBUG.");
             }
         }
+        return logger;
     }
 }

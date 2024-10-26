@@ -2,6 +2,7 @@ package org.slackerdb.message.response;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.message.PostgresMessage;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -10,6 +11,11 @@ import java.nio.charset.StandardCharsets;
 
 public class AdminClientResp  extends PostgresMessage {
     private String returnMsg;
+
+    public AdminClientResp(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
+
     public void setReturnMsg(String s) {
         returnMsg = s;
     }

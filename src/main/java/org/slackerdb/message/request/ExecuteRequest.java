@@ -5,7 +5,6 @@ import org.slackerdb.entity.Column;
 import org.slackerdb.entity.Field;
 import org.slackerdb.entity.ParsedStatement;
 import org.slackerdb.entity.PostgresTypeOids;
-import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresMessage;
 import org.slackerdb.message.PostgresRequest;
 import org.slackerdb.message.response.*;
@@ -41,6 +40,10 @@ public class ExecuteRequest extends PostgresRequest {
     //      Zero denotes “no limit”.
     private String portalName;
     private int    maximumRowsReturned;
+
+    public ExecuteRequest(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
 
     @Override
     public void decode(byte[] data) {
@@ -129,7 +132,7 @@ public class ExecuteRequest extends PostgresRequest {
                             break;
                         } else {
                             // 不认识的字段类型, 告警后按照字符串来处理
-                            AppLogger.logger.warn("Not implemented column type: {}", columnTypeName);
+                            this.dbInstance.logger.warn("Not implemented column type: {}", columnTypeName);
                             column.columnValue = rs.getString(i).getBytes(StandardCharsets.UTF_8);
                             column.columnLength = column.columnValue.length;
                         }
@@ -143,40 +146,37 @@ public class ExecuteRequest extends PostgresRequest {
     public long insertSqlHistory(ChannelHandlerContext ctx)
     {
         long sqlHistoryId = -1;
-        if (DBInstance.backendSqlHistoryConnection == null)
+        if (this.dbInstance.backendSqlHistoryConnection == null)
         {
             // 没有开始日志服务
             return sqlHistoryId;
         }
-        String historySQL = "Insert INTO SQL_HISTORY(ID, SessionId, ClientIP, SQL, SqlId, StartTime) " +
-                "VALUES(?,?,?,?,?, current_timestamp)";
+        String historySQL = "Insert INTO SQL_HISTORY(SessionId, ClientIP, SQL, SqlId, StartTime) " +
+                "VALUES(?,?,?,?, current_timestamp)";
         try {
-            Statement stmt = DBInstance.backendSqlHistoryConnection.createStatement();
-            ResultSet rs = stmt.executeQuery("SELECT nextval('sql_history_id')");
-            rs.next();
-            sqlHistoryId = rs.getLong(1);
-            rs.close();
-            stmt.close();
             PreparedStatement preparedStatement =
-                    DBInstance.backendSqlHistoryConnection.prepareStatement(historySQL);
-            preparedStatement.setLong(1, sqlHistoryId);
-            preparedStatement.setLong(2, getCurrentSessionId(ctx));
-            preparedStatement.setString(3, DBInstance.getSession(getCurrentSessionId(ctx)).clientAddress);
-            preparedStatement.setString(4, DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL);
-            preparedStatement.setLong(5, DBInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.get());
-            preparedStatement.execute();
+                    this.dbInstance.backendSqlHistoryConnection.prepareStatement(historySQL, Statement.RETURN_GENERATED_KEYS);
+            preparedStatement.setLong(1, getCurrentSessionId(ctx));
+            preparedStatement.setString(2, this.dbInstance.getSession(getCurrentSessionId(ctx)).clientAddress);
+            preparedStatement.setString(3, this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL);
+            preparedStatement.setLong(4, this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.get());
+            preparedStatement.executeUpdate();
+            ResultSet generatedKeys = preparedStatement.getGeneratedKeys();
+            generatedKeys.next();
+            sqlHistoryId = generatedKeys.getLong(1);
+            generatedKeys.close();
             preparedStatement.close();
         }
         catch (SQLException se)
         {
-            AppLogger.logger.warn("[SERVER] Save to sql history failed.", se);
+            this.dbInstance.logger.trace("[SERVER] Save to sql history failed.", se);
         }
         return sqlHistoryId;
     }
 
     public void updateSqlHistory(long sqlHistoryId, int sqlCode, long affectedRows, String errorMsg)
     {
-        if (DBInstance.backendSqlHistoryConnection == null)
+        if (this.dbInstance.backendSqlHistoryConnection == null)
         {
             // 没有开始日志服务
             return;
@@ -189,7 +189,7 @@ public class ExecuteRequest extends PostgresRequest {
                 "WHERE ID = ?";
         try {
             PreparedStatement preparedStatement =
-                    DBInstance.backendSqlHistoryConnection.prepareStatement(historySQL);
+                    this.dbInstance.backendSqlHistoryConnection.prepareStatement(historySQL);
             preparedStatement.setInt(1, sqlCode);
             preparedStatement.setLong(2, affectedRows);
             preparedStatement.setString(3, errorMsg);
@@ -199,15 +199,15 @@ public class ExecuteRequest extends PostgresRequest {
         }
         catch (SQLException se)
         {
-            AppLogger.logger.warn("[SERVER] Save to sql history failed.", se);
+            this.dbInstance.logger.warn("[SERVER] Save to sql history failed.", se);
         }
     }
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         // 记录会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         long  nRowsAffected = 0;
@@ -217,24 +217,24 @@ public class ExecuteRequest extends PostgresRequest {
         try {
             // 开始处理
             ParsedStatement parsedStatement =
-                    DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("Portal" + "-" + portalName);
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("Portal" + "-" + portalName);
             if (parsedStatement != null && parsedStatement.isPlSql)
             {
                 // PLSQL处理
-                Connection conn = DBInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
-                GroovyInstance groovyInstance = DBInstance.getSession(getCurrentSessionId(ctx)).groovyInstance;
+                Connection conn = this.dbInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
+                GroovyInstance groovyInstance = this.dbInstance.getSession(getCurrentSessionId(ctx)).groovyInstance;
                 PlSqlVisitor.runPlSql(conn, groovyInstance, parsedStatement.sql);
 
-                CommandComplete commandComplete = new CommandComplete();
+                CommandComplete commandComplete = new CommandComplete(this.dbInstance);
                 commandComplete.setCommandResult("UPDATE 0");
                 commandComplete.process(ctx, request, out);
 
                 // 发送并刷新返回消息
-                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
+                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
 
                 // PLSQL的记录保存到SQL历史中
-                DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = parsedStatement.sql;
-                DBInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.incrementAndGet();
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = parsedStatement.sql;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.incrementAndGet();
                 nSqlHistoryId = insertSqlHistory(ctx);
 
                 break tryBlock;
@@ -246,17 +246,17 @@ public class ExecuteRequest extends PostgresRequest {
             }
 
             // 取出上次解析的SQL，如果为空语句，则直接返回
-            String executeSQL = DBInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("Portal" + "-" + portalName).sql;
+            String executeSQL = this.dbInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("Portal" + "-" + portalName).sql;
             if (executeSQL.isEmpty()) {
-                CommandComplete commandComplete = new CommandComplete();
+                CommandComplete commandComplete = new CommandComplete(this.dbInstance);
                 commandComplete.process(ctx, request, out);
 
                 // 发送并刷新返回消息
-                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
+                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
                 out.close();
                 break tryBlock;
             }
-            DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = executeSQL;
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = executeSQL;
             // 之前有缓存记录
             if (parsedStatement.resultSet != null)
             {
@@ -265,7 +265,7 @@ public class ExecuteRequest extends PostgresRequest {
                 nSqlHistoryId = insertSqlHistory(ctx);
 
                 ResultSet rs = parsedStatement.resultSet;
-                DataRow dataRow = new DataRow();
+                DataRow dataRow = new DataRow(this.dbInstance);
                 ResultSetMetaData rsmd = rs.getMetaData();
 
                 int rowsReturned = 0;
@@ -276,14 +276,14 @@ public class ExecuteRequest extends PostgresRequest {
                     dataRow.setColumns(null);
 
                     // 发送并刷新返回消息
-                    PostgresMessage.writeAndFlush(ctx, DataRow.class.getSimpleName(), out);
+                    PostgresMessage.writeAndFlush(ctx, DataRow.class.getSimpleName(), out, this.dbInstance.logger);
 
                     rowsReturned = rowsReturned + 1;
                     if (maximumRowsReturned != 0 && rowsReturned >= maximumRowsReturned) {
                         // 如果要求分批返回，则不再继续，分批返回
-                        PortalSuspended portalSuspended = new PortalSuspended();
+                        PortalSuspended portalSuspended = new PortalSuspended(this.dbInstance);
                         portalSuspended.process(ctx, request, out);
-                        PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out);
+                        PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out, this.dbInstance.logger);
                         out.close();
                         parsedStatement.nRowsAffected += rowsReturned;
                         break tryBlock;
@@ -292,13 +292,13 @@ public class ExecuteRequest extends PostgresRequest {
                 // 所有的记录查询完毕
                 rs.close();
                 nRowsAffected = parsedStatement.nRowsAffected + rowsReturned;
-                DBInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
             }
             else
             {
                 // 记录一个新的SqlID, 和当前正在执行的句柄（便于取消）
-                DBInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.incrementAndGet();
-                DBInstance.getSession(getCurrentSessionId(ctx)).executingPreparedStatement = parsedStatement.preparedStatement;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.incrementAndGet();
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).executingPreparedStatement = parsedStatement.preparedStatement;
 
                 // 记录到SQL历史中
                 nSqlHistoryId = insertSqlHistory(ctx);
@@ -315,12 +315,12 @@ public class ExecuteRequest extends PostgresRequest {
                 }
                 int rowsReturned = 0;
                 if (isResultSet) {
-                    DataRow dataRow = new DataRow();
+                    DataRow dataRow = new DataRow(this.dbInstance);
 
-                    boolean describeRequestExist = DBInstance.getSession(getCurrentSessionId(ctx)).hasDescribeRequest;
+                    boolean describeRequestExist = this.dbInstance.getSession(getCurrentSessionId(ctx)).hasDescribeRequest;
                     if (describeRequestExist) {
                         // 如果之前有describeRequest， 则返回RowsDescription； 否则直接返回结果
-                        DBInstance.getSession(getCurrentSessionId(ctx)).hasDescribeRequest = false;
+                        this.dbInstance.getSession(getCurrentSessionId(ctx)).hasDescribeRequest = false;
 
                         List<Field> fields = new ArrayList<>();
 
@@ -332,10 +332,10 @@ public class ExecuteRequest extends PostgresRequest {
                             field.name = resultSetMetaData.getColumnName(i);
                             field.objectIdOfTable = 0;
                             field.attributeNumberOfColumn = 0;
-                            field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(columnTypeName);
+                            field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(dbInstance, columnTypeName);
                             if (field.dataTypeId == -1 )
                             {
-                                AppLogger.logger.error("executeSQL: {}" , executeSQL);
+                                this.dbInstance.logger.error("executeSQL: {}" , executeSQL);
                             }
                             field.dataTypeSize = (short) 2147483647;
                             field.dataTypeModifier = -1;
@@ -358,19 +358,19 @@ public class ExecuteRequest extends PostgresRequest {
                             fields.add(field);
                         }
 
-                        RowDescription rowDescription = new RowDescription();
+                        RowDescription rowDescription = new RowDescription(this.dbInstance);
                         rowDescription.setFields(fields);
                         rowDescription.process(ctx, request, out);
                         rowDescription.setFields(null);
 
                         // 发送并刷新RowsDescription消息
-                        PostgresMessage.writeAndFlush(ctx, RowDescription.class.getSimpleName(), out);
+                        PostgresMessage.writeAndFlush(ctx, RowDescription.class.getSimpleName(), out, this.dbInstance.logger);
                     }
 
                     ResultSet rs = parsedStatement.preparedStatement.getResultSet();
                     parsedStatement.resultSet = rs;
                     // 保留当前的ResultSet到Portal中
-                    DBInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement("Portal" + "-" + portalName, parsedStatement);
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement("Portal" + "-" + portalName, parsedStatement);
 
                     ResultSetMetaData rsmd = rs.getMetaData();
                     while (rs.next()) {
@@ -380,14 +380,14 @@ public class ExecuteRequest extends PostgresRequest {
                         dataRow.setColumns(null);
 
                         // 发送并刷新返回消息
-                        PostgresMessage.writeAndFlush(ctx, DataRow.class.getSimpleName(), out);
+                        PostgresMessage.writeAndFlush(ctx, DataRow.class.getSimpleName(), out, this.dbInstance.logger);
 
                         rowsReturned = rowsReturned + 1;
                         if (maximumRowsReturned != 0 && rowsReturned >= maximumRowsReturned) {
                             // 如果要求分批返回，则不再继续，分批返回
-                            PortalSuspended portalSuspended = new PortalSuspended();
+                            PortalSuspended portalSuspended = new PortalSuspended(this.dbInstance);
                             portalSuspended.process(ctx, request, out);
-                            PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out);
+                            PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out, this.dbInstance.logger);
                             // 返回等待下一次ExecuteRequest
                             out.close();
                             parsedStatement.nRowsAffected += rowsReturned;
@@ -396,7 +396,7 @@ public class ExecuteRequest extends PostgresRequest {
                     }
                     rs.close();
                     nRowsAffected = parsedStatement.nRowsAffected + rowsReturned;
-                    DBInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
                 }
                 else
                 {
@@ -413,18 +413,18 @@ public class ExecuteRequest extends PostgresRequest {
 
             // 设置语句的事务级别
             if (executeSQL.toUpperCase().startsWith("BEGIN")) {
-                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = true;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = true;
             } else if (executeSQL.toUpperCase().startsWith("END")) {
-                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             } else if (executeSQL.toUpperCase().startsWith("COMMIT")) {
-                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             } else if (executeSQL.toUpperCase().startsWith("ROLLBACK")) {
-                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             } else if (executeSQL.toUpperCase().startsWith("ABORT")) {
-                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             }
 
-            CommandComplete commandComplete = new CommandComplete();
+            CommandComplete commandComplete = new CommandComplete(this.dbInstance);
             if (executeSQL.toUpperCase().startsWith("BEGIN")) {
                 commandComplete.setCommandResult("BEGIN");
             } else if (executeSQL.toUpperCase().startsWith("END")) {
@@ -447,7 +447,7 @@ public class ExecuteRequest extends PostgresRequest {
             commandComplete.process(ctx, request, out);
 
             // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
 
             // 更新SQL历史信息
             if (nSqlHistoryId != -1)
@@ -457,13 +457,13 @@ public class ExecuteRequest extends PostgresRequest {
         }
         catch (SQLException e) {
             // 生成一个错误消息
-            ErrorResponse errorResponse = new ErrorResponse();
+            ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
             errorResponse.setErrorFile("ExecuteRequest");
             errorResponse.setErrorResponse(String.valueOf(e.getErrorCode()), e.getMessage());
             errorResponse.process(ctx, request, out);
 
             // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
 
             // 更新SQL历史信息
             if (nSqlHistoryId != -1)
@@ -476,8 +476,8 @@ public class ExecuteRequest extends PostgresRequest {
         }
 
         // 取消会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = "";
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = "";
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

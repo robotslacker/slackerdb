@@ -2,6 +2,7 @@ package org.slackerdb.message.response;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.message.PostgresMessage;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -9,6 +10,11 @@ import java.io.IOException;
 
 public class BackendKeyData extends PostgresMessage {
     public static final int FIXED_SECRET = 5678;
+
+    public BackendKeyData(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
+
     // BackendKeyData (B) #
     //   Byte1('K')
     //     Identifies the message as cancellation key data.

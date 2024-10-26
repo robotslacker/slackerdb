@@ -51,14 +51,23 @@ data=slackerdb
 # Empty means it is placed in memory (i.e.: memory:) , after db restart, all data will lost.
 data_dir=:memory:
 
-# The location of temporary files during database operation, the default is under data_dir
+# The location of temporary files during database operation.
+# Disk mode:   If not set, it defaults to the same as data_dir.
+# Memory mode: If not set, it defaults to system temporary setting.
 # It is strongly recommended to use a high-performance disk as a temporary directory.
 # If memory resources are sufficient, you can also configure memory_limit to -1.
 # -1 means all temporary files will exist only in the memory (only valid for memory mode)
 temp_dir=
 
-# Location of system extension plugin files
+# Location of system extension plugin files.
+# If not set, it defaults to $HOME/.duckdb/extensions
 extension_dir=
+
+# Location of the external function definition, used to execute in the plsql script.
+# If not set, it defaults to the same as data_dir
+# Disk mode:   If not set, it defaults to the same as data_dir.
+# Memory mode: If not set, it defaults to "data".
+plsql_func_dir=
 
 # The location where the log file is saved
 # CONSOLE means output to the console, and others mean output to a file
@@ -75,7 +84,7 @@ port=4309
 bind=0.0.0.0
 
 # Client idle timeout (in seconds)
-clientTimeout=600
+client_timeout=600
 
 # Database opening mode
 access_mode=READ_WRITE
@@ -92,23 +101,25 @@ threads=
 # Default is 60% of available memory
 memory_limit=
 
-# Initialization Script. Maybe file or directory.
+# Initialization script. Maybe file or directory.
 # If it is a file, the file will be used.
 # If it is a directory, all files with the .sql suffix in the directory will be used.
 # The script(s in the directory) will be executed only when the in-memory database or file database is opened for the first time.
 init_schema=
 
+# locale. The default language set of the program. If not set, it will be marked as the system default
+locale=
 
 # SQL execution history
 # Client IP/Port, Execution start time, execution duration, SQL statement, execution result code, number of affected rows
-# True will save it in a separated db file, default is blank, means disable this feature.
+# True will save it in a separated file with sqlite format (enable wal), default is blank, means disable this feature.
 # default placed directory is same with data_dir
 sql_history=
 
 # SQL execution history file default placed directory
-# default same with data_dir
+# Disk mode:   If not set, it defaults to the same as data_dir.
+# Memory mode: If not set, it defaults to "data".
 sql_history_dir=
-
 ```
 Note: All parameters are optional.   
 You can keep only the parameters you need to modify.   

@@ -9,6 +9,10 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
 public class ReadyForQuery extends PostgresMessage {
+    public ReadyForQuery(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
+
     @Override
     public void process(ChannelHandlerContext ctx, Object request, ByteArrayOutputStream out) throws IOException {
         //  ReadyForQuery (B)
@@ -25,6 +29,6 @@ public class ReadyForQuery extends PostgresMessage {
         out.write((byte) 'Z');
         out.write(Utils.int32ToBytes(5));
 
-        out.write((byte) (DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction ? 'T' : 'I'));
+        out.write((byte) (this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction ? 'T' : 'I'));
     }
 }

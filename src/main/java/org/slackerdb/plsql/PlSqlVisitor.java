@@ -6,7 +6,6 @@ import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.misc.Interval;
 import org.antlr.v4.runtime.tree.ParseTree;
-import org.duckdb.DuckDBConnection;
 import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.server.GroovyInstance;
 
@@ -600,55 +599,55 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         catch (EventTermination ignored) {}
     }
 
-    public static void main(String[] args) throws SQLException  {
-        DuckDBConnection duckDBConnection =
-                (DuckDBConnection) DriverManager.getConnection("jdbc:duckdb:", "", "");
-        GroovyInstance groovyInstance1 = new GroovyInstance();
-        duckDBConnection.createStatement().execute("Create Table tab1(num int)");
-        duckDBConnection.createStatement().execute("Create Table tab2(col1 int, col2 int)");
-        duckDBConnection.createStatement().execute("Insert into tab1(num) values(3)");
-
-        String plSql = "declare     \n" +
-                "    x1 int;    -- xxxx     \n" +
-                "    x2 int;     \n" +
-                "    i int;     \n" +
-                "    cursor c1 is select 400,500;     \n" +
-                "begin     \n" +
-                "    let x1 = 10;     \n" +
-                "    update tab1 set num = :x1;     \n" +
-                "    select 3,4 into :x1, :x2;     \n" +
-                "    begin     \n" +
-                "        let x2 = :x1;     \n" +
-                "    exception:     \n" +
-                "        let x2 = 20;     \n" +
-                "    end;     \n" +
-                "    open c1;     \n" +
-                "    loop     \n" +
-                "        fetch c1 into :x1, :x2;     \n" +
-                "        exit when c1%notfound;     \n" +
-                "        insert into tab2 values(:x1, :x2);     \n" +
-                "    end loop;     \n" +
-                "    close c1;     \n" +
-                "    for :i in 1 TO 5      \n" +
-                "    loop     \n" +
-                "        if 3 > 5 then     \n" +
-                "            break;     \n" +
-                "        end if;     \n" +
-                "        pass;     \n" +
-                "    end loop;     \n" +
-                "    for :i in ['3','4','5']      \n" +
-                "    loop     \n" +
-                "        if 3 > 5 then     \n" +
-                "            break;\n" +
-                "        end if;     \n" +
-                "        pass;     \n" +
-                "    end loop;     \n" +
-                "    if 3>5 then     \n" +
-                "        pass;     \n" +
-                "    else     \n" +
-                "        pass;     \n" +
-                "    end if;     \n" +
-                "end;";
-        PlSqlVisitor.runPlSql(duckDBConnection, groovyInstance1, plSql);
-    }
+//    public static void main(String[] args) throws SQLException  {
+//        DuckDBConnection duckDBConnection =
+//                (DuckDBConnection) DriverManager.getConnection("jdbc:duckdb:", "", "");
+//        GroovyInstance groovyInstance1 = new GroovyInstance();
+//        duckDBConnection.createStatement().execute("Create Table tab1(num int)");
+//        duckDBConnection.createStatement().execute("Create Table tab2(col1 int, col2 int)");
+//        duckDBConnection.createStatement().execute("Insert into tab1(num) values(3)");
+//
+//        String plSql = "declare     \n" +
+//                "    x1 int;    -- xxxx     \n" +
+//                "    x2 int;     \n" +
+//                "    i int;     \n" +
+//                "    cursor c1 is select 400,500;     \n" +
+//                "begin     \n" +
+//                "    let x1 = 10;     \n" +
+//                "    update tab1 set num = :x1;     \n" +
+//                "    select 3,4 into :x1, :x2;     \n" +
+//                "    begin     \n" +
+//                "        let x2 = :x1;     \n" +
+//                "    exception:     \n" +
+//                "        let x2 = 20;     \n" +
+//                "    end;     \n" +
+//                "    open c1;     \n" +
+//                "    loop     \n" +
+//                "        fetch c1 into :x1, :x2;     \n" +
+//                "        exit when c1%notfound;     \n" +
+//                "        insert into tab2 values(:x1, :x2);     \n" +
+//                "    end loop;     \n" +
+//                "    close c1;     \n" +
+//                "    for :i in 1 TO 5      \n" +
+//                "    loop     \n" +
+//                "        if 3 > 5 then     \n" +
+//                "            break;     \n" +
+//                "        end if;     \n" +
+//                "        pass;     \n" +
+//                "    end loop;     \n" +
+//                "    for :i in ['3','4','5']      \n" +
+//                "    loop     \n" +
+//                "        if 3 > 5 then     \n" +
+//                "            break;\n" +
+//                "        end if;     \n" +
+//                "        pass;     \n" +
+//                "    end loop;     \n" +
+//                "    if 3>5 then     \n" +
+//                "        pass;     \n" +
+//                "    else     \n" +
+//                "        pass;     \n" +
+//                "    end if;     \n" +
+//                "end;";
+//        PlSqlVisitor.runPlSql(duckDBConnection, groovyInstance1, plSql);
+//    }
 }

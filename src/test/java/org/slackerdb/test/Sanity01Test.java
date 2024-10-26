@@ -7,10 +7,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
-import org.slackerdb.Main;
 import org.slackerdb.configuration.ServerConfiguration;
+import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.server.DBInstance;
-import org.slackerdb.utils.Sleeper;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.LoggerFactory;
@@ -23,54 +22,34 @@ import java.util.Calendar;
 import java.util.TimeZone;
 
 public class Sanity01Test {
-    static Thread dbThread = null;
     static int dbPort=4309;
+    static DBInstance dbInstance ;
 
     @BeforeAll
-    static void initAll() {
+    static void initAll() throws ServerException {
         // 强制使用UTC时区，以避免时区问题在PG和后端数据库中不一致的行为
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
 
-        // 启动slackerDB的服务
-        Thread dbThread = new Thread(() -> {
-            try {
-                // 修改默认的db启动端口
-                ServerConfiguration.LoadDefaultConfiguration();
-                ServerConfiguration.setPort(dbPort);
-                ServerConfiguration.setData("mem");
+        // 修改默认的db启动端口
+        ServerConfiguration serverConfiguration = new ServerConfiguration();
+        serverConfiguration.setPort(dbPort);
+        serverConfiguration.setData("mem");
 
-                // 启动数据库
-                Main.setLogLevel("INFO");
-                Main.serverStart();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
-        dbThread.start();
-        while (true)
-        {
-            if (DBInstance.state.equalsIgnoreCase("RUNNING"))
-            {
-                break;
-            }
-            else
-            {
-                Sleeper.sleep(1000);
-            }
-        }
+        // 初始化数据库
+        dbInstance = new DBInstance(serverConfiguration);
+        dbInstance.start();
+
+        assert dbInstance.instanceState.equalsIgnoreCase("RUNNING");
         System.out.println("TEST:: Server started successful ...");
     }
-
 
     @AfterAll
     static void tearDownAll() throws Exception{
         System.out.println("TEST:: Will shutdown server ...");
-        System.out.println("TEST:: Active sessions : " + DBInstance.activeSessions);
-        Main.serverStop();
+        System.out.println("TEST:: Active sessions : " +  dbInstance.activeSessions);
+        dbInstance.stop();
         System.out.println("TEST:: Server stopped successful.");
-        if (dbThread != null) {
-            dbThread.interrupt();
-        }
+        assert dbInstance.instanceState.equalsIgnoreCase("IDLE");
     }
 
     @Test

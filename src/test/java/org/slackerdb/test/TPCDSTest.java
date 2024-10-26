@@ -3,8 +3,8 @@ package org.slackerdb.test;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.slackerdb.Main;
 import org.slackerdb.configuration.ServerConfiguration;
+import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Sleeper;
 
@@ -15,7 +15,6 @@ import java.util.*;
 
 
 public class TPCDSTest {
-    static Thread dbThread = null;
     static int dbPort=4309;
     // 一共需要运行几轮
     static int round = 1000;
@@ -35,52 +34,30 @@ public class TPCDSTest {
 
     static int roundSuccessfulCount = 0;
     static int roundFailedCount = 0;
+    static DBInstance dbInstance ;
 
     @BeforeAll
-    static void initAll() throws SQLException {
+    static void initAll() throws ServerException,SQLException {
         tpcdsSQLMap = TpcdsSQL.loadTPCDSSQLMap();
 
-        // 启动slackerDB的服务
-        Thread dbThread = new Thread(() -> {
-            try {
-                // 修改默认的db启动端口
-                ServerConfiguration.LoadDefaultConfiguration();
-                ServerConfiguration.setPort(dbPort);
-                ServerConfiguration.setData("tpcdstest");
-                ServerConfiguration.setData_dir(System.getProperty("java.io.tmpdir"));
-                ServerConfiguration.setThreads(threads);
-                ServerConfiguration.setMemory_limit(memory_limit);
-                ServerConfiguration.setMax_workers(max_nio_workers);
+        // 修改默认的db启动端口
+        ServerConfiguration serverConfiguration = new ServerConfiguration();
+        serverConfiguration.setPort(dbPort);
+        serverConfiguration.setData("tpcdstest");
+        serverConfiguration.setData_dir(System.getProperty("java.io.tmpdir"));
+        serverConfiguration.setThreads(threads);
+        serverConfiguration.setMemory_limit(memory_limit);
+        serverConfiguration.setMax_workers(max_nio_workers);
 
-                File dbFile = new File(String.valueOf(Path.of(ServerConfiguration.getData_Dir(), ServerConfiguration.getData() + ".db")));
-                if (dbFile.exists())
-                {
-                    var ignored = dbFile.delete();
-                }
-
-                // 启动数据库
-                Main.setLogLevel("INFO");
-                Main.serverStart();
-
-                // 强制使用UTC时区，以避免时区问题在PG和后端数据库中不一致的行为
-                TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
-
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
-        dbThread.start();
-        while (true)
+        File dbFile = new File(String.valueOf(Path.of(serverConfiguration.getData_Dir(), serverConfiguration.getData() + ".db")));
+        if (dbFile.exists())
         {
-            if (DBInstance.state.equalsIgnoreCase("RUNNING"))
-            {
-                break;
-            }
-            else
-            {
-                Sleeper.sleep(1000);
-            }
+            var ignored = dbFile.delete();
         }
+
+        // 初始化数据库
+        dbInstance = new DBInstance(serverConfiguration);
+        dbInstance.start();
         System.out.println("TEST:: Server started successful ...");
 
         String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/tpcdstest";
@@ -100,11 +77,10 @@ public class TPCDSTest {
 
     @AfterAll
     static void tearDownAll() throws Exception {
-        Main.serverStop();
-        if (dbThread != null) {
-            dbThread.interrupt();
-        }
-        File dbFile = new File(String.valueOf(Path.of(ServerConfiguration.getData_Dir(), ServerConfiguration.getData() + ".db")));
+        dbInstance.stop();
+
+        File dbFile = new File(String.valueOf(Path.of(dbInstance.serverConfiguration.getData_Dir(),
+                dbInstance.serverConfiguration.getData() + ".db")));
         if (dbFile.exists())
         {
             var ignored = dbFile.delete();

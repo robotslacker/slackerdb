@@ -9,13 +9,9 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
-import io.netty.handler.logging.LogLevel;
-import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.AttributeKey;
-import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.exceptions.ServerException;
-import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresRequest;
 import org.slackerdb.message.request.*;
 import org.slackerdb.utils.Utils;
@@ -25,6 +21,7 @@ import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.*;
+import ch.qos.logback.classic.Logger;
 
 /**
  * POSTGRES V3 协议处理
@@ -33,8 +30,49 @@ public class PostgresServer {
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
 
+    private Logger logger;
+    private boolean portReady = false;
+
+    long readerIdleTime;
+    long writerIdleTime;
+    long allIdleTime;
+    int nioEventThreads;
+
+    private String bind;
+    private int port;
+    private DBInstance dbInstance;
+
+    // 设置日志的句柄
+    public void setLogger(Logger pLogger)
+    {
+        this.logger = pLogger;
+    }
+
+    public void setBindHostAndPort(String pBind, int pPort)
+    {
+        this.bind = pBind;
+        this.port = pPort;
+    }
+
+    public void setServerTimeout(long pReaderIdleTime, long pWriterIdleTime, long pAllIdleTime)
+    {
+        this.readerIdleTime = pReaderIdleTime;
+        this.writerIdleTime = pWriterIdleTime;
+        this.allIdleTime = pAllIdleTime;
+    }
+
+    public void setNioEventThreads(int pNioEventThreads)
+    {
+        this.nioEventThreads = pNioEventThreads;
+    }
+
+    public void setDBInstance(DBInstance pDbInstance)
+    {
+        this.dbInstance = pDbInstance;
+    }
+
     /**
-     * Start the server
+     * 启动协议处理
      */
     public void start() {
         // Listener thread
@@ -48,32 +86,33 @@ public class PostgresServer {
         thread.start();
     }
 
-    public void stop(String clientInfo)
+    /**
+     * 关闭协议处理
+     */
+    public void stop()
     {
-        AppLogger.logger.info("[SERVER] Received stop request from [{}].", clientInfo);
-        AppLogger.logger.info("[SERVER] Server will stop now.");
-        DBInstance.state = "SHUTTING DOWN";
+        logger.info("[SERVER] Received stop request.");
+        logger.info("[SERVER] Server will stop now.");
         if (workerGroup != null) {
             workerGroup.shutdownGracefully();
         }
         if (bossGroup != null) {
             bossGroup.shutdownGracefully();
         }
-        DBInstance.state = "CLOSED";
-        AppLogger.logger.info("[SERVER] Server stopped.");
+        logger.info("[SERVER] Server stopped.");
     }
 
     // 自定义解码器，处理原始字节数据
-    static class RawMessageDecoder extends ByteToMessageDecoder {
-        static void pushMsgObject(List<Object> out, Object obj)
+    class RawMessageDecoder extends ByteToMessageDecoder {
+        void pushMsgObject(List<Object> out, Object obj)
         {
             // 打印所有收到的字节内容（16进制）
-            if (AppLogger.logger.getLevel().levelStr.equals("TRACE")) {
+            if (logger.getLevel().levelStr.equals("TRACE")) {
                 PostgresRequest postgresRequest = (PostgresRequest)obj;
-                AppLogger.logger.trace("[SERVER][RX CONTENT ]: {},{}",
+                logger.trace("[SERVER][RX CONTENT ]: {},{}",
                         obj.getClass().getSimpleName(), postgresRequest.encode().length);
                 for (String dumpMessage : Utils.bytesToHexList(postgresRequest.encode())) {
-                    AppLogger.logger.trace("[SERVER][RX CONTENT ]: {}", dumpMessage);
+                    logger.trace("[SERVER][RX CONTENT ]: {}", dumpMessage);
                 }
             }
             out.add(obj);
@@ -81,8 +120,8 @@ public class PostgresServer {
 
         @Override
         protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
-            int sessionId = (int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get();
-            String lastRequestCommand = DBInstance.getSession(sessionId).LastRequestCommand;
+            // 获取上一次的处理指令，本次处理可能和上次相关
+            String lastRequestCommand = (String)ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).get();
 
             // 如果之前没有读取过任何协议，则读取前一个Int。可能是SSLRequest或者StartupMessage
             byte[] data;
@@ -105,13 +144,13 @@ public class PostgresServer {
                     // 处理消息
                     if (Arrays.equals(data, SSLRequest.SSLRequestHeader))
                     {
-                        SSLRequest sslRequest = new SSLRequest();
+                        SSLRequest sslRequest = new SSLRequest(dbInstance);
                         sslRequest.decode(data);
                         pushMsgObject(out, sslRequest);
 
                         // 标记当前步骤
                         lastRequestCommand = SSLRequest.class.getSimpleName();
-                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                     }
                     else if (Arrays.equals(data, AdminClientRequest.AdminClientRequestHeader))
                     {
@@ -119,7 +158,7 @@ public class PostgresServer {
 
                         // 标记当前步骤
                         lastRequestCommand = AdminClientRequest.class.getSimpleName();
-                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                     }
                     else
                     {
@@ -150,13 +189,13 @@ public class PostgresServer {
                     in.readBytes(data);
 
                     // 处理消息
-                    StartupRequest startupRequest = new StartupRequest();
+                    StartupRequest startupRequest = new StartupRequest(dbInstance);
                     startupRequest.decode(data);
                     pushMsgObject(out, startupRequest);
 
                     // 标记当前步骤
                     lastRequestCommand = StartupRequest.class.getSimpleName();
-                    DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                    ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                     continue;
                 }
 
@@ -182,7 +221,7 @@ public class PostgresServer {
 
                 switch (messageType) {
                     case 'P':
-                        ParseRequest parseRequest = new ParseRequest();
+                        ParseRequest parseRequest = new ParseRequest(dbInstance);
                         parseRequest.decode(data);
 
                         // 处理消息
@@ -190,10 +229,10 @@ public class PostgresServer {
 
                         // 标记当前步骤
                         lastRequestCommand = ParseRequest.class.getSimpleName();
-                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                         break;
                     case 'B':
-                        BindRequest bindRequest = new BindRequest();
+                        BindRequest bindRequest = new BindRequest(dbInstance);
                         bindRequest.decode(data);
 
                         // 处理消息
@@ -201,10 +240,10 @@ public class PostgresServer {
 
                         // 标记当前步骤
                         lastRequestCommand = BindRequest.class.getSimpleName();
-                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                         break;
                     case 'E':
-                        ExecuteRequest executeRequest = new ExecuteRequest();
+                        ExecuteRequest executeRequest = new ExecuteRequest(dbInstance);
                         executeRequest.decode(data);
 
                         // 处理消息
@@ -212,10 +251,10 @@ public class PostgresServer {
 
                         // 标记当前步骤
                         lastRequestCommand = ExecuteRequest.class.getSimpleName();
-                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                         break;
                     case 'S':
-                        SyncRequest syncRequest = new SyncRequest();
+                        SyncRequest syncRequest = new SyncRequest(dbInstance);
                         syncRequest.decode(data);
 
                         // 处理消息
@@ -223,10 +262,10 @@ public class PostgresServer {
 
                         // 标记当前步骤
                         lastRequestCommand = SyncRequest.class.getSimpleName();
-                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                         break;
                     case 'D':
-                        DescribeRequest describeRequest = new DescribeRequest();
+                        DescribeRequest describeRequest = new DescribeRequest(dbInstance);
                         describeRequest.decode(data);
 
                         // 处理消息
@@ -234,10 +273,10 @@ public class PostgresServer {
 
                         // 标记当前步骤
                         lastRequestCommand = DescribeRequest.class.getSimpleName();
-                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                         break;
                     case 'Q':
-                        QueryRequest queryRequest = new QueryRequest();
+                        QueryRequest queryRequest = new QueryRequest(dbInstance);
                         queryRequest.decode(data);
 
                         // 处理消息
@@ -245,10 +284,10 @@ public class PostgresServer {
 
                         // 标记当前步骤
                         lastRequestCommand = DescribeRequest.class.getSimpleName();
-                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                         break;
                     case 'd':
-                        CopyDataRequest copyDataRequest = new CopyDataRequest();
+                        CopyDataRequest copyDataRequest = new CopyDataRequest(dbInstance);
                         copyDataRequest.decode(data);
 
                         // 处理消息
@@ -256,10 +295,10 @@ public class PostgresServer {
 
                         // 标记当前步骤
                         lastRequestCommand = CopyDataRequest.class.getSimpleName();
-                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                         break;
                     case 'c':
-                        CopyDoneRequest copyDoneRequest = new CopyDoneRequest();
+                        CopyDoneRequest copyDoneRequest = new CopyDoneRequest(dbInstance);
                         copyDoneRequest.decode(data);
 
                         // 处理消息
@@ -267,10 +306,10 @@ public class PostgresServer {
 
                         // 标记当前步骤
                         lastRequestCommand = CopyDoneRequest.class.getSimpleName();
-                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                         break;
                     case 'C':
-                        CloseRequest closeRequest = new CloseRequest();
+                        CloseRequest closeRequest = new CloseRequest(dbInstance);
                         closeRequest.decode(data);
 
                         // 处理消息
@@ -278,10 +317,10 @@ public class PostgresServer {
 
                         // 标记当前步骤
                         lastRequestCommand = CloseRequest.class.getSimpleName();
-                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                         break;
                     case 'X':
-                        TerminateRequest terminateRequest = new TerminateRequest();
+                        TerminateRequest terminateRequest = new TerminateRequest(dbInstance);
                         terminateRequest.decode(data);
 
                         // 处理消息
@@ -291,7 +330,7 @@ public class PostgresServer {
                         ctx.close();
                         break;
                     case 'F':
-                        CancelRequest cancelRequest = new CancelRequest();
+                        CancelRequest cancelRequest = new CancelRequest(dbInstance);
                         cancelRequest.decode(data);
 
                         // 处理消息
@@ -299,17 +338,21 @@ public class PostgresServer {
 
                         // 标记当前步骤
                         lastRequestCommand = CancelRequest.class.getSimpleName();
-                        DBInstance.getSession(sessionId).LastRequestCommand = lastRequestCommand;
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                         break;
                     case '!':
-                        AdminClientRequest adminClientRequest = new AdminClientRequest();
+                        AdminClientRequest adminClientRequest = new AdminClientRequest(dbInstance);
                         adminClientRequest.decode(data);
 
                         // 处理消息
                         pushMsgObject(out, adminClientRequest);
+
+                        // 标记当前步骤
+                        lastRequestCommand = AdminClientRequest.class.getSimpleName();
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                         break;
                     default:
-                        AppLogger.logger.error("[SERVER] Unknown message type: {}", messageType);
+                        logger.error("[SERVER] Unknown message type: {}", messageType);
                 }
             }
         }
@@ -326,7 +369,7 @@ public class PostgresServer {
     private void run() throws InterruptedException, ServerException {
         // Netty消息处理
         bossGroup = new NioEventLoopGroup(1);
-        workerGroup = new NioEventLoopGroup(ServerConfiguration.getMax_Workers());
+        workerGroup = new NioEventLoopGroup(nioEventThreads);
 
         try {
             ServerBootstrap bootstrap = new ServerBootstrap();
@@ -339,36 +382,31 @@ public class PostgresServer {
                     .option(ChannelOption.SO_RCVBUF, 4096)
                     .option(ChannelOption.SO_REUSEADDR, true)
                     .option(ChannelOption.SO_BACKLOG, 128)
-                    .handler(
-                            new LoggingHandler(LogLevel.valueOf(ServerConfiguration.getLog_level().levelStr))
-                    )
                     .childHandler(new ChannelInitializer<SocketChannel>() {
                         @Override
                         protected void initChannel(SocketChannel ch) {
                             // 定义超时处理机制
-                            ch.pipeline().addLast(new IdleStateHandler(
-                                    ServerConfiguration.getClientTimeout(),
-                                    ServerConfiguration.getClientTimeout(),
-                                    ServerConfiguration.getClientTimeout(),
-                                    TimeUnit.SECONDS));
+                            ch.pipeline().addLast(new IdleStateHandler(readerIdleTime, writerIdleTime, allIdleTime,TimeUnit.SECONDS));
                             // 定义消息处理
                             ch.pipeline().addLast(new RawMessageDecoder());
                             ch.pipeline().addLast(new RawMessageEncoder());
                             // 定义消息处理
-                            ch.pipeline().addLast(new PostgresServerHandler()
-                            );
+                            ch.pipeline().addLast(new PostgresServerHandler(dbInstance, logger));
                         }
                     });
             ChannelFuture future =
-                    bootstrap.bind(new InetSocketAddress(ServerConfiguration.getBindHost(), ServerConfiguration.getPort())).sync();
-            AppLogger.logger.info("[SERVER] Listening on {}:{}",
-                    ServerConfiguration.getBindHost(),
-                    ServerConfiguration.getPort());
-            DBInstance.state = "RUNNING";
+                    bootstrap.bind(new InetSocketAddress(bind, port)).sync();
+                    logger.info("[SERVER] Listening on {}:{}", bind, port);
+            portReady = true;
             future.channel().closeFuture().sync();
         } finally {
             bossGroup.shutdownGracefully();
             workerGroup.shutdownGracefully();
         }
+    }
+
+    public boolean isPortReady()
+    {
+        return portReady;
     }
 }

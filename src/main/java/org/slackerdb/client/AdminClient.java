@@ -1,5 +1,16 @@
 package org.slackerdb.client;
 
+/*
+    AdminClient
+
+    用来接受客户端的管理命令
+    目前实现的有：
+    1： 停止
+    2： 查看服务器运行状态
+    3： 杀掉会话进程
+ */
+
+import ch.qos.logback.classic.Logger;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.*;
@@ -7,11 +18,8 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
-import io.netty.handler.logging.LogLevel;
-import io.netty.handler.logging.LoggingHandler;
-import org.slackerdb.configuration.ServerConfiguration;
 import io.netty.buffer.Unpooled;
-import org.slackerdb.logger.AppLogger;
+import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.message.request.AdminClientRequest;
 
 import java.nio.ByteBuffer;
@@ -61,7 +69,7 @@ public class AdminClient {
         }
     }
 
-    public static void doCommand(String command) {
+    public static void doCommand(Logger logger, ServerConfiguration serverConfiguration, String command) {
         // 启动Netty客户端
         EventLoopGroup group = new NioEventLoopGroup();
         try {
@@ -73,8 +81,6 @@ public class AdminClient {
                                  @Override
                                  protected void initChannel(NioSocketChannel ch) {
                                      // 定义消息处理
-                                     ch.pipeline().addLast(
-                                             new LoggingHandler(LogLevel.valueOf(ServerConfiguration.getLog_level().levelStr)));
                                      ch.pipeline().addLast(new ByteArrayEncoder());
                                      ch.pipeline().addLast(new ByteArrayDecoder());
                                  }
@@ -83,7 +89,7 @@ public class AdminClient {
 
             // 连接服务器
             ChannelFuture future =
-                    client.connect(ServerConfiguration.getBindHost(), ServerConfiguration.getPort()).sync();
+                    client.connect(serverConfiguration.getBindHost(), serverConfiguration.getPort()).sync();
 
             // 发送消息头，并等待回应标志
             ByteBuf buffer = Unpooled.wrappedBuffer(AdminClientRequest.AdminClientRequestHeader);
@@ -101,7 +107,7 @@ public class AdminClient {
             future.channel().closeFuture().sync();
         }
         catch (Exception e) {
-            AppLogger.logger.error("Error connecting to server", e);
+            logger.error("Error connecting to server", e);
         }
         finally {
             group.shutdownGracefully();

@@ -3,10 +3,9 @@ package org.slackerdb.test;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.slackerdb.Main;
 import org.slackerdb.configuration.ServerConfiguration;
+import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.server.DBInstance;
-import org.slackerdb.utils.Sleeper;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -15,51 +14,30 @@ import java.sql.Statement;
 import java.util.TimeZone;
 
 public class PlSqlTest {
-    static Thread dbThread = null;
     static int dbPort=4309;
+    static DBInstance dbInstance ;
 
     @BeforeAll
-    static void initAll() {
+    static void initAll() throws ServerException {
         // 强制使用UTC时区，以避免时区问题在PG和后端数据库中不一致的行为
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
 
-        // 启动slackerDB的服务
-        Thread dbThread = new Thread(() -> {
-            try {
-                // 修改默认的db启动端口
-                ServerConfiguration.LoadDefaultConfiguration();
-                ServerConfiguration.setPort(dbPort);
-                ServerConfiguration.setData("mem");
+        // 修改默认的db启动端口
+        ServerConfiguration serverConfiguration = new ServerConfiguration();
+        serverConfiguration.setPort(dbPort);
+        serverConfiguration.setData("mem");
 
-                // 启动数据库
-                Main.setLogLevel("INFO");
-                Main.serverStart();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
-        dbThread.start();
-        while (true)
-        {
-            if (DBInstance.state.equalsIgnoreCase("RUNNING"))
-            {
-                break;
-            }
-            else
-            {
-                Sleeper.sleep(1000);
-            }
-        }
+        // 启动数据库
+        dbInstance = new DBInstance(serverConfiguration);
+        dbInstance.start();
+
         System.out.println("TEST:: Server started successful ...");
     }
 
 
     @AfterAll
     static void tearDownAll() throws Exception{
-        Main.serverStop();
-        if (dbThread != null) {
-            dbThread.interrupt();
-        }
+        dbInstance.stop();
     }
 
     @Test

@@ -2,8 +2,6 @@ package org.slackerdb.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.duckdb.DuckDBConnection;
-import org.slackerdb.configuration.ServerConfiguration;
-import org.slackerdb.logger.AppLogger;
 import org.slackerdb.message.PostgresMessage;
 import org.slackerdb.message.PostgresRequest;
 import org.slackerdb.message.response.*;
@@ -41,6 +39,10 @@ public class StartupRequest  extends PostgresRequest {
 
     private final Map<String, String> startupOptions = new HashMap<>();
 
+    public StartupRequest(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
+
     @Override
     public void decode(byte[] data) {
         byte[][] result = Utils.splitByteArray(Arrays.copyOfRange(data, 4, data.length), (byte)0);
@@ -53,51 +55,37 @@ public class StartupRequest  extends PostgresRequest {
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         // 记录会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
 
         try {
-//            boolean hasFreeSession = false;
-//            for (int i=0;i<100;i++)
-//            {
-//                if (DBInstance.activeSessions > (ServerConfiguration.getMax_Workers() - 2))
-//                {
-//                    System.out.println("No free connection. will wait ..." + DBInstance.activeSessions);
-//                    // 任何时候都要考虑给admin的status保留至少2个连接会话，否则管理操作无法进行
-//                    Sleeper.sleep(500);
-//                    continue;
-//                }
-//                hasFreeSession = true;
-//                break;
-//            }
-//            if (!hasFreeSession)
-//            {
-//                ByteArrayOutputStream out = new ByteArrayOutputStream();
-//                // 生成一个错误消息
-//                ErrorResponse errorResponse = new ErrorResponse();
-//                errorResponse.setErrorResponse("SLACKER-0099",
-//                        "The maximum number of connections (" +
-//                                ServerConfiguration.getMax_Workers() +
-//                                ") has been exceeded. Connect refused. ");
-//                errorResponse.process(ctx, request, out);
-//
-//                // 发送并刷新返回消息
-//                PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
-//
-//                // 关闭连接
-//                out.close();
-//                ctx.close();
-//                return;
-//            }
+            // 检查登录选项中是否包含了数据库名称，如果不包含，直接报错
+            if (!startupOptions.containsKey("database"))
+            {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                // 生成一个错误消息
+                ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                errorResponse.setErrorResponse("SLACKERDB-00001",Utils.getMessage("SLACKERDB-00001"));
+                errorResponse.process(ctx, request, out);
+
+                // 发送并刷新返回消息
+                PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+                // 关闭连接
+                out.close();
+                ctx.close();
+                return;
+            }
+
             //  检查登录选项中的数据库名称和文件名称是否匹配，如果不匹配，直接拒绝
-            if (!ServerConfiguration.getData().equalsIgnoreCase(startupOptions.get("database")))
+            if (!this.dbInstance.serverConfiguration.getData().equalsIgnoreCase(startupOptions.get("database")))
             {
                 boolean existDatabase = false;
                 String querySchemaList =
                         "select catalog_name from information_schema.schemata " +
                                 "where catalog_name = '" + startupOptions.get("database") + "' LIMIT 1";
 
-                Statement querySchemaStmt = DBInstance.backendSysConnection.createStatement();
+                Statement querySchemaStmt = this.dbInstance.backendSysConnection.createStatement();
                 ResultSet rs = querySchemaStmt.executeQuery(querySchemaList);
                 if (rs.next()) {
                     existDatabase = true;
@@ -108,13 +96,14 @@ public class StartupRequest  extends PostgresRequest {
                 if (!existDatabase) {
                     ByteArrayOutputStream out = new ByteArrayOutputStream();
                     // 生成一个错误消息
-                    ErrorResponse errorResponse = new ErrorResponse();
-                    errorResponse.setErrorResponse("SLACKER-0099",
-                            "Database [" + startupOptions.get("database") + "] does not exist! Connect refused. ");
+                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                    errorResponse.setErrorResponse(
+                            "SLACKERDB-00002",
+                            Utils.getMessage("SLACKERDB-00002", startupOptions.get("database")));
                     errorResponse.process(ctx, request, out);
 
                     // 发送并刷新返回消息
-                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
 
                     // 关闭连接
                     out.close();
@@ -122,21 +111,23 @@ public class StartupRequest  extends PostgresRequest {
                     return;
                 }
             }
+
+            // 如果设置了连接用户，则使用用户定义的连接用户，否则使用main（默认）
             if (!startupOptions.containsKey("user") || startupOptions.get("user").trim().isEmpty())
             {
                 // 没有指定用户就默认为public
-                startupOptions.put("user", "public");
+                startupOptions.put("user", "main");
             }
             String connectedUser =  startupOptions.get("user").trim();
 
-            // 检查登录的用户
-            if (!connectedUser.equalsIgnoreCase("public")) {
+            // 检查登录的用户是否存在于数据库中
+            if (!connectedUser.equalsIgnoreCase("main")) {
                 boolean existUser = false;
                 String querySchemaList =
                         "select schema_name from information_schema.schemata " +
                                 "where schema_name = '" + connectedUser + "' LIMIT 1";
 
-                Statement querySchemaStmt = DBInstance.backendSysConnection.createStatement();
+                Statement querySchemaStmt = this.dbInstance.backendSysConnection.createStatement();
                 ResultSet rs = querySchemaStmt.executeQuery(querySchemaList);
                 if (rs.next()) {
                     existUser = true;
@@ -146,13 +137,13 @@ public class StartupRequest  extends PostgresRequest {
                 if (!existUser) {
                     ByteArrayOutputStream out = new ByteArrayOutputStream();
 
-                    ErrorResponse errorResponse = new ErrorResponse();
+                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
                     errorResponse.setErrorResponse("SLACKER-0099",
                             "User [" + startupOptions.get("user") + "] does not exist! Connect refused. ");
                     errorResponse.process(ctx, request, out);
 
                     // 发送并刷新返回消息
-                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
 
                     // 关闭连接
                     out.close();
@@ -164,27 +155,34 @@ public class StartupRequest  extends PostgresRequest {
             // 把查询路径指向新的schema
             Connection conn;
             synchronized (this) {
-                conn = DBInstance.connectionPool.poll();
+                conn = this.dbInstance.connectionPool.poll();
                 if (conn == null)
                 {
-                    conn = ((DuckDBConnection) DBInstance.backendSysConnection).duplicate();
+                    conn = ((DuckDBConnection) this.dbInstance.backendSysConnection).duplicate();
                 }
             }
             Statement stmt = conn.createStatement();
             stmt.execute("set variable current_database = '" + startupOptions.get("database") + "'");
-            stmt.execute("set search_path = '" + connectedUser + ",duck_catalog'");
+
+            if (this.dbInstance.serverConfiguration.getData_Dir().equalsIgnoreCase(":MEMORY:")) {
+                stmt.execute("set search_path = 'memory.duck_catalog," + connectedUser + "'");
+            }
+            else
+            {
+                stmt.execute("set search_path = '" + this.dbInstance.serverConfiguration.getData() + ".duck_catalog," + connectedUser + "'");
+            }
             stmt.close();
 
             // 记录会话信息
             int sessionId = getCurrentSessionId(ctx);
-            DBInstance.getSession(sessionId).dbConnection = conn;
-            DBInstance.getSession(sessionId).dbConnectedTime = LocalDateTime.now();
-            DBInstance.getSession(sessionId).startupOptions = startupOptions;
-            DBInstance.getSession(sessionId).status = "DB-CONNECTED";
+            this.dbInstance.getSession(sessionId).dbConnection = conn;
+            this.dbInstance.getSession(sessionId).dbConnectedTime = LocalDateTime.now();
+            this.dbInstance.getSession(sessionId).startupOptions = startupOptions;
+            this.dbInstance.getSession(sessionId).status = "DB-CONNECTED";
         }
         catch (SQLException se)
         {
-            AppLogger.logger.error("[SERVER] Init backend connection error. ", se);
+            this.dbInstance.logger.error("[SERVER] Init backend connection error. ", se);
             ctx.close();
             return;
         }
@@ -192,12 +190,12 @@ public class StartupRequest  extends PostgresRequest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
         // 总是回复认证成功
-        AuthenticationOk authenticationOk = new AuthenticationOk();
+        AuthenticationOk authenticationOk = new AuthenticationOk(this.dbInstance);
         authenticationOk.process(ctx, request, out);
-        PostgresMessage.writeAndFlush(ctx, AuthenticationOk.class.getSimpleName(), out);
+        PostgresMessage.writeAndFlush(ctx, AuthenticationOk.class.getSimpleName(), out, this.dbInstance.logger);
 
         // 返回一些参数信息
-        ParameterStatus parameterStatus = new ParameterStatus();
+        ParameterStatus parameterStatus = new ParameterStatus(this.dbInstance);
         parameterStatus.setKeyValue("server_version", "15");
         parameterStatus.process(ctx, request, out);
 
@@ -215,21 +213,21 @@ public class StartupRequest  extends PostgresRequest {
 
         parameterStatus.setKeyValue("is_superuser", "on");
         parameterStatus.process(ctx, request, out);
-        PostgresMessage.writeAndFlush(ctx, ParameterStatus.class.getSimpleName(), out);
+        PostgresMessage.writeAndFlush(ctx, ParameterStatus.class.getSimpleName(), out, this.dbInstance.logger);
 
         // 返回 BackendKeyData
-        BackendKeyData backendKeyData = new BackendKeyData();
+        BackendKeyData backendKeyData = new BackendKeyData(this.dbInstance);
         backendKeyData.process(ctx, request, out);
-        PostgresMessage.writeAndFlush(ctx, BackendKeyData.class.getSimpleName(), out);
+        PostgresMessage.writeAndFlush(ctx, BackendKeyData.class.getSimpleName(), out, this.dbInstance.logger);
 
         // 做好准备，可以查询
-        ReadyForQuery readyForQuery = new ReadyForQuery();
+        ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
         readyForQuery.process(ctx, request, out);
-        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out);
+        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
         out.close();
 
         // 取消会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

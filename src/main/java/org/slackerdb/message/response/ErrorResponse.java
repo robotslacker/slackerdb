@@ -2,6 +2,7 @@ package org.slackerdb.message.response;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.message.PostgresMessage;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -14,6 +15,10 @@ public class ErrorResponse extends PostgresMessage {
     private String errorSeverity = "ERROR";
     private String errorFile = "n/a";
     private String errorLine = "0";
+
+    public ErrorResponse(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
 
     public void setErrorResponse(String errorCode, String errorMessage)
     {

@@ -4,107 +4,108 @@ import org.slackerdb.exceptions.ServerException;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
+
 import ch.qos.logback.classic.Level;
-import oshi.SystemInfo;
-import oshi.hardware.GlobalMemory;
+import org.slackerdb.utils.Utils;
 
 public class ServerConfiguration extends Throwable {
-    private static final Properties appProperties = new Properties();
+    private String   data;
 
-    private static String   data = "slackerdb";
-    private static String   data_dir = ":memory:";
-    private static String   temp_dir = System.getProperty("java.io.tmpdir");
-    private static String   extension_dir = "";
-    private static String   plsql_func_dir = "";
-    private static String   log = "console";
-    private static Level    log_level = Level.INFO;
-    private static int      port = 4309;
-    private static String   bind = "0.0.0.0";
-    private static String   memory_limit = null;
-    private static int      threads = (int)(Runtime.getRuntime().availableProcessors() * 0.5);
-    private static String   access_mode = "READ_WRITE";
-    private static int      max_workers = Runtime.getRuntime().availableProcessors();
-    private static int      clientTimeout = 600;
-    private static String   init_schema = "";
-    private static String   sqlHistory = "";
-    private static String   sqlHistoryDir = "";
+    private String   data_dir;
+    private String   temp_dir;
+    private String   plsql_func_dir;
+    private String   sqlHistoryDir;
 
-    private static int readOption(String optionName, int defaultValue)
+    private String   extension_dir;
+    private String   log;
+    private Level    log_level;
+    private int      port;
+    private String   bind;
+    private String   memory_limit;
+    private int      threads;
+    private String   access_mode;
+    private int      max_workers;
+    private int      client_timeout;
+    private String   init_schema;
+    private String   sqlHistory;
+    private Locale   locale;
+
+    public ServerConfiguration()
     {
-        String propValue;
-        propValue = appProperties.getProperty(optionName, "");
-        if (propValue.trim().isEmpty())
-        {
-            return defaultValue;
-        }
-        else
-        {
-            return Integer.parseInt(propValue);
-        }
-    }
+        // 设置默认参数
+        // 默认的数据库名称
+        String default_data = "slackerdb";
+        // 默认启动在内存下
+        String default_data_dir = ":memory:";
+        // 内存模式和文件模式的默认值不同
+        // 内存模式: 系统的临时目录
+        // 文件模式: 等同data_dir
+        String default_temp_dir = "";
+        // 内存模式和文件模式的默认值不同
+        // 内存模式: data
+        // 文件模式: 等同data_dir
+        String default_plsql_func_dir = "";
 
-    private static String readOption(String optionName, String defaultValue)
-    {
-        String propValue;
-        propValue = appProperties.getProperty(optionName, "");
-        if (propValue.trim().isEmpty())
-        {
-            return defaultValue;
-        }
-        else
-        {
-            return propValue.trim();
-        }
-    }
+        //  默认使用系统的配置，即不主动配置
+        String default_extension_dir = "";
+        // 默认日志打印到控制台
+        String default_log = "console";
+        // 默认系统的日志级别为INFO
+        Level default_log_level = Level.INFO;
+        // 默认启动的端口
+        int default_port = 4309;
+        // 默认绑定的主机地址
+        String default_bind = "0.0.0.0";
+        // 默认不限制内存使用情况
+        String default_memory_limit = "";
+        // 默认使用一半的CPU作为计算线程
+        int default_threads = (int)(Runtime.getRuntime().availableProcessors() * 0.5);
+        // 默认数据库可读可写
+        String default_access_mode = "READ_WRITE";
+        // 默认使用全部的CPU作为Netty的后台线程数
+        int default_max_workers = Runtime.getRuntime().availableProcessors();
+        // 默认客户端的超时时间
+        int default_client_timeout = 600;
+        // 默认不配置初始化脚本
+        String default_init_schema = "";
+        // 默认不记录SQL执行历史信息
+        String default_sqlHistory = "";
+        // 内存模式和文件模式的默认值不同
+        // 内存模式: data
+        // 文件模式: 等同data_dir
+        String default_sqlHistoryDir = "";
+        // 默认设置系统默认的语言集
+        Locale default_locale = Locale.getDefault();
 
-    public static void LoadDefaultConfiguration()
-    {
-        // 数据库名称
-        data = readOption("data", data);
-        // 数据目录位置，默认存放在内存中
-        data_dir = readOption("data_dir", data_dir);
-        // 日志目录，默认为console，即不记录日志文件
-        log = readOption("log", log);
-        // 默认打印到INFO级别
-        log_level = Level.valueOf(readOption("log_level", log_level.levelStr));
-        // 默认开放全部地址访问
-        bind = readOption("bind", bind);
-        port = readOption("port", port);
-        // 最大容许的内存数量
-        if (memory_limit != null) {
-            memory_limit = readOption("memory_limit", memory_limit);
-        }
-        else
-        {
-            SystemInfo systemInfo = new SystemInfo();
-            GlobalMemory memory = systemInfo.getHardware().getMemory();
-            String defaultPhysicalMemorySize =
-                    (int) ((double) memory.getTotal() / 1024 / 1024 / 1024 * 0.6) + "GB";
-            memory_limit = readOption("memory_limit", defaultPhysicalMemorySize);
-        }
-        // 默认使用主机内核数量的80%
-        threads = readOption("threads", threads);
-        // 数据库最大工作线程
-        max_workers = readOption("max_workers", max_workers);
-        // 客户端最大超时时间, 默认为10分钟
-        clientTimeout = readOption("client_timeout", clientTimeout);
-        // 客户端读写模式
-        access_mode = readOption("access_mode", access_mode);
-        // 数据库临时文件目录，默认和data_dir相同
-        temp_dir = readOption("temp_dir", temp_dir);
-        // 扩展文件目录， 默认不配置
-        extension_dir = readOption("extension_dir", extension_dir);
-        // 初始化脚本的位置
-        init_schema = readOption("init_schema", init_schema);
-        // PLSQL中函数外部声明文件的位置
-        plsql_func_dir = readOption("plsql_func_dir", plsql_func_dir);
-        sqlHistory = readOption("sql_history", sqlHistory);
-        sqlHistoryDir = readOption("sql_history_dir", sqlHistoryDir);
+        // 系统第一次的值和默认值相同
+        data = default_data;
+
+        data_dir = default_data_dir;
+        temp_dir = default_temp_dir;
+        plsql_func_dir = default_plsql_func_dir;
+        sqlHistoryDir = default_sqlHistoryDir;
+        extension_dir = default_extension_dir;
+
+        log = default_log;
+        log_level = default_log_level;
+        port = default_port;
+        bind = default_bind;
+        memory_limit = default_memory_limit;
+        threads = default_threads;
+        access_mode = default_access_mode;
+        max_workers = default_max_workers;
+        client_timeout = default_client_timeout;
+        init_schema = default_init_schema;
+        sqlHistory = default_sqlHistory;
+        locale = default_locale;
     }
 
     // 读取参数配置文件
-    public static void LoadConfigurationFile(String configurationFileName) throws ServerException {
+    public void LoadConfigurationFile(String configurationFileName) throws ServerException {
+        Properties appProperties = new Properties();
         File configurationFile;
 
         // 首先读取参数配置里头的信息
@@ -115,129 +116,401 @@ public class ServerConfiguration extends Throwable {
                 // 加载属性文件
                 appProperties.load(input);
             } catch (Exception ex) {
-                throw new ServerException(99, ex.getMessage());
+                throw new ServerException(Utils.getMessage("SLACKERDB-00003", configurationFileName), ex);
             }
         }
 
-        // 加载配置信息
-        LoadDefaultConfiguration();
+        // 加载配置信息，根据参数配置信息修改默认配置
+        for (Map.Entry<Object, Object> entry : appProperties.entrySet()) {
+            switch (entry.getKey().toString().toUpperCase())
+            {
+                case "LOCALE":
+                    setLocale(entry.getValue().toString());
+                    break;
+                case "DATA":
+                    setData(entry.getValue().toString());
+                    break;
+                case "DATA_DIR":
+                    setData_dir(entry.getValue().toString());
+                    break;
+                case "TEMP_DIR":
+                    setTemp_dir(entry.getValue().toString());
+                    break;
+                case "EXTENSION_DIR":
+                    setExtension_dir(entry.getValue().toString());
+                    break;
+                case "PLSQL_FUNC_DIR":
+                    setPlsql_func_dir(entry.getValue().toString());
+                    break;
+                case "LOG":
+                    setLog(entry.getValue().toString());
+                    break;
+                case "LOG_LEVEL":
+                    setLog_level(entry.getValue().toString());
+                    break;
+                case "PORT":
+                    setPort(entry.getValue().toString());
+                    break;
+                case "BIND":
+                    setBindHost(entry.getValue().toString());
+                    break;
+                case "CLIENT_TIMEOUT":
+                    setClient_timeout(entry.getValue().toString());
+                    break;
+                case "ACCESS_MODE":
+                    setAccess_mode(entry.getValue().toString());
+                    break;
+                case "MAX_WORKERS":
+                    setMax_workers(entry.getValue().toString());
+                    break;
+                case "THREADS":
+                    setThreads(entry.getValue().toString());
+                    break;
+                case "MEMORY_LIMIT":
+                    setMemory_limit(entry.getValue().toString());
+                    break;
+                case "INIT_SCHEMA":
+                    setInit_schema(entry.getValue().toString());
+                    break;
+                case "SQL_HISTORY":
+                    setSqlHistory(entry.getValue().toString());
+                    break;
+                case "SQL_HISTORY_DIR":
+                    setSqlHistoryDir(entry.getValue().toString());
+                    break;
+                default:
+                    throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));
+            }
+        }
     }
 
-    public static String getLog()
+    public String getLog()
     {
         return log;
     }
-    public static Level getLog_level() { return log_level;}
-    public static int getPort()
+    public Level getLog_level() { return log_level;}
+
+    public int getPort()
     {
         return port;
     }
-    public static String getBindHost()
+    public String getBindHost()
     {
         return bind;
     }
-    public static int getClientTimeout()
+    public int getClient_timeout()
     {
-        return clientTimeout;
+        return client_timeout;
     }
-    public static String getAccess_mode()
+    public String getAccess_mode()
     {
         return access_mode;
     }
-    public static String getData()
+    public String getData()
     {
         return data;
     }
-    public static String getData_Dir()
+    public String getData_Dir()
     {
         return data_dir;
     }
-    public static String getMemory_limit()
+
+    public String getMemory_limit()
     {
         return memory_limit;
     }
-    public static int getThreads()
+
+    public int getThreads()
     {
         return threads;
     }
-    public static int getMax_Workers()
+
+    public int getMax_Workers()
     {
         return max_workers;
     }
-    public static String getTemp_dir()
+
+    public String getTemp_dir()
     {
-        return temp_dir;
+        if (temp_dir.isEmpty())
+        {
+            if (data_dir.isEmpty() || data_dir.equalsIgnoreCase(":MEMORY:"))
+            {
+                return System.getProperty("java.io.tmpdir");
+            }
+            else
+            {
+                return data_dir;
+            }
+        }
+        else
+        {
+            return temp_dir;
+        }
     }
-    public static String getExtension_dir()
+
+    public String getExtension_dir()
     {
         return extension_dir;
     }
-    public static String getInit_schema()
+    public String getInit_schema()
     {
         return init_schema;
     }
-    public static String getPlsql_func_dir()
+
+    public String getPlsql_func_dir()
     {
-        return plsql_func_dir;
+        if (plsql_func_dir.isEmpty())
+        {
+            if (data_dir.isEmpty() || data_dir.equalsIgnoreCase(":MEMORY:"))
+            {
+                return "data";
+            }
+            else
+            {
+                return data_dir;
+            }
+        }
+        else
+        {
+            return plsql_func_dir;
+        }
     }
-    public static String getSqlHistory()
+
+    public String getSqlHistory()
     {
         return sqlHistory;
     }
-    public static String getSqlHistoryDir()
+
+    public String getSqlHistoryDir()
     {
-        return sqlHistoryDir;
+        if (sqlHistoryDir.isEmpty())
+        {
+            if (data_dir.isEmpty() || data_dir.equalsIgnoreCase(":MEMORY:"))
+            {
+                return "data";
+            }
+            else
+            {
+                return data_dir;
+            }
+        }
+        else
+        {
+            return sqlHistoryDir;
+        }
     }
 
-    public static void setLog_level(Level plog_level) { log_level = plog_level;}
-    public static void setLog(String pLog) { log = pLog.trim();}
-    public static void setBindHost(String pHost)
+    public Locale getLocale()
+    {
+        return locale;
+    }
+
+    public void setLog_level(String pLog_level) throws ServerException {
+        log_level = Level.valueOf(pLog_level);
+
+        if (!log_level.levelStr.equalsIgnoreCase(pLog_level))
+        {
+            // 如果LogLevel的参数有错误，设置内容将不会有效
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "log_level", pLog_level)
+            );
+        }
+    }
+
+    public void setLog(String pLog) { log = pLog.trim();}
+    public void setBindHost(String pHost)
     {
         bind = pHost;
     }
-    public static void setPort(int pPort)
+    public void setPort(String pPort) throws ServerException
     {
+        try {
+            port = Integer.parseInt(pPort);
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "port", pPort)
+            );
+        }
+        if (port <= 0)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "port", pPort)
+            );
+        }
+    }
+
+    public void setPort(int pPort) throws ServerException
+    {
+        if (pPort <= 0)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "port", pPort)
+            );
+        }
         port = pPort;
     }
-    public static void setTemp_dir(String pTemp_dir) { temp_dir = pTemp_dir;}
-    public static void setExtension_dir(String pExtension_dir)
+
+    public void setTemp_dir(String pTemp_dir)
+    {
+        temp_dir = pTemp_dir;
+    }
+
+    public void setExtension_dir(String pExtension_dir)
     {
         extension_dir = pExtension_dir;
     }
-    public static void setData(String pData)
+
+    public void setData(String pData)
     {
         data = pData;
     }
-    public static void setData_dir(String pData_dir)
+
+    public void setData_dir(String pData_dir)
     {
         data_dir = pData_dir;
     }
-    public static void setMax_workers(int pMax_workers)
+
+    public void setMax_workers(String pMax_workers) throws ServerException
+    {
+        if (pMax_workers.isEmpty())
+        {
+            // 默认值不进行设置
+            return;
+        }
+
+        try {
+            max_workers = Integer.parseInt(pMax_workers);
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "max_workers", pMax_workers)
+            );
+        }
+        if (max_workers <= 0)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "max_workers", pMax_workers)
+            );
+        }
+    }
+
+    public void setMax_workers(int pMax_workers) throws ServerException
     {
         max_workers = pMax_workers;
+        if (max_workers <= 0)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "max_workers", pMax_workers)
+            );
+        }
     }
-    public static void setThreads(int pThreads)
+
+    public void setThreads(String pThreads) throws ServerException
+    {
+        if (pThreads.isEmpty())
+        {
+            // 默认值不进行设置
+            return;
+        }
+        try {
+            threads = Integer.parseInt(pThreads);
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "threads", pThreads)
+            );
+        }
+        if (threads <= 0)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "threads", pThreads)
+            );
+        }
+    }
+
+    public void setThreads(int pThreads) throws ServerException
     {
         threads = pThreads;
+        if (threads <= 0)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "threads", pThreads)
+            );
+        }
     }
-    public static void setMemory_limit(String pMemory_limit)
+
+    public void setMemory_limit(String pMemory_limit)
     {
         memory_limit = pMemory_limit;
     }
-    public static void setInit_schema(String pInit_schema)
+    public void setInit_schema(String pInit_schema)
     {
         init_schema = pInit_schema;
     }
-    public static void setPlsql_func_dir(String pPlsql_func_dir)
+    public void setPlsql_func_dir(String pPlsql_func_dir)
     {
         plsql_func_dir = pPlsql_func_dir;
     }
-    public static void setSqlHistory(String pSQLHistory)
+    public void setSqlHistory(String pSQLHistory)
     {
         sqlHistory = pSQLHistory;
     }
-    public static void setSqlHistoryDir(String pSQLHistoryDir)
+    public void setSqlHistoryDir(String pSQLHistoryDir)
     {
         sqlHistoryDir = pSQLHistoryDir;
+    }
+    public void setLocale(String pLocale) throws ServerException
+    {
+        if (pLocale == null || pLocale.isEmpty())
+        {
+            locale = Locale.getDefault();
+        }
+        else
+        {
+            try
+            {
+                locale = Utils.toLocale(pLocale);
+            }
+            catch (IllegalArgumentException ignored)
+            {
+                throw new ServerException(
+                        Utils.getMessage("SLACKERDB-00005", "locale", pLocale)
+                );
+            }
+        }
+    }
+
+    public void setClient_timeout(String pClient_Timeout) throws ServerException {
+        try {
+            client_timeout = Integer.parseInt(pClient_Timeout);
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "client_timeout", pClient_Timeout)
+            );
+        }
+        if (client_timeout <= 0)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "client_timeout", pClient_Timeout)
+            );
+        }
+    }
+
+    public void setAccess_mode(String pAccessMode) throws ServerException
+    {
+        if (!pAccessMode.equalsIgnoreCase("READ_WRITE") && !pAccessMode.equalsIgnoreCase("READ_ONLY"))
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "access_mode", pAccessMode)
+            );
+        }
+        access_mode = pAccessMode;
     }
 }

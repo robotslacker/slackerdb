@@ -2,7 +2,6 @@ package org.slackerdb.server;
 
 import groovy.lang.Binding;
 import groovy.lang.GroovyShell;
-import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.exceptions.ServerException;
 
 import java.io.File;
@@ -17,6 +16,14 @@ import java.util.List;
 public class GroovyInstance {
     private GroovyShell groovyShell = null;
     private Binding binding = null;
+
+    private final DBInstance dbInstance;
+
+    public GroovyInstance(DBInstance pDbInstance)
+    {
+        dbInstance = pDbInstance;
+    }
+
     private void initInstance(Binding pBinding) throws ServerException
     {
         this.binding = pBinding;
@@ -30,12 +37,12 @@ public class GroovyInstance {
                 resourceAsStream.close();
             }
             // 首先加载程序参数文件中预定义的函数
-            if (!ServerConfiguration.getPlsql_func_dir().isEmpty()) {
+            if (!dbInstance.serverConfiguration.getPlsql_func_dir().isEmpty()) {
                 List<String> initScriptFiles = new ArrayList<>();
-                if (new File(ServerConfiguration.getPlsql_func_dir()).isFile()) {
-                    initScriptFiles.add(new File(ServerConfiguration.getPlsql_func_dir()).getAbsolutePath());
-                } else if (new File(ServerConfiguration.getPlsql_func_dir()).isDirectory()) {
-                    File[] files = new File(ServerConfiguration.getPlsql_func_dir()).listFiles();
+                if (new File(dbInstance.serverConfiguration.getPlsql_func_dir()).isFile()) {
+                    initScriptFiles.add(new File(dbInstance.serverConfiguration.getPlsql_func_dir()).getAbsolutePath());
+                } else if (new File(dbInstance.serverConfiguration.getPlsql_func_dir()).isDirectory()) {
+                    File[] files = new File(dbInstance.serverConfiguration.getPlsql_func_dir()).listFiles();
                     if (files != null) {
                         for (File file : files) {
                             if (file.isFile() && file.getName().endsWith(".groovy")) {
@@ -44,8 +51,7 @@ public class GroovyInstance {
                         }
                     }
                 } else {
-                    throw new ServerException(999,
-                            "Init groovy [" + ServerConfiguration.getPlsql_func_dir() + "] does not exist!");
+                    throw new ServerException("Init groovy [" + dbInstance.serverConfiguration.getPlsql_func_dir() + "] does not exist!");
                 }
                 Collections.sort(initScriptFiles);
                 for (String initScriptFile : initScriptFiles) {
@@ -53,8 +59,7 @@ public class GroovyInstance {
                 }
             }
         } catch (IOException ie) {
-            throw new ServerException(999,
-                    "Init groovy [" + ServerConfiguration.getPlsql_func_dir() + "] error!", ie);
+            throw new ServerException("Init groovy [" + dbInstance.serverConfiguration.getPlsql_func_dir() + "] error!", ie);
         }
     }
 

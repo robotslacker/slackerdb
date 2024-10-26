@@ -1,6 +1,6 @@
 package org.slackerdb.sql;
 
-import org.slackerdb.configuration.ServerConfiguration;
+import org.slackerdb.server.DBInstance;
 import org.slackerdb.utils.LRUCache;
 
 import java.util.ArrayList;
@@ -15,17 +15,17 @@ public class SQLReplacer {
 
     private static final LRUCache lruCache = new LRUCache();
 
-    private static void load()
+    private static void load(DBInstance dbInstance)
     {
         String   catalogName;
 
-        if (ServerConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:"))
+        if (dbInstance.serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:"))
         {
             catalogName = "memory";
         }
         else
         {
-            catalogName = ServerConfiguration.getData().trim().toLowerCase();
+            catalogName = dbInstance.serverConfiguration.getData().trim().toLowerCase();
         }
         SQLReplaceItems.add(
                 new QueryReplacerItem(
@@ -51,6 +51,11 @@ public class SQLReplacer {
         SQLReplaceItems.add(
                 new QueryReplacerItem(
                         "pg_catalog.pg_database", catalogName + ".duck_catalog.pg_database",
+                        true, true)
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_extension", catalogName + ".duck_catalog.pg_extension",
                         true, true)
         );
 
@@ -155,9 +160,9 @@ public class SQLReplacer {
         isLoaded = true;
     }
 
-    public static String replaceSQL(String sql) {
+    public static String replaceSQL(DBInstance pDbInstance, String sql) {
         if (!isLoaded) {
-            load();
+            load(pDbInstance);
         }
 
         // 如果有缓存的SQL记录，则读取缓存的内容

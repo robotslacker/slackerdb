@@ -23,6 +23,10 @@ import java.util.regex.Pattern;
 public class QueryRequest  extends PostgresRequest {
     private String      sql = "";
 
+    public QueryRequest(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
+
     //  Query (F)
     //    Byte1('Q')
     //      Identifies the message as a simple query.
@@ -58,9 +62,9 @@ public class QueryRequest  extends PostgresRequest {
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         // 记录会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = sql;
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = sql;
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
@@ -79,8 +83,8 @@ public class QueryRequest  extends PostgresRequest {
                     targetColumnMap.put(columns[i].trim().toUpperCase(), i);
                 }
                 String copyTableFormat = m.group(7);
-                DBInstance.getSession(getCurrentSessionId(ctx)).copyTableName = copyTableName;
-                DBInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat = copyTableFormat;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableName = copyTableName;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat = copyTableFormat;
 
                 String targetTableName;
                 String targetSchemaName;
@@ -91,9 +95,9 @@ public class QueryRequest  extends PostgresRequest {
                     targetSchemaName = "";
                     targetTableName = copyTableName;
                 }
-                DuckDBConnection conn = (DuckDBConnection) DBInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
-                DBInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = conn.createAppender(targetSchemaName, targetTableName);
-                DBInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows = 0;
+                DuckDBConnection conn = (DuckDBConnection) this.dbInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = conn.createAppender(targetSchemaName, targetTableName);
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows = 0;
                 // 获取表名的实际表名，DUCK并不支持部分字段的Appender操作。所以要追加列表中不存在的相关信息
                 List<Integer> copyTableDbColumnMapPos = new ArrayList<>();
                 String executeSql;
@@ -111,37 +115,37 @@ public class QueryRequest  extends PostgresRequest {
                 }
                 rs.close();
                 ps.close();
-                DBInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos = copyTableDbColumnMapPos;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos = copyTableDbColumnMapPos;
 
                 // 发送CopyInResponse
-                CopyInResponse copyInResponse = new CopyInResponse();
+                CopyInResponse copyInResponse = new CopyInResponse(this.dbInstance);
                 copyInResponse.copyColumnCount = (short) targetColumnMap.size();
                 copyInResponse.process(ctx, request, out);
 
                 // 发送并刷新返回消息
-                PostgresMessage.writeAndFlush(ctx, CopyInResponse.class.getSimpleName(), out);
+                PostgresMessage.writeAndFlush(ctx, CopyInResponse.class.getSimpleName(), out, this.dbInstance.logger);
 
                 out.close();
                 break tryBlock;
             }
 
             // 在执行之前需要做替换
-            sql = SQLReplacer.replaceSQL(sql);
+            sql = SQLReplacer.replaceSQL(this.dbInstance, sql);
 
             // 取出上次解析的SQL，如果为空语句，则直接返回
             if (sql.isEmpty()) {
-                CommandComplete commandComplete = new CommandComplete();
+                CommandComplete commandComplete = new CommandComplete(this.dbInstance);
                 commandComplete.process(ctx, request, out);
 
                 // 发送并刷新返回消息
-                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
+                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
 
                 // 发送ReadyForQuery
-                ReadyForQuery readyForQuery = new ReadyForQuery();
+                ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
                 readyForQuery.process(ctx, request, out);
 
                 // 发送并刷新返回消息
-                PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out);
+                PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
 
                 out.close();
 
@@ -151,7 +155,7 @@ public class QueryRequest  extends PostgresRequest {
             // 理解为简单查询
             long nAffectedRows = 0;
             PreparedStatement preparedStatement =
-                    DBInstance.getSession(getCurrentSessionId(ctx)).dbConnection.prepareStatement(sql);
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).dbConnection.prepareStatement(sql);
             boolean isResultSet = false;
             try {
                 isResultSet = preparedStatement.execute();
@@ -173,7 +177,7 @@ public class QueryRequest  extends PostgresRequest {
                     field.name = resultSetMetaData.getColumnName(i);
                     field.objectIdOfTable = 0;
                     field.attributeNumberOfColumn = 0;
-                    field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(columnTypeName);
+                    field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(dbInstance, columnTypeName);
                     field.dataTypeSize = (short) 2147483647;
                     field.dataTypeModifier = -1;
                     // 一律文本返回
@@ -181,15 +185,15 @@ public class QueryRequest  extends PostgresRequest {
                     fields.add(field);
                 }
 
-                RowDescription rowDescription = new RowDescription();
+                RowDescription rowDescription = new RowDescription(this.dbInstance);
                 rowDescription.setFields(fields);
                 rowDescription.process(ctx, request, out);
                 rowDescription.setFields(null);
 
                 // 发送并刷新RowsDescription消息
-                PostgresMessage.writeAndFlush(ctx, RowDescription.class.getSimpleName(), out);
+                PostgresMessage.writeAndFlush(ctx, RowDescription.class.getSimpleName(), out, this.dbInstance.logger);
 
-                DataRow dataRow = new DataRow();
+                DataRow dataRow = new DataRow(this.dbInstance);
                 ResultSet rs = preparedStatement.getResultSet();
                 ResultSetMetaData rsmd = rs.getMetaData();
                 while (rs.next()) {
@@ -200,7 +204,7 @@ public class QueryRequest  extends PostgresRequest {
 
                     nAffectedRows ++;
                     // 发送并刷新返回消息
-                    PostgresMessage.writeAndFlush(ctx, DataRow.class.getSimpleName(), out);
+                    PostgresMessage.writeAndFlush(ctx, DataRow.class.getSimpleName(), out, this.dbInstance.logger);
                 }
                 rs.close();
             }
@@ -217,18 +221,18 @@ public class QueryRequest  extends PostgresRequest {
 
             // 设置语句的事务级别
             if (sql.toUpperCase().startsWith("BEGIN")) {
-                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = true;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = true;
             } else if (sql.toUpperCase().startsWith("END")) {
-                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             } else if (sql.toUpperCase().startsWith("COMMIT")) {
-                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             } else if (sql.toUpperCase().startsWith("ROLLBACK")) {
-                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             } else if (sql.toUpperCase().startsWith("ABORT")) {
-                DBInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
             }
 
-            CommandComplete commandComplete = new CommandComplete();
+            CommandComplete commandComplete = new CommandComplete(this.dbInstance);
             if (sql.toUpperCase().startsWith("BEGIN")) {
                 commandComplete.setCommandResult("BEGIN");
             } else if (sql.toUpperCase().startsWith("END")) {
@@ -251,19 +255,19 @@ public class QueryRequest  extends PostgresRequest {
             commandComplete.process(ctx, request, out);
 
             // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
 
             // 发送ReadyForQuery
-            ReadyForQuery readyForQuery = new ReadyForQuery();
+            ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
             readyForQuery.process(ctx, request, out);
 
             // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
         } catch (SQLException se) {
             StackTraceElement[] stackTrace = se.getStackTrace();
 
             // 生成一个错误消息
-            ErrorResponse errorResponse = new ErrorResponse();
+            ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
             errorResponse.setErrorResponse(String.valueOf(se.getErrorCode()), se.getMessage());
             errorResponse.setErrorSeverity("ERROR");
             errorResponse.setErrorFile(stackTrace[0].getFileName());
@@ -271,21 +275,21 @@ public class QueryRequest  extends PostgresRequest {
             errorResponse.process(ctx, request, out);
 
             // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
 
             // 发送ReadyForQuery
-            ReadyForQuery readyForQuery = new ReadyForQuery();
+            ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
             readyForQuery.process(ctx, request, out);
 
             // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
         } finally {
             out.close();
         }
 
         // 取消会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingSQL = "";
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = "";
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

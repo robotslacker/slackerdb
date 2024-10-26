@@ -1,21 +1,17 @@
 package org.slackerdb.server;
-import org.slackerdb.configuration.ServerConfiguration;
 
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 
 public class SlackerCatalog {
-    public static void createFakeCatalog(Connection conn) throws SQLException
+    public static void createFakeCatalog(DBInstance pDbInstance, Connection conn) throws SQLException
     {
         List<String> fakeCatalogDDLList = new ArrayList<>();
 
-        // 创建一个默认的新Schema，不使用默认的main
-        fakeCatalogDDLList.add("create schema if not exists public");
-
         // 以下为了解决DBeaver的显示问题
         fakeCatalogDDLList.add("create schema if not exists duck_catalog");
-        fakeCatalogDDLList.add("CREATE TABLE if not exists duck_catalog.pg_roles\n" +
+        fakeCatalogDDLList.add("CREATE or replace TABLE duck_catalog.pg_roles\n" +
                 "(\n" +
                 "\trolname varchar,\n" +
                 "\trolsuper bool NULL,\n" +
@@ -46,7 +42,7 @@ public class SlackerCatalog {
         fakeCatalogDDLList.add("create or replace view duck_catalog.pg_database \n" +
                 " as\n" +
                 " select oid, oid as datlastsysoid, " +
-                "        case when datname='memory' then '" + ServerConfiguration.getData().toLowerCase() + "' else datname end as datname," +
+                "        case when datname='memory' then '" + pDbInstance.serverConfiguration.getData().toLowerCase() + "' else datname end as datname," +
                 "        0 as dattablespace, " +
                 "   null as datacl, false as datistemplate, true as datallowconn," +
                 "   'en_US.utf8' as datcollate,'en_US.utf8' as datctype, -1 as datconnlimit," +
@@ -86,8 +82,20 @@ public class SlackerCatalog {
                 " proconfig       text         ,\n" +
                 " proacl          text\n" +
                 ");\n");
-        fakeCatalogDDLList.add("CREATE or replace MACRO pg_get_userbyid(a) AS (select 'system')");
-        fakeCatalogDDLList.add("CREATE or replace MACRO pg_encoding_to_char(a) AS (select 'UTF8')");
+        fakeCatalogDDLList.add("CREATE or replace TABLE  duck_catalog.pg_extension\n" +
+                "(\n" +
+                " oid               int,\n" +
+                " extname           text,\n" +
+                " extowner          int,\n" +
+                " extnamespace      int,\n" +
+                " extrelocatable    bool,\n" +
+                " extversion        text,\n" +
+                " extconfig         int,\n" +
+                " extcondition      text\n" +
+                ");\n");
+        fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_get_userbyid(a) AS (select 'system')");
+        fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_encoding_to_char(a) AS (select 'UTF8')");
+        fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_tablespace_location(a) AS (select '')");
         Statement stmt = conn.createStatement();
         for (String sql : fakeCatalogDDLList)
         {

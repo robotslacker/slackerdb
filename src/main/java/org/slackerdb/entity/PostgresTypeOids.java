@@ -1,6 +1,6 @@
 package org.slackerdb.entity;
 
-import org.slackerdb.logger.AppLogger;
+import org.slackerdb.server.DBInstance;
 
 import java.util.Map;
 import java.util.HashMap;
@@ -98,7 +98,7 @@ public class PostgresTypeOids {
         postgresOidAndType.put(2277, "ARRAY");
     }
 
-    public static int getTypeOidFromTypeName(String columnTypeName)
+    public static int getTypeOidFromTypeName(DBInstance dbInstance, String columnTypeName)
     {
         if (columnTypeName.startsWith("DECIMAL"))
         {
@@ -116,12 +116,12 @@ public class PostgresTypeOids {
         }
         else
         {
-            AppLogger.logger.error("Could not find postgres type for column type {}", columnTypeName);
+            dbInstance.logger.error("Could not find postgres type for column type {}", columnTypeName);
             return -1;
         }
     }
 
-    public static String getTypeNameFromTypeOid(int columnTypeOid)
+    public static String getTypeNameFromTypeOid(DBInstance dbInstance, int columnTypeOid)
     {
         if (postgresOidAndType.isEmpty())
         {
@@ -135,7 +135,7 @@ public class PostgresTypeOids {
         }
         else
         {
-            AppLogger.logger.error("Could not find postgres type for type id {}", columnTypeOid);
+            dbInstance.logger.error("Could not find postgres type for type id {}", columnTypeOid);
             return "";
         }
     }

@@ -19,6 +19,10 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 public class CopyDoneRequest extends PostgresRequest {
+    public CopyDoneRequest(DBInstance pDbInstance) {
+        super(pDbInstance);
+    }
+
     //  CopyDone (F & B)
     //    Byte1('c')
     //      Identifies the message as a COPY-complete indicator.
@@ -32,20 +36,20 @@ public class CopyDoneRequest extends PostgresRequest {
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         // 记录会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         long nCopiedRows = 0;
         try {
-            DuckDBAppender duckDBAppender = DBInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
+            DuckDBAppender duckDBAppender = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
 
             String  sourceStr;
             // 和上次没有解析完全的字符串要拼接起来
-            if (!DBInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.isEmpty())
+            if (!this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.isEmpty())
             {
-                sourceStr = DBInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained;
-                List<Integer> copyTableDbColumnMapPos = DBInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
+                sourceStr = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained;
+                List<Integer> copyTableDbColumnMapPos = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
                 Iterable<CSVRecord> parsedRecords = CSVFormat.DEFAULT.parse(new StringReader(sourceStr));
                 for (CSVRecord record : parsedRecords) {
                     duckDBAppender.beginRow();
@@ -61,36 +65,36 @@ public class CopyDoneRequest extends PostgresRequest {
                 }
             }
             duckDBAppender.close();
-            DBInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = null;
-            nCopiedRows = DBInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows + nCopiedRows;
-            DBInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows = 0;
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = null;
+            nCopiedRows = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows + nCopiedRows;
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows = 0;
 
             // 发送CommandComplete
-            CommandComplete commandComplete = new CommandComplete();
+            CommandComplete commandComplete = new CommandComplete(this.dbInstance);
             commandComplete.setCommandResult("COPY " + nCopiedRows);
             commandComplete.process(ctx, request, out);
-            PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
 
             // 发送ReadyForQuery
-            ReadyForQuery readyForQuery = new ReadyForQuery();
+            ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
             readyForQuery.process(ctx, request, out);
-            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
         }
         catch (SQLException se) {
             // 生成一个错误消息
-            ErrorResponse errorResponse = new ErrorResponse();
+            ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
             errorResponse.setErrorResponse(String.valueOf(se.getErrorCode()), se.getMessage());
             errorResponse.process(ctx, request, out);
 
             // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out);
+            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
         }
         finally {
             out.close();
         }
 
         // 取消会话的开始时间，以及业务类型
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
-        DBInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
+        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
     }
 }

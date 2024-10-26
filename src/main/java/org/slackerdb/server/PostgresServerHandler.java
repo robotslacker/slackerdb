@@ -1,39 +1,65 @@
 package org.slackerdb.server;
 
+import ch.qos.logback.classic.Logger;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.util.AttributeKey;
-import org.slackerdb.message.request.BaseRequest;
-import org.slackerdb.logger.AppLogger;
+import org.slackerdb.message.PostgresRequest;
 
 import java.net.InetSocketAddress;
 import java.time.LocalDateTime;
 
 public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
+    private final DBInstance dbInstance;
+    private Logger logger;
+
+    public PostgresServerHandler(DBInstance pDbInstance, Logger pLogger)
+    {
+        super();
+        logger = pLogger;
+        dbInstance = pDbInstance;
+    }
+
+    // 设置日志的句柄
+    public void setLogger(Logger pLogger)
+    {
+        this.logger = pLogger;
+    }
+
+
     @Override
     public void channelRegistered(ChannelHandlerContext ctx) {
         // 获取远端的 IP 地址和端口号
         InetSocketAddress remoteAddress = (InetSocketAddress) ctx.channel().remoteAddress();
-        AppLogger.logger.trace("[SERVER] Accepted connection from {}", remoteAddress.toString());
+        logger.trace("[SERVER] Accepted connection from {}", remoteAddress.toString());
 
         // 创建一个初始会话，并在ctx的信息中进行记录
-        DBSession dbSession = new DBSession();
+        DBSession dbSession = new DBSession(dbInstance);
         dbSession.connectedTime = LocalDateTime.now();
         dbSession.status = "connected";
         dbSession.clientAddress = remoteAddress.toString();
 
-        int sessionId = DBInstance.newSession(dbSession);
+        int sessionId = dbInstance.newSession(dbSession);
         ctx.channel().attr(AttributeKey.valueOf("SessionId")).set(sessionId);
     }
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
+        // 开始处理，标记活跃会话数加一
+        synchronized (this) {
+            dbInstance.activeSessions++;
+        }
         try {
-            BaseRequest.processMessage(ctx, msg);
+            PostgresRequest postgresRequest = (PostgresRequest) msg;
+            postgresRequest.process(ctx, msg);
         } catch (Exception e) {
-            AppLogger.logger.error("[SERVER] Error processing request", e);
+            logger.error("[SERVER] Error processing request", e);
+        }
+        // 结束处理，标记活跃会话数减一
+        synchronized (this) {
+            dbInstance.activeSessions--;
         }
     }
 
@@ -45,11 +71,11 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         // 关闭会话
-        DBInstance.abortSession((int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get());
+        dbInstance.abortSession((int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get());
 
         // 获取远端的 IP 地址和端口号
         InetSocketAddress remoteAddress = (InetSocketAddress) ctx.channel().remoteAddress();
-        AppLogger.logger.trace("[SERVER] Connection {} disconnected.", remoteAddress.toString());
+        logger.trace("[SERVER] Connection {} disconnected.", remoteAddress.toString());
 
         // 释放资源
         super.channelInactive(ctx);
@@ -61,11 +87,11 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception{
         // 关闭会话
-        DBInstance.abortSession((int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get());
+        dbInstance.abortSession((int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get());
 
         // 获取远端的 IP 地址和端口号
         InetSocketAddress remoteAddress = (InetSocketAddress) ctx.channel().remoteAddress();
-        AppLogger.logger.trace("[SERVER] Connection {} error.", remoteAddress.toString(), cause);
+        logger.trace("[SERVER] Connection {} error.", remoteAddress.toString(), cause);
 
         // 释放资源
         super.exceptionCaught(ctx, cause);
@@ -77,16 +103,16 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
         // 关闭会话
-        DBInstance.abortSession((int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get());
+        dbInstance.abortSession((int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get());
 
         if (evt instanceof IdleStateEvent) {
             IdleStateEvent event = (IdleStateEvent) evt;
             if (event.state() == IdleState.READER_IDLE) {
-                AppLogger.logger.trace("[SERVER] Connection {} error. Read timeout. ", ctx.channel().remoteAddress());
+                logger.trace("[SERVER] Connection {} error. Read timeout. ", ctx.channel().remoteAddress());
             } else if (event.state() == IdleState.WRITER_IDLE) {
-                AppLogger.logger.trace("[SERVER] Connection {} error. Write timeout. ", ctx.channel().remoteAddress());
+                logger.trace("[SERVER] Connection {} error. Write timeout. ", ctx.channel().remoteAddress());
             } else if (event.state() == IdleState.ALL_IDLE) {
-                AppLogger.logger.trace("[SERVER] Connection {} error. all timeout. ", ctx.channel().remoteAddress());
+                logger.trace("[SERVER] Connection {} error. all timeout. ", ctx.channel().remoteAddress());
             }
 
             // 释放资源
