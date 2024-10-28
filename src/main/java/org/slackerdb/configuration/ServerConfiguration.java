@@ -12,6 +12,51 @@ import ch.qos.logback.classic.Level;
 import org.slackerdb.utils.Utils;
 
 public class ServerConfiguration extends Throwable {
+    // 设置默认参数
+    // 默认的数据库名称
+    private final String default_data = "slackerdb";
+    // 默认启动在内存下
+    private final String default_data_dir = ":memory:";
+    // 内存模式和文件模式的默认值不同
+    // 内存模式: 系统的临时目录
+    // 文件模式: 等同data_dir
+    private final String default_temp_dir = "";
+    // 内存模式和文件模式的默认值不同
+    // 内存模式: data
+    // 文件模式: 等同data_dir
+    private final String default_plsql_func_dir = "";
+
+    //  默认使用系统的配置，即不主动配置
+    private final String default_extension_dir = "";
+    // 默认日志打印到控制台
+    private final String default_log = "console";
+    // 默认系统的日志级别为INFO
+    private final Level default_log_level = Level.INFO;
+    // 默认启动的端口
+    private final int default_port = 4309;
+    // 默认绑定的主机地址
+    private final String default_bind = "0.0.0.0";
+    // 默认不限制内存使用情况
+    private final String default_memory_limit = "";
+    // 默认使用一半的CPU作为计算线程
+    private final int default_threads = (int)(Runtime.getRuntime().availableProcessors() * 0.5);
+    // 默认数据库可读可写
+    private final String default_access_mode = "READ_WRITE";
+    // 默认使用全部的CPU作为Netty的后台线程数
+    private final int default_max_workers = Runtime.getRuntime().availableProcessors();
+    // 默认客户端的超时时间
+    private final int default_client_timeout = 600;
+    // 默认不配置初始化脚本
+    private final String default_init_schema = "";
+    // 默认不记录SQL执行历史信息
+    private final String default_sqlHistory = "";
+    // 内存模式和文件模式的默认值不同
+    // 内存模式: data
+    // 文件模式: 等同data_dir
+    private final String default_sqlHistoryDir = "";
+    // 默认设置系统默认的语言集
+    private final Locale default_locale = Locale.getDefault();
+
     private String   data;
 
     private String   data_dir;
@@ -35,51 +80,6 @@ public class ServerConfiguration extends Throwable {
 
     public ServerConfiguration()
     {
-        // 设置默认参数
-        // 默认的数据库名称
-        String default_data = "slackerdb";
-        // 默认启动在内存下
-        String default_data_dir = ":memory:";
-        // 内存模式和文件模式的默认值不同
-        // 内存模式: 系统的临时目录
-        // 文件模式: 等同data_dir
-        String default_temp_dir = "";
-        // 内存模式和文件模式的默认值不同
-        // 内存模式: data
-        // 文件模式: 等同data_dir
-        String default_plsql_func_dir = "";
-
-        //  默认使用系统的配置，即不主动配置
-        String default_extension_dir = "";
-        // 默认日志打印到控制台
-        String default_log = "console";
-        // 默认系统的日志级别为INFO
-        Level default_log_level = Level.INFO;
-        // 默认启动的端口
-        int default_port = 4309;
-        // 默认绑定的主机地址
-        String default_bind = "0.0.0.0";
-        // 默认不限制内存使用情况
-        String default_memory_limit = "";
-        // 默认使用一半的CPU作为计算线程
-        int default_threads = (int)(Runtime.getRuntime().availableProcessors() * 0.5);
-        // 默认数据库可读可写
-        String default_access_mode = "READ_WRITE";
-        // 默认使用全部的CPU作为Netty的后台线程数
-        int default_max_workers = Runtime.getRuntime().availableProcessors();
-        // 默认客户端的超时时间
-        int default_client_timeout = 600;
-        // 默认不配置初始化脚本
-        String default_init_schema = "";
-        // 默认不记录SQL执行历史信息
-        String default_sqlHistory = "";
-        // 内存模式和文件模式的默认值不同
-        // 内存模式: data
-        // 文件模式: 等同data_dir
-        String default_sqlHistoryDir = "";
-        // 默认设置系统默认的语言集
-        Locale default_locale = Locale.getDefault();
-
         // 系统第一次的值和默认值相同
         data = default_data;
 
@@ -125,58 +125,166 @@ public class ServerConfiguration extends Throwable {
             switch (entry.getKey().toString().toUpperCase())
             {
                 case "LOCALE":
-                    setLocale(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        locale = this.default_locale;
+                    }
+                    else {
+                        setLocale(entry.getValue().toString());
+                    }
                     break;
                 case "DATA":
-                    setData(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        data = this.default_data;
+                    }
+                    else {
+                        setData(entry.getValue().toString());
+                    }
                     break;
                 case "DATA_DIR":
-                    setData_dir(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        data_dir = this.default_data_dir;
+                    }
+                    else {
+                        setData_dir(entry.getValue().toString());
+                    }
                     break;
                 case "TEMP_DIR":
-                    setTemp_dir(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        temp_dir = this.default_temp_dir;
+                    }
+                    else {
+                        setTemp_dir(entry.getValue().toString());
+                    }
                     break;
                 case "EXTENSION_DIR":
-                    setExtension_dir(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        extension_dir = this.default_extension_dir;
+                    }
+                    else {
+                        setExtension_dir(entry.getValue().toString());
+                    }
                     break;
                 case "PLSQL_FUNC_DIR":
-                    setPlsql_func_dir(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        plsql_func_dir= this.default_plsql_func_dir;
+                    }
+                    else {
+                        setPlsql_func_dir(entry.getValue().toString());
+                    }
                     break;
                 case "LOG":
-                    setLog(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        log= this.default_log;
+                    }
+                    else {
+                        setLog(entry.getValue().toString());
+                    }
                     break;
                 case "LOG_LEVEL":
-                    setLog_level(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        log_level= this.default_log_level;
+                    }
+                    else {
+                        setLog_level(entry.getValue().toString());
+                    }
                     break;
                 case "PORT":
-                    setPort(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        port= this.default_port;
+                    }
+                    else {
+                        setPort(entry.getValue().toString());
+                    }
                     break;
                 case "BIND":
-                    setBindHost(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        bind= this.default_bind;
+                    }
+                    else {
+                        setBindHost(entry.getValue().toString());
+                    }
                     break;
                 case "CLIENT_TIMEOUT":
-                    setClient_timeout(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        client_timeout= this.default_client_timeout;
+                    }
+                    else {
+                        setClient_timeout(entry.getValue().toString());
+                    }
                     break;
                 case "ACCESS_MODE":
-                    setAccess_mode(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        access_mode= this.default_access_mode;
+                    }
+                    else {
+                        setAccess_mode(entry.getValue().toString());
+                    }
                     break;
                 case "MAX_WORKERS":
-                    setMax_workers(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        max_workers= this.default_max_workers;
+                    }
+                    else {
+                        setMax_workers(entry.getValue().toString());
+                    }
                     break;
                 case "THREADS":
-                    setThreads(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        threads= this.default_threads;
+                    }
+                    else {
+                        setThreads(entry.getValue().toString());
+                    }
                     break;
                 case "MEMORY_LIMIT":
-                    setMemory_limit(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        memory_limit= this.default_memory_limit;
+                    }
+                    else {
+                        setMemory_limit(entry.getValue().toString());
+                    }
                     break;
                 case "INIT_SCHEMA":
-                    setInit_schema(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        init_schema= this.default_init_schema;
+                    }
+                    else {
+                        setInit_schema(entry.getValue().toString());
+                    }
                     break;
                 case "SQL_HISTORY":
-                    setSqlHistory(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        sqlHistory= this.default_sqlHistory;
+                    }
+                    else {
+                        setSqlHistory(entry.getValue().toString());
+                    }
                     break;
                 case "SQL_HISTORY_DIR":
-                    setSqlHistoryDir(entry.getValue().toString());
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        sqlHistoryDir= this.default_sqlHistoryDir;
+                    }
+                    else {
+                        setSqlHistoryDir(entry.getValue().toString());
+                    }
                     break;
                 default:
                     throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));

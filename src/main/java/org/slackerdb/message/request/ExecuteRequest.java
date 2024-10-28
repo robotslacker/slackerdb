@@ -239,7 +239,7 @@ public class ExecuteRequest extends PostgresRequest {
 
                 break tryBlock;
             }
-            if (parsedStatement == null || parsedStatement.preparedStatement == null)
+            if (parsedStatement == null || parsedStatement.preparedStatement == null || parsedStatement.preparedStatement.isClosed())
             {
                 // 之前语句解析或者绑定出了错误, 没有继续执行的必要
                 break tryBlock;

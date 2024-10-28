@@ -1,10 +1,19 @@
 package org.slackerdb;
 
+
+/*
+    Main
+
+    主程序. 根据命令行参数来完成数据库的启动、停止、状态查看
+
+ */
+
 import ch.qos.logback.classic.Logger;
 import org.slackerdb.client.AdminClient;
 import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.logger.AppLogger;
 import org.slackerdb.server.DBInstance;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -64,6 +73,10 @@ public class Main {
             if (appOptions.containsKey("conf"))
             {
                 serverConfiguration.LoadConfigurationFile(appOptions.get("conf"));
+            }
+            if (appOptions.containsKey("locale"))
+            {
+                serverConfiguration.setLocale(appOptions.get("locale"));
             }
             if (appOptions.containsKey("log_level"))
             {
@@ -137,7 +150,8 @@ public class Main {
             // 启动应用程序
             if (appCommand.toString().toUpperCase().startsWith("START")) {
                 serverStart(logger, serverConfiguration);
-                // 永远等待，并不会退出
+                // 这里永远等待，不退出
+                try {Thread.sleep(Long.MAX_VALUE);} catch (InterruptedException ignored) {}
             }
             else
             {

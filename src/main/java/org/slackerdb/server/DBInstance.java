@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
 
 public class DBInstance {
     // 服务器启动的时间
-    public final LocalDateTime bootTime = LocalDateTime.now();
+    public LocalDateTime bootTime = null;
 
     // 服务器配置参数
     public ServerConfiguration serverConfiguration;
@@ -158,6 +158,7 @@ public class DBInstance {
 
         // 服务器开始启动
         this.instanceState = "STARTING";
+        this.bootTime = LocalDateTime.now();
 
         // 文件是否为第一次打开
         boolean databaseFirstOpened = false;

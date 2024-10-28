@@ -68,6 +68,12 @@ public class SQLReplacer {
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
+                        "set\\s+session\\s+character.*",
+                        "",true,false
+                )
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
                         "set\\s+extra_float_digits.*",
                         "set user = dummy",true,false
                 )

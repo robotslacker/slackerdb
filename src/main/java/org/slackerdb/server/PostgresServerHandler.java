@@ -13,19 +13,13 @@ import java.time.LocalDateTime;
 
 public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
     private final DBInstance dbInstance;
-    private Logger logger;
+    private final Logger logger;
 
     public PostgresServerHandler(DBInstance pDbInstance, Logger pLogger)
     {
         super();
         logger = pLogger;
         dbInstance = pDbInstance;
-    }
-
-    // 设置日志的句柄
-    public void setLogger(Logger pLogger)
-    {
-        this.logger = pLogger;
     }
 
 
@@ -41,8 +35,8 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
         dbSession.status = "connected";
         dbSession.clientAddress = remoteAddress.toString();
 
-        int sessionId = dbInstance.newSession(dbSession);
-        ctx.channel().attr(AttributeKey.valueOf("SessionId")).set(sessionId);
+        // 将SessionId信息记录到CTX中
+        ctx.channel().attr(AttributeKey.valueOf("SessionId")).set(dbInstance.newSession(dbSession));
     }
 
     @Override

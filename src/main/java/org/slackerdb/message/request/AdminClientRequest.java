@@ -54,24 +54,27 @@ public class AdminClientRequest  extends PostgresRequest {
             LocalDateTime currentTime = LocalDateTime.now();
 
             // 显示当前服务状态
-            feedBackMsg.append("SERVER STATUS: \n");
+            feedBackMsg.append("SERVER STATUS: ").append(this.dbInstance.instanceState).append("\n");
+            feedBackMsg.append("   : ").append(ProcessHandle.current().pid()).append("\n");
             feedBackMsg.append("  PID : ").append(ProcessHandle.current().pid()).append("\n");
             feedBackMsg.append("  Now : ").append(currentTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
-            feedBackMsg.append("  Boot: ").append(this.dbInstance.bootTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
+            if (this.dbInstance.bootTime != null) {
+                feedBackMsg.append("  Boot: ").append(this.dbInstance.bootTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
 
-            // 计算时间差
-            Duration duration = Duration.between(this.dbInstance.bootTime, currentTime);
-            long days = duration.toDays();
-            long hours = duration.minusDays(days).toHours();
-            long minutes = duration.minusDays(days).minusHours(hours).toMinutes();
-            long seconds = duration.minusDays(days).minusHours(hours).minusMinutes(minutes).getSeconds();
-            String readableTimeDifference = String.format("%d day%s, %d hour%s, %d minute%s, and %d second%s",
-                    days, days == 1 ? "" : "s",
-                    hours, hours == 1 ? "" : "s",
-                    minutes, minutes == 1 ? "" : "s",
-                    seconds, seconds == 1 ? "" : "s"
-            );
-            feedBackMsg.append("  Run : ").append(readableTimeDifference).append("\n");
+                // 计算时间差
+                Duration duration = Duration.between(this.dbInstance.bootTime, currentTime);
+                long days = duration.toDays();
+                long hours = duration.minusDays(days).toHours();
+                long minutes = duration.minusDays(days).minusHours(hours).toMinutes();
+                long seconds = duration.minusDays(days).minusHours(hours).minusMinutes(minutes).getSeconds();
+                String readableTimeDifference = String.format("%d day%s, %d hour%s, %d minute%s, and %d second%s",
+                        days, days == 1 ? "" : "s",
+                        hours, hours == 1 ? "" : "s",
+                        minutes, minutes == 1 ? "" : "s",
+                        seconds, seconds == 1 ? "" : "s"
+                );
+                feedBackMsg.append("  Run : ").append(readableTimeDifference).append("\n");
+            }
 
             // 打印服务器的运行参数
             feedBackMsg.append("SERVER PARAMETER: \n");
