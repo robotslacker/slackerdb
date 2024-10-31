@@ -22,12 +22,10 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
         dbInstance = pDbInstance;
     }
 
-
     @Override
     public void channelRegistered(ChannelHandlerContext ctx) {
         // 获取远端的 IP 地址和端口号
         InetSocketAddress remoteAddress = (InetSocketAddress) ctx.channel().remoteAddress();
-        logger.trace("[SERVER] Accepted connection from {}", remoteAddress.toString());
 
         // 创建一个初始会话，并在ctx的信息中进行记录
         DBSession dbSession = new DBSession(dbInstance);
@@ -36,11 +34,23 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
         dbSession.clientAddress = remoteAddress.toString();
 
         // 将SessionId信息记录到CTX中
-        ctx.channel().attr(AttributeKey.valueOf("SessionId")).set(dbInstance.newSession(dbSession));
+        int sessionId = dbInstance.newSession(dbSession);
+        ctx.channel().attr(AttributeKey.valueOf("SessionId")).set(sessionId);
+
+        // 设置线程名称，并打印调试信息
+        Thread.currentThread().setName("Session-" + sessionId);
+        logger.trace("[SERVER] Accepted connection from {}", remoteAddress.toString());
     }
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
+        // 设置线程名称
+        int sessionId = 0;
+        if (ctx.channel().hasAttr(AttributeKey.valueOf("SessionId"))) {
+            sessionId = (int) ctx.channel().attr(AttributeKey.valueOf("SessionId")).get();
+        }
+        Thread.currentThread().setName("Session-" + sessionId);
+
         // 开始处理，标记活跃会话数加一
         synchronized (this) {
             dbInstance.activeSessions++;
@@ -64,6 +74,13 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        // 设置线程名称
+        int sessionId = 0;
+        if (ctx.channel().hasAttr(AttributeKey.valueOf("SessionId"))) {
+            sessionId = (int) ctx.channel().attr(AttributeKey.valueOf("SessionId")).get();
+        }
+        Thread.currentThread().setName("Session-" + sessionId);
+
         // 关闭会话
         dbInstance.abortSession((int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get());
 
@@ -80,6 +97,13 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception{
+        // 设置线程名称
+        int sessionId = 0;
+        if (ctx.channel().hasAttr(AttributeKey.valueOf("SessionId"))) {
+            sessionId = (int) ctx.channel().attr(AttributeKey.valueOf("SessionId")).get();
+        }
+        Thread.currentThread().setName("Session-" + sessionId);
+
         // 关闭会话
         dbInstance.abortSession((int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get());
 
@@ -96,6 +120,13 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+        // 设置线程名称
+        int sessionId = 0;
+        if (ctx.channel().hasAttr(AttributeKey.valueOf("SessionId"))) {
+            sessionId = (int) ctx.channel().attr(AttributeKey.valueOf("SessionId")).get();
+        }
+        Thread.currentThread().setName("Session-" + sessionId);
+
         // 关闭会话
         dbInstance.abortSession((int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get());
 

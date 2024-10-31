@@ -112,9 +112,13 @@ locale=
 
 # SQL execution history
 # Client IP/Port, Execution start time, execution duration, SQL statement, execution result code, number of affected rows
-# True will save it in a separated file with sqlite format (enable wal), default is blank, means disable this feature.
+# True will save it in a separated file with h2 format, default is blank, means disable this feature.
 # default placed directory is same with data_dir
 sql_history=
+
+# The TCP port opened by SQL History to the outside, In order to read the SQL history execution during the running process
+# default is none, means will not open this port
+sql_history_port=
 
 # SQL execution history file default placed directory
 # Disk mode:   If not set, it defaults to the same as data_dir.
@@ -124,6 +128,27 @@ sql_history_dir=
 Note: All parameters are optional.   
 You can keep only the parameters you need to modify.   
 For parameters that are not configured, means default values  will be used.
+
+### Embed the slackerdb in your code
+``` 
+  // create configuration,  and update as your need
+  ServerConfiguration serverConfiguration = new ServerConfiguration();
+  serverConfiguration1.setPort(4309);
+  serverConfiguration1.setData("data1");
+  
+  // init database
+  DBInstance dbInstance= new DBInstance(serverConfiguration1);
+  
+  // startup database
+  dbInstance1.start();
+  
+  // shutdown database
+  dbInstance.stop();
+  
+  // We currently supports starting multiple instances running at the same time.
+  // But each instance must has his own port and instance name.
+
+```
 
 ### Start the database:
 ``` 

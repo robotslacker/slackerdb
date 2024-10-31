@@ -78,6 +78,7 @@ public class PostgresServer {
         // Listener thread
         Thread thread = new Thread(() -> {
             try {
+                Thread.currentThread().setName("Listener");
                 run();
             } catch (InterruptedException | ServerException e) {
                 throw new RuntimeException(e);

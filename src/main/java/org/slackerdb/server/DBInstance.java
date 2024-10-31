@@ -1,6 +1,7 @@
 package org.slackerdb.server;
 
 import ch.qos.logback.classic.Logger;
+import org.h2.jdbcx.JdbcConnectionPool;
 import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.logger.AppLogger;
@@ -38,7 +39,7 @@ public class DBInstance {
     public String instanceState = "IDLE";
     public Connection backendSysConnection;
 
-    public Connection backendSqlHistoryConnection = null;
+    public JdbcConnectionPool backendSqlHistoryConnectionPool = null;
 
     public int    activeSessions = 0;
 
@@ -252,24 +253,38 @@ public class DBInstance {
                     }
                     else {
                         String sqlHistoryFile = Path.of(sqlHistoryDir, serverConfiguration.getSqlHistory().trim()).toString();
-                        backendSqlHistoryConnection = DriverManager.getConnection("jdbc:sqlite:" + sqlHistoryFile);
+                        backendSqlHistoryConnectionPool =
+                                JdbcConnectionPool.create("jdbc:h2:" + sqlHistoryFile + ";DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE", null, null);
                         logger.info("[SERVER] Backend sql history database [{}] opened.", sqlHistoryFile);
+                        Connection backendSqlHistoryConnection = backendSqlHistoryConnectionPool.getConnection();
                         stmt = backendSqlHistoryConnection.createStatement();
-                        stmt.execute("PRAGMA journal_mode=WAL;");
-                        stmt.execute("CREATE TABLE IF NOT EXISTS SQL_HISTORY " +
-                                "(" +
-                                "    ID             INTEGER Primary Key AUTOINCREMENT," +
-                                "    SessionID      BIGINT," +
-                                "    ClientIP       TEXT," +
-                                "    StartTime      TIMESTAMP," +
-                                "    EndTime        TIMESTAMP," +
-                                "    SqlID          BIGINT," +
-                                "    SQL            TEXT," +
-                                "    SqlCode        INT," +
-                                "    AffectedRows   BIGINT," +
-                                "    ErrorMsg       TEXT" +
-                                ")");
+                        String sql = "CREATE TABLE IF NOT EXISTS SQL_HISTORY\n " +
+                                "(\n" +
+                                "    ID             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n" +
+                                "    SessionID      INT,\n" +
+                                "    ClientIP       TEXT,\n" +
+                                "    StartTime      TIMESTAMP,\n" +
+                                "    EndTime        TIMESTAMP,\n" +
+                                "    Elapsed        INT GENERATED ALWAYS AS (DATEDIFF('SECOND', StartTime, EndTime)), \n" +
+                                "    SqlID          INT,\n" +
+                                "    SQL            TEXT,\n" +
+                                "    SqlCode        INT,\n" +
+                                "    AffectedRows   BIGINT\n," +
+                                "    ErrorMsg       TEXT\n" +
+                                ")";
+                        stmt.execute(sql);
                         stmt.close();
+                        backendSqlHistoryConnection.close();
+                        // 对外提供TCP连接
+                        if (serverConfiguration.getSqlHistoryPort() != 0) {
+                            org.h2.tools.Server h2TcpServer = org.h2.tools.Server.createTcpServer(
+                                    "-tcpPort", String.valueOf(serverConfiguration.getSqlHistoryPort()),
+                                    "-tcpAllowOthers", "-tcpDaemon"
+                            );
+                            h2TcpServer.start();
+                            logger.info("[SERVER] SQLHistory Server TCP Port started at :{}",
+                                    serverConfiguration.getSqlHistoryPort());
+                        }
                     }
                 }
             }

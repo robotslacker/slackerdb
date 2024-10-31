@@ -11,7 +11,9 @@ import org.slackerdb.server.DBSession;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -53,9 +55,30 @@ public class AdminClientRequest  extends PostgresRequest {
         {
             LocalDateTime currentTime = LocalDateTime.now();
 
+            // 获取数据库的一些基本信息
+            // 包括使用的内存大小，文件大小
+            String  database_size = "";
+            String  memory_usage = "";
+            try {
+                Statement stmt = this.dbInstance.backendSysConnection.createStatement();
+                ResultSet rs = stmt.executeQuery("CALL pragma_database_size()");
+                while (rs.next()) {
+                    if (rs.getString("database_name").equalsIgnoreCase(this.dbInstance.serverConfiguration.getData())) {
+                        database_size = rs.getString("database_size");
+                        memory_usage = rs.getString("memory_usage");
+                        break;
+                    }
+                }
+                rs.close();
+                stmt.close();
+            }
+            catch (SQLException se)
+            {
+                feedBackMsg.append("Failed to get database info. ").append(se.getMessage()).append("\n");
+            }
+
             // 显示当前服务状态
             feedBackMsg.append("SERVER STATUS: ").append(this.dbInstance.instanceState).append("\n");
-            feedBackMsg.append("   : ").append(ProcessHandle.current().pid()).append("\n");
             feedBackMsg.append("  PID : ").append(ProcessHandle.current().pid()).append("\n");
             feedBackMsg.append("  Now : ").append(currentTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
             if (this.dbInstance.bootTime != null) {
@@ -75,6 +98,8 @@ public class AdminClientRequest  extends PostgresRequest {
                 );
                 feedBackMsg.append("  Run : ").append(readableTimeDifference).append("\n");
             }
+            feedBackMsg.append("  DB SIZE     : ").append(database_size).append("\n");
+            feedBackMsg.append("  MEMORY USAGE: ").append(memory_usage).append("\n");
 
             // 打印服务器的运行参数
             feedBackMsg.append("SERVER PARAMETER: \n");
@@ -84,6 +109,7 @@ public class AdminClientRequest  extends PostgresRequest {
             feedBackMsg.append(String.format("%-20s", "  Data_Dir:")).append(this.dbInstance.serverConfiguration.getData_Dir()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Temp_Dir:")).append(this.dbInstance.serverConfiguration.getTemp_dir()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  SQLHistory_Dir:")).append(this.dbInstance.serverConfiguration.getSqlHistoryDir()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  SQLHistory_Port:")).append(this.dbInstance.serverConfiguration.getSqlHistoryPort()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  SQLHistory:")).append(this.dbInstance.serverConfiguration.getSqlHistory()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  PLSQL_Func_Dir:")).append(this.dbInstance.serverConfiguration.getPlsql_func_dir()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Extension_Dir:")).append(this.dbInstance.serverConfiguration.getExtension_dir()).append("\n");

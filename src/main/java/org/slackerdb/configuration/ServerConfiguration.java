@@ -54,6 +54,8 @@ public class ServerConfiguration extends Throwable {
     // 内存模式: data
     // 文件模式: 等同data_dir
     private final String default_sqlHistoryDir = "";
+    // 默认的SqlHistory对外开放端口
+    private final int default_sqlHistoryPort = 0;
     // 默认设置系统默认的语言集
     private final Locale default_locale = Locale.getDefault();
 
@@ -75,6 +77,7 @@ public class ServerConfiguration extends Throwable {
     private int      max_workers;
     private int      client_timeout;
     private String   init_schema;
+    private int      sqlHistoryPort;
     private String   sqlHistory;
     private Locale   locale;
 
@@ -100,6 +103,7 @@ public class ServerConfiguration extends Throwable {
         client_timeout = default_client_timeout;
         init_schema = default_init_schema;
         sqlHistory = default_sqlHistory;
+        sqlHistoryPort = default_sqlHistoryPort;
         locale = default_locale;
     }
 
@@ -277,6 +281,15 @@ public class ServerConfiguration extends Throwable {
                         setSqlHistory(entry.getValue().toString());
                     }
                     break;
+                case "SQL_HISTORY_PORT":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        sqlHistoryPort= this.default_sqlHistoryPort;
+                    }
+                    else {
+                        setSqlHistoryPort(entry.getValue().toString());
+                    }
+                    break;
                 case "SQL_HISTORY_DIR":
                     if (entry.getValue().toString().isEmpty())
                     {
@@ -385,6 +398,12 @@ public class ServerConfiguration extends Throwable {
         }
     }
 
+
+    public int getSqlHistoryPort()
+    {
+        return sqlHistoryPort;
+    }
+
     public String getSqlHistory()
     {
         return sqlHistory;
@@ -483,12 +502,6 @@ public class ServerConfiguration extends Throwable {
 
     public void setMax_workers(String pMax_workers) throws ServerException
     {
-        if (pMax_workers.isEmpty())
-        {
-            // 默认值不进行设置
-            return;
-        }
-
         try {
             max_workers = Integer.parseInt(pMax_workers);
         }
@@ -519,11 +532,6 @@ public class ServerConfiguration extends Throwable {
 
     public void setThreads(String pThreads) throws ServerException
     {
-        if (pThreads.isEmpty())
-        {
-            // 默认值不进行设置
-            return;
-        }
         try {
             threads = Integer.parseInt(pThreads);
         }
@@ -568,6 +576,26 @@ public class ServerConfiguration extends Throwable {
     {
         sqlHistory = pSQLHistory;
     }
+
+    public void setSqlHistoryPort(String pSQLHistoryPort) throws ServerException
+    {
+        try {
+            sqlHistoryPort = Integer.parseInt(pSQLHistoryPort);
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "port", pSQLHistoryPort)
+            );
+        }
+        if (sqlHistoryPort <= 0)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "port", pSQLHistoryPort)
+            );
+        }
+    }
+
     public void setSqlHistoryDir(String pSQLHistoryDir)
     {
         sqlHistoryDir = pSQLHistoryDir;

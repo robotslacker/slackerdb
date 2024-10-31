@@ -146,16 +146,18 @@ public class ExecuteRequest extends PostgresRequest {
     public long insertSqlHistory(ChannelHandlerContext ctx)
     {
         long sqlHistoryId = -1;
-        if (this.dbInstance.backendSqlHistoryConnection == null)
+        if (this.dbInstance.backendSqlHistoryConnectionPool == null)
         {
             // 没有开始日志服务
             return sqlHistoryId;
         }
+        Connection backendSqlHistoryConnection = null;
         String historySQL = "Insert INTO SQL_HISTORY(SessionId, ClientIP, SQL, SqlId, StartTime) " +
                 "VALUES(?,?,?,?, current_timestamp)";
         try {
+            backendSqlHistoryConnection = this.dbInstance.backendSqlHistoryConnectionPool.getConnection();
             PreparedStatement preparedStatement =
-                    this.dbInstance.backendSqlHistoryConnection.prepareStatement(historySQL, Statement.RETURN_GENERATED_KEYS);
+                    backendSqlHistoryConnection.prepareStatement(historySQL, Statement.RETURN_GENERATED_KEYS);
             preparedStatement.setLong(1, getCurrentSessionId(ctx));
             preparedStatement.setString(2, this.dbInstance.getSession(getCurrentSessionId(ctx)).clientAddress);
             preparedStatement.setString(3, this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL);
@@ -171,16 +173,25 @@ public class ExecuteRequest extends PostgresRequest {
         {
             this.dbInstance.logger.trace("[SERVER] Save to sql history failed.", se);
         }
+        finally {
+            try {
+                if (backendSqlHistoryConnection != null && !backendSqlHistoryConnection.isClosed()) {
+                    backendSqlHistoryConnection.close();
+                }
+            }
+            catch (Exception ignored) {}
+        }
         return sqlHistoryId;
     }
 
     public void updateSqlHistory(long sqlHistoryId, int sqlCode, long affectedRows, String errorMsg)
     {
-        if (this.dbInstance.backendSqlHistoryConnection == null)
+        if (this.dbInstance.backendSqlHistoryConnectionPool == null)
         {
             // 没有开始日志服务
             return;
         }
+        Connection backendSqlHistoryConnection = null;
         String historySQL = "Update SQL_HISTORY " +
                 "SET   EndTime = current_timestamp," +
                 "      SqlCode = ?, " +
@@ -188,9 +199,15 @@ public class ExecuteRequest extends PostgresRequest {
                 "      ErrorMsg = ? " +
                 "WHERE ID = ?";
         try {
-            PreparedStatement preparedStatement =
-                    this.dbInstance.backendSqlHistoryConnection.prepareStatement(historySQL);
-            preparedStatement.setInt(1, sqlCode);
+            backendSqlHistoryConnection = this.dbInstance.backendSqlHistoryConnectionPool.getConnection();
+            PreparedStatement preparedStatement = backendSqlHistoryConnection.prepareStatement(historySQL);
+            if (sqlCode == 0) {
+                preparedStatement.setInt(1, sqlCode);
+            }
+            else
+            {
+                preparedStatement.setInt(1, -99);
+            }
             preparedStatement.setLong(2, affectedRows);
             preparedStatement.setString(3, errorMsg);
             preparedStatement.setLong(4, sqlHistoryId);
@@ -200,6 +217,14 @@ public class ExecuteRequest extends PostgresRequest {
         catch (SQLException se)
         {
             this.dbInstance.logger.warn("[SERVER] Save to sql history failed.", se);
+        }
+        finally {
+            try {
+                if (backendSqlHistoryConnection != null && !backendSqlHistoryConnection.isClosed()) {
+                    backendSqlHistoryConnection.close();
+                }
+            }
+            catch (Exception ignored) {}
         }
     }
 

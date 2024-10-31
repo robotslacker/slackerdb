@@ -16,6 +16,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
@@ -263,6 +264,46 @@ public class BindRequest extends PostgresRequest {
             PostgresMessage.writeAndFlush(ctx, BindComplete.class.getSimpleName(), out, this.dbInstance.logger);
         }
         catch (SQLException e) {
+            // 插入SQL执行历史
+            if (this.dbInstance.backendSqlHistoryConnectionPool != null)
+            {
+                Connection backendSqlHistoryConnection = null;
+                String historySQL = "Insert INTO SQL_HISTORY(SessionId, ClientIP, SQL, SqlId, StartTime, EndTime," +
+                        "SQLCode, AffectedRows, ErrorMsg) " +
+                        "VALUES(?,?,?,?, current_timestamp, current_timestamp, ?, 0, ?)";
+                try {
+                    backendSqlHistoryConnection = this.dbInstance.backendSqlHistoryConnectionPool.getConnection();
+                    PreparedStatement preparedStatement =
+                            backendSqlHistoryConnection.prepareStatement(historySQL);
+                    preparedStatement.setLong(1, getCurrentSessionId(ctx));
+                    preparedStatement.setString(2, this.dbInstance.getSession(getCurrentSessionId(ctx)).clientAddress);
+                    preparedStatement.setString(3, this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL);
+                    preparedStatement.setLong(4, this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.get());
+                    if (e.getErrorCode() == 0) {
+                        preparedStatement.setInt(5, -99);
+                    }
+                    else
+                    {
+                        preparedStatement.setInt(5, e.getErrorCode());
+                    }
+                    preparedStatement.setString(6, e.getSQLState() + ":" + e.getMessage());
+                    preparedStatement.execute();
+                    preparedStatement.close();
+                }
+                catch (SQLException se)
+                {
+                    this.dbInstance.logger.trace("[SERVER] Save to sql history failed.", se);
+                }
+                finally {
+                    try {
+                        if (backendSqlHistoryConnection != null && !backendSqlHistoryConnection.isClosed()) {
+                            backendSqlHistoryConnection.close();
+                        }
+                    }
+                    catch (Exception ignored) {}
+                }
+            }
+
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
             errorResponse.setErrorFile("BindRequest");
