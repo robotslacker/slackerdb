@@ -147,7 +147,7 @@ public class DBInstance {
         String instanceName = serverConfiguration.getData();
 
         // 初始化日志服务
-        logger = AppLogger.CreateLogger(
+        logger = AppLogger.createLogger(
                 serverConfiguration.getData(),
                 serverConfiguration.getLog_level().levelStr,
                 serverConfiguration.getLog());
@@ -422,5 +422,4 @@ public class DBInstance {
             logger.error("Force checkpoint failed.", e);
         }
     }
-
 }

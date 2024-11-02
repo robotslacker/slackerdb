@@ -38,17 +38,30 @@ public class StartupRequest  extends PostgresRequest {
     //      The parameter value.
 
     private final Map<String, String> startupOptions = new HashMap<>();
+    private byte[] rawMessage;
 
     public StartupRequest(DBInstance pDbInstance) {
         super(pDbInstance);
     }
 
+    public Map<String, String> getStartupOptions()
+    {
+        return startupOptions;
+    }
+
+    public byte[] getRawMessage()
+    {
+        return rawMessage;
+    }
+
     @Override
     public void decode(byte[] data) {
+        // 跳过前面4个字节的协议版本号. 目前没有对这个信息进行处理
         byte[][] result = Utils.splitByteArray(Arrays.copyOfRange(data, 4, data.length), (byte)0);
         for (int i = 0; i < result.length-1; i=i+2) {
             startupOptions.put(new String(result[i]), new String(result[i+1]));
         }
+        rawMessage = data;
         super.decode(data);
     }
 

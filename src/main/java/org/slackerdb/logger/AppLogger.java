@@ -13,8 +13,19 @@ import org.slf4j.LoggerFactory;
 import java.util.Iterator;
 
 public class AppLogger {
-    public static Logger CreateLogger(String loggerName, String pLogLevel, String pLogsStr)
+    public static Logger createLogger(String loggerName, String pLogLevel, String pLogsStr)
     {
+        if (pLogsStr == null)
+        {
+            // 如果没有提供LOG的位置，则仅输出到屏幕
+            pLogsStr = "CONSOLE";
+        }
+        if (pLogLevel == null)
+        {
+            // 如果没有提供级别，默认为INFO级别
+            pLogLevel = "INFO";
+        }
+
         Logger logger = (Logger) LoggerFactory.getLogger(loggerName);
         Level log_level = Level.valueOf(pLogLevel);
         String[] logs = pLogsStr.split(",");
@@ -26,7 +37,6 @@ public class AppLogger {
         rootLogger.detachAndStopAllAppenders();
 
         // 关闭Netty的日志
-        // Retrieve the logger for Netty's internal logging
         Logger nettyLogger = (Logger) LoggerFactory.getLogger("io.netty");
         nettyLogger.setLevel(Level.OFF);
 
@@ -73,15 +83,16 @@ public class AppLogger {
         {
             logger.setLevel(log_level);
         }
-        else
-        {
-            logger.setLevel(Level.valueOf(pLogLevel));
-            if (pLogLevel.equalsIgnoreCase("TRACE")) {
-                logger.trace("[LOGGER] Logger level has been set to TRACE.");
-            }
-            if (pLogLevel.equalsIgnoreCase("DEBUG")) {
-                logger.trace("[LOGGER] Logger level has been set to DEBUG.");
-            }
+        else {
+            logger.warn("[LOGGER] Invalid log level parameter [{0}]. Fallback to INFO.");
+            logger.setLevel(Level.INFO);
+        }
+
+        if (pLogLevel.equalsIgnoreCase("TRACE")) {
+            logger.trace("[LOGGER] Logger level has been set to TRACE.");
+        }
+        if (pLogLevel.equalsIgnoreCase("DEBUG")) {
+            logger.trace("[LOGGER] Logger level has been set to DEBUG.");
         }
         return logger;
     }

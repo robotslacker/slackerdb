@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.server.DBInstance;
+import org.slackerdb.server.DBInstances;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -25,8 +26,7 @@ public class MultiDBInstanceTest {
     }
 
     @Test
-    void testMultiDBInstance() throws ServerException, SQLException
-    {
+    void testMultiDBInstance() throws ServerException, SQLException {
         // 修改默认的db启动端口
         ServerConfiguration serverConfiguration1 = new ServerConfiguration();
         serverConfiguration1.setPort(4309);
@@ -47,7 +47,7 @@ public class MultiDBInstanceTest {
         assert dbInstance1.instanceState.equalsIgnoreCase("RUNNING");
         assert dbInstance2.instanceState.equalsIgnoreCase("RUNNING");
 
-        String  connectURL = "jdbc:postgresql://127.0.0.1:4309/data1";
+        String connectURL = "jdbc:postgresql://127.0.0.1:4309/data1";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -86,8 +86,7 @@ public class MultiDBInstanceTest {
     }
 
     @Test
-    void testDuplicateStart() throws ServerException
-    {
+    void testDuplicateStart() throws ServerException {
         // 修改默认的db启动端口
         ServerConfiguration serverConfiguration1 = new ServerConfiguration();
         serverConfiguration1.setPort(4309);
@@ -102,9 +101,7 @@ public class MultiDBInstanceTest {
         boolean gotException = false;
         try {
             dbInstance1.start();
-        }
-        catch (ServerException se)
-        {
+        } catch (ServerException se) {
             gotException = true;
             assert se.getErrorCode().equalsIgnoreCase("SLACKERDB-00006");
         }
@@ -115,8 +112,7 @@ public class MultiDBInstanceTest {
     }
 
     @Test
-    void testStartStopStartAgain() throws ServerException
-    {
+    void testStartStopStartAgain() throws ServerException {
         // 修改默认的db启动端口
         ServerConfiguration serverConfiguration1 = new ServerConfiguration();
         serverConfiguration1.setPort(4309);
@@ -134,5 +130,40 @@ public class MultiDBInstanceTest {
         dbInstance1.start();
         // 再次关闭数据库
         dbInstance1.stop();
+    }
+
+    @Test
+    void testMultiDBInstancesManager() throws ServerException {
+        // 修改默认的db启动端口
+        ServerConfiguration serverConfiguration1 = new ServerConfiguration();
+        serverConfiguration1.setPort(4309);
+        serverConfiguration1.setData("data1");
+
+        ServerConfiguration serverConfiguration2 = new ServerConfiguration();
+        serverConfiguration2.setPort(4310);
+        serverConfiguration2.setData("data1");
+
+        ServerConfiguration serverConfiguration3 = new ServerConfiguration();
+        serverConfiguration3.setPort(4309);
+        serverConfiguration3.setData("data3");
+
+        // 初始化数据库
+        DBInstance instance1 = DBInstances.createInstance(serverConfiguration1);
+        try {
+            DBInstances.createInstance(serverConfiguration2);
+        }
+        catch (ServerException serverException)
+        {
+            assert serverException.getErrorCode().equalsIgnoreCase("SLACKERDB-00009");
+        }
+        try {
+            DBInstances.createInstance(serverConfiguration3);
+        }
+        catch (ServerException serverException)
+        {
+            assert serverException.getErrorCode().equalsIgnoreCase("SLACKERDB-00010");
+        }
+        DBInstances.destroyInstance(instance1.serverConfiguration.getData());
+
     }
 }

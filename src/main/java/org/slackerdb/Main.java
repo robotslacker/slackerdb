@@ -36,7 +36,7 @@ public class Main {
 
     public static void main(String[] args){
         // 打开日志文件
-        Logger logger = AppLogger.CreateLogger("SLACKERDB", "INFO", "CONSOLE");
+        Logger logger = AppLogger.createLogger("SLACKERDB", "INFO", "CONSOLE");
 
         // 处理应用程序参数
         Map<String, String> appOptions = new HashMap<>();

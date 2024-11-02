@@ -164,6 +164,7 @@ public class PostgresServer {
                     else
                     {
                         // 都不是，则重置指针读取位置
+                        // 有可能没有SSL请求，直接是StartupRequest (PG ODBC)
                         in.readerIndex(in.readerIndex() - 8);
                     }
 
@@ -180,6 +181,17 @@ public class PostgresServer {
                     data = new byte[4];
                     in.readBytes(data);
                     int messageLen = Utils.bytesToInt32(data);
+
+                    // 如果消息体长度超过1024，或者小于0. 明显是一个不合理的消息，直接拒绝
+                    if (messageLen <= 0 || messageLen > 1024)
+                    {
+                        logger.trace("[SERVER] Invalid startup message from [{}]. Content header: [{}]. Refused.",
+                                ctx.channel().remoteAddress().toString(),
+                                Utils.bytesToHex(data));
+                        in.clear();
+                        ctx.close();
+                        return;
+                    }
 
                     // 等待消息体发送结束, 4字节的字节长度也是消息体长度的一部分
                     if (in.readableBytes() < (messageLen - 4)) {
@@ -211,6 +223,17 @@ public class PostgresServer {
 
                 char messageType = (char) byteBuffer.get();
                 int messageLen = byteBuffer.getInt();
+
+                // 如果消息体长度小于0. 明显是一个不合理的消息，直接拒绝
+                if (messageLen <= 0 )
+                {
+                    logger.trace("[SERVER] Invalid package message from [{}]. Content header: [{}]. Refused.",
+                            ctx.channel().remoteAddress().toString(),
+                            Utils.bytesToHex(data));
+                    in.clear();
+                    ctx.close();
+                    return;
+                }
 
                 // 等待消息体发送结束, 4字节的字节长度也是消息体长度的一部分
                 if (in.readableBytes() < (messageLen - 4)) {
