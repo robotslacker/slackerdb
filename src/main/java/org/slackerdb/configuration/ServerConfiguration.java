@@ -3,7 +3,9 @@ package org.slackerdb.configuration;
 import org.slackerdb.exceptions.ServerException;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.net.ServerSocket;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
@@ -33,7 +35,7 @@ public class ServerConfiguration extends Throwable {
     // 默认系统的日志级别为INFO
     private final Level default_log_level = Level.INFO;
     // 默认启动的端口
-    private final int default_port = 4309;
+    private final int default_port = 0;
     // 默认绑定的主机地址
     private final String default_bind = "0.0.0.0";
     // 默认不限制内存使用情况
@@ -415,7 +417,7 @@ public class ServerConfiguration extends Throwable {
         {
             if (data_dir.isEmpty() || data_dir.equalsIgnoreCase(":MEMORY:"))
             {
-                return "data";
+                return ":mem:";
             }
             else
             {
@@ -450,10 +452,12 @@ public class ServerConfiguration extends Throwable {
     {
         bind = pHost;
     }
+
     public void setPort(String pPort) throws ServerException
     {
+        int tempPort;
         try {
-            port = Integer.parseInt(pPort);
+            tempPort = Integer.parseInt(pPort);
         }
         catch (NumberFormatException ignored)
         {
@@ -461,23 +465,40 @@ public class ServerConfiguration extends Throwable {
                     Utils.getMessage("SLACKERDB-00005", "port", pPort)
             );
         }
-        if (port <= 0)
+        if (tempPort == 0) {
+            try (ServerSocket socket = new ServerSocket(0)) {
+                tempPort = socket.getLocalPort();
+            } catch (IOException e) {
+                throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
+            }
+        }
+
+        if (tempPort < -1)
         {
             throw new ServerException(
                     Utils.getMessage("SLACKERDB-00005", "port", pPort)
             );
         }
+        port = tempPort;
     }
 
     public void setPort(int pPort) throws ServerException
     {
-        if (pPort <= 0)
+        int tempPort = pPort;
+        if (tempPort == 0) {
+            try (ServerSocket socket = new ServerSocket(0)) {
+                tempPort = socket.getLocalPort();
+            } catch (IOException e) {
+                throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
+            }
+        }
+        if (tempPort < -1)
         {
             throw new ServerException(
                     Utils.getMessage("SLACKERDB-00005", "port", pPort)
             );
         }
-        port = pPort;
+        port = tempPort;
     }
 
     public void setTemp_dir(String pTemp_dir)
@@ -579,27 +600,38 @@ public class ServerConfiguration extends Throwable {
 
     public void setSqlHistoryPort(String pSQLHistoryPort) throws ServerException
     {
+        int tempPort;
         try {
-            sqlHistoryPort = Integer.parseInt(pSQLHistoryPort);
+            tempPort = Integer.parseInt(pSQLHistoryPort);
         }
         catch (NumberFormatException ignored)
         {
             throw new ServerException(
-                    Utils.getMessage("SLACKERDB-00005", "port", pSQLHistoryPort)
+                    Utils.getMessage("SLACKERDB-00005", "sql_history_port", pSQLHistoryPort)
             );
         }
-        if (sqlHistoryPort <= 0)
+        if (tempPort == 0) {
+            try (ServerSocket socket = new ServerSocket(0)) {
+                tempPort = socket.getLocalPort();
+            } catch (IOException e) {
+                throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
+            }
+        }
+
+        if (tempPort < -1)
         {
             throw new ServerException(
-                    Utils.getMessage("SLACKERDB-00005", "port", pSQLHistoryPort)
+                    Utils.getMessage("SLACKERDB-00005", "sql_history_port", pSQLHistoryPort)
             );
         }
+        sqlHistoryPort = tempPort;
     }
 
     public void setSqlHistoryDir(String pSQLHistoryDir)
     {
         sqlHistoryDir = pSQLHistoryDir;
     }
+
     public void setLocale(String pLocale) throws ServerException
     {
         if (pLocale == null || pLocale.isEmpty())

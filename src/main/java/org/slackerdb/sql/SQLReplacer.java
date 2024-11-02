@@ -29,6 +29,12 @@ public class SQLReplacer {
         }
         SQLReplaceItems.add(
                 new QueryReplacerItem(
+                        "format_type(nullif(t.typbasetype, 0), t.typtypmod)","null::TEXT",
+                        false, true
+                )
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
                         "pg_catalog.pg_roles",catalogName + ".duck_catalog.pg_roles",
                         true, true
                 )

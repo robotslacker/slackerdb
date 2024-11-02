@@ -78,7 +78,10 @@ log=CONSOLE,logs/slackerdb.log
 log_level=INFO
 
 # Service port
-port=4309
+# 0 means the system will randomly assign a port
+# -1 means no port will be opened
+# default is 0, means random port.
+port=0
 
 # Service binding host
 bind=0.0.0.0
@@ -117,12 +120,14 @@ locale=
 sql_history=
 
 # The TCP port opened by SQL History to the outside, In order to read the SQL history execution during the running process
-# default is none, means will not open this port
+# 0 means the system will randomly assign a port
+# -1 means no port will be opened
+# default is 0, means random port.
 sql_history_port=
 
 # SQL execution history file default placed directory
 # Disk mode:   If not set, it defaults to the same as data_dir.
-# Memory mode: If not set, it defaults to "data".
+# Memory mode: If not set, it defaults to save it in memory.
 sql_history_dir=
 ```
 Note: All parameters are optional.   

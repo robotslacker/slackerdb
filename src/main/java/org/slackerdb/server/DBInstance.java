@@ -6,6 +6,7 @@ import org.slackerdb.configuration.ServerConfiguration;
 import org.slackerdb.exceptions.ServerException;
 import org.slackerdb.logger.AppLogger;
 import org.slackerdb.utils.Sleeper;
+import org.slackerdb.utils.Utils;
 
 import java.io.File;
 import java.io.IOException;
@@ -201,7 +202,7 @@ public class DBInstance {
             // 容许未签名的扩展
             connectProperties.setProperty("allow_unsigned_extensions", "true");
             backendSysConnection = DriverManager.getConnection(backendConnectString, connectProperties);
-            logger.info("[SERVER] Backend database [{}:{}] opened.",
+            logger.info("[SERVER] Backend database [{}:{}] mounted.",
                     serverConfiguration.getData_Dir(), serverConfiguration.getData());
 
             Statement stmt = backendSysConnection.createStatement();
@@ -246,44 +247,55 @@ public class DBInstance {
                     {
                         sqlHistoryDir = serverConfiguration.getData_Dir();
                     }
-                    if (sqlHistoryDir.equalsIgnoreCase(":memory:"))
+                    String backendSqlHistoryURL;
+                    if (sqlHistoryDir.equalsIgnoreCase(":memory:") || sqlHistoryDir.equalsIgnoreCase(":mem:"))
                     {
-                        // 内存模式下SQL历史毫无意义，因此直接跳过
-                        logger.warn("[SERVER] Skipped backend sql history database in memory. Please set sql_history_dir if you need sql_history feature in memory mode.");
+                        // 内存模式
+                        backendSqlHistoryURL = "jdbc:h2:mem:" + this.serverConfiguration.getSqlHistory() + ";DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE";
+                        backendSqlHistoryConnectionPool = JdbcConnectionPool.create(backendSqlHistoryURL, null, null);
+                        logger.info("[SERVER] Backend sql history database [mem:{}] opened (memory mode).",
+                                this.serverConfiguration.getSqlHistory());
                     }
                     else {
                         String sqlHistoryFile = Path.of(sqlHistoryDir, serverConfiguration.getSqlHistory().trim()).toString();
-                        backendSqlHistoryConnectionPool =
-                                JdbcConnectionPool.create("jdbc:h2:" + sqlHistoryFile + ";DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE", null, null);
-                        logger.info("[SERVER] Backend sql history database [{}] opened.", sqlHistoryFile);
-                        Connection backendSqlHistoryConnection = backendSqlHistoryConnectionPool.getConnection();
-                        stmt = backendSqlHistoryConnection.createStatement();
-                        String sql = "CREATE TABLE IF NOT EXISTS SQL_HISTORY\n " +
-                                "(\n" +
-                                "    ID             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n" +
-                                "    SessionID      INT,\n" +
-                                "    ClientIP       TEXT,\n" +
-                                "    StartTime      TIMESTAMP,\n" +
-                                "    EndTime        TIMESTAMP,\n" +
-                                "    Elapsed        INT GENERATED ALWAYS AS (DATEDIFF('SECOND', StartTime, EndTime)), \n" +
-                                "    SqlID          INT,\n" +
-                                "    SQL            TEXT,\n" +
-                                "    SqlCode        INT,\n" +
-                                "    AffectedRows   BIGINT\n," +
-                                "    ErrorMsg       TEXT\n" +
-                                ")";
-                        stmt.execute(sql);
-                        stmt.close();
-                        backendSqlHistoryConnection.close();
-                        // 对外提供TCP连接
-                        if (serverConfiguration.getSqlHistoryPort() != 0) {
-                            org.h2.tools.Server h2TcpServer = org.h2.tools.Server.createTcpServer(
-                                    "-tcpPort", String.valueOf(serverConfiguration.getSqlHistoryPort()),
-                                    "-tcpAllowOthers", "-tcpDaemon"
-                            );
-                            h2TcpServer.start();
-                            logger.info("[SERVER] SQLHistory Server TCP Port started at :{}",
-                                    serverConfiguration.getSqlHistoryPort());
+                        backendSqlHistoryURL = "jdbc:h2:" + sqlHistoryFile + ";DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE";
+                        backendSqlHistoryConnectionPool = JdbcConnectionPool.create(backendSqlHistoryURL, null, null);
+                        logger.info("[SERVER] Backend sql history database [{}] opened (disk mode).", sqlHistoryFile);
+                    }
+                    Connection backendSqlHistoryConnection = backendSqlHistoryConnectionPool.getConnection();
+                    stmt = backendSqlHistoryConnection.createStatement();
+                    String sql = "CREATE TABLE IF NOT EXISTS SQL_HISTORY\n " +
+                            "(\n" +
+                            "    ID             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n" +
+                            "    SessionID      INT,\n" +
+                            "    ClientIP       TEXT,\n" +
+                            "    StartTime      TIMESTAMP,\n" +
+                            "    EndTime        TIMESTAMP,\n" +
+                            "    Elapsed        INT GENERATED ALWAYS AS (DATEDIFF('SECOND', StartTime, EndTime)), \n" +
+                            "    SqlID          INT,\n" +
+                            "    SQL            TEXT,\n" +
+                            "    SqlCode        INT,\n" +
+                            "    AffectedRows   BIGINT\n," +
+                            "    ErrorMsg       TEXT\n" +
+                            ")";
+                    stmt.execute(sql);
+                    stmt.close();
+                    backendSqlHistoryConnection.close();
+                    // 对外提供TCP连接
+                    if (serverConfiguration.getSqlHistoryPort() != -1) {
+                        org.h2.tools.Server h2TcpServer = org.h2.tools.Server.createTcpServer(
+                                "-tcpPort", String.valueOf(serverConfiguration.getSqlHistoryPort()),
+                                "-tcpAllowOthers", "-tcpDaemon"
+                        );
+                        h2TcpServer.start();
+                        logger.info("[SERVER] SQLHistory Server TCP Port started at :{}",
+                                serverConfiguration.getSqlHistoryPort());
+                    }
+                    else
+                    {
+                        if (serverConfiguration.getSqlHistoryPort() == -1)
+                        {
+                            logger.info("[SERVER] SQLHistory Server started without port.");
                         }
                     }
                 }
@@ -322,17 +334,22 @@ public class DBInstance {
         this.instanceState = "MOUNTED";
 
         // 启动PG的协议处理程序
-        protocolServer = new PostgresServer();
-        protocolServer.setLogger(logger);
-        protocolServer.setBindHostAndPort(serverConfiguration.getBindHost(), serverConfiguration.getPort());
-        protocolServer.setServerTimeout(serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout());
-        protocolServer.setNioEventThreads(serverConfiguration.getMax_Workers());
-        protocolServer.setDBInstance(this);
-        protocolServer.start();
-        while (!protocolServer.isPortReady())
+        if (serverConfiguration.getPort() != -1) {
+            protocolServer = new PostgresServer();
+            protocolServer.setLogger(logger);
+            protocolServer.setBindHostAndPort(serverConfiguration.getBindHost(), serverConfiguration.getPort());
+            protocolServer.setServerTimeout(serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout());
+            protocolServer.setNioEventThreads(serverConfiguration.getMax_Workers());
+            protocolServer.setDBInstance(this);
+            protocolServer.start();
+            while (!protocolServer.isPortReady()) {
+                // 等待Netty进程就绪
+                Sleeper.sleep(1000);
+            }
+        }
+        else
         {
-            // 等待Netty进程就绪
-            Sleeper.sleep(1000);
+            logger.info("[SERVER] {}", Utils.getMessage("SLACKERDB-00008"));
         }
         // 标记服务已经启动完成
         this.instanceState = "RUNNING";

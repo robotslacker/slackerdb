@@ -126,6 +126,10 @@ public class Main {
             {
                 serverConfiguration.setSqlHistory(appOptions.get("sql_history"));
             }
+            if (appOptions.containsKey("sql_history_port"))
+            {
+                serverConfiguration.setSqlHistoryPort(appOptions.get("sql_history_port"));
+            }
             if (appOptions.containsKey("sql_history_dir"))
             {
                 serverConfiguration.setSqlHistoryDir(appOptions.get("sql_history_dir"));
