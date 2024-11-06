@@ -16,4 +16,37 @@
     <modules>
         <module>DbServer</module>
     </modules>
+
+    <build>
+        <plugins>
+            <!-- Maven Resources Plugin to copy child modules' local jar files -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-local-child-jars</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/dist/jlib</outputDirectory>
+                            <resources>
+                                <!-- Specify each child module's target directory -->
+                                <resource>
+                                    <directory>${project.basedir}/DbServer/target</directory>
+                                    <includes>
+                                        <include>*-standalone.jar</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
 </project>
