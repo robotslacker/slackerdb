@@ -311,6 +311,11 @@ public class ExecuteRequest extends PostgresRequest {
                         PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out, this.dbInstance.logger);
                         out.close();
                         parsedStatement.nRowsAffected += rowsReturned;
+                        // 更新SQL历史信息
+                        if (nSqlHistoryId != -1)
+                        {
+                            updateSqlHistory(nSqlHistoryId, 0, rowsReturned, "");
+                        }
                         break tryBlock;
                     }
                 }
@@ -416,6 +421,11 @@ public class ExecuteRequest extends PostgresRequest {
                             // 返回等待下一次ExecuteRequest
                             out.close();
                             parsedStatement.nRowsAffected += rowsReturned;
+                            // 更新SQL历史信息
+                            if (nSqlHistoryId != -1)
+                            {
+                                updateSqlHistory(nSqlHistoryId, 0, rowsReturned, "");
+                            }
                             break tryBlock;
                         }
                     }

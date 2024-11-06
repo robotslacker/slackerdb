@@ -1,9 +1,7 @@
 .idea/
-
 .vscode/
-
 target
-
 dist
-
 logs
+localtest/
+*/*.iml
