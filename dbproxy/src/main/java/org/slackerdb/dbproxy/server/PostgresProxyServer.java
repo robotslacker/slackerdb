@@ -1,5 +1,6 @@
 package org.slackerdb.dbproxy.server;
 
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
@@ -19,6 +20,7 @@ import org.slackerdb.dbproxy.message.request.AdminClientRequest;
 import org.slackerdb.dbproxy.message.request.ProxyRequest;
 import org.slackerdb.dbproxy.message.request.SSLRequest;
 import org.slackerdb.dbproxy.message.request.StartupRequest;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -40,10 +42,6 @@ public class PostgresProxyServer {
     private int port;
     private boolean portReady = false;
     private ProxyInstance proxyInstance;
-
-    private final Map<String, Boolean> proxyAlias = new HashMap<>();
-
-    private final Map<String, List<PostgresProxyTarget>> proxyTarget = new HashMap<>();
 
     public void setProxyInstance(ProxyInstance pProxyInstance)
     {
@@ -282,12 +280,15 @@ public class PostgresProxyServer {
     }
 
     private void run() throws InterruptedException, ServerException {
+        // 关闭Netty的日志, 如果不是在trace下
+        Logger nettyLogger = (Logger) LoggerFactory.getLogger("io.netty");
+        if (!this.logger.getLevel().equals(Level.TRACE)) {
+            nettyLogger.setLevel(Level.OFF);
+        }
+
         // Netty消息处理
         bossGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup(nioEventThreads);
-
-        // 处理Handler要能够从Server侧拿到代理转发的规则
-        PostgresProxyServer postgresProxyServerHandler = this;
 
         try {
             ServerBootstrap bootstrap = new ServerBootstrap();
@@ -307,7 +308,7 @@ public class PostgresProxyServer {
                             // 定义消息处理
                             ch.pipeline().addLast(new RawMessageDecoder());
                             ch.pipeline().addLast(new RawMessageEncoder());
-                            ch.pipeline().addLast(new PostgresProxyServerHandler(postgresProxyServerHandler, logger));
+                            ch.pipeline().addLast(new PostgresProxyServerHandler(proxyInstance, logger));
                         }
                     });
             ChannelFuture future =
@@ -324,79 +325,5 @@ public class PostgresProxyServer {
     public boolean isPortReady()
     {
         return portReady;
-    }
-
-    public synchronized void createAlias(String aliasName, boolean checkHeartBeat) throws ServerException
-    {
-        if (proxyAlias.containsKey(aliasName))
-        {
-            throw new ServerException(
-                    "SLACKERDB-00013",
-                    Utils.getMessage("SLACKERDB-00013"));
-        }
-        proxyAlias.put(aliasName, checkHeartBeat);
-        proxyTarget.put(aliasName, new ArrayList<>());
-    }
-
-    public synchronized void addAliasTarget(String aliasName, String host, int port, int weight) throws ServerException
-    {
-        if (!proxyAlias.containsKey(aliasName))
-        {
-            throw new ServerException(
-                    "SLACKERDB-00018",
-                    Utils.getMessage("SLACKERDB-00018", aliasName));
-        }
-        List<PostgresProxyTarget> proxyTargetList = proxyTarget.get(aliasName);
-        for (PostgresProxyTarget target : proxyTargetList)
-        {
-            if (target.getHost().equalsIgnoreCase(host) && target.getPort() == port)
-            {
-                throw new ServerException(
-                        "SLACKERDB-00014",
-                        Utils.getMessage("SLACKERDB-00014", aliasName, host, port));
-            }
-        }
-        proxyTargetList.add(new PostgresProxyTarget(host, port, weight));
-        proxyTarget.put(aliasName, proxyTargetList);
-    }
-
-    public PostgresProxyTarget getAvailableTarget(String aliasName) throws ServerException
-    {
-        if (!proxyAlias.containsKey(aliasName))
-        {
-            throw new ServerException("SLACKERDB-00015", Utils.getMessage("SLACKERDB-00015", aliasName));
-        }
-        if (proxyTarget.get(aliasName).isEmpty())
-        {
-            throw new ServerException("SLACKERDB-00016", Utils.getMessage("SLACKERDB-00016", aliasName));
-        }
-        List<PostgresProxyTarget> proxyTargets = proxyTarget.get(aliasName);
-        if (proxyTargets.size() == 1)
-        {
-            // 如果只有一个候选，则返回候选
-            PostgresProxyTarget postgresProxyTarget = proxyTargets.get(0);
-            if (postgresProxyTarget.getWeight() != 0) {
-                return proxyTargets.get(0);
-            }
-            else
-            {
-                throw new ServerException("SLACKERDB-00017", Utils.getMessage("SLACKERDB-00017", aliasName));
-            }
-        }
-        // 计算权重，按照权重返回
-        int totalWeight = 0;
-        for (PostgresProxyTarget proxyTarget : proxyTargets) {
-            totalWeight += proxyTarget.getWeight();
-        }
-        // 生成 1 到 totalWeight 范围的随机数
-        int randomValue = new Random().nextInt(totalWeight) + 1;
-        // 根据权重分布选择元素
-        for (PostgresProxyTarget proxyTarget : proxyTargets) {
-            randomValue -= proxyTarget.getWeight();
-            if (randomValue <= 0) {
-                return proxyTarget;
-            }
-        }
-        throw new ServerException("SLACKERDB-00017", Utils.getMessage("SLACKERDB-00017", aliasName));
     }
 }

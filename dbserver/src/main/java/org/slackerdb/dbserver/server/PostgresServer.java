@@ -1,5 +1,6 @@
 package org.slackerdb.dbserver.server;
 
+import ch.qos.logback.classic.Level;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.UnpooledByteBufAllocator;
@@ -22,6 +23,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.*;
 import ch.qos.logback.classic.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * POSTGRES V3 协议处理
@@ -391,6 +393,12 @@ public class PostgresServer {
     }
 
     private void run() throws InterruptedException, ServerException {
+        // 关闭Netty的日志, 如果不是在trace下
+        Logger nettyLogger = (Logger) LoggerFactory.getLogger("io.netty");
+        if (!this.logger.getLevel().equals(Level.TRACE)) {
+            nettyLogger.setLevel(Level.OFF);
+        }
+
         // Netty消息处理
         bossGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup(nioEventThreads);

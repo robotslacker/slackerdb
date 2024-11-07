@@ -15,7 +15,6 @@ import org.slackerdb.dbproxy.message.request.AdminClientRequest;
 import org.slackerdb.dbproxy.message.request.ProxyRequest;
 import org.slackerdb.dbproxy.message.request.SSLRequest;
 import org.slackerdb.dbproxy.message.request.StartupRequest;
-import org.slackerdb.dbproxy.message.response.AdminClientResp;
 import org.slackerdb.dbproxy.message.response.ErrorResponse;
 import org.slackerdb.dbproxy.message.response.NoticeMessage;
 import org.slackerdb.dbproxy.message.response.ProxyResponse;
@@ -30,14 +29,14 @@ import java.util.concurrent.atomic.AtomicLong;
 public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
     private final Logger logger;
     private final AtomicLong maxSessionId = new AtomicLong(1000);
-    private final PostgresProxyServer postgresProxyServer;
     private Channel outboundChannel;
+    private final ProxyInstance proxyInstance;
 
-    public PostgresProxyServerHandler(PostgresProxyServer pPostgresProxyServer, Logger pLogger)
+    public PostgresProxyServerHandler(ProxyInstance proxyInstance, Logger pLogger)
     {
         super();
         logger = pLogger;
-        postgresProxyServer = pPostgresProxyServer;
+        this.proxyInstance = proxyInstance;
     }
 
     @Override
@@ -89,7 +88,7 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
             String aliasName = connectParameters.get("database");
             try {
                 // 查找合适的目的地
-                PostgresProxyTarget postgresProxyTarget = postgresProxyServer.getAvailableTarget(aliasName);
+                PostgresProxyTarget postgresProxyTarget = this.proxyInstance.getAvailableTarget(aliasName);
 
                 // 构建一个目的转发器
                 Bootstrap bootstrap = new Bootstrap();

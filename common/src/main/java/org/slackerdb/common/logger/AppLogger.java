@@ -36,10 +36,6 @@ public class AppLogger {
         // 清除默认配置
         rootLogger.detachAndStopAllAppenders();
 
-        // 关闭Netty的日志
-        Logger nettyLogger = (Logger) LoggerFactory.getLogger("io.netty");
-        nettyLogger.setLevel(Level.OFF);
-
         Iterator<Appender<ILoggingEvent>> iterator = logger.iteratorForAppenders();
         while (iterator.hasNext()) {
             Appender<ILoggingEvent> appender = iterator.next();

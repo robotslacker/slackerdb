@@ -4,6 +4,7 @@ import ch.qos.logback.classic.Logger;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.logger.AppLogger;
 import org.slackerdb.common.utils.Sleeper;
+import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 
 import java.text.MessageFormat;
@@ -34,12 +35,15 @@ public class ProxyInstance {
     // 资源文件，记录各种消息，以及日后可能的翻译信息
     public ResourceBundle resourceBundle;
 
-
     // 为每个连接创建一个会话ID
     private int maxSessionId = 1000;
 
     // 记录会话列表
     public final Map<Integer, ProxySession> proxySessions = new HashMap<>();
+
+    private final Map<String, Boolean> proxyAlias = new HashMap<>();
+
+    private final Map<String, List<PostgresProxyTarget>> proxyTarget = new HashMap<>();
 
     public ProxyInstance(ServerConfiguration pServerConfiguration) throws ServerException
     {
@@ -97,7 +101,7 @@ public class ProxyInstance {
         protocolServer.setNioEventThreads(serverConfiguration.getMax_Workers());
         protocolServer.setProxyInstance(this);
         protocolServer.start();
-        while (!protocolServer.isPortReady()) {
+        while (protocolServer.isPortReady()) {
             // 等待Netty进程就绪
             Sleeper.sleep(1000);
         }
@@ -140,5 +144,80 @@ public class ProxyInstance {
     public void setExclusiveMode(boolean exclusiveMode)
     {
         this.exclusiveMode = exclusiveMode;
+    }
+
+    public synchronized void createAlias(String aliasName, boolean checkHeartBeat) throws ServerException
+    {
+        if (proxyAlias.containsKey(aliasName))
+        {
+            throw new ServerException(
+                    "SLACKERDB-00013",
+                    Utils.getMessage("SLACKERDB-00013"));
+        }
+        proxyAlias.put(aliasName, checkHeartBeat);
+        proxyTarget.put(aliasName, new ArrayList<>());
+    }
+
+    public synchronized void addAliasTarget(String aliasName, String host, int port, int weight) throws ServerException
+    {
+        if (!proxyAlias.containsKey(aliasName))
+        {
+            throw new ServerException(
+                    "SLACKERDB-00018",
+                    Utils.getMessage("SLACKERDB-00018", aliasName));
+        }
+        List<PostgresProxyTarget> proxyTargetList = proxyTarget.get(aliasName);
+        for (PostgresProxyTarget target : proxyTargetList)
+        {
+            if (target.getHost().equalsIgnoreCase(host) && target.getPort() == port)
+            {
+                throw new ServerException(
+                        "SLACKERDB-00014",
+                        Utils.getMessage("SLACKERDB-00014", aliasName, host, port));
+            }
+        }
+        proxyTargetList.add(new PostgresProxyTarget(host, port, weight));
+        proxyTarget.put(aliasName, proxyTargetList);
+    }
+
+
+    public PostgresProxyTarget getAvailableTarget(String aliasName) throws ServerException
+    {
+        if (!proxyAlias.containsKey(aliasName))
+        {
+            throw new ServerException("SLACKERDB-00015", Utils.getMessage("SLACKERDB-00015", aliasName));
+        }
+        if (proxyTarget.get(aliasName).isEmpty())
+        {
+            throw new ServerException("SLACKERDB-00016", Utils.getMessage("SLACKERDB-00016", aliasName));
+        }
+        List<PostgresProxyTarget> proxyTargets = proxyTarget.get(aliasName);
+        if (proxyTargets.size() == 1)
+        {
+            // 如果只有一个候选，则返回候选
+            PostgresProxyTarget postgresProxyTarget = proxyTargets.get(0);
+            if (postgresProxyTarget.getWeight() != 0) {
+                return proxyTargets.get(0);
+            }
+            else
+            {
+                throw new ServerException("SLACKERDB-00017", Utils.getMessage("SLACKERDB-00017", aliasName));
+            }
+        }
+        // 计算权重，按照权重返回
+        int totalWeight = 0;
+        for (PostgresProxyTarget proxyTarget : proxyTargets) {
+            totalWeight += proxyTarget.getWeight();
+        }
+        // 生成 1 到 totalWeight 范围的随机数
+        int randomValue = new Random().nextInt(totalWeight) + 1;
+        // 根据权重分布选择元素
+        for (PostgresProxyTarget proxyTarget : proxyTargets) {
+            randomValue -= proxyTarget.getWeight();
+            if (randomValue <= 0) {
+                return proxyTarget;
+            }
+        }
+        throw new ServerException("SLACKERDB-00017", Utils.getMessage("SLACKERDB-00017", aliasName));
     }
 }
