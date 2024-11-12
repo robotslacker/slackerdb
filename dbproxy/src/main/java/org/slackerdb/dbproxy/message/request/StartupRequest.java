@@ -2,15 +2,11 @@ package org.slackerdb.dbproxy.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.common.utils.Utils;
-import org.slackerdb.dbproxy.message.PostgresMessage;
 import org.slackerdb.dbproxy.message.PostgresRequest;
-import org.slackerdb.dbproxy.message.response.*;
 import org.slackerdb.dbproxy.server.ProxyInstance;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.sql.SQLException;
-import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -39,7 +35,7 @@ public class StartupRequest extends PostgresRequest {
     //      The parameter value.
 
     private final Map<String, String> startupOptions = new HashMap<>();
-    private byte[] rawMessage;
+    private int version;
 
     public StartupRequest(ProxyInstance pProxyInstance) {
         super(pProxyInstance);
@@ -50,26 +46,37 @@ public class StartupRequest extends PostgresRequest {
         return startupOptions;
     }
 
-    public byte[] getRawMessage()
-    {
-        return rawMessage;
-    }
+    byte[] rawData;
 
     @Override
     public void decode(byte[] data) {
-        // 跳过前面4个字节的协议版本号. 目前没有对这个信息进行处理
+        // 前面4个字节的协议版本号.
+        version = Utils.bytesToInt32(Arrays.copyOf(data, 4));
+        // 目前没有对这个信息进行处理
         byte[][] result = Utils.splitByteArray(Arrays.copyOfRange(data, 4, data.length), (byte)0);
         for (int i = 0; i < result.length-1; i=i+2) {
             startupOptions.put(new String(result[i]), new String(result[i+1]));
         }
-        rawMessage = data;
+        rawData = data;
         super.decode(data);
+    }
+
+    public byte[] rebuildData() throws IOException
+    {
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        outputStream.write(Utils.int32ToBytes(version));
+        for (Map.Entry<String, String> entry : startupOptions.entrySet()) {
+            outputStream.write(entry.getKey().getBytes());
+            outputStream.write((byte) 0);
+            outputStream.write(entry.getValue().getBytes());
+            outputStream.write((byte) 0);
+        }
+        // 末尾终止符
+        outputStream.write((byte) 0);
+        return outputStream.toByteArray();
     }
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
-        // 记录会话的开始时间，以及业务类型
-//        this.proxyInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
-//        this.proxyInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
     }
 }

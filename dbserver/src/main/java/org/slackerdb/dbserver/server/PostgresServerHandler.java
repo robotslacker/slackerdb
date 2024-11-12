@@ -52,7 +52,7 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
         Thread.currentThread().setName("Session-" + sessionId);
 
         // 开始处理，标记活跃会话数加一
-        synchronized (this) {
+        synchronized (dbInstance) {
             dbInstance.activeSessions++;
         }
         try {
@@ -62,7 +62,7 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
             logger.error("[SERVER] Error processing request", e);
         }
         // 结束处理，标记活跃会话数减一
-        synchronized (this) {
+        synchronized (dbInstance) {
             dbInstance.activeSessions--;
         }
     }

@@ -8,9 +8,7 @@ import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.common.utils.Sleeper;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
+import java.sql.*;
 import java.util.TimeZone;
 
 public class ProxyTest {
@@ -43,8 +41,11 @@ public class ProxyTest {
         }
 
         // 添加代理规则
-        proxyInstance.createAlias("mem", false);
-        proxyInstance.addAliasTarget("mem", "127.0.0.1", dbInstance.serverConfiguration.getPort(), 200);
+        proxyInstance.createAlias("mem1", false);
+        proxyInstance.addAliasTarget("mem1",
+                "127.0.0.1:" +
+                dbInstance.serverConfiguration.getPort() + "/" +
+                dbInstance.serverConfiguration.getData(), 200);
 
         System.out.println("TEST:: Server started successful ...");
     }
@@ -58,10 +59,15 @@ public class ProxyTest {
 
     @Test
     void connectProxy() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn = DriverManager.getConnection(
-                connectURL, "", "");
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem1";
+        Connection pgConn = DriverManager.getConnection(connectURL, "", "");
         pgConn.setAutoCommit(false);
+        Statement stmt = pgConn.createStatement();
+        ResultSet rs = stmt.executeQuery("select current_database();");
+        rs.next();
+        assert rs.getString(1).equals("memory");
+        rs.close();
+        stmt.close();
         pgConn.close();
     }
 

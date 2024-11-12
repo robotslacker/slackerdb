@@ -77,12 +77,14 @@ public class ProxyInstance {
 
     // 根据参数配置文件启动代理实例
     public synchronized void start() throws ServerException {
+        // 设置线程名称好保持日志格式
+        Thread.currentThread().setName("PROXY");
+
         // 初始化日志服务
         logger = AppLogger.createLogger(
                 "PROXY",
                 serverConfiguration.getLog_level().levelStr,
                 serverConfiguration.getLog());
-
         // 只有在停止的状态下才能启动
         if (!this.instanceState.equalsIgnoreCase("IDLE"))
         {
@@ -90,6 +92,7 @@ public class ProxyInstance {
         }
 
         // 服务器开始启动
+        logger.info("[PROXY] Starting ...");
         this.instanceState = "STARTING";
         this.bootTime = LocalDateTime.now();
 
@@ -101,13 +104,14 @@ public class ProxyInstance {
         protocolServer.setNioEventThreads(serverConfiguration.getMax_Workers());
         protocolServer.setProxyInstance(this);
         protocolServer.start();
-        while (protocolServer.isPortReady()) {
+        while (!protocolServer.isPortReady()) {
             // 等待Netty进程就绪
             Sleeper.sleep(1000);
         }
 
         // 标记服务已经启动完成
         this.instanceState = "RUNNING";
+        logger.info("[PROXY] Server is running.");
     }
 
     // 停止代理服务实例
@@ -152,13 +156,13 @@ public class ProxyInstance {
         {
             throw new ServerException(
                     "SLACKERDB-00013",
-                    Utils.getMessage("SLACKERDB-00013"));
+                    Utils.getMessage("SLACKERDB-00013", aliasName));
         }
         proxyAlias.put(aliasName, checkHeartBeat);
         proxyTarget.put(aliasName, new ArrayList<>());
     }
 
-    public synchronized void addAliasTarget(String aliasName, String host, int port, int weight) throws ServerException
+    public synchronized void addAliasTarget(String aliasName, String remoteTarget, int weight) throws ServerException
     {
         if (!proxyAlias.containsKey(aliasName))
         {
@@ -167,16 +171,7 @@ public class ProxyInstance {
                     Utils.getMessage("SLACKERDB-00018", aliasName));
         }
         List<PostgresProxyTarget> proxyTargetList = proxyTarget.get(aliasName);
-        for (PostgresProxyTarget target : proxyTargetList)
-        {
-            if (target.getHost().equalsIgnoreCase(host) && target.getPort() == port)
-            {
-                throw new ServerException(
-                        "SLACKERDB-00014",
-                        Utils.getMessage("SLACKERDB-00014", aliasName, host, port));
-            }
-        }
-        proxyTargetList.add(new PostgresProxyTarget(host, port, weight));
+        proxyTargetList.add(new PostgresProxyTarget(remoteTarget, weight));
         proxyTarget.put(aliasName, proxyTargetList);
     }
 

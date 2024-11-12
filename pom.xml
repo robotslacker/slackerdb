@@ -20,6 +20,22 @@
         <module>dbproxy</module>
     </modules>
 
+    <profiles>
+        <profile>
+            <id>enable-resource-copy</id>
+            <activation>
+                <!-- 在父模块执行时激活 -->
+                <property>
+                    <name>project.parent</name>
+                    <value></value>
+                </property>
+            </activation>
+            <properties>
+                <isParent>true</isParent>
+            </properties>
+        </profile>
+    </profiles>
+
     <dependencies>
         <!-- 日志组件 -->
         <dependency>
@@ -68,70 +84,5 @@
             <version>5.1.0</version>
             <scope>test</scope>
         </dependency>
-
     </dependencies>
-
-    <build>
-        <plugins>
-            <!-- Maven Resources Plugin to copy child modules' local jar files -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-resources-plugin</artifactId>
-                <version>3.3.1</version>
-                <executions>
-                    <execution>
-                        <id>copy-conf</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>copy-resources</goal>
-                        </goals>
-                        <configuration>
-                            <outputDirectory>${project.build.directory}/dist/conf</outputDirectory>
-                            <resources>
-                                <!-- Specify each child module's target directory -->
-                                <resource>
-                                    <directory>${project.basedir}/dbserver/conf</directory>
-                                    <includes>
-                                        <include>dbserver.conf</include>
-                                    </includes>
-                                </resource>
-                                <resource>
-                                    <directory>${project.basedir}/dbproxy/conf</directory>
-                                    <includes>
-                                        <include>dbproxy.conf</include>
-                                    </includes>
-                                </resource>
-                            </resources>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>copy-jars</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>copy-resources</goal>
-                        </goals>
-                        <configuration>
-                            <outputDirectory>${project.build.directory}/dist/jlib</outputDirectory>
-                            <resources>
-                                <!-- Specify each child module's target directory -->
-                                <resource>
-                                    <directory>${project.basedir}/dbserver/target</directory>
-                                    <includes>
-                                        <include>*-standalone.jar</include>
-                                    </includes>
-                                </resource>
-                                <resource>
-                                    <directory>${project.basedir}/dbproxy/target</directory>
-                                    <includes>
-                                        <include>*-standalone.jar</include>
-                                    </includes>
-                                </resource>
-                            </resources>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-        </plugins>
-    </build>
-
 </project>

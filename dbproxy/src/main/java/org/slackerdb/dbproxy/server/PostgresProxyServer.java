@@ -289,7 +289,6 @@ public class PostgresProxyServer {
         // Netty消息处理
         bossGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup(nioEventThreads);
-
         try {
             ServerBootstrap bootstrap = new ServerBootstrap();
 

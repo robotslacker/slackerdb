@@ -111,10 +111,15 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
                         ctx.channel().attr(AttributeKey.valueOf("ForwardTarget"))
                                 .set(outboundChannel.remoteAddress().toString());
 
+                        // Startup消息要重新拼接内容, database用新的来覆盖
+                        Map<String, String> oldStartupOptions = startupRequest.getStartupOptions();
+                        oldStartupOptions.put("database", postgresProxyTarget.getDatabase());
+                        byte[] newStartupOption = startupRequest.rebuildData();
+
                         // 转发Startup消息
                         ByteBuf byteBuf = Unpooled.buffer();
-                        byteBuf.writeBytes(Utils.int32ToBytes(startupRequest.getRawMessage().length + 4));
-                        byteBuf.writeBytes(startupRequest.getRawMessage());
+                        byteBuf.writeBytes(Utils.int32ToBytes(newStartupOption.length + 4));
+                        byteBuf.writeBytes(newStartupOption);
                         outboundChannel.writeAndFlush(byteBuf);
                     } else {
                         ctx.channel().close();

@@ -26,7 +26,7 @@
         <dependency>
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
-            <version>1.1.2</version>
+            <version>1.1.3</version>
         </dependency>
         <!-- H2 数据库驱动 -->
         <dependency>
@@ -74,14 +74,28 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-source-plugin</artifactId>
+                <artifactId>maven-resources-plugin</artifactId>
                 <version>3.3.1</version>
                 <executions>
                     <execution>
-                        <id>attach-sources</id>
+                        <id>generate-version-properties</id>
+                        <phase>process-resources</phase>
                         <goals>
-                            <goal>jar</goal>
+                            <goal>copy-resources</goal>
                         </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>src/main/resources</directory>
+                                    <includes>
+                                        <include>version.properties</include>
+                                    </includes>
+                                    <filtering>true</filtering>  <!-- 启用变量替换 -->
+                                </resource>
+                            </resources>
+                            <propertiesEncoding>${project.build.sourceEncoding}</propertiesEncoding>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>

@@ -14,6 +14,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.Map;
 
 public class AdminClientRequest extends PostgresRequest {
     public static final byte[] AdminClientRequestHeader = {0x00, 0x00, 0x00, 0x08, 0x01, 0x01, 0x01, 0x01};
@@ -32,8 +34,9 @@ public class AdminClientRequest extends PostgresRequest {
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+        System.out.println(clientRequestCommand);
         StringBuilder feedBackMsg = new StringBuilder();
-        if (clientRequestCommand.trim().equalsIgnoreCase("STOP"))
+        if (clientRequestCommand.trim().toUpperCase().startsWith("STOP"))
         {
             // 关闭代理服务
             try {
@@ -43,7 +46,7 @@ public class AdminClientRequest extends PostgresRequest {
             }
             feedBackMsg.append("Server stop successful.");
         }
-        else if (clientRequestCommand.trim().equalsIgnoreCase("STATUS"))
+        else if (clientRequestCommand.trim().toUpperCase().startsWith("STATUS"))
         {
             LocalDateTime currentTime = LocalDateTime.now();
 
@@ -103,6 +106,49 @@ public class AdminClientRequest extends PostgresRequest {
                 feedBackMsg.append("\n");
             }
         }
+        else if (clientRequestCommand.trim().toUpperCase().startsWith("REGISTER"))
+        {
+            Map<String, String> appOptions = new HashMap<>();
+            String paramName = null;
+            String paramValue;
+            clientRequestCommand = clientRequestCommand.trim();
+            clientRequestCommand = clientRequestCommand.substring("REGISTER".length() + 1);
+            clientRequestCommand = clientRequestCommand.trim();
+
+            boolean parameterParseOK = true;
+            for (String arg : clientRequestCommand.split(" ")) {
+                if (arg.startsWith("--")) {
+                    paramName = arg.substring(2).toLowerCase();
+                }
+                else
+                {
+                    if (paramName == null)
+                    {
+                        parameterParseOK = false;
+                        feedBackMsg.append("[ADMIN CMD] Unexpected command parameter [").append(clientRequestCommand).append("].");
+                        break;
+                    }
+                    paramValue = arg;
+                    appOptions.put(paramName, paramValue);
+                    paramName = null;
+                }
+            }
+            if (parameterParseOK && (!appOptions.containsKey("database") || !appOptions.containsKey("target")))
+            {
+                feedBackMsg.append("[ADMIN CMD] Register need target database info and local alias name [ --database <database name> --target <remote db url>].");
+            }
+            else {
+                // 服务端开始代理
+                try {
+                    proxyInstance.createAlias(appOptions.get("database"), false);
+                    proxyInstance.addAliasTarget(appOptions.get("database"), appOptions.get("target"), 200);
+                    feedBackMsg.append("[ADMIN CMD] Register proxy successful!\n");
+                } catch (ServerException se) {
+                    feedBackMsg.append("[ADMIN CMD] Register proxy failed!\n");
+                    feedBackMsg.append("[ADMIN CMD] ").append(se.getMessage());
+                }
+            }
+        }
         else
         {
             feedBackMsg.append("[ADMIN CMD] Unknown command [").append(clientRequestCommand).append("].");
@@ -118,7 +164,7 @@ public class AdminClientRequest extends PostgresRequest {
         out.close();
 
         // 如果是独占模式, 则停止命令将同时停止程序运行
-        if (clientRequestCommand.trim().equalsIgnoreCase("STOP") && this.proxyInstance.isExclusiveMode())
+        if (clientRequestCommand.trim().toUpperCase().startsWith("STOP") && this.proxyInstance.isExclusiveMode())
         {
             System.exit(0);
         }

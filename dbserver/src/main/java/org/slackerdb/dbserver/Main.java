@@ -14,36 +14,63 @@ import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.logger.AppLogger;
 import org.slackerdb.dbserver.server.DBInstance;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
+import java.util.TimeZone;
 
 public class Main {
-    public static void serverStart(Logger logger, ServerConfiguration serverConfiguration) throws Exception
+    // 打印帮助信息
+    public static void showUsage()
     {
-        // 启动服务器
-        logger.info("[SERVER] SlackerDB server starting ...");
+        String version;
+        try {
+            InputStream inputStream = Main.class.getResourceAsStream("/version.properties");
+            Properties properties = new Properties();
+            properties.load(inputStream);
+            version = properties.getProperty("version", "{project.version}");
+        }
+        catch (IOException ioe)
+        {
+            version = "{project.version}";
+        }
 
-        // 初始化后端的DuckDB数据库
-        DBInstance dbInstance = new DBInstance(serverConfiguration);
-        // 设置为独占模式，当数据库端口停止，数据库也将停止
-        dbInstance.setExclusiveMode(true);
-        // 启动数据库
-        dbInstance.start();
-    }
-
-    public static void serverAdmin(Logger logger, ServerConfiguration serverConfiguration, String appCommand)
-    {
-        // 执行命令请求
-        AdminClient.doCommand(logger, serverConfiguration, appCommand);
+        System.out.println("Usage: java -jar slackerdb-" + version + "-standalone.jar [COMMAND] [--parameter <parameter value>]");
+        System.out.println("Commands:");
+        System.out.println("  start     Start slackerdb server.");
+        System.out.println("  stop      Stop slackerdb server.");
+        System.out.println("  status    print server status.");
+        System.out.println("  help      print this message.");
+        System.out.println("  version   print server version.");
+        System.out.println("Parameters:");
+        System.out.println("  --conf              Configuration file.");
+        System.out.println("  --locale            default language of the program.");
+        System.out.println("  --log_level         log level, default is INFO.");
+        System.out.println("  --log               log file, default is CONSOLE.");
+        System.out.println("  --bind              server bind ip address, default is 0.0.0.0");
+        System.out.println("  --host              remote server address,  default is 127.0.0.1");
+        System.out.println("  --port              server listener port. default is random");
+        System.out.println("  --data              database name. default is slackerdb");
+        System.out.println("  --data_dir          database file directory. default is :memory:");
+        System.out.println("  --temp_dir          database temporary file directory. default is os dependent.");
+        System.out.println("  --extension_dir     extension file directory. default is $HOME/.duckdb/extensions.");
+        System.out.println("  --init_schema       system init script or script directory. default is none.");
+        System.out.println("  --sql_history       sql history database name. default is none.");
+        System.out.println("  --sql_history_port  sql history database remote service port. default is none.");
+        System.out.println("  --sql_history_dir   sql history database file directory. default is none.");
     }
 
     public static void main(String[] args){
-        // 打开日志文件
-        Logger logger = AppLogger.createLogger("SLACKERDB", "INFO", "CONSOLE");
-
         // 处理应用程序参数
         Map<String, String> appOptions = new HashMap<>();
-        StringBuilder appCommand = null;
+        StringBuilder subCommand = null;
 
         String paramName = null;
         String paramValue;
@@ -55,12 +82,17 @@ public class Main {
             {
                 if (paramName == null)
                 {
-                    if (appCommand == null) {
-                        appCommand = new StringBuilder(arg);
+                    if (subCommand == null) {
+                        subCommand = new StringBuilder(arg);
+                        continue;
                     }
                     else
                     {
-                        appCommand.append(" ").append(arg);
+                        // 最后只能有一个命令参数存在
+                        System.err.println(
+                                "Error: Only one subcommand is required. But you have more .. [" + subCommand + ", " + arg + " ...].");
+                        showUsage();
+                        System.exit(255);
                     }
                 }
                 paramValue = arg;
@@ -137,39 +169,99 @@ public class Main {
             {
                 serverConfiguration.setSqlHistoryDir(appOptions.get("sql_history_dir"));
             }
-            if (appOptions.containsKey("help") || (appCommand != null && appCommand.toString().equalsIgnoreCase("HELP")))
+            if (subCommand == null)
             {
-                System.out.println("Usage:  java -jar slackerdb-xxx-standalone.jar [--option value, ]  command.");
-                System.out.println();
-                System.out.println("        COMMAND:   START");
-                System.out.println("        COMMAND:   STOP");
-                System.out.println("        COMMAND:   STATUS");
-                System.out.println("        COMMAND:   KILL <sessionId>");
-                System.out.println();
-                System.exit(0);
-            }
-            if (appCommand == null)
-            {
-                logger.error("[SERVER] Invalid command [null]. \n Usage: java -jar slackerdb-xxx-standalone.jar [--option value, ]  command.");
-                System.exit(1);
+                // 如果没有任何一个子命令，则直接打印帮助后退出
+                System.err.println("Error: At least one subcommand is required. ");
+                showUsage();
+                System.exit(255);
             }
 
+
+            // 从资源信息中读取系统的版本号
+            String version, localBuildDate;
+            try {
+                InputStream inputStream = Main.class.getResourceAsStream("/version.properties");
+                Properties properties = new Properties();
+                properties.load(inputStream);
+                version = properties.getProperty("version", "{project.version}");
+                String buildTimestamp = properties.getProperty("build.timestamp", "${build.timestamp}");
+
+                // 转换编译的时间格式
+                try {
+                    ZonedDateTime zdt = ZonedDateTime.parse(buildTimestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX"));
+                    LocalDateTime localDateTime = LocalDateTime.ofInstant(zdt.toInstant(), ZoneId.systemDefault());
+                    localBuildDate =
+                            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").format(localDateTime) + " " +
+                                    TimeZone.getTimeZone(ZoneId.systemDefault()).getID();
+                }
+                catch (DateTimeParseException ex)
+                {
+                    localBuildDate = buildTimestamp;
+                }
+            }
+            catch (IOException ioe)
+            {
+                version = "{project.version}";
+                localBuildDate = "${build.timestamp}";
+            }
+
+            if (subCommand.toString().equalsIgnoreCase("HELP"))
+            {
+                // 打印帮助信息
+                showUsage();
+                System.exit(0);
+            }
+            else if (subCommand.toString().equalsIgnoreCase("VERSION"))
+            {
+                // 打印版本信息
+                System.out.println("[PROXY] VERSION：" + version);
+                System.out.println("[PROXY] Build Time: " + localBuildDate );
+                System.exit(0);
+            }
+
+            // 初始化日志服务
+            Logger logger = AppLogger.createLogger(
+                    "SLACKERDB",
+                    serverConfiguration.getLog_level().levelStr,
+                    serverConfiguration.getLog());
+
             // 启动应用程序
-            if (appCommand.toString().toUpperCase().startsWith("START")) {
-                serverStart(logger, serverConfiguration);
+            if (subCommand.toString().toUpperCase().startsWith("START")) {
+                // 启动服务器
+                logger.info("[SERVER] SlackerDB server starting (PID:{})...", ProcessHandle.current().pid());
+                logger.info("[SERVER] VERSION：{}", version);
+                logger.info("[SERVER] Build Time: {}", localBuildDate);
+
+                // 初始化后端的DuckDB数据库
+                DBInstance dbInstance = new DBInstance(serverConfiguration);
+                // 设置为独占模式，当数据库端口停止，数据库也将停止
+                dbInstance.setExclusiveMode(true);
+                // 启动数据库
+                dbInstance.start();
+
                 // 这里永远等待，不退出
                 try {Thread.sleep(Long.MAX_VALUE);} catch (InterruptedException ignored) {}
             }
             else
             {
-                serverAdmin(logger, serverConfiguration, appCommand.toString());
-                System.exit(0);
+                // 其他命令
+                if (!appOptions.containsKey("host") && !appOptions.containsKey("bind") ) {
+                    // 客户端运行，如果没有指定远端主机名称，默认127.0.0.1， 而不是0.0.0.0
+                    serverConfiguration.setBindHost("127.0.0.1");
+                }
+                // 执行其他请求
+                AdminClient.doCommand(serverConfiguration, subCommand.toString(), appOptions);
             }
+
+            // 退出应用程序
+            System.exit(0);
         }
-        catch (Exception ex)
+        catch (Exception se)
         {
-            logger.error("[SERVER] Fatal exception.", ex);
-            System.exit(1);
+            System.err.println("Error: unexpected internal error.");
+            se.printStackTrace(System.err);
+            System.exit(255);
         }
     }
 }

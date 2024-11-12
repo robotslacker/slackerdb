@@ -41,7 +41,7 @@ public class AdminClientRequest  extends PostgresRequest {
         this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
 
         StringBuilder feedBackMsg = new StringBuilder();
-        if (clientRequestCommand.trim().equalsIgnoreCase("STOP"))
+        if (clientRequestCommand.trim().toUpperCase().startsWith("STOP"))
         {
             // 关闭数据库
             try {
@@ -51,7 +51,7 @@ public class AdminClientRequest  extends PostgresRequest {
             }
             feedBackMsg.append("Server stop successful.");
         }
-        else if (clientRequestCommand.trim().equalsIgnoreCase("STATUS"))
+        else if (clientRequestCommand.trim().toUpperCase().startsWith("STATUS"))
         {
             LocalDateTime currentTime = LocalDateTime.now();
 
@@ -59,15 +59,18 @@ public class AdminClientRequest  extends PostgresRequest {
             // 包括使用的内存大小，文件大小
             String  database_size = "";
             String  memory_usage = "";
+            String  database_version = "";
             try {
                 Statement stmt = this.dbInstance.backendSysConnection.createStatement();
-                ResultSet rs = stmt.executeQuery("CALL pragma_database_size()");
-                while (rs.next()) {
-                    if (rs.getString("database_name").equalsIgnoreCase(this.dbInstance.serverConfiguration.getData())) {
-                        database_size = rs.getString("database_size");
-                        memory_usage = rs.getString("memory_usage");
-                        break;
-                    }
+                ResultSet rs = stmt.executeQuery(
+                            "select  version() as version,* " +
+                                "from    pragma_database_size() " +
+                                "where   database_name = current_database()");
+                if (rs.next())
+                {
+                    database_size = rs.getString("database_size");
+                    memory_usage = rs.getString("memory_usage");
+                    database_version = rs.getString("version");
                 }
                 rs.close();
                 stmt.close();
@@ -98,6 +101,7 @@ public class AdminClientRequest  extends PostgresRequest {
                 );
                 feedBackMsg.append("  Run : ").append(readableTimeDifference).append("\n");
             }
+            feedBackMsg.append("  DB VERSION  : ").append(database_version).append("\n");
             feedBackMsg.append("  DB SIZE     : ").append(database_size).append("\n");
             feedBackMsg.append("  MEMORY USAGE: ").append(memory_usage).append("\n");
 
@@ -218,7 +222,7 @@ public class AdminClientRequest  extends PostgresRequest {
         this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
 
         // 如果是独占模式, 则停止命令将同时停止程序运行
-        if (clientRequestCommand.trim().equalsIgnoreCase("STOP") && this.dbInstance.isExclusiveMode())
+        if (clientRequestCommand.trim().toUpperCase().startsWith("STOP") && this.dbInstance.isExclusiveMode())
         {
             System.exit(0);
         }

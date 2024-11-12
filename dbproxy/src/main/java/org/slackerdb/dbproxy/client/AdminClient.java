@@ -9,6 +9,7 @@ package org.slackerdb.dbproxy.client;
     2： 查看服务器运行状态
  */
 
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
@@ -18,12 +19,15 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
+import org.slackerdb.common.logger.AppLogger;
 import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 import org.slackerdb.dbproxy.message.request.AdminClientRequest;
+import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 
 public class AdminClient {
     // Encoder to convert byte[] to ByteBuf
@@ -68,7 +72,19 @@ public class AdminClient {
         }
     }
 
-    public static void doCommand(Logger logger, ServerConfiguration serverConfiguration, String command) {
+    public static void doCommand(ServerConfiguration serverConfiguration, String command, Map<String, String> appOptions) {
+        // 初始化日志服务
+        Logger logger = AppLogger.createLogger(
+                "PROXY",
+                serverConfiguration.getLog_level().levelStr,
+                serverConfiguration.getLog());
+
+        // 关闭Netty的日志, 如果不是在trace下
+        Logger nettyLogger = (Logger) LoggerFactory.getLogger("io.netty");
+        if (!logger.getLevel().equals(Level.TRACE)) {
+            nettyLogger.setLevel(Level.OFF);
+        }
+
         // 启动Netty客户端
         EventLoopGroup group = new NioEventLoopGroup();
         try {
@@ -94,11 +110,17 @@ public class AdminClient {
             ByteBuf buffer = Unpooled.wrappedBuffer(AdminClientRequest.AdminClientRequestHeader);
             future.channel().writeAndFlush(buffer).sync();
 
+            // 拼接消息正文
+            StringBuilder message = new StringBuilder();
+            for (Map.Entry<String, String> entry : appOptions.entrySet()) {
+                message.append("--").append(entry.getKey()).append(" ").append(entry.getValue()).append(" ");
+            }
+
             // 发送消息正文
-            byte[] msg = command.getBytes(StandardCharsets.UTF_8);
+            byte[] msg = (command + " " + message).getBytes(StandardCharsets.UTF_8);
             buffer = Unpooled.buffer().capacity(5+msg.length);
             buffer.writeByte('!');
-            buffer.writeInt(4+command.length());
+            buffer.writeInt(4 + msg.length);
             buffer.writeBytes(msg);
             future.channel().writeAndFlush(buffer).sync();
 

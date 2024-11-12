@@ -9,6 +9,7 @@ The SQL engine and storage engine behind it are both DUCKDB, the new favorite of
 What we do in this project:
 1. make we can view and update duckdb data from the process outside.
 2. make we can view and update duckdb data from the network.
+3. PG protocol proxy, so that you can connect to multi db services distributed on same or different machines through a unified service port.
 
 ## Known Issues
 ### 1. Time Zone Issues with TimeStamp
@@ -113,10 +114,11 @@ init_schema=
 # locale. The default language set of the program. If not set, it will be marked as the system default
 locale=
 
-# SQL execution history
-# Client IP/Port, Execution start time, execution duration, SQL statement, execution result code, number of affected rows
-# True will save it in a separated file with h2 format, default is blank, means disable this feature.
-# default placed directory is same with data_dir
+# SQL execution history database name
+# Contents of sql history:
+#     Client IP/Port, Execution start time, execution duration, SQL statement, execution result code, number of affected rows
+# Storage is h2 format, you can use any sql tool to query the sql execution history.
+# default is blank, means disable this feature.
 sql_history=
 
 # The TCP port opened by SQL History to the outside, In order to read the SQL history execution during the running process
