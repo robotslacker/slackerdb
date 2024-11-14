@@ -28,6 +28,8 @@ public class ServerConfiguration extends Throwable {
     private final int default_client_timeout = 600;
     // 默认设置系统默认的语言集
     private final Locale default_locale = Locale.getDefault();
+    // 系统的PID文件
+    private final String default_pid = "";
 
     private String   log;
     private Level    log_level;
@@ -36,6 +38,7 @@ public class ServerConfiguration extends Throwable {
     private int      max_workers;
     private int      client_timeout;
     private Locale   locale;
+    private String   pid;
 
     public ServerConfiguration() throws ServerException
     {
@@ -47,6 +50,7 @@ public class ServerConfiguration extends Throwable {
         max_workers = default_max_workers;
         client_timeout = default_client_timeout;
         locale = default_locale;
+        pid = default_pid;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -140,6 +144,15 @@ public class ServerConfiguration extends Throwable {
                         setMax_workers(entry.getValue().toString());
                     }
                     break;
+                case "PID":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        pid = this.default_pid;
+                    }
+                    else {
+                        setPid(entry.getValue().toString());
+                    }
+                    break;
                 default:
                     throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));
             }
@@ -151,6 +164,7 @@ public class ServerConfiguration extends Throwable {
         return log;
     }
     public Level getLog_level() { return log_level;}
+    public String getPid() {return pid;};
 
     public int getPort()
     {
@@ -309,4 +323,10 @@ public class ServerConfiguration extends Throwable {
             );
         }
     }
+
+    public void setPid(String pPid) throws ServerException
+    {
+        pid = pPid;
+    }
+
 }

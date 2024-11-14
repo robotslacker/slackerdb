@@ -10,6 +10,8 @@ import org.slackerdb.common.utils.Utils;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.*;
@@ -82,6 +84,10 @@ public class DBInstance {
 
     // 记录会话列表
     public final Map<Integer, DBSession> dbSessions = new HashMap<>();
+
+    // PID进程锁信息
+    private RandomAccessFile pidRandomAccessFile;
+    private FileLock pidFileLockHandler;
 
     // 终止会话
     // 默认回滚所有会话
@@ -180,6 +186,28 @@ public class DBInstance {
         // 服务器开始启动
         this.instanceState = "STARTING";
         this.bootTime = LocalDateTime.now();
+
+        // 检查PID文件
+        if (!this.serverConfiguration.getPid().isEmpty())
+        {
+            File pidFile = new File(this.serverConfiguration.getPid());
+            // 尝试锁定文件
+            try {
+                pidRandomAccessFile = new RandomAccessFile(pidFile, "rw");
+                pidFileLockHandler = pidRandomAccessFile.getChannel().tryLock();
+                if (pidFileLockHandler == null)
+                {
+                    throw new ServerException(
+                            "SLACKERDB-00013",
+                            Utils.getMessage("SLACKERDB-00013", this.serverConfiguration.getPid()));
+                }
+                pidRandomAccessFile.writeBytes(String.valueOf(ProcessHandle.current().pid()));
+            } catch (IOException e) {
+                throw new ServerException(
+                        "SLACKERDB-00013",
+                        Utils.getMessage("SLACKERDB-00013", this.serverConfiguration.getPid()));
+            }
+        }
 
         // 文件是否为第一次打开
         boolean databaseFirstOpened = false;
@@ -405,6 +433,27 @@ public class DBInstance {
             backendSysConnection.close();
         } catch (SQLException e) {
             logger.error("Error closing backend connection", e);
+        }
+
+        // 删除PID文件
+        if (pidRandomAccessFile != null )
+        {
+            try {
+                pidFileLockHandler.release();
+                pidFileLockHandler = null;
+
+                pidRandomAccessFile.close();
+                File pidFile = new File(this.serverConfiguration.getPid());
+                if (pidFile.exists()) {
+                    if (!pidFile.delete()) {
+                        logger.warn("[SERVER] {}", Utils.getMessage("SLACKERDB-00014"));
+                    }
+                }
+                pidRandomAccessFile = null;
+            }
+            catch (IOException ignored) {
+                logger.warn("[SERVER] {}", Utils.getMessage("SLACKERDB-00014"));
+            }
         }
 
         // 数据库标记为空闲

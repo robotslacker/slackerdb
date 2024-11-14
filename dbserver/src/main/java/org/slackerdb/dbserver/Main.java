@@ -169,6 +169,10 @@ public class Main {
             {
                 serverConfiguration.setSqlHistoryDir(appOptions.get("sql_history_dir"));
             }
+            if (appOptions.containsKey("pid"))
+            {
+                serverConfiguration.setPid(appOptions.get("pid"));
+            }
             if (subCommand == null)
             {
                 // 如果没有任何一个子命令，则直接打印帮助后退出

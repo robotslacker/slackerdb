@@ -60,6 +60,8 @@ public class ServerConfiguration extends Throwable {
     private final int default_sqlHistoryPort = 0;
     // 默认设置系统默认的语言集
     private final Locale default_locale = Locale.getDefault();
+    // 系统的PID文件
+    private final String default_pid = "";
 
     private String   data;
 
@@ -82,6 +84,7 @@ public class ServerConfiguration extends Throwable {
     private int      sqlHistoryPort;
     private String   sqlHistory;
     private Locale   locale;
+    private String   pid;
 
     public ServerConfiguration() throws ServerException
     {
@@ -107,6 +110,7 @@ public class ServerConfiguration extends Throwable {
         sqlHistory = default_sqlHistory;
         sqlHistoryPort = default_sqlHistoryPort;
         locale = default_locale;
+        pid = default_pid;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -308,6 +312,15 @@ public class ServerConfiguration extends Throwable {
                         setSqlHistoryDir(entry.getValue().toString());
                     }
                     break;
+                case "PID":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        pid = this.default_pid;
+                    }
+                    else {
+                        setPid(entry.getValue().toString());
+                    }
+                    break;
                 default:
                     throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));
             }
@@ -441,6 +454,7 @@ public class ServerConfiguration extends Throwable {
     {
         return locale;
     }
+    public String getPid() {return pid;};
 
     public void setLog_level(String pLog_level) throws ServerException {
         log_level = Level.valueOf(pLog_level);
@@ -687,5 +701,10 @@ public class ServerConfiguration extends Throwable {
             );
         }
         access_mode = pAccessMode;
+    }
+
+    public void setPid(String pPid) throws ServerException
+    {
+        pid = pPid;
     }
 }

@@ -11,7 +11,7 @@
 
     <groupId>org.robotslacker</groupId>
     <artifactId>slackerdb</artifactId>
-    <version>0.0.8</version>
+    <version>0.0.9</version>
     <packaging>pom</packaging>
 
     <modules>
@@ -19,22 +19,6 @@
         <module>dbserver</module>
         <module>dbproxy</module>
     </modules>
-
-    <profiles>
-        <profile>
-            <id>enable-resource-copy</id>
-            <activation>
-                <!-- 在父模块执行时激活 -->
-                <property>
-                    <name>project.parent</name>
-                    <value></value>
-                </property>
-            </activation>
-            <properties>
-                <isParent>true</isParent>
-            </properties>
-        </profile>
-    </profiles>
 
     <dependencies>
         <!-- 日志组件 -->
@@ -54,6 +38,7 @@
             <version>2.0.7</version>
         </dependency>
 
+        <!-- 以下为测试组件 -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>

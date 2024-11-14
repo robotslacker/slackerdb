@@ -7,6 +7,10 @@ import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 
+import java.io.File;
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.channels.FileLock;
 import java.text.MessageFormat;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -35,8 +39,9 @@ public class ProxyInstance {
     // 资源文件，记录各种消息，以及日后可能的翻译信息
     public ResourceBundle resourceBundle;
 
-    // 为每个连接创建一个会话ID
-    private int maxSessionId = 1000;
+    // PID进程锁信息
+    private RandomAccessFile pidRandomAccessFile;
+    private FileLock pidFileLockHandler;
 
     // 记录会话列表
     public final Map<Integer, ProxySession> proxySessions = new HashMap<>();
@@ -96,6 +101,28 @@ public class ProxyInstance {
         this.instanceState = "STARTING";
         this.bootTime = LocalDateTime.now();
 
+        // 检查PID文件
+        if (!this.serverConfiguration.getPid().isEmpty())
+        {
+            File pidFile = new File(this.serverConfiguration.getPid());
+            // 尝试锁定文件
+            try {
+                pidRandomAccessFile = new RandomAccessFile(pidFile, "rw");
+                pidFileLockHandler = pidRandomAccessFile.getChannel().tryLock();
+                if (pidFileLockHandler == null)
+                {
+                    throw new ServerException(
+                            "SLACKERDB-00013",
+                            Utils.getMessage("SLACKERDB-00013", this.serverConfiguration.getPid()));
+                }
+                pidRandomAccessFile.writeBytes(String.valueOf(ProcessHandle.current().pid()));
+            } catch (IOException e) {
+                throw new ServerException(
+                        "SLACKERDB-00013",
+                        Utils.getMessage("SLACKERDB-00013", this.serverConfiguration.getPid()));
+            }
+        }
+
         // 启动PG的协议处理程序
         protocolServer = new PostgresProxyServer();
         protocolServer.setLogger(logger);
@@ -128,6 +155,27 @@ public class ProxyInstance {
         // 停止对外网络服务
         protocolServer.stop();
 
+        // 删除PID文件
+        if (pidRandomAccessFile != null )
+        {
+            try {
+                pidFileLockHandler.release();
+                pidFileLockHandler = null;
+
+                pidRandomAccessFile.close();
+                File pidFile = new File(this.serverConfiguration.getPid());
+                if (pidFile.exists()) {
+                    if (!pidFile.delete()) {
+                        logger.warn("[SERVER] {}", Utils.getMessage("SLACKERDB-00014"));
+                    }
+                }
+                pidRandomAccessFile = null;
+            }
+            catch (IOException ignored) {
+                logger.warn("[SERVER] {}", Utils.getMessage("SLACKERDB-00014"));
+            }
+        }
+
         // 服务状态标记为空闲
         this.instanceState = "IDLE";
     }
@@ -155,8 +203,8 @@ public class ProxyInstance {
         if (proxyAlias.containsKey(aliasName))
         {
             throw new ServerException(
-                    "SLACKERDB-00013",
-                    Utils.getMessage("SLACKERDB-00013", aliasName));
+                    "SLACKERDB-00019",
+                    Utils.getMessage("SLACKERDB-00019", aliasName));
         }
         proxyAlias.put(aliasName, checkHeartBeat);
         proxyTarget.put(aliasName, new ArrayList<>());
