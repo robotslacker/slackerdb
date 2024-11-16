@@ -48,6 +48,7 @@ public class Main {
         System.out.println("  version   print server version.");
         System.out.println("Parameters:");
         System.out.println("  --conf         Configuration file.");
+        System.out.println("  --pid          process pid file, default is none.");
         System.out.println("  --locale       default language of the program.");
         System.out.println("  --log_level    log level, default is INFO.");
         System.out.println("  --log          log file, default is CONSOLE.");
@@ -165,6 +166,9 @@ public class Main {
             }
             if (appOptions.containsKey("port")) {
                 serverConfiguration.setPort(appOptions.get("port"));
+            }
+            if (appOptions.containsKey("pid")) {
+                serverConfiguration.setPid(appOptions.get("pid"));
             }
 
             // 初始化日志服务

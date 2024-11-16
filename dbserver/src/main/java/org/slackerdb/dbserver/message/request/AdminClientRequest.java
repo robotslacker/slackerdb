@@ -10,13 +10,19 @@ import org.slackerdb.dbserver.server.DBSession;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.Properties;
+import java.util.TimeZone;
 
 public class AdminClientRequest  extends PostgresRequest {
     public static final byte[] AdminClientRequestHeader = {0x00, 0x00, 0x00, 0x08, 0x01, 0x01, 0x01, 0x01};
@@ -80,8 +86,38 @@ public class AdminClientRequest  extends PostgresRequest {
                 feedBackMsg.append("Failed to get database info. ").append(se.getMessage()).append("\n");
             }
 
+            // 从资源信息中读取系统的版本号
+            String version, localBuildDate;
+            try {
+                InputStream inputStream = this.getClass().getResourceAsStream("/version.properties");
+                Properties properties = new Properties();
+                properties.load(inputStream);
+                version = properties.getProperty("version", "{project.version}");
+                String buildTimestamp = properties.getProperty("build.timestamp", "${build.timestamp}");
+
+                // 转换编译的时间格式
+                try {
+                    ZonedDateTime zdt = ZonedDateTime.parse(buildTimestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX"));
+                    LocalDateTime localDateTime = LocalDateTime.ofInstant(zdt.toInstant(), ZoneId.systemDefault());
+                    localBuildDate =
+                            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").format(localDateTime) + " " +
+                                    TimeZone.getTimeZone(ZoneId.systemDefault()).getID();
+                }
+                catch (DateTimeParseException ex)
+                {
+                    localBuildDate = buildTimestamp;
+                }
+            }
+            catch (IOException ioe)
+            {
+                version = "{project.version}";
+                localBuildDate = "${build.timestamp}";
+            }
+
             // 显示当前服务状态
             feedBackMsg.append("SERVER STATUS: ").append(this.dbInstance.instanceState).append("\n");
+            feedBackMsg.append("  VERSION : ").append(version).append("\n");
+            feedBackMsg.append("  BUILD : ").append(localBuildDate).append("\n");
             feedBackMsg.append("  PID : ").append(ProcessHandle.current().pid()).append("\n");
             feedBackMsg.append("  Now : ").append(currentTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
             if (this.dbInstance.bootTime != null) {

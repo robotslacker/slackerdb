@@ -51,6 +51,7 @@ public class Main {
         System.out.println("  version   print server version.");
         System.out.println("Parameters:");
         System.out.println("  --conf              Configuration file.");
+        System.out.println("  --pid               process pid file, default is none.");
         System.out.println("  --locale            default language of the program.");
         System.out.println("  --log_level         log level, default is INFO.");
         System.out.println("  --log               log file, default is CONSOLE.");
@@ -180,7 +181,6 @@ public class Main {
                 showUsage();
                 System.exit(255);
             }
-
 
             // 从资源信息中读取系统的版本号
             String version, localBuildDate;

@@ -148,7 +148,7 @@ public class DBSession {
         if (parsedStatements.containsKey(portalName))
         {
             PreparedStatement preparedStatement = parsedStatements.get(portalName).preparedStatement;
-            if (!preparedStatement.isClosed()) {
+            if (preparedStatement != null && !preparedStatement.isClosed()) {
                 preparedStatement.close();
             }
             parsedStatements.remove(portalName);

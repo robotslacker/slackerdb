@@ -239,9 +239,10 @@ For parameters that are not configured, means default values  will be used.
 ```
 
 ## Use IDE tools to connect to the database
-Currently, DBeaver is supported to connect to the database by configuring the JDBC driver.  
-When configuring the driver, just select the Postgres driver.  
-Navicat tool is not supported yet, and other tools have not been tested.  
+Currently, DBeaver is only supported to connect to the database by configuring the JDBC driver.  
+When configuring the driver, select the Postgres driver.  
+We can confirm : Navicat, pgAdmin are not supported yet.
+
 
 ## Known Issues
 ### 1. Time Zone Issues with TimeStamp
