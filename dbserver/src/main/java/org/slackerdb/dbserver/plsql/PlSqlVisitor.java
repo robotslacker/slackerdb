@@ -1,18 +1,17 @@
 package org.slackerdb.dbserver.plsql;
 
-import groovy.lang.Binding;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.misc.Interval;
 import org.antlr.v4.runtime.tree.ParseTree;
-import org.slackerdb.common.exceptions.ServerException;
-import org.slackerdb.dbserver.server.GroovyInstance;
+import org.duckdb.DuckDBConnection;
 
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
     static class EventTermination extends RuntimeException {}
@@ -22,23 +21,16 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         {
             super(msg);
         }
-        ParserError(String msg, Exception ex) { super(msg,ex); }
     }
-    static class ParseSQLException extends RuntimeException {
-        ParseSQLException(String msg, Exception ex) { super(msg,ex); }
-    }
-
-    Binding declareVariables = new Binding();
+    HashMap<String, Object>  declareVariables = new HashMap<>();
     HashMap<String, DeclareCursor> declareCursors = new HashMap<>();
     CharStream inputStream;
     Connection conn;
-    GroovyInstance groovyInstance;
 
-    public PlSqlVisitor(Connection conn, GroovyInstance groovyInstance, CharStream charStream)
+    public PlSqlVisitor(Connection conn, CharStream charStream)
     {
         this.conn = conn;
         this.inputStream = charStream;
-        this.groovyInstance = groovyInstance;
     }
 
     @Override
@@ -89,10 +81,10 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                                 throw new ParserError("Invalid default value for [" + variableName + "].");
                             }
                         }
-                        declareVariables.setVariable("__" + variableName + "__", defaultValue);
+                        declareVariables.put("__" + variableName + "__", defaultValue);
                         break;
                     case "TEXT":
-                        declareVariables.setVariable("__" + variableName + "__", variableDefaultValue);
+                        declareVariables.put("__" + variableName + "__", variableDefaultValue);
                         break;
                     default:
                         throw new ParserError("Invalid default type [" + variable.datatype().getText() + "] for [" + variableName + "].");
@@ -103,11 +95,15 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
     }
 
     @Override
-    public Void visitBegin_block(PlSqlParserParser.Begin_blockContext ctx)
+    public Void visitBegin_block(PlSqlParserParser.Begin_blockContext ctx) throws RuntimeException
     {
         try
         {
             visitBegin_code_block(ctx.begin_code_block());
+        }
+        catch (RuntimeException se)
+        {
+            throw se;
         }
         catch (Exception ex)
         {
@@ -124,7 +120,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
     }
 
     @Override
-    public Void visitBegin_code_block(PlSqlParserParser.Begin_code_blockContext ctx)
+    public Void visitBegin_code_block(PlSqlParserParser.Begin_code_blockContext ctx) throws RuntimeException
     {
         for (int i = 0; i < ctx.getChildCount(); i++) {
             ParseTree child = ctx.getChild(i);
@@ -170,7 +166,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
     }
 
     @Override
-    public Void visitSql_block(PlSqlParserParser.Sql_blockContext ctx)
+    public Void visitSql_block(PlSqlParserParser.Sql_blockContext ctx) throws RuntimeException
     {
         if (ctx.let() != null)
         {
@@ -212,7 +208,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
     }
 
     @Override
-    public Void visitLet(PlSqlParserParser.LetContext ctx)
+    public Void visitLet(PlSqlParserParser.LetContext ctx) throws ParseSQLException
     {
         String variableName = ctx.Identifier().getText().trim();
         String expression = this.inputStream.getText(
@@ -220,20 +216,13 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         expression = expression.replaceAll(":(\\w+)", "__$1__");
 
         // 解析并计算表达式
-        if (!declareVariables.hasVariable("__" + variableName + "__"))
+        if (!declareVariables.containsKey("__" + variableName + "__"))
         {
             throw new ParserError("Variable [" + variableName + "] has not been declared." );
         }
-        try
-        {
-            Object result = groovyInstance.evaluate(expression, declareVariables);
-            // 输出结果
-            declareVariables.setVariable("__" + variableName + "__", result);
-        }
-        catch (ServerException se)
-        {
-            throw new ParserError("Groovy execute failed.", se );
-        }
+        Object result = evaluate(expression, declareVariables);
+        // 输出结果
+        declareVariables.put("__" + variableName + "__", result);
         return null;
     }
 
@@ -251,14 +240,14 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                 if (tokenCtx.bindIdentifier() != null) {
                     // 记录绑定的变量, 去掉前面的：
                     String variableName = tokenCtx.bindIdentifier().getText().substring(1) ;
-                    if (!declareVariables.hasVariable("__" + variableName + "__"))
+                    if (!declareVariables.containsKey("__" + variableName + "__"))
                     {
                         throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
                                 "Variable [" + variableName + "] has not been declared." );
                     }
                     else
                     {
-                        bindObjects.add(declareVariables.getVariable("__" + variableName + "__"));
+                        bindObjects.add(declareVariables.get("__" + variableName + "__"));
                     }
                     sql = sql.replace(tokenCtx.bindIdentifier().getText(), "?");
                 }
@@ -346,7 +335,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         for (PlSqlParserParser.BindIdentifierContext bindCtx : ctx.fetch_list().bindIdentifier())
         {
             String variableName = bindCtx.getText().trim().substring(1);
-            if (!declareVariables.hasVariable("__" + variableName + "__"))
+            if (!declareVariables.containsKey("__" + variableName + "__"))
             {
                 throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
                         "Variable " + variableName + " in FETCH statement is undefined.");
@@ -373,7 +362,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                 int nPos = 1;
                 for (String bindVariable : bindVariables)
                 {
-                    declareVariables.setVariable(bindVariable, rs.getObject(nPos));
+                    declareVariables.put(bindVariable, rs.getObject(nPos));
                     nPos = nPos + 1;
                 }
             }
@@ -400,7 +389,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         for (PlSqlParserParser.BindIdentifierContext bindCtx : ctx.fetch_list().bindIdentifier())
         {
             String variableName = bindCtx.getText().trim().substring(1);
-            if (!declareVariables.hasVariable("__" + variableName + "__"))
+            if (!declareVariables.containsKey("__" + variableName + "__"))
             {
                 throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
                         "Variable " + variableName + " in FETCH statement is undefined.");
@@ -420,7 +409,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                 int nPos = 1;
                 for (String bindVariable : bindVariables)
                 {
-                    declareVariables.setVariable(bindVariable, cursor.rs.getObject(nPos));
+                    declareVariables.put(bindVariable, cursor.rs.getObject(nPos));
                     nPos = nPos + 1;
                 }
             }
@@ -437,7 +426,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
     }
 
     @Override
-    public Void visitIf_block(PlSqlParserParser.If_blockContext ctx)
+    public Void visitIf_block(PlSqlParserParser.If_blockContext ctx) throws ParseSQLException
     {
         String ifExpression =
                 this.inputStream.getText(
@@ -445,53 +434,46 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                                 ctx.if_().expression().getStop().getStopIndex())
                 ).trim();
         ifExpression = ifExpression.replaceAll(":(\\w+)", "__$1__");
-        try
+        boolean result = (boolean)evaluate(ifExpression, declareVariables);
+        if (result)
         {
-            boolean result = (boolean)groovyInstance.evaluate(ifExpression, declareVariables);
-            if (result)
+            // 结果If命中
+            for (PlSqlParserParser.Sql_blockContext sqlCtx: ctx.sql_block())
             {
-                // 结果If命中
-                for (PlSqlParserParser.Sql_blockContext sqlCtx: ctx.sql_block())
+                visitSql_block(sqlCtx);
+            }
+        }
+        else
+        {
+            // ElseIf
+            boolean matchedElseIf = false;
+            for (PlSqlParserParser.Elseif_blockContext elseIfCtx : ctx.elseif_block())
+            {
+                ifExpression =
+                        this.inputStream.getText(
+                                new Interval(
+                                        elseIfCtx.elseif().expression().getStart().getStartIndex(),
+                                        elseIfCtx.elseif().expression().getStop().getStopIndex())
+                        ).trim();
+                result = (boolean)evaluate(ifExpression, declareVariables);
+                if (result)
+                {
+                    for (PlSqlParserParser.Sql_blockContext sqlCtx: elseIfCtx.sql_block())
+                    {
+                        visitSql_block(sqlCtx);
+                    }
+                    matchedElseIf = true;
+                    break;
+                }
+            }
+            if (!matchedElseIf)
+            {
+                // 执行Else操作
+                for (PlSqlParserParser.Sql_blockContext sqlCtx: ctx.else_block().sql_block())
                 {
                     visitSql_block(sqlCtx);
                 }
             }
-            else
-            {
-                // ElseIf
-                boolean matchedElseIf = false;
-                for (PlSqlParserParser.Elseif_blockContext elseIfCtx : ctx.elseif_block())
-                {
-                    ifExpression =
-                            this.inputStream.getText(
-                                    new Interval(
-                                            elseIfCtx.elseif().expression().getStart().getStartIndex(),
-                                            elseIfCtx.elseif().expression().getStop().getStopIndex())
-                            ).trim();
-                    result = (boolean)groovyInstance.evaluate(ifExpression, declareVariables);
-                    if (result)
-                    {
-                        for (PlSqlParserParser.Sql_blockContext sqlCtx: elseIfCtx.sql_block())
-                        {
-                            visitSql_block(sqlCtx);
-                        }
-                        matchedElseIf = true;
-                        break;
-                    }
-                }
-                if (!matchedElseIf)
-                {
-                    // 执行Else操作
-                    for (PlSqlParserParser.Sql_blockContext sqlCtx: ctx.else_block().sql_block())
-                    {
-                        visitSql_block(sqlCtx);
-                    }
-                }
-            }
-        }
-        catch (ServerException se)
-        {
-            throw new ParserError("Groovy execute failed.", se );
         }
         return null;
     }
@@ -538,13 +520,13 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
     public Void visitFor_block(PlSqlParserParser.For_blockContext ctx)
     {
         String bindIdentifierName = ctx.bindIdentifier().getText().trim().substring(1);
-        if (!declareVariables.hasVariable("__" + bindIdentifierName + "__"))
+        if (!declareVariables.containsKey("__" + bindIdentifierName + "__"))
         {
             throw new ParserError("Variable [" + bindIdentifierName + "] has not been declared." );
         }
         if (ctx.list() != null) {
             for (PlSqlParserParser.ExpressionContext exprCtx : ctx.list().exprList().expression()) {
-                declareVariables.setVariable("__" + bindIdentifierName + "__", exprCtx.getText());
+                declareVariables.put("__" + bindIdentifierName + "__", exprCtx.getText());
                 try {
                     for (int i = 0; i < ctx.getChildCount(); i++) {
                         ParseTree child = ctx.getChild(i);
@@ -560,7 +542,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
             }
         } else {
             for (int i = Integer.parseInt(ctx.expression(0).getText()); i < Integer.parseInt(ctx.expression(1).getText()); i++) {
-                declareVariables.setVariable("__" + bindIdentifierName + "__", i);
+                declareVariables.put("__" + bindIdentifierName + "__", i);
                 try
                 {
                     for (int j = 0; j < ctx.getChildCount(); j++) {
@@ -579,7 +561,33 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         return null;
     }
 
-    public static void runPlSql(Connection conn, GroovyInstance groovyInstance, String plSql)
+    public Object evaluate(String expression, Map<String, Object> bindingObjects) throws ParseSQLException
+    {
+        Object ret = null;
+        for (String variableName : bindingObjects.keySet())
+        {
+            expression = expression.replaceAll("\\b" + variableName + "\\b", "getvariable('" + variableName + "')");
+        }
+        try {
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery("select " + expression);
+            if (rs.next()) {
+                ret = rs.getObject(1);
+            }
+            if (rs.next()) {
+                // 对于表达式计算，不能包含多值
+                throw new SQLException("Evaluate got too much rows.");
+            }
+            rs.close();
+            stmt.close();
+        }
+        catch (SQLException se)
+        {
+            throw new ParseSQLException(se.getMessage(), se);
+        }
+        return ret;
+    }
+    public static void runPlSql(Connection conn, String plSql)
     {
         CharStream input = CharStreams.fromString(plSql);
 
@@ -591,7 +599,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         ParseTree tree = parser.plsql_script();
 
         // 执行 visitor
-        PlSqlVisitor visitor = new PlSqlVisitor(conn, groovyInstance, input);
+        PlSqlVisitor visitor = new PlSqlVisitor(conn, input);
 
         try {
             visitor.visit(tree);
@@ -599,55 +607,71 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         catch (EventTermination ignored) {}
     }
 
-//    public static void main(String[] args) throws SQLException  {
-//        DuckDBConnection duckDBConnection =
-//                (DuckDBConnection) DriverManager.getConnection("jdbc:duckdb:", "", "");
-//        GroovyInstance groovyInstance1 = new GroovyInstance();
-//        duckDBConnection.createStatement().execute("Create Table tab1(num int)");
-//        duckDBConnection.createStatement().execute("Create Table tab2(col1 int, col2 int)");
-//        duckDBConnection.createStatement().execute("Insert into tab1(num) values(3)");
-//
-//        String plSql = "declare     \n" +
-//                "    x1 int;    -- xxxx     \n" +
-//                "    x2 int;     \n" +
-//                "    i int;     \n" +
-//                "    cursor c1 is select 400,500;     \n" +
-//                "begin     \n" +
-//                "    let x1 = 10;     \n" +
-//                "    update tab1 set num = :x1;     \n" +
-//                "    select 3,4 into :x1, :x2;     \n" +
-//                "    begin     \n" +
-//                "        let x2 = :x1;     \n" +
-//                "    exception:     \n" +
-//                "        let x2 = 20;     \n" +
-//                "    end;     \n" +
-//                "    open c1;     \n" +
-//                "    loop     \n" +
-//                "        fetch c1 into :x1, :x2;     \n" +
-//                "        exit when c1%notfound;     \n" +
-//                "        insert into tab2 values(:x1, :x2);     \n" +
-//                "    end loop;     \n" +
-//                "    close c1;     \n" +
-//                "    for :i in 1 TO 5      \n" +
-//                "    loop     \n" +
-//                "        if 3 > 5 then     \n" +
-//                "            break;     \n" +
-//                "        end if;     \n" +
-//                "        pass;     \n" +
-//                "    end loop;     \n" +
-//                "    for :i in ['3','4','5']      \n" +
-//                "    loop     \n" +
-//                "        if 3 > 5 then     \n" +
-//                "            break;\n" +
-//                "        end if;     \n" +
-//                "        pass;     \n" +
-//                "    end loop;     \n" +
-//                "    if 3>5 then     \n" +
-//                "        pass;     \n" +
-//                "    else     \n" +
-//                "        pass;     \n" +
-//                "    end if;     \n" +
-//                "end;";
-//        PlSqlVisitor.runPlSql(duckDBConnection, groovyInstance1, plSql);
-//    }
+    public static void main(String[] args) throws SQLException  {
+        DuckDBConnection duckDBConnection =
+                (DuckDBConnection) DriverManager.getConnection("jdbc:duckdb:", "", "");
+        duckDBConnection.createStatement().execute("Create Table tab1(num int)");
+        duckDBConnection.createStatement().execute("Create Table tab2(col1 int, col2 int)");
+        duckDBConnection.createStatement().execute("Insert into tab1(num) values(3)");
+
+        String plSql = "declare     \n" +
+                "    x1 int;    -- xxxx     \n" +
+                "    x2 int;     \n" +
+                "    i int;     \n" +
+                "    cursor c1 is select 400,500;     \n" +
+                "begin     \n" +
+                "    let x1 = 10;     \n" +
+                "    update tab1 set num = :x1;     \n" +
+                "    select 3,4 into :x1, :x2;     \n" +
+                "    begin     \n" +
+                "        let x2 = :x1;     \n" +
+                "    exception:     \n" +
+                "        let x2 = 20;     \n" +
+                "    end;     \n" +
+                "    open c1;     \n" +
+                "    loop     \n" +
+                "        fetch c1 into :x1, :x2;     \n" +
+                "        exit when c1%notfound;     \n" +
+                "        insert into tab2 values(:x1, :x2);     \n" +
+                "        let x1 = 40;     \n" +
+                "        let x2 = 50;     \n" +
+                "        insert into tab2 values(:x1, :x2);     \n" +
+                "    end loop;     \n" +
+                "    close c1;     \n" +
+                "    for :i in 1 TO 5      \n" +
+                "    loop     \n" +
+                "        if 3 > 5 then     \n" +
+                "            break;     \n" +
+                "        end if;     \n" +
+                "        pass;     \n" +
+                "    end loop;     \n" +
+                "    for :i in ['3','4','5']      \n" +
+                "    loop     \n" +
+                "        if 3 > 5 then     \n" +
+                "            break;\n" +
+                "        end if;     \n" +
+                "        pass;     \n" +
+                "    end loop;     \n" +
+                "    if 3>5 then     \n" +
+                "        pass;     \n" +
+                "    else     \n" +
+                "        pass;     \n" +
+                "    end if;     \n" +
+                "end;";
+        PlSqlVisitor.runPlSql(duckDBConnection, plSql);
+
+        Statement stmt = duckDBConnection.createStatement();
+        ResultSet rs = stmt.executeQuery("select * from tab1 order by 1");
+        while (rs.next())
+        {
+            System.out.println(rs.getInt(1));
+        }
+        rs = stmt.executeQuery("select * from tab2 order by 1");
+        while (rs.next())
+        {
+            System.out.println(rs.getInt(1) + " " + rs.getInt(2));
+        }
+        rs.close();
+        stmt.close();
+    }
 }

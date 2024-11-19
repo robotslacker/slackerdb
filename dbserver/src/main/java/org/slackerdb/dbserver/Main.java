@@ -21,28 +21,22 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
-import java.util.TimeZone;
+import java.util.*;
 
 public class Main {
     // 打印帮助信息
     public static void showUsage()
     {
-        String version;
-        try {
-            InputStream inputStream = Main.class.getResourceAsStream("/version.properties");
-            Properties properties = new Properties();
-            properties.load(inputStream);
-            version = properties.getProperty("version", "{project.version}");
+        String codeLocation = Main.class.getProtectionDomain().getCodeSource().getLocation().getFile();
+        if (codeLocation.split("!").length > 1) {
+            codeLocation = codeLocation.split("!")[0];
+            codeLocation = codeLocation.split("/")[codeLocation.split("/").length - 1];
         }
-        catch (IOException ioe)
+        else
         {
-            version = "{project.version}";
+            codeLocation = "****.jar";
         }
-
-        System.out.println("Usage: java -jar slackerdb-" + version + "-standalone.jar [COMMAND] [--parameter <parameter value>]");
+        System.out.println("Usage: java -jar " + codeLocation + " [COMMAND] [--parameter <parameter value>]");
         System.out.println("Commands:");
         System.out.println("  start     Start slackerdb server.");
         System.out.println("  stop      Stop slackerdb server.");
@@ -97,9 +91,63 @@ public class Main {
                     }
                 }
                 paramValue = arg;
-                appOptions.put(paramName, paramValue);
+                appOptions.put(paramName.toLowerCase(), paramValue);
                 paramName = null;
             }
+        }
+        if (paramName != null)
+        {
+            appOptions.put(paramName.toLowerCase(), null);
+        }
+
+        if (subCommand == null)
+        {
+            // 如果没有任何一个子命令，则直接打印帮助后退出
+            System.err.println("Error: At least one subcommand is required. ");
+            showUsage();
+            System.exit(255);
+        }
+
+        // 从资源信息中读取系统的版本号
+        String version, localBuildDate;
+        try {
+            InputStream inputStream = Main.class.getResourceAsStream("/version.properties");
+            Properties properties = new Properties();
+            properties.load(inputStream);
+            version = properties.getProperty("version", "{project.version}");
+            String buildTimestamp = properties.getProperty("build.timestamp", "${build.timestamp}");
+
+            // 转换编译的时间格式
+            try {
+                ZonedDateTime zdt = ZonedDateTime.parse(buildTimestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX"));
+                LocalDateTime localDateTime = LocalDateTime.ofInstant(zdt.toInstant(), ZoneId.systemDefault());
+                localBuildDate =
+                        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").format(localDateTime) + " " +
+                                TimeZone.getTimeZone(ZoneId.systemDefault()).getID();
+            }
+            catch (DateTimeParseException ex)
+            {
+                localBuildDate = buildTimestamp;
+            }
+        }
+        catch (IOException ioe)
+        {
+            version = "{project.version}";
+            localBuildDate = "${build.timestamp}";
+        }
+
+        if (subCommand.toString().equalsIgnoreCase("HELP"))
+        {
+            // 打印帮助信息
+            showUsage();
+            System.exit(0);
+        }
+        else if (subCommand.toString().equalsIgnoreCase("VERSION"))
+        {
+            // 打印版本信息
+            System.out.println("[SERVER] VERSION：" + version);
+            System.out.println("[SERVER] Build Time: " + localBuildDate );
+            System.exit(0);
         }
 
         try
@@ -174,56 +222,6 @@ public class Main {
             {
                 serverConfiguration.setPid(appOptions.get("pid"));
             }
-            if (subCommand == null)
-            {
-                // 如果没有任何一个子命令，则直接打印帮助后退出
-                System.err.println("Error: At least one subcommand is required. ");
-                showUsage();
-                System.exit(255);
-            }
-
-            // 从资源信息中读取系统的版本号
-            String version, localBuildDate;
-            try {
-                InputStream inputStream = Main.class.getResourceAsStream("/version.properties");
-                Properties properties = new Properties();
-                properties.load(inputStream);
-                version = properties.getProperty("version", "{project.version}");
-                String buildTimestamp = properties.getProperty("build.timestamp", "${build.timestamp}");
-
-                // 转换编译的时间格式
-                try {
-                    ZonedDateTime zdt = ZonedDateTime.parse(buildTimestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX"));
-                    LocalDateTime localDateTime = LocalDateTime.ofInstant(zdt.toInstant(), ZoneId.systemDefault());
-                    localBuildDate =
-                            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").format(localDateTime) + " " +
-                                    TimeZone.getTimeZone(ZoneId.systemDefault()).getID();
-                }
-                catch (DateTimeParseException ex)
-                {
-                    localBuildDate = buildTimestamp;
-                }
-            }
-            catch (IOException ioe)
-            {
-                version = "{project.version}";
-                localBuildDate = "${build.timestamp}";
-            }
-
-            if (subCommand.toString().equalsIgnoreCase("HELP"))
-            {
-                // 打印帮助信息
-                showUsage();
-                System.exit(0);
-            }
-            else if (subCommand.toString().equalsIgnoreCase("VERSION"))
-            {
-                // 打印版本信息
-                System.out.println("[PROXY] VERSION：" + version);
-                System.out.println("[PROXY] Build Time: " + localBuildDate );
-                System.exit(0);
-            }
-
             // 初始化日志服务
             Logger logger = AppLogger.createLogger(
                     "SLACKERDB",

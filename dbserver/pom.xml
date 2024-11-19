@@ -37,7 +37,7 @@
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
-            <version>4.1.111.Final</version>
+            <version>4.1.115.Final</version>
         </dependency>
         <dependency>
             <groupId>org.apache.commons</groupId>
@@ -48,11 +48,6 @@
             <groupId>org.antlr</groupId>
             <artifactId>antlr4-runtime</artifactId>
             <version>4.13.2</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.groovy</groupId>
-            <artifactId>groovy</artifactId>
-            <version>4.0.23</version>
         </dependency>
     </dependencies>
 

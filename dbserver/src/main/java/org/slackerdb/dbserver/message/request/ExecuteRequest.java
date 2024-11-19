@@ -10,7 +10,6 @@ import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.*;
 import org.slackerdb.dbserver.plsql.PlSqlVisitor;
 import org.slackerdb.dbserver.server.DBInstance;
-import org.slackerdb.dbserver.server.GroovyInstance;
 import org.slackerdb.common.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -247,8 +246,7 @@ public class ExecuteRequest extends PostgresRequest {
             {
                 // PLSQL处理
                 Connection conn = this.dbInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
-                GroovyInstance groovyInstance = this.dbInstance.getSession(getCurrentSessionId(ctx)).groovyInstance;
-                PlSqlVisitor.runPlSql(conn, groovyInstance, parsedStatement.sql);
+                PlSqlVisitor.runPlSql(conn, parsedStatement.sql);
 
                 CommandComplete commandComplete = new CommandComplete(this.dbInstance);
                 commandComplete.setCommandResult("UPDATE 0");

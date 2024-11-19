@@ -26,19 +26,16 @@ public class Main {
     // 打印帮助信息
     public static void showUsage()
     {
-        String version;
-        try {
-            InputStream inputStream = Main.class.getResourceAsStream("/version.properties");
-            Properties properties = new Properties();
-            properties.load(inputStream);
-            version = properties.getProperty("version", "{project.version}");
+        String codeLocation = Main.class.getProtectionDomain().getCodeSource().getLocation().getFile();
+        if (codeLocation.split("!").length > 1) {
+            codeLocation = codeLocation.split("!")[0];
+            codeLocation = codeLocation.split("/")[codeLocation.split("/").length - 1];
         }
-        catch (IOException ioe)
+        else
         {
-            version = "{project.version}";
+            codeLocation = "****.jar";
         }
-
-        System.out.println("Usage: java -jar slackerdb-dbproxy-" + version + "-standalone.jar [COMMAND] [--parameter <parameter value>]");
+        System.out.println("Usage: java -jar " + codeLocation + " [COMMAND] [--parameter <parameter value>]");
         System.out.println("Commands:");
         System.out.println("  start     Start proxy server.");
         System.out.println("  stop      Stop proxy server.");
@@ -90,10 +87,15 @@ public class Main {
                     }
                 }
                 paramValue = arg;
-                appOptions.put(paramName, paramValue);
+                appOptions.put(paramName.toLowerCase(), paramValue);
                 paramName = null;
             }
         }
+        if (paramName != null)
+        {
+            appOptions.put(paramName.toLowerCase(), null);
+        }
+
         if (subCommand == null)
         {
             // 如果没有任何一个子命令，则直接打印帮助后退出

@@ -29,8 +29,6 @@ public class DBSession {
     public String status = "N/A";
     // 客户端的IP地址
     public String clientAddress = "";
-    // Groovy引擎，用来执行PLSQL中的表达式计算
-    public GroovyInstance groovyInstance = null;
     // 保存的语句解析信息
     public final Map<String, ParsedStatement> parsedStatements = new HashMap<>();
     // 标记客户端是否请求了描述信息（如果请求需要返回RowDescription, 反之不返回)

@@ -5,6 +5,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import com.sun.management.OperatingSystemMXBean;
+import java.lang.management.ManagementFactory;
 import java.net.ServerSocket;
 import java.util.Locale;
 import java.util.Map;
@@ -39,7 +41,7 @@ public class ServerConfiguration extends Throwable {
     // 默认绑定的主机地址
     private final String default_bind = "0.0.0.0";
     // 默认不限制内存使用情况
-    private final String default_memory_limit = "";
+    private final String default_memory_limit;
     // 默认使用一半的CPU作为计算线程
     private final int default_threads = (int)(Runtime.getRuntime().availableProcessors() * 0.5);
     // 默认数据库可读可写
@@ -101,7 +103,6 @@ public class ServerConfiguration extends Throwable {
         log_level = default_log_level;
         port = default_port;
         bind = default_bind;
-        memory_limit = default_memory_limit;
         threads = default_threads;
         access_mode = default_access_mode;
         max_workers = default_max_workers;
@@ -118,6 +119,12 @@ public class ServerConfiguration extends Throwable {
         } catch (IOException e) {
             throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
         }
+
+        // 系统默认内存为系统可用内存的60%
+        OperatingSystemMXBean operatingSystemMXBean = (OperatingSystemMXBean)ManagementFactory.getOperatingSystemMXBean();
+        default_memory_limit =
+                (int) ((operatingSystemMXBean.getTotalPhysicalMemorySize() * 0.6 )/ 1024 / 1024 /1024) + "G";
+        memory_limit = default_memory_limit;
     }
 
     // 读取参数配置文件
@@ -454,7 +461,7 @@ public class ServerConfiguration extends Throwable {
     {
         return locale;
     }
-    public String getPid() {return pid;};
+    public String getPid() {return pid;}
 
     public void setLog_level(String pLog_level) throws ServerException {
         log_level = Level.valueOf(pLog_level);
@@ -703,7 +710,7 @@ public class ServerConfiguration extends Throwable {
         access_mode = pAccessMode;
     }
 
-    public void setPid(String pPid) throws ServerException
+    public void setPid(String pPid)
     {
         pid = pPid;
     }
