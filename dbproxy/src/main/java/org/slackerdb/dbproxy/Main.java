@@ -54,6 +54,7 @@ public class Main {
         System.out.println("  --port         server listener port. default is random");
         System.out.println("  --database     proxy database name.");
         System.out.println("  --target       proxy target url. Example: 127.0.0.1:5432/db1");
+        System.out.println("  --workers      INT. maximum worker threads for forward. default is CPU cores.");
     }
 
     // 主程序
@@ -171,6 +172,10 @@ public class Main {
             }
             if (appOptions.containsKey("pid")) {
                 serverConfiguration.setPid(appOptions.get("pid"));
+            }
+            if (appOptions.containsKey("workers"))
+            {
+                serverConfiguration.setMax_workers(appOptions.get("workers"));
             }
 
             // 初始化日志服务

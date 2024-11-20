@@ -140,9 +140,11 @@ endif
 datatype
     : 'INT'
     | 'TEXT'
-    | 'LONG'
+    | 'BIGINT'
     | 'DOUBLE'
-    | Identifier ('.' Identifier)? '%TYPE'
+    | 'DATE'
+    | 'TIMESTAMP'
+    | 'FLOAT'
     ;
 
 exit

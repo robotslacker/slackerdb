@@ -19,7 +19,7 @@ public class ServerConfiguration extends Throwable {
     // 默认系统的日志级别为INFO
     private final Level default_log_level = Level.INFO;
     // 默认启动的端口
-    private final int default_port = 0;;
+    private final int default_port = 0;
     // 默认绑定的主机地址
     private final String default_bind = "0.0.0.0";
     // 默认使用全部的CPU作为Netty的后台线程数
@@ -164,7 +164,7 @@ public class ServerConfiguration extends Throwable {
         return log;
     }
     public Level getLog_level() { return log_level;}
-    public String getPid() {return pid;};
+    public String getPid() {return pid;}
 
     public int getPort()
     {

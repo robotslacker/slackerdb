@@ -7,7 +7,13 @@ import org.antlr.v4.runtime.misc.Interval;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.duckdb.DuckDBConnection;
 
+import java.math.BigInteger;
 import java.sql.*;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -59,7 +65,13 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
             }
             else
             {
+                // 这里定义了一个变量
                 String variableName = variable.variable_name().getText().toLowerCase().trim();
+                // 变量必须用字母开头，不能用数字开头
+                if (!Character.isLetter(variableName.charAt(0)))
+                {
+                    throw new ParserError("Declare variable must start with letter. [" + variableName + "].");
+                }
                 String variableDefaultValue = null;
                 if (variable.variable_defaultValue() != null)
                 {
@@ -70,21 +82,94 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                 )
                 {
                     case "INT":
-                        int  defaultValue = 0;
                         if (variableDefaultValue != null)
                         {
                             try {
-                                defaultValue = Integer.parseInt(variableDefaultValue);
+                                declareVariables.put("__" + variableName + "__", Integer.parseInt(variableDefaultValue));
                             }
-                            catch (NumberFormatException ne)
+                            catch (NumberFormatException ignored)
                             {
                                 throw new ParserError("Invalid default value for [" + variableName + "].");
                             }
                         }
-                        declareVariables.put("__" + variableName + "__", defaultValue);
+                        else {
+                            declareVariables.put("__" + variableName + "__", 0);
+                        }
+                        break;
+                    case "BIGINT":
+                        if (variableDefaultValue != null)
+                        {
+                            try {
+                                declareVariables.put("__" + variableName + "__", new BigInteger(variableDefaultValue));
+                            }
+                            catch (NumberFormatException ignored)
+                            {
+                                throw new ParserError("Invalid default value for [" + variableName + "].");
+                            }
+                        }
+                        else {
+                            declareVariables.put("__" + variableName + "__", 0);
+                        }
                         break;
                     case "TEXT":
                         declareVariables.put("__" + variableName + "__", variableDefaultValue);
+                        break;
+                    case "FLOAT":
+                        if (variableDefaultValue != null) {
+                            try {
+                                declareVariables.put("__" + variableName + "__", Float.parseFloat(variableDefaultValue));
+                            } catch (NumberFormatException ignored)
+                            {
+                                throw new ParserError("Invalid default value for [" + variableName + "].");
+                            }
+                        }
+                        else
+                        {
+                            declareVariables.put("__" + variableName + "__", 0.0d);
+                        }
+                        break;
+                    case "DOUBLE":
+                        if (variableDefaultValue != null) {
+                            try {
+                                declareVariables.put("__" + variableName + "__", Double.parseDouble(variableDefaultValue));
+                            } catch (NumberFormatException ignored)
+                            {
+                                throw new ParserError("Invalid default value for [" + variableName + "].");
+                            }
+                        }
+                        else
+                        {
+                            declareVariables.put("__" + variableName + "__", 0.0d);
+                        }
+                        break;
+                    case "DATE":
+                        if (variableDefaultValue != null) {
+                            try {
+                                declareVariables.put("__" + variableName + "__", new SimpleDateFormat("yyyy-MM-dd").parse(variableDefaultValue));
+                            } catch (ParseException ignored)
+                            {
+                                throw new ParserError("Invalid default value for [" + variableName + "].");
+                            }
+                        }
+                        else
+                        {
+                            declareVariables.put("__" + variableName + "__", null);
+                        }
+                        break;
+                    case "TIMESTAMP":
+                        if (variableDefaultValue != null) {
+                            try {
+                                declareVariables.put("__" + variableName + "__",
+                                        LocalDateTime.parse(variableDefaultValue, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+                            } catch (DateTimeParseException ignored)
+                            {
+                                throw new ParserError("Invalid default value for [" + variableName + "].");
+                            }
+                        }
+                        else
+                        {
+                            declareVariables.put("__" + variableName + "__", null);
+                        }
                         break;
                     default:
                         throw new ParserError("Invalid default type [" + variable.datatype().getText() + "] for [" + variableName + "].");
@@ -213,7 +298,8 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         String variableName = ctx.Identifier().getText().trim();
         String expression = this.inputStream.getText(
                 new Interval(ctx.expression().getStart().getStartIndex(), ctx.expression().getStop().getStopIndex())).trim();
-        expression = expression.replaceAll(":(\\w+)", "__$1__");
+        // 必须是冒号开头，则必须变量用字母开头
+        expression = expression.replaceAll(":(\\b[a-zA-Z]\\w*\\b)", "__$1__");
 
         // 解析并计算表达式
         if (!declareVariables.containsKey("__" + variableName + "__"))
@@ -362,7 +448,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                 int nPos = 1;
                 for (String bindVariable : bindVariables)
                 {
-                    declareVariables.put(bindVariable, rs.getObject(nPos));
+                    declareVariables.put("__" + bindVariable + "__", rs.getObject(nPos));
                     nPos = nPos + 1;
                 }
             }
@@ -409,7 +495,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                 int nPos = 1;
                 for (String bindVariable : bindVariables)
                 {
-                    declareVariables.put(bindVariable, cursor.rs.getObject(nPos));
+                    declareVariables.put("__" + bindVariable + "__", cursor.rs.getObject(nPos));
                     nPos = nPos + 1;
                 }
             }
@@ -564,9 +650,29 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
     public Object evaluate(String expression, Map<String, Object> bindingObjects) throws ParseSQLException
     {
         Object ret = null;
-        for (String variableName : bindingObjects.keySet())
+        for (Map.Entry<String, Object> bindingObjectEntry: bindingObjects.entrySet())
         {
-            expression = expression.replaceAll("\\b" + variableName + "\\b", "getvariable('" + variableName + "')");
+            if (bindingObjectEntry.getValue() instanceof Integer) {
+                expression = expression.replaceAll("\\b" + bindingObjectEntry.getKey() + "\\b",
+                        String.valueOf(bindingObjectEntry.getValue()));
+            } else if (bindingObjectEntry.getValue() instanceof String) {
+                expression = expression.replaceAll("\\b" + bindingObjectEntry.getKey() + "\\b",
+                       "'" +  bindingObjectEntry.getValue() + "'");
+            } else if (bindingObjectEntry.getValue() instanceof Double) {
+                expression = expression.replaceAll("\\b" + bindingObjectEntry.getKey() + "\\b",
+                        String.valueOf(bindingObjectEntry.getValue()));
+            } else if (bindingObjectEntry.getValue() instanceof java.math.BigDecimal) {
+                expression = expression.replaceAll("\\b" + bindingObjectEntry.getKey() + "\\b",
+                        String.valueOf(bindingObjectEntry.getValue()));
+            }
+            else if (bindingObjectEntry.getValue() == null)
+            {
+                expression = expression.replaceAll("\\b" + bindingObjectEntry.getKey() + "\\b", "null");
+            }
+            else
+            {
+                System.out.println("waht ？ " + bindingObjectEntry.getValue().getClass().getName());
+            }
         }
         try {
             Statement stmt = conn.createStatement();
@@ -587,6 +693,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         }
         return ret;
     }
+
     public static void runPlSql(Connection conn, String plSql)
     {
         CharStream input = CharStreams.fromString(plSql);

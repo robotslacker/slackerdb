@@ -61,12 +61,6 @@ temp_dir=
 # If not set, it defaults to $HOME/.duckdb/extensions
 extension_dir=
 
-# Location of the external function definition, used to execute in the plsql script.
-# If not set, it defaults to the same as data_dir
-# Disk mode:   If not set, it defaults to the same as data_dir.
-# Memory mode: If not set, it defaults to "data".
-plsql_func_dir=
-
 # The location where the log file is saved
 # CONSOLE means output to the console, and others mean output to a file
 # Multiple logs can be output at the same time, separated by commas, for example, console, logs/xx.log

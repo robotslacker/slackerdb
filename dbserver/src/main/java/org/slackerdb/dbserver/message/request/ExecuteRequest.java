@@ -144,61 +144,62 @@ public class ExecuteRequest extends PostgresRequest {
 
     public long insertSqlHistory(ChannelHandlerContext ctx)
     {
-        long sqlHistoryId = -1;
-        if (this.dbInstance.backendSqlHistoryConnectionPool == null)
+        Connection backendSqlHistoryConnection = null;
+        try {
+            backendSqlHistoryConnection = this.dbInstance.getSqlHistoryConn();
+        } catch (SQLException se)
+        {
+            this.dbInstance.logger.warn("[SERVER] Failed to get sql history conn.", se);
+        }
+        if (backendSqlHistoryConnection == null)
         {
             // 没有开始日志服务
-            return sqlHistoryId;
+            return -1;
         }
-        Connection backendSqlHistoryConnection = null;
-        String historySQL = "Insert INTO SQL_HISTORY(SessionId, ClientIP, SQL, SqlId, StartTime) " +
-                "VALUES(?,?,?,?, current_timestamp)";
+        long sqlHistoryId = this.dbInstance.backendSqlHistoryId.incrementAndGet();
+        String historySQL = "Insert INTO sysaux.SQL_HISTORY(ID, SessionId, ClientIP, SQL, SqlId, StartTime) " +
+                "VALUES(?, ?,?,?,?, current_timestamp)";
         try {
-            backendSqlHistoryConnection = this.dbInstance.backendSqlHistoryConnectionPool.getConnection();
             PreparedStatement preparedStatement =
-                    backendSqlHistoryConnection.prepareStatement(historySQL, Statement.RETURN_GENERATED_KEYS);
-            preparedStatement.setLong(1, getCurrentSessionId(ctx));
-            preparedStatement.setString(2, this.dbInstance.getSession(getCurrentSessionId(ctx)).clientAddress);
-            preparedStatement.setString(3, this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL);
-            preparedStatement.setLong(4, this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.get());
+                    backendSqlHistoryConnection.prepareStatement(historySQL);
+            preparedStatement.setLong(1, sqlHistoryId);
+            preparedStatement.setLong(2, getCurrentSessionId(ctx));
+            preparedStatement.setString(3, this.dbInstance.getSession(getCurrentSessionId(ctx)).clientAddress);
+            preparedStatement.setString(4, this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL);
+            preparedStatement.setLong(5, this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.get());
             preparedStatement.executeUpdate();
-            ResultSet generatedKeys = preparedStatement.getGeneratedKeys();
-            generatedKeys.next();
-            sqlHistoryId = generatedKeys.getLong(1);
-            generatedKeys.close();
             preparedStatement.close();
+            // 希望连接池能够复用数据库连接
+            this.dbInstance.backendSqlHistoryConnectionPool.add(backendSqlHistoryConnection);
         }
         catch (SQLException se)
         {
             this.dbInstance.logger.trace("[SERVER] Save to sql history failed.", se);
-        }
-        finally {
-            try {
-                if (backendSqlHistoryConnection != null && !backendSqlHistoryConnection.isClosed()) {
-                    backendSqlHistoryConnection.close();
-                }
-            }
-            catch (Exception ignored) {}
         }
         return sqlHistoryId;
     }
 
     public void updateSqlHistory(long sqlHistoryId, int sqlCode, long affectedRows, String errorMsg)
     {
-        if (this.dbInstance.backendSqlHistoryConnectionPool == null)
+        Connection backendSqlHistoryConnection = null;
+        try {
+            backendSqlHistoryConnection = this.dbInstance.getSqlHistoryConn();
+        } catch (SQLException se)
+        {
+            this.dbInstance.logger.warn("[SERVER] Failed to get sql history conn.", se);
+        }
+        if (backendSqlHistoryConnection == null)
         {
             // 没有开始日志服务
             return;
         }
-        Connection backendSqlHistoryConnection = null;
-        String historySQL = "Update SQL_HISTORY " +
+        String historySQL = "Update sysaux.SQL_HISTORY " +
                 "SET   EndTime = current_timestamp," +
                 "      SqlCode = ?, " +
                 "      AffectedRows = ?, " +
                 "      ErrorMsg = ? " +
                 "WHERE ID = ?";
         try {
-            backendSqlHistoryConnection = this.dbInstance.backendSqlHistoryConnectionPool.getConnection();
             PreparedStatement preparedStatement = backendSqlHistoryConnection.prepareStatement(historySQL);
             if (sqlCode == 0) {
                 preparedStatement.setInt(1, sqlCode);
@@ -212,18 +213,12 @@ public class ExecuteRequest extends PostgresRequest {
             preparedStatement.setLong(4, sqlHistoryId);
             preparedStatement.execute();
             preparedStatement.close();
+            // 希望连接池能够复用数据库连接
+            this.dbInstance.backendSqlHistoryConnectionPool.add(backendSqlHistoryConnection);
         }
         catch (SQLException se)
         {
             this.dbInstance.logger.warn("[SERVER] Save to sql history failed.", se);
-        }
-        finally {
-            try {
-                if (backendSqlHistoryConnection != null && !backendSqlHistoryConnection.isClosed()) {
-                    backendSqlHistoryConnection.close();
-                }
-            }
-            catch (Exception ignored) {}
         }
     }
 

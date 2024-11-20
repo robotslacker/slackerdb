@@ -202,10 +202,6 @@ public class Main {
             {
                 serverConfiguration.setInit_schema(appOptions.get("init_schema"));
             }
-            if (appOptions.containsKey("plsql_func_dir"))
-            {
-                serverConfiguration.setPlsql_func_dir(appOptions.get("plsql_func_dir"));
-            }
             if (appOptions.containsKey("sql_history"))
             {
                 serverConfiguration.setSqlHistory(appOptions.get("sql_history"));

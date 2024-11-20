@@ -151,7 +151,6 @@ public class AdminClientRequest  extends PostgresRequest {
             feedBackMsg.append(String.format("%-20s", "  SQLHistory_Dir:")).append(this.dbInstance.serverConfiguration.getSqlHistoryDir()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  SQLHistory_Port:")).append(this.dbInstance.serverConfiguration.getSqlHistoryPort()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  SQLHistory:")).append(this.dbInstance.serverConfiguration.getSqlHistory()).append("\n");
-            feedBackMsg.append(String.format("%-20s", "  PLSQL_Func_Dir:")).append(this.dbInstance.serverConfiguration.getPlsql_func_dir()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Extension_Dir:")).append(this.dbInstance.serverConfiguration.getExtension_dir()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Threads:")).append(this.dbInstance.serverConfiguration.getThreads()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Memory_Limit:")).append(this.dbInstance.serverConfiguration.getMemory_limit()).append("\n");
@@ -166,6 +165,8 @@ public class AdminClientRequest  extends PostgresRequest {
             feedBackMsg.append("SERVER USAGE: \n");
             feedBackMsg.append("  Max Connections(High water mark): ").append(this.dbInstance.connectionPool.size()).append("\n");
             feedBackMsg.append("  Active Sessions: ").append(this.dbInstance.activeSessions).append("\n");
+            feedBackMsg.append("  Connection Pool Size: ").append(this.dbInstance.connectionPool.size()).append("\n");
+            feedBackMsg.append("  SQL History Connection Pool Size: ").append(this.dbInstance.backendSqlHistoryConnectionPool.size()).append("\n");
 
             // 显示当前的数据库会话情况
             feedBackMsg.append("SERVER SESSIONS: \n");

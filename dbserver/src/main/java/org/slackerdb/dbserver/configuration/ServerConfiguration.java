@@ -25,10 +25,6 @@ public class ServerConfiguration extends Throwable {
     // 内存模式: 系统的临时目录
     // 文件模式: 等同data_dir
     private final String default_temp_dir = "";
-    // 内存模式和文件模式的默认值不同
-    // 内存模式: data
-    // 文件模式: 等同data_dir
-    private final String default_plsql_func_dir = "";
 
     //  默认使用系统的配置，即不主动配置
     private final String default_extension_dir = "";
@@ -69,7 +65,6 @@ public class ServerConfiguration extends Throwable {
 
     private String   data_dir;
     private String   temp_dir;
-    private String   plsql_func_dir;
     private String   sqlHistoryDir;
 
     private String   extension_dir;
@@ -95,7 +90,6 @@ public class ServerConfiguration extends Throwable {
 
         data_dir = default_data_dir;
         temp_dir = default_temp_dir;
-        plsql_func_dir = default_plsql_func_dir;
         sqlHistoryDir = default_sqlHistoryDir;
         extension_dir = default_extension_dir;
 
@@ -191,15 +185,6 @@ public class ServerConfiguration extends Throwable {
                     }
                     else {
                         setExtension_dir(entry.getValue().toString());
-                    }
-                    break;
-                case "PLSQL_FUNC_DIR":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        plsql_func_dir= this.default_plsql_func_dir;
-                    }
-                    else {
-                        setPlsql_func_dir(entry.getValue().toString());
                     }
                     break;
                 case "LOG":
@@ -408,26 +393,6 @@ public class ServerConfiguration extends Throwable {
         return init_schema;
     }
 
-    public String getPlsql_func_dir()
-    {
-        if (plsql_func_dir.isEmpty())
-        {
-            if (data_dir.isEmpty() || data_dir.equalsIgnoreCase(":MEMORY:"))
-            {
-                return "data";
-            }
-            else
-            {
-                return data_dir;
-            }
-        }
-        else
-        {
-            return plsql_func_dir;
-        }
-    }
-
-
     public int getSqlHistoryPort()
     {
         return sqlHistoryPort;
@@ -616,10 +581,6 @@ public class ServerConfiguration extends Throwable {
     public void setInit_schema(String pInit_schema)
     {
         init_schema = pInit_schema;
-    }
-    public void setPlsql_func_dir(String pPlsql_func_dir)
-    {
-        plsql_func_dir = pPlsql_func_dir;
     }
     public void setSqlHistory(String pSQLHistory)
     {
