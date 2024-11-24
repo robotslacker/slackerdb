@@ -18,6 +18,7 @@
         <module>common</module>
         <module>dbserver</module>
         <module>dbproxy</module>
+        <module>plsql</module>
     </modules>
 
     <dependencies>

@@ -9,6 +9,14 @@ The SQL engine and storage engine behind it are both DUCKDB.
 Slackerdb is currently has two parts:  
 * A proxy program, used to forward PG protocol to remote.  
 1.  PG protocol proxy, so that you can connect to multi db services distributed on same or different machines through a unified service port.
+2.  If necessary, you can also use this proxy to forward ordinary PG requests, which is no different.
+3.  Remote user/password/serviceName can different with proxy if you think this is what your want.
+4.  TODO: weight, max_latency, max_repl_lag support
+* A plsql parser(experimental version), you can write plsql code.
+1.  Support Begin .... Exception ... End;
+2.  Support Loop, For;
+3.  Support Declare cursor, fetch;
+4.  Support variable. let or select ... into ...;
 * A service program, used to implement PG communication protocol based on DuckDB.  
 1.  make we can view and update duckdb data from the process outside.
 2.  make we can view and update duckdb data from the network.
@@ -114,8 +122,10 @@ locale=
 # SQL execution history database name
 # Contents of sql history:
 #     Client IP/Port, Execution start time, execution duration, SQL statement, execution result code, number of affected rows
-# Storage is h2 format, you can use any sql tool to query the sql execution history.
-# default is blank, means disable this feature.
+# Storage maybe external (h2 format) or internal (duckdb format, save in database itself)
+# bundle: means sql history will save internal, you can query the data similar like other query.
+# blank:  default is blank, means disable this feature.
+# other:  means sql history will save with external h2 format, you can use any sql tool to query the sql execution history.
 sql_history=
 
 # The TCP port opened by SQL History to the outside, In order to read the SQL history execution during the running process

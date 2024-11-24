@@ -1,5 +1,5 @@
 // Generated from PlSqlParser.g4 by ANTLR 4.13.2
-package org.slackerdb.dbserver.plsql;
+package org.slackerdb.plsql;
 import org.antlr.v4.runtime.atn.*;
 import org.antlr.v4.runtime.dfa.DFA;
 import org.antlr.v4.runtime.*;

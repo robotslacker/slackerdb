@@ -1,11 +1,10 @@
-package org.slackerdb.dbserver.plsql;
+package org.slackerdb.plsql;
 
-import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CharStream;
+import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.misc.Interval;
 import org.antlr.v4.runtime.tree.ParseTree;
-import org.duckdb.DuckDBConnection;
 
 import java.math.BigInteger;
 import java.sql.*;
@@ -188,17 +187,19 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         }
         catch (RuntimeException se)
         {
-            throw se;
-        }
-        catch (Exception ex)
-        {
-            if (ctx.exception() != null)
+            if (se instanceof ParseSQLException)
             {
-                visitBegin_exception_block(ctx.begin_exception_block());
+                if (ctx.exception() != null)
+                {
+                    visitBegin_exception_block(ctx.begin_exception_block());
+                }
+                else
+                {
+                    throw se;
+                }
             }
-            else
-            {
-                throw ex;
+            else {
+                throw se;
             }
         }
         return null;
@@ -713,72 +714,72 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         }
         catch (EventTermination ignored) {}
     }
-
-    public static void main(String[] args) throws SQLException  {
-        DuckDBConnection duckDBConnection =
-                (DuckDBConnection) DriverManager.getConnection("jdbc:duckdb:", "", "");
-        duckDBConnection.createStatement().execute("Create Table tab1(num int)");
-        duckDBConnection.createStatement().execute("Create Table tab2(col1 int, col2 int)");
-        duckDBConnection.createStatement().execute("Insert into tab1(num) values(3)");
-
-        String plSql = "declare     \n" +
-                "    x1 int;    -- xxxx     \n" +
-                "    x2 int;     \n" +
-                "    i int;     \n" +
-                "    cursor c1 is select 400,500;     \n" +
-                "begin     \n" +
-                "    let x1 = 10;     \n" +
-                "    update tab1 set num = :x1;     \n" +
-                "    select 3,4 into :x1, :x2;     \n" +
-                "    begin     \n" +
-                "        let x2 = :x1;     \n" +
-                "    exception:     \n" +
-                "        let x2 = 20;     \n" +
-                "    end;     \n" +
-                "    open c1;     \n" +
-                "    loop     \n" +
-                "        fetch c1 into :x1, :x2;     \n" +
-                "        exit when c1%notfound;     \n" +
-                "        insert into tab2 values(:x1, :x2);     \n" +
-                "        let x1 = 40;     \n" +
-                "        let x2 = 50;     \n" +
-                "        insert into tab2 values(:x1, :x2);     \n" +
-                "    end loop;     \n" +
-                "    close c1;     \n" +
-                "    for :i in 1 TO 5      \n" +
-                "    loop     \n" +
-                "        if 3 > 5 then     \n" +
-                "            break;     \n" +
-                "        end if;     \n" +
-                "        pass;     \n" +
-                "    end loop;     \n" +
-                "    for :i in ['3','4','5']      \n" +
-                "    loop     \n" +
-                "        if 3 > 5 then     \n" +
-                "            break;\n" +
-                "        end if;     \n" +
-                "        pass;     \n" +
-                "    end loop;     \n" +
-                "    if 3>5 then     \n" +
-                "        pass;     \n" +
-                "    else     \n" +
-                "        pass;     \n" +
-                "    end if;     \n" +
-                "end;";
-        PlSqlVisitor.runPlSql(duckDBConnection, plSql);
-
-        Statement stmt = duckDBConnection.createStatement();
-        ResultSet rs = stmt.executeQuery("select * from tab1 order by 1");
-        while (rs.next())
-        {
-            System.out.println(rs.getInt(1));
-        }
-        rs = stmt.executeQuery("select * from tab2 order by 1");
-        while (rs.next())
-        {
-            System.out.println(rs.getInt(1) + " " + rs.getInt(2));
-        }
-        rs.close();
-        stmt.close();
-    }
+//
+//    public static void main(String[] args) throws SQLException  {
+//        DuckDBConnection duckDBConnection =
+//                (DuckDBConnection) DriverManager.getConnection("jdbc:duckdb:", "", "");
+//        duckDBConnection.createStatement().execute("Create Table tab1(num int)");
+//        duckDBConnection.createStatement().execute("Create Table tab2(col1 int, col2 int)");
+//        duckDBConnection.createStatement().execute("Insert into tab1(num) values(3)");
+//
+//        String plSql = "declare     \n" +
+//                "    x1 int;    -- xxxx     \n" +
+//                "    x2 int;     \n" +
+//                "    i int;     \n" +
+//                "    cursor c1 is select 400,500;     \n" +
+//                "begin     \n" +
+//                "    let x1 = 10;     \n" +
+//                "    update tab1 set num = :x1;     \n" +
+//                "    select 3,4 into :x1, :x2;     \n" +
+//                "    begin     \n" +
+//                "        let x2 = :x1;     \n" +
+//                "    exception:     \n" +
+//                "        let x2 = 20;     \n" +
+//                "    end;     \n" +
+//                "    open c1;     \n" +
+//                "    loop     \n" +
+//                "        fetch c1 into :x1, :x2;     \n" +
+//                "        exit when c1%notfound;     \n" +
+//                "        insert into tab2 values(:x1, :x2);     \n" +
+//                "        let x1 = 40;     \n" +
+//                "        let x2 = 50;     \n" +
+//                "        insert into tab2 values(:x1, :x2);     \n" +
+//                "    end loop;     \n" +
+//                "    close c1;     \n" +
+//                "    for :i in 1 TO 5      \n" +
+//                "    loop     \n" +
+//                "        if 3 > 5 then     \n" +
+//                "            break;     \n" +
+//                "        end if;     \n" +
+//                "        pass;     \n" +
+//                "    end loop;     \n" +
+//                "    for :i in ['3','4','5']      \n" +
+//                "    loop     \n" +
+//                "        if 3 > 5 then     \n" +
+//                "            break;\n" +
+//                "        end if;     \n" +
+//                "        pass;     \n" +
+//                "    end loop;     \n" +
+//                "    if 3>5 then     \n" +
+//                "        pass;     \n" +
+//                "    else     \n" +
+//                "        pass;     \n" +
+//                "    end if;     \n" +
+//                "end;";
+//        PlSqlVisitor.runPlSql(duckDBConnection, plSql);
+//
+//        Statement stmt = duckDBConnection.createStatement();
+//        ResultSet rs = stmt.executeQuery("select * from tab1 order by 1");
+//        while (rs.next())
+//        {
+//            System.out.println(rs.getInt(1));
+//        }
+//        rs = stmt.executeQuery("select * from tab2 order by 1");
+//        while (rs.next())
+//        {
+//            System.out.println(rs.getInt(1) + " " + rs.getInt(2));
+//        }
+//        rs.close();
+//        stmt.close();
+//    }
 }

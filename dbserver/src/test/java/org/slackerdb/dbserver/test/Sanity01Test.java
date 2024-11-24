@@ -34,6 +34,7 @@ public class Sanity01Test {
         ServerConfiguration serverConfiguration = new ServerConfiguration();
         serverConfiguration.setPort(dbPort);
         serverConfiguration.setData("mem");
+        serverConfiguration.setLog_level("INFO");
 
         // 初始化数据库
         dbInstance = new DBInstance(serverConfiguration);
@@ -568,6 +569,33 @@ public class Sanity01Test {
         rs.close();
         pgConn2.close();
 
+    }
+
+    @Test
+    void testMultiString() throws SQLException
+    {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = "CREATE TABLE testMultiString (id INTEGER)";
+        pgConn1.createStatement().execute(sql);
+
+        sql = "INSERT INTO testMultiString Values(1);INSERT INTO testMultiString Values(2);";
+        PreparedStatement pStmt = pgConn1.prepareStatement(sql);
+        pStmt.execute();
+
+        pStmt = pgConn1.prepareStatement("select Count(*), Sum(Id) from testMultiString ");
+        ResultSet rs = pStmt.executeQuery();
+        while (rs.next())
+        {
+            assert rs.getInt(1) == 2;
+            assert rs.getInt(2) == 3;
+        }
+        pStmt.close();
+
+        pgConn1.close();
     }
 
     @Test

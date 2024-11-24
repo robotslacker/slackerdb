@@ -22,6 +22,11 @@
             <artifactId>slackerdb-common</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-plsql</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!-- DuckDB 数据库驱动 -->
         <dependency>
             <groupId>org.duckdb</groupId>
@@ -34,31 +39,21 @@
             <artifactId>h2</artifactId>
             <version>2.2.224</version>
         </dependency>
+        <!-- NETTY 驱动 -->
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
             <version>4.1.115.Final</version>
         </dependency>
+        <!-- CSV解析 -->
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-csv</artifactId>
             <version>1.11.0</version>
         </dependency>
-        <dependency>
-            <groupId>org.antlr</groupId>
-            <artifactId>antlr4-runtime</artifactId>
-            <version>4.13.2</version>
-        </dependency>
     </dependencies>
-
     <build>
         <resources>
-            <resource>
-                <directory>src/main/java</directory>
-                <includes>
-                    <include>**/*.groovy</include>
-                </includes>
-            </resource>
             <resource>
                 <directory>src/main/resources</directory>
                 <includes>
@@ -106,7 +101,6 @@
                 <configuration>
                     <includes>
                         <include>**/Sanity01Test.java</include>
-                        <include>**/PlSqlTest.java</include>
                         <include>**/MultiDBInstanceTest.java</include>
                     </includes>
                     <parallel>none</parallel> <!-- Disable parallel execution -->

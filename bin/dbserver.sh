@@ -19,8 +19,8 @@ CONF_FILE="conf/dbserver.conf"
 # get script parent directory and cd.
 script_dir="$(dirname "$(readlink -f "$0")")"
 parent_dir="$(dirname "$script_dir")"
-cd "$parent_dir"
-
+cd "$parent_dir" || exit 255
+W
 # check JAR file
 if [ ! -f "$JAR_PATH" ]; then
     echo "Error: $JAR_PATH not found!"
@@ -43,8 +43,7 @@ start() {
         echo "$APP_NAME is already running (PID: $(cat "$PID_FILE"))"
     else
         echo "Starting $APP_NAME..."
-        nohup $JAVA_CMD $JAVA_OPTS -jar "$JAR_PATH" --conf "$CONF_FILE" --pid "$PID_FILE" start >> "$LOG_FILE" 2>&1 &
-        echo $! > "$PID_FILE"
+        nohup "$JAVA_CMD" "$JAVA_OPTS" -jar "$JAR_PATH" --conf "$CONF_FILE" --pid "$PID_FILE" start >> "$LOG_FILE" 2>&1 &
         echo "$APP_NAME started (PID: $(cat "$PID_FILE"))"
     fi
 }
@@ -53,7 +52,9 @@ start() {
 stop() {
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
         echo "Stopping $APP_NAME (PID: $(cat "$PID_FILE"))..."
-        $JAVA_CMD $JAVA_OPTS -jar "$JAR_PATH" --conf "$CONF_FILE" stop
+        if ! timeout 10 "$JAVA_CMD" "$JAVA_OPTS" -jar "$JAR_PATH" --conf "$CONF_FILE" stop; then
+            awk '{print "kill -9 "$1}|' < "$PID_FILE" |sh
+        fi
         echo "$APP_NAME stopped"
     else
         echo "$APP_NAME is not running"
@@ -64,7 +65,7 @@ stop() {
 status() {
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
         echo "$APP_NAME is running (PID: $(cat "$PID_FILE"))"
-        $JAVA_CMD $JAVA_OPTS -jar "$JAR_PATH" --conf "$CONF_FILE" status
+        timeout 10 "$JAVA_CMD" "$JAVA_OPTS" -jar "$JAR_PATH" --conf "$CONF_FILE" status
     else
         echo "$APP_NAME is not running"
     fi

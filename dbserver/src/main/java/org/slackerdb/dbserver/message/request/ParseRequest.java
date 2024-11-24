@@ -24,7 +24,7 @@ public class ParseRequest extends PostgresRequest {
     private String      sql = "";
     private int[]       parameterDataTypeIds;
     private static final Pattern plsqlPattern =
-            Pattern.compile("DO\\s+\\$\\$(.*)\\$\\$.*",Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+            Pattern.compile("(DO)?(\\s+)?\\$\\$(.*)\\$\\$.*",Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
 
     public ParseRequest(DBInstance pDbInstance) {
         super(pDbInstance);
@@ -99,7 +99,8 @@ public class ParseRequest extends PostgresRequest {
 
             // 记录SQL语句
             ParsedStatement parsedPrepareStatement = new ParsedStatement();
-            parsedPrepareStatement.sql = matcher.group(1).trim();
+            // 前面两个部分可能是DO，也可能是空白换行
+            parsedPrepareStatement.sql = matcher.group(3).trim();
             parsedPrepareStatement.isPlSql = true;
             this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
                     "PreparedStatement" + "-" + preparedStmtName, parsedPrepareStatement);

@@ -1,4 +1,4 @@
-package org.slackerdb.dbserver.plsql;
+package org.slackerdb.plsql;
 
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;

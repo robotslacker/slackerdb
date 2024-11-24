@@ -8,7 +8,7 @@ import org.slackerdb.dbserver.entity.PostgresTypeOids;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.*;
-import org.slackerdb.dbserver.plsql.PlSqlVisitor;
+import org.slackerdb.plsql.PlSqlVisitor;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.common.utils.Utils;
 
