@@ -241,8 +241,16 @@ public class ExecuteRequest extends PostgresRequest {
             {
                 // PLSQL处理
                 Connection conn = this.dbInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
-                PlSqlVisitor.runPlSql(conn, parsedStatement.sql);
 
+                // 运行PLSQL代码
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = parsedStatement.sql;
+                nSqlHistoryId = insertSqlHistory(ctx);
+                PlSqlVisitor.runPlSql(conn, parsedStatement.sql);
+                if (nSqlHistoryId != -1) {
+                    updateSqlHistory(nSqlHistoryId, 0, -1, "");
+                }
+
+                // 返回任务完成的消息
                 CommandComplete commandComplete = new CommandComplete(this.dbInstance);
                 commandComplete.setCommandResult("UPDATE 0");
                 commandComplete.process(ctx, request, out);
@@ -253,7 +261,6 @@ public class ExecuteRequest extends PostgresRequest {
                 // PLSQL的记录保存到SQL历史中
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = parsedStatement.sql;
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.incrementAndGet();
-                nSqlHistoryId = insertSqlHistory(ctx);
 
                 break tryBlock;
             }

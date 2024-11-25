@@ -261,7 +261,7 @@ Number
  ;
 
 Identifier
- : [a-z_] [a-z_0-9]*
+ : [a-z_] [a-z_0-9.]*
  ;
 
 String

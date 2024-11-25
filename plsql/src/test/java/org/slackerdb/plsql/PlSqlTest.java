@@ -289,4 +289,19 @@ public class PlSqlTest {
         pgConn.close();
     }
 
+    @Test
+    void testIdentifierWithDot() throws SQLException {
+        String  connectURL = "jdbc:duckdb::memory:";
+        Connection pgConn = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn.setAutoCommit(false);
+        pgConn.createStatement().execute("create table main.tab1 (id int)");
+        PlSqlVisitor.runPlSql(pgConn,
+                "Declare\n" +
+                        "   x  int;\n" +
+                        "begin\n" +
+                        "    insert into main.tab1 values(10);\n" +
+                        "end;");
+        pgConn.close();
+    }
 }

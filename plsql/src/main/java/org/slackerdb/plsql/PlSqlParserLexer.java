@@ -204,7 +204,7 @@ public class PlSqlParserLexer extends Lexer {
 		"\u0000DDdd\u0002\u0000OOoo\u0002\u0000UUuu\u0002\u0000LLll\u0002\u0000"+
 		"AAaa\u0002\u0000MMmm\u0002\u0000SSss\u0002\u0000PPpp\u0002\u0000FFff\u0003"+
 		"\u0000\t\n\f\r  \u0002\u0000CCcc\u0002\u0000RRrr\u0002\u0000HHhh\u0002"+
-		"\u0000KKkk\u0002\u0000WWww\u0003\u0000AZ__az\u0004\u000009AZ__az\u0001"+
+		"\u0000KKkk\u0002\u0000WWww\u0003\u0000AZ__az\u0005\u0000..09AZ__az\u0001"+
 		"\u0000\"\"\u0004\u0000\n\n\r\r\"\"\\\\\u0002\u0000\n\n\r\r\u0001\u0000"+
 		"\'\'\u0004\u0000\n\n\r\r\'\'\\\\\u0001\u000019\u0001\u000009\u01fb\u0000"+
 		"\u0001\u0001\u0000\u0000\u0000\u0000\u0003\u0001\u0000\u0000\u0000\u0000"+
