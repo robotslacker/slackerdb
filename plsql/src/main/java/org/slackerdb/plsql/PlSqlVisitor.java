@@ -324,6 +324,19 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         try {
             List<Object> bindObjects = new ArrayList<>();
             for (PlSqlParserParser.Sql_tokenContext tokenCtx : ctx.sql_part().sql_token()) {
+                if (tokenCtx.envIdentifier() != null) {
+                    String variableName = tokenCtx.envIdentifier().getText().trim();
+                    variableName = variableName.substring(2, variableName.length() - 1);
+                    if (!declareVariables.containsKey("__" + variableName + "__"))
+                    {
+                        throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
+                                "Variable [" + variableName + "] has not been declared." );
+                    }
+                    else
+                    {
+                        sql = sql.replace("${" + variableName + "}", String.valueOf(declareVariables.get("__" + variableName + "__")));
+                    }
+                }
                 if (tokenCtx.bindIdentifier() != null) {
                     // 记录绑定的变量, 去掉前面的：
                     String variableName = tokenCtx.bindIdentifier().getText().substring(1) ;
@@ -358,7 +371,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
     @Override
     public Void visitCursor_open_statement(PlSqlParserParser.Cursor_open_statementContext ctx)
     {
-        String cursorName = ctx.Identifier().getText().trim();
+        String cursorName = ctx.Identifier().getText().toLowerCase().trim();
         if (!declareCursors.containsKey(cursorName))
         {
             throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
@@ -383,7 +396,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
     @Override
     public Void visitCursor_close_statement(PlSqlParserParser.Cursor_close_statementContext ctx)
     {
-        String cursorName = ctx.Identifier().getText().trim();
+        String cursorName = ctx.Identifier().getText().toLowerCase().trim();
         if (!declareCursors.containsKey(cursorName))
         {
             throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
@@ -466,7 +479,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
     @Override
     public Void visitFetchstatement(PlSqlParserParser.FetchstatementContext ctx)
     {
-        String cursorName = ctx.Identifier().getText().trim();
+        String cursorName = ctx.Identifier().getText().toLowerCase().trim();
         if (!declareCursors.containsKey(cursorName))
         {
             throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
@@ -579,7 +592,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                     }
                     if (child instanceof PlSqlParserParser.Exit_when_statementContext) {
                         PlSqlParserParser.Exit_when_statementContext exitWhenCtx = (PlSqlParserParser.Exit_when_statementContext) child;
-                        String cursorName = exitWhenCtx.Identifier().getText().trim();
+                        String cursorName = exitWhenCtx.Identifier().getText().toLowerCase().trim();
                         if (!declareCursors.containsKey(cursorName)) {
                             throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
                                     "Cursor [" + cursorName + "] has not been declared.");

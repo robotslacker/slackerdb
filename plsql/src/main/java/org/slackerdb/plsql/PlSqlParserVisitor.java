@@ -362,6 +362,12 @@ public interface PlSqlParserVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitBindIdentifier(PlSqlParserParser.BindIdentifierContext ctx);
 	/**
+	 * Visit a parse tree produced by {@link PlSqlParserParser#envIdentifier}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitEnvIdentifier(PlSqlParserParser.EnvIdentifierContext ctx);
+	/**
 	 * Visit a parse tree produced by {@link PlSqlParserParser#list}.
 	 * @param ctx the parse tree
 	 * @return the visitor result

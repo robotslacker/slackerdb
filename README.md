@@ -17,6 +17,7 @@ Slackerdb is currently has two parts:
 2.  Support Loop, For;
 3.  Support Declare cursor, fetch;
 4.  Support variable. let or select ... into ...;
+5.  If necessary, you can also use this parser to execute plsql against other database.
 * A service program, used to implement PG communication protocol based on DuckDB.  
 1.  make we can view and update duckdb data from the process outside.
 2.  make we can view and update duckdb data from the network.

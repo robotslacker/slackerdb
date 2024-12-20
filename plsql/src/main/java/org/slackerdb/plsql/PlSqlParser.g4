@@ -87,7 +87,7 @@ sql_part
     ;
 
 sql_token
-    :  bindIdentifier |
+    :  bindIdentifier | envIdentifier |
        (~(SColon | EXCEPTION | LOOP | END | FOR | FETCH | EXIT | OPEN | CLOSE | PASS | IF | ELSE |ELSEIF | BREAK))
     ;
 
@@ -186,6 +186,10 @@ bindIdentifier
  : ':' Identifier
  ;
 
+envIdentifier
+ : '${' Identifier '}'
+ ;
+
 list
  : '[' exprList? ']'
  ;
@@ -238,7 +242,6 @@ EXIT: 'EXIT';
 WHEN: 'WHEN';
 INTO: 'INTO';
 NOTFOUND: 'NOTFOUND';
-IF:  'IF';
 ELSEIF: 'ELSEIF';
 ENDIF:  'END' WS+ 'IF';
 THEN:  'THEN';
@@ -263,6 +266,8 @@ Number
 Identifier
  : [a-z_] [a-z_0-9.]*
  ;
+
+IF:  'IF';
 
 String
  : ["] ( ~["\r\n\\] | '\\' ~[\r\n] )* ["]

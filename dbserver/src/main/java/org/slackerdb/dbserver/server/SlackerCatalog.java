@@ -96,6 +96,7 @@ public class SlackerCatalog {
         fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_get_userbyid(a) AS (select 'system')");
         fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_encoding_to_char(a) AS (select 'UTF8')");
         fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_tablespace_location(a) AS (select '')");
+
         Statement stmt = conn.createStatement();
         for (String sql : fakeCatalogDDLList)
         {

@@ -304,4 +304,67 @@ public class PlSqlTest {
                         "end;");
         pgConn.close();
     }
+
+    @Test
+    void testEnvIdentifier() throws SQLException {
+        String  connectURL = "jdbc:duckdb::memory:";
+        Connection pgConn = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn.setAutoCommit(false);
+        pgConn.createStatement().execute("create table main.testEnvIdentifier (id int)");
+        PlSqlVisitor.runPlSql(pgConn,
+                """
+                        Declare
+                            x   int;
+                        Begin
+                            let x = 10;
+                            insert into main.testEnvIdentifier values(${x});
+                        End;
+                        """);
+        ResultSet rs = pgConn.createStatement().executeQuery(
+                "Select count(*) recount, min(id) " +
+                        " FROM main.testEnvIdentifier");
+        if (rs.next())
+        {
+            assert rs.getInt(1) == 1;
+            assert rs.getInt(2) == 10;
+        }
+        rs.close();
+        pgConn.close();
+    }
+
+    @Test
+    void testLoopInsert() throws SQLException {
+        String  connectURL = "jdbc:duckdb::memory:";
+        Connection pgConn = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn.setAutoCommit(false);
+        PlSqlVisitor.runPlSql(pgConn,
+                """
+                        Declare
+                            Cursor mCur Is select unnest(generate_series(DATE '2020-01-01', DATE '2021-01-01', INTERVAL 1 HOUR));
+                            xx TimeStamp;
+                        Begin
+                            Create Or Replace Table testLoopInsert(ID int, time TimeStamp);
+                            Open mCur;
+                            Loop
+                                Fetch mCur into :xx;
+                                Insert into testLoopInsert(time) values(:xx);
+                                Exit When mCur%NotFound;
+                            End Loop;
+                            Close mCur;
+                        End;
+                        """);
+        ResultSet rs = pgConn.createStatement().executeQuery(
+                "Select count(*) recount, min(time) mintime, max(time) maxtime" +
+                " FROM main.testLoopInsert order by 1");
+        if (rs.next())
+        {
+            assert rs.getInt(1) == 8786;
+            assert rs.getString(2).equals("2020-01-01 00:00:00.0");
+            assert rs.getString(3).equals("2021-01-01 00:00:00.0");
+        }
+        rs.close();
+        pgConn.close();
+    }
 }

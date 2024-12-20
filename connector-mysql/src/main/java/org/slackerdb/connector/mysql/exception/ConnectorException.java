@@ -1,21 +1,21 @@
-package org.slackerdb.common.exceptions;
+package org.slackerdb.connector.mysql.exception;
 
-public class ServerException extends RuntimeException
+public class ConnectorException extends RuntimeException
 {
     private String errorCode;
     private String errorMessage;
 
-    public ServerException(Throwable cause)
+    public ConnectorException(Throwable cause)
     {
         super(cause);
     }
 
-    public ServerException(String errorMessage)
+    public ConnectorException(String errorMessage)
     {
         super(errorMessage);
     }
 
-    public ServerException(String errorCode, String errorMessage)
+    public ConnectorException(String errorCode, String errorMessage)
     {
         super(errorMessage);
         this.errorCode = errorCode;
@@ -32,7 +32,7 @@ public class ServerException extends RuntimeException
         return getMessage();
     }
 
-    public ServerException(String errorMessage, Throwable cause)
+    public ConnectorException(String errorMessage, Throwable cause)
     {
         super(errorMessage, cause);
     }

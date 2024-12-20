@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.io.StringReader;
 import java.math.BigDecimal;
 import java.sql.*;
+import java.time.LocalDateTime;
 import java.util.Calendar;
 import java.util.TimeZone;
 
@@ -45,7 +46,7 @@ public class Sanity01Test {
     }
 
     @AfterAll
-    static void tearDownAll() throws Exception{
+    static void tearDownAll() {
         System.out.println("TEST:: Will shutdown server ...");
         System.out.println("TEST:: Active sessions : " +  dbInstance.activeSessions);
         dbInstance.stop();
@@ -735,6 +736,23 @@ public class Sanity01Test {
         pgConn1.close();
 
         assert nRows == expectedResult;
+    }
+
+    @Test
+    void testSetTimeStamp() throws SQLException
+    {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.createStatement().execute("create table testSetTimeStamp(id int, game_time timestamp)");
+        PreparedStatement preparedStatement = pgConn1.prepareStatement(
+                "insert into testSetTimeStamp by name " +
+                        "select * from (select 10 as id, current_timestamp as game_time) where game_time <= ?::TIMESTAMP");
+        preparedStatement.setString(1, Timestamp.valueOf(LocalDateTime.now()).toString());
+        preparedStatement.execute();
+
     }
 }
 
