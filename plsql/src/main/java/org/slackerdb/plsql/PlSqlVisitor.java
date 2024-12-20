@@ -17,6 +17,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
     static class EventTermination extends RuntimeException {}
@@ -324,19 +326,6 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         try {
             List<Object> bindObjects = new ArrayList<>();
             for (PlSqlParserParser.Sql_tokenContext tokenCtx : ctx.sql_part().sql_token()) {
-                if (tokenCtx.envIdentifier() != null) {
-                    String variableName = tokenCtx.envIdentifier().getText().trim();
-                    variableName = variableName.substring(2, variableName.length() - 1);
-                    if (!declareVariables.containsKey("__" + variableName + "__"))
-                    {
-                        throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
-                                "Variable [" + variableName + "] has not been declared." );
-                    }
-                    else
-                    {
-                        sql = sql.replace("${" + variableName + "}", String.valueOf(declareVariables.get("__" + variableName + "__")));
-                    }
-                }
                 if (tokenCtx.bindIdentifier() != null) {
                     // 记录绑定的变量, 去掉前面的：
                     String variableName = tokenCtx.bindIdentifier().getText().substring(1) ;
@@ -352,6 +341,26 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                     sql = sql.replace(tokenCtx.bindIdentifier().getText(), "?");
                 }
             }
+            // 替换${}标记的变量
+            // 定义匹配 ${xxx} 的正则表达式
+            Pattern pattern = Pattern.compile("\\$\\{(\\w+)}");
+            while (true) {
+                Matcher matcher = pattern.matcher(sql);
+                if (matcher.find()) {
+                    String variableName = matcher.group(1);
+                    if (!declareVariables.containsKey("__" + variableName + "__")) {
+                        throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
+                                "Variable [" + variableName + "] has not been declared.");
+                    } else {
+                        sql = sql.replace("${" + variableName + "}", String.valueOf(declareVariables.get("__" + variableName + "__")));
+                    }
+                }
+                else
+                {
+                    break;
+                }
+            }
+
             PreparedStatement pStmt = this.conn.prepareStatement(sql);
             int nBindPos = 1;
             for (Object obj : bindObjects)
@@ -590,8 +599,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                     if (child instanceof PlSqlParserParser.Sql_blockContext) {
                         visitSql_block((PlSqlParserParser.Sql_blockContext) child);
                     }
-                    if (child instanceof PlSqlParserParser.Exit_when_statementContext) {
-                        PlSqlParserParser.Exit_when_statementContext exitWhenCtx = (PlSqlParserParser.Exit_when_statementContext) child;
+                    if (child instanceof PlSqlParserParser.Exit_when_statementContext exitWhenCtx) {
                         String cursorName = exitWhenCtx.Identifier().getText().toLowerCase().trim();
                         if (!declareCursors.containsKey(cursorName)) {
                             throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
@@ -685,7 +693,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
             }
             else
             {
-                System.out.println("waht ？ " + bindingObjectEntry.getValue().getClass().getName());
+                throw new ParserError("waht ？ " + bindingObjectEntry.getValue().getClass().getName());
             }
         }
         try {
@@ -714,85 +722,26 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
 
         // 创建词法分析器, 语法解析器
         PlSqlParserLexer lexer = new PlSqlParserLexer(input);
+        lexer.removeErrorListeners();
+        lexer.addErrorListener(new ParserErrorListener());
+
         CommonTokenStream tokens = new CommonTokenStream(lexer);
         PlSqlParserParser parser = new PlSqlParserParser(tokens);
+        parser.removeErrorListeners();
+        parser.addErrorListener(new ParserErrorListener());
+
         // 创建解析表达式
-        ParseTree tree = parser.plsql_script();
-
-        // 执行 visitor
-        PlSqlVisitor visitor = new PlSqlVisitor(conn, input);
-
         try {
-            visitor.visit(tree);
+            ParseTree tree = parser.plsql_script();
+            // 执行 visitor
+            PlSqlVisitor visitor = new PlSqlVisitor(conn, input);
+            try {
+                visitor.visit(tree);
+            } catch (EventTermination ignored) {
+            }
+        } catch (RuntimeException re)
+        {
+            throw new ParseSQLException("Parser Error:", re);
         }
-        catch (EventTermination ignored) {}
     }
-//
-//    public static void main(String[] args) throws SQLException  {
-//        DuckDBConnection duckDBConnection =
-//                (DuckDBConnection) DriverManager.getConnection("jdbc:duckdb:", "", "");
-//        duckDBConnection.createStatement().execute("Create Table tab1(num int)");
-//        duckDBConnection.createStatement().execute("Create Table tab2(col1 int, col2 int)");
-//        duckDBConnection.createStatement().execute("Insert into tab1(num) values(3)");
-//
-//        String plSql = "declare     \n" +
-//                "    x1 int;    -- xxxx     \n" +
-//                "    x2 int;     \n" +
-//                "    i int;     \n" +
-//                "    cursor c1 is select 400,500;     \n" +
-//                "begin     \n" +
-//                "    let x1 = 10;     \n" +
-//                "    update tab1 set num = :x1;     \n" +
-//                "    select 3,4 into :x1, :x2;     \n" +
-//                "    begin     \n" +
-//                "        let x2 = :x1;     \n" +
-//                "    exception:     \n" +
-//                "        let x2 = 20;     \n" +
-//                "    end;     \n" +
-//                "    open c1;     \n" +
-//                "    loop     \n" +
-//                "        fetch c1 into :x1, :x2;     \n" +
-//                "        exit when c1%notfound;     \n" +
-//                "        insert into tab2 values(:x1, :x2);     \n" +
-//                "        let x1 = 40;     \n" +
-//                "        let x2 = 50;     \n" +
-//                "        insert into tab2 values(:x1, :x2);     \n" +
-//                "    end loop;     \n" +
-//                "    close c1;     \n" +
-//                "    for :i in 1 TO 5      \n" +
-//                "    loop     \n" +
-//                "        if 3 > 5 then     \n" +
-//                "            break;     \n" +
-//                "        end if;     \n" +
-//                "        pass;     \n" +
-//                "    end loop;     \n" +
-//                "    for :i in ['3','4','5']      \n" +
-//                "    loop     \n" +
-//                "        if 3 > 5 then     \n" +
-//                "            break;\n" +
-//                "        end if;     \n" +
-//                "        pass;     \n" +
-//                "    end loop;     \n" +
-//                "    if 3>5 then     \n" +
-//                "        pass;     \n" +
-//                "    else     \n" +
-//                "        pass;     \n" +
-//                "    end if;     \n" +
-//                "end;";
-//        PlSqlVisitor.runPlSql(duckDBConnection, plSql);
-//
-//        Statement stmt = duckDBConnection.createStatement();
-//        ResultSet rs = stmt.executeQuery("select * from tab1 order by 1");
-//        while (rs.next())
-//        {
-//            System.out.println(rs.getInt(1));
-//        }
-//        rs = stmt.executeQuery("select * from tab2 order by 1");
-//        while (rs.next())
-//        {
-//            System.out.println(rs.getInt(1) + " " + rs.getInt(2));
-//        }
-//        rs.close();
-//        stmt.close();
-//    }
 }

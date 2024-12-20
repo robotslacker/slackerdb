@@ -87,7 +87,7 @@ sql_part
     ;
 
 sql_token
-    :  bindIdentifier | envIdentifier | IF |
+    :  bindIdentifier | IF |
        (~(SColon | EXCEPTION | LOOP | END | FOR | FETCH | EXIT | OPEN | CLOSE | PASS | IF | ELSE |ELSEIF | BREAK))
     ;
 
@@ -186,10 +186,6 @@ bindIdentifier
  : ':' Identifier
  ;
 
-envIdentifier
- : '${' Identifier '}'
- ;
-
 list
  : '[' exprList? ']'
  ;
@@ -264,7 +260,7 @@ Number
  ;
 
 Identifier
- : [a-z_] [a-z_0-9.]*
+ : ([a-z_] [a-z_0-9.]* ) | '${' [a-z_] [a-z_0-9.]* '}'
  ;
 
 String

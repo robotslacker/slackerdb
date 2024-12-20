@@ -313,23 +313,26 @@ public class PlSqlTest {
         Connection pgConn = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
-        pgConn.createStatement().execute("create table main.testEnvIdentifier (id int)");
+        pgConn.createStatement().execute("create table main.testEnvIdentifier (id int, col1 text)");
         PlSqlVisitor.runPlSql(pgConn,
                 """
                         Declare
                             x   int;
+                            y   text;
                         Begin
                             let x = 10;
-                            insert into main.testEnvIdentifier values(${x});
+                            let y = 'Hello World';
+                            insert into main.testEnvIdentifier values(${x}, '${y}');
                         End;
                         """);
         ResultSet rs = pgConn.createStatement().executeQuery(
-                "Select count(*) recount, min(id) " +
+                "Select count(*) recount, min(id),min(col1) " +
                         " FROM main.testEnvIdentifier");
         if (rs.next())
         {
             assert rs.getInt(1) == 1;
             assert rs.getInt(2) == 10;
+            assert rs.getString(3).equals("Hello World");
         }
         rs.close();
         pgConn.close();
