@@ -87,7 +87,7 @@ sql_part
     ;
 
 sql_token
-    :  bindIdentifier | envIdentifier |
+    :  bindIdentifier | envIdentifier | IF |
        (~(SColon | EXCEPTION | LOOP | END | FOR | FETCH | EXIT | OPEN | CLOSE | PASS | IF | ELSE |ELSEIF | BREAK))
     ;
 
@@ -252,7 +252,7 @@ RETURN: 'RETURN';
 EXCEPTION: 'EXCEPTION';
 PASS:  'PASS';
 IN: 'in';
-
+IF:  'IF';
 
 Bool
  : 'true'
@@ -266,8 +266,6 @@ Number
 Identifier
  : [a-z_] [a-z_0-9.]*
  ;
-
-IF:  'IF';
 
 String
  : ["] ( ~["\r\n\\] | '\\' ~[\r\n] )* ["]

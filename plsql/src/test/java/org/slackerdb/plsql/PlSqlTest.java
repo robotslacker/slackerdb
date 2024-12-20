@@ -132,50 +132,52 @@ public class PlSqlTest {
         pgConn.createStatement().execute("Insert into tab1(num) values(3)");
 
         // 执行PLSQL
-        String plSql = "declare     \n" +
-                "    x1 int;    -- xxxx     \n" +
-                "    x2 int;     \n" +
-                "    i int;     \n" +
-                "    cursor c1 is select 400,500;     \n" +
-                "begin     \n" +
-                "    let x1 = 10;     \n" +
-                "    update tab1 set num = :x1;     \n" +
-                "    select 3,4 into :x1, :x2;     \n" +
-                "    begin     \n" +
-                "        let x2 = :x1;     \n" +
-                "    exception:     \n" +
-                "        let x2 = 20;     \n" +
-                "    end;     \n" +
-                "    open c1;     \n" +
-                "    loop     \n" +
-                "        fetch c1 into :x1, :x2;     \n" +
-                "        exit when c1%notfound;     \n" +
-                "        insert into tab2 values(:x1, :x2);     \n" +
-                "        let x1 = 40;     \n" +
-                "        let x2 = 50;     \n" +
-                "        insert into tab2 values(:x1, :x2);     \n" +
-                "    end loop;     \n" +
-                "    close c1;     \n" +
-                "    for :i in 1 TO 5      \n" +
-                "    loop     \n" +
-                "        if 3 > 5 then     \n" +
-                "            break;     \n" +
-                "        end if;     \n" +
-                "        pass;     \n" +
-                "    end loop;     \n" +
-                "    for :i in ['3','4','5']      \n" +
-                "    loop     \n" +
-                "        if 3 > 5 then     \n" +
-                "            break;\n" +
-                "        end if;     \n" +
-                "        pass;     \n" +
-                "    end loop;     \n" +
-                "    if 3>5 then     \n" +
-                "        pass;     \n" +
-                "    else     \n" +
-                "        pass;     \n" +
-                "    end if;     \n" +
-                "end;";
+        String plSql = """
+                declare
+                    x1 int;    -- xxxx
+                    x2 int;
+                    i int;
+                    cursor c1 is select 400,500;
+                begin
+                    let x1 = 10;
+                    update tab1 set num = :x1;
+                    select 3,4 into :x1, :x2;
+                    begin
+                        let x2 = :x1;
+                    exception:
+                        let x2 = 20;
+                    end;
+                    open c1;
+                    loop
+                        fetch c1 into :x1, :x2;
+                        exit when c1%notfound;
+                        insert into tab2 values(:x1, :x2);
+                        let x1 = 40;
+                        let x2 = 50;
+                        insert into tab2 values(:x1, :x2);
+                    end loop;
+                    close c1;
+                    for :i in 1 TO 5
+                    loop
+                        if 3 > 5 then
+                            break;
+                        end if;
+                        pass;
+                    end loop;
+                    for :i in ['3','4','5']
+                    loop
+                        if 3 > 5 then
+                            break;
+                        end if;
+                        pass;
+                    end loop;
+                    if 3>5 then
+                        pass;
+                    else
+                        pass;
+                    end if;
+                end;
+                """;
         PlSqlVisitor.runPlSql(pgConn, plSql);
 
         Statement stmt = pgConn.createStatement();
