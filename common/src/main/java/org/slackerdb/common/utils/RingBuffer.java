@@ -5,10 +5,11 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class RingBuffer<T> {
-    private final Object[] buffer;
+    private Object[] buffer;
     private int head = 0;
     private int tail = 0;
     private int size = 0;
+    private int capacity = 0;
 
     private final Lock lock = new ReentrantLock();
     private final Condition notEmpty = lock.newCondition();
@@ -16,6 +17,7 @@ public class RingBuffer<T> {
 
     public RingBuffer(int capacity) {
         this.buffer = new Object[capacity];
+        this.capacity = capacity;
     }
 
     public int size()
@@ -23,6 +25,14 @@ public class RingBuffer<T> {
         return this.size;
     }
 
+    public void clear()
+    {
+        this.head = 0;
+        this.tail = 0;
+        this.size = 0;
+        this.buffer = new Object[this.capacity];
+
+    }
     public void put(T item) {
         lock.lock();
         try {

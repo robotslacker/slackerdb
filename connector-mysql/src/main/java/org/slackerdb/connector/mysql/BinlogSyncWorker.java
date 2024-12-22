@@ -11,6 +11,7 @@ import net.sf.jsqlparser.statement.create.table.CreateTable;
 import net.sf.jsqlparser.statement.create.table.Index;
 import net.sf.jsqlparser.statement.drop.Drop;
 import net.sf.jsqlparser.statement.truncate.Truncate;
+import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.connector.mysql.exception.ConnectorException;
 
 import java.io.IOException;
@@ -27,16 +28,18 @@ public class BinlogSyncWorker extends Thread
     private String binlogFileName;
 
     private Connection sourceDbConnection;
+    private Connection targetDBConnection;
 
     // 记录源表和目标表的映射关系，避免反复的正则计算
     // SourceSchemaName.SourceTableName, TableInfo
     private final Map<String, TableInfo> tableInfoCacheByName = new HashMap<>();
     // 记录表的ID信息和基础信息之间的关系
     // Table_id, SourceSchemaName.SourceTableName
+    // 这些信息只在一个binlog文件内有效，一旦ROTATE，之前的记录就没有了意义
     private final Map<Long, String> tableInfoCacheById = new HashMap<>();
     // 记录所有需要全量同步的数据
     // SourceSchemaName.SourceTableName, FullSyncWorker
-    private final Map<String, TableFullSyncWorker> tableFullSyncWorkers = new HashMap<>();
+    private TableFullSyncScheduler tableFullSyncScheduler = new TableFullSyncScheduler();
 
     // 记录每个任务所对应的处理实例
     private final Map<String, BinLogConsumer> binLogConsumerMap = new HashMap<>();
@@ -45,6 +48,7 @@ public class BinlogSyncWorker extends Thread
     {
         try {
             this.sourceDbConnection = connectorHandler.newSourceDbConnection();
+            this.targetDBConnection = connectorHandler.newTargetDBConnection();
         }
         catch (SQLException sqlException)
         {
@@ -186,6 +190,18 @@ public class BinlogSyncWorker extends Thread
                         }
                         tableInfo.targetTableDDL = migrateMySQLDDLToDuckDDL(parserDDLStatement, tableInfo.targetSchemaName + "." + tableInfo.targetTableName);
                         tableInfo.targetTemporaryTableDDL = generateDuckTemporaryTableDDL(parserDDLStatement, tableInfo.targetTableName + "_$$");
+
+                        // 如果目标表不存在，则需要创建该表，并做全量同步
+                        if (!DuckdbUtil.isTableExists(this.targetDBConnection, tableInfo.targetSchemaName, tableInfo.targetTableName))
+                        {
+                            logger.trace("[MYSQL-BINLOG] Target {}.{} does not exist, will create then full sync it.", tableInfo.targetSchemaName, tableInfo.targetTableName);
+                            Statement statement = this.targetDBConnection.createStatement();
+                            statement.execute(tableInfo.targetTableDDL);
+                            statement.close();
+                            tableInfo.fullSyncStatus = true;
+                            // 需要提交事务来保证后续数据的消费
+                            this.targetDBConnection.commit();
+                        }
                     }
                     break;
                 }
@@ -199,16 +215,41 @@ public class BinlogSyncWorker extends Thread
 
     private void processBinaryLogEvent(Event event)
     {
-        logger.trace("Received BinLogEvent {} {}", event.getHeader().getEventType(), event.getData().toString());
+        logger.trace("[MYSQL-BINLOG] Received BinLogEvent {} {}", event.getHeader().getEventType(), event.getData().toString());
         try {
             switch (event.getHeader().getEventType()) {
-                case FORMAT_DESCRIPTION, GTID, XID -> {
-                    // 暂时不处理
-                }
+                case FORMAT_DESCRIPTION, GTID, XID, PREVIOUS_GTIDS -> // 暂时不处理
+                        logger.trace("[MYSQL-BINLOG] Skip event {}.", event.getHeader().getEventType());
                 case ROTATE -> {
                     RotateEventData rotateEventData = event.getData();
+
                     // 记录新的binlog文件名称
                     this.binlogFileName = rotateEventData.getBinlogFilename();
+                    // 必须等当前所有事件都消费完毕（包括涉及到的全量同步），否则无法跳转到下一个binlog文件
+                    while (true) {
+                        if (!tableFullSyncScheduler.tableFullSyncWorkers.isEmpty())
+                        {
+                            logger.info("[MYSQL-BINLOG] Binlog rotate is waiting full sync thread ... {}:{}",
+                                    rotateEventData.getBinlogFilename(), tableFullSyncScheduler.tableFullSyncWorkers.size());
+                            Sleeper.sleep(1000L);
+                            continue;
+                        }
+                        int queueSize = 0;
+                        for (BinLogConsumer binLogConsumer : this.binLogConsumerMap.values()) {
+                            queueSize = queueSize + binLogConsumer.consumeQueue.size();
+                        }
+                        if (queueSize == 0)
+                        {
+                            logger.info("[MYSQL-BINLOG] Binlog has switched to {}.", rotateEventData.getBinlogFilename());
+                            break;
+                        }
+                        else
+                        {
+                            logger.info("[MYSQL-BINLOG] Binlog rotate is waiting consume thread ... {}:{}",
+                                    rotateEventData.getBinlogFilename(), queueSize);
+                            Sleeper.sleep(1000L);
+                        }
+                    }
                 }
                 case QUERY -> {
                     QueryEventData queryEventData = event.getData();
@@ -305,34 +346,19 @@ public class BinlogSyncWorker extends Thread
                         }
                     }
 
-                    if (tableFullSyncWorkers.containsKey(sourceSchema + "." + sourceObject))
+                    if (tableFullSyncScheduler.tableFullSyncWorkers.containsKey(sourceSchema + "." + sourceObject))
                     {
                         // 如果这个表已经正在全量同步
-                        TableFullSyncWorker tableFullSyncWorker = tableFullSyncWorkers.get(sourceSchema + "." + sourceObject);
-                        if (tableFullSyncWorker.syncCompleted)
-                        {
-                            // 消费可能存在的剩余内容
-                            while (true) {
-                                // 推给消费者
-                                RowEventData rowEventDataQueue = tableFullSyncWorker.cachedBinLogEvents.take(0);
-                                if (rowEventDataQueue == null)
-                                {
-                                    break;
-                                }
-                                this.binLogConsumerMap.get(tableInfo.syncTaskName).consumeQueue.put(rowEventDataQueue);
-                            }
-                            tableFullSyncWorkers.remove(sourceSchema + "." + sourceObject);
-                            // 更新缓存信息
-                            tableInfoCacheById.put(tableInfo.sourceTableId, sourceSchema + "." + sourceObject);
-                            tableInfoCacheByName.put(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName, tableInfo);
-                            // 本次事件推给消费者
-                            this.binLogConsumerMap.get(tableInfo.syncTaskName).consumeQueue.put(rowEventData);
-                        }
-                        else
-                        {
-                            // 全量同步还没有完成，暂时无法处理该事件，积压到队列中处理
-                            tableFullSyncWorker.pushRowEvent(rowEventData);
-                        }
+                        TableFullSyncWorker tableFullSyncWorker = tableFullSyncScheduler.tableFullSyncWorkers.get(sourceSchema + "." + sourceObject);
+                        // 无论这个表之前的状态是什么，只要收到DDL命令，之前的全量同步都已经毫无意义，需要停止
+                        logger.trace("[MYSQL-BINLOG] Will abort full sync {}.{}/{}, because new DDL has came.",
+                                tableInfo.sourceTableId, tableInfo.sourceTableName, tableInfo.sourceTableId
+                                );
+                        tableFullSyncWorker.abort();
+                        tableFullSyncScheduler.tableFullSyncWorkers.remove(sourceSchema + "." + sourceObject);
+                        tableInfoCacheById.put(tableInfo.sourceTableId, sourceSchema + "." + sourceObject);
+                        tableInfoCacheByName.put(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName, tableInfo);
+                        this.binLogConsumerMap.get(tableInfo.syncTaskName).consumeQueue.put(rowEventData);
                     }
                     else
                     {
@@ -364,30 +390,11 @@ public class BinlogSyncWorker extends Thread
                     rowEventData.binlogFileName = this.binlogFileName;
                     rowEventData.binLogPosition = ((EventHeaderV4)event.getHeader()).getNextPosition();
                     rowEventData.binlogTimestamp = event.getHeader().getTimestamp();
-                    if (tableFullSyncWorkers.containsKey(sourceSchema + "." + sourceObject))
+                    if (tableFullSyncScheduler.tableFullSyncWorkers.containsKey(sourceSchema + "." + sourceObject))
                     {
-                        // 如果这个表已经正在全量同步
-                        TableFullSyncWorker tableFullSyncWorker = tableFullSyncWorkers.get(sourceSchema + "." + sourceObject);
-                        if (tableFullSyncWorker.syncCompleted)
-                        {
-                            // 消费可能存在的剩余内容
-                            while (true) {
-                                // 推给消费者
-                                RowEventData rowEventDataQueue = tableFullSyncWorker.cachedBinLogEvents.take(0);
-                                if (rowEventDataQueue == null)
-                                {
-                                    break;
-                                }
-                                this.binLogConsumerMap.get(tableInfo.syncTaskName).consumeQueue.put(rowEventDataQueue);
-                            }
-                            tableFullSyncWorkers.remove(sourceSchema + "." + sourceObject);
-                            tableInfo.fullSyncStatus = false;
-                        }
-                        else
-                        {
-                            // 全量同步还没有完成，暂时无法处理该事件，积压到队列中处理
-                            tableFullSyncWorker.pushRowEvent(rowEventData);
-                        }
+                        TableFullSyncWorker tableFullSyncWorker = tableFullSyncScheduler.tableFullSyncWorkers.get(sourceSchema + "." + sourceObject);
+                        // 全量同步还没有完成，暂时无法处理该事件，积压到队列中处理
+                        tableFullSyncWorker.pushRowEvent(rowEventData);
                     }
                     else
                     {
@@ -400,8 +407,7 @@ public class BinlogSyncWorker extends Thread
                             tableFullSyncWorker.setLogger(this.logger);
                             tableFullSyncWorker.connectorHandler = this.connectorHandler;
                             tableFullSyncWorker.tableInfo = tableInfo;
-                            tableFullSyncWorker.start();
-                            tableFullSyncWorkers.put(sourceSchema + "." + sourceObject, tableFullSyncWorker);
+                            tableFullSyncScheduler.addWorker(sourceSchema + "." + sourceObject, tableFullSyncWorker);
                             // 本次事件也放到消费队列中去完成
                             tableFullSyncWorker.pushRowEvent(rowEventData);
                         }
@@ -441,32 +447,12 @@ public class BinlogSyncWorker extends Thread
                     rowEventData.binLogPosition = ((EventHeaderV4)event.getHeader()).getNextPosition();
                     rowEventData.binlogTimestamp = event.getHeader().getTimestamp();
 
-                    if (tableFullSyncWorkers.containsKey(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName))
+                    if (tableFullSyncScheduler.tableFullSyncWorkers.containsKey(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName))
                     {
-                        // 如果这个表已经正在全量同步
-                        TableFullSyncWorker tableFullSyncWorker = tableFullSyncWorkers.get(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName);
-                        if (tableFullSyncWorker.syncCompleted)
-                        {
-                            // 消费可能存在的剩余内容
-                            while (true) {
-                                // 推给消费者
-                                RowEventData rowEventDataQueue = tableFullSyncWorker.cachedBinLogEvents.take(0);
-                                if (rowEventDataQueue == null)
-                                {
-                                    break;
-                                }
-                                this.binLogConsumerMap.get(tableInfo.syncTaskName).consumeQueue.put(rowEventDataQueue);
-                            }
-                            tableFullSyncWorkers.remove(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName);
-                            tableInfo.fullSyncStatus = false;
-                            // 本次事件推给消费者
-                            this.binLogConsumerMap.get(tableInfo.syncTaskName).consumeQueue.put(rowEventData);
-                        }
-                        else
-                        {
-                            // 全量同步还没有完成，暂时无法处理该事件，积压到队列中处理
-                            tableFullSyncWorker.pushRowEvent(rowEventData);
-                        }
+                        TableFullSyncWorker tableFullSyncWorker =
+                                tableFullSyncScheduler.tableFullSyncWorkers.get(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName);
+                        // 全量同步还没有完成，暂时无法处理该事件，积压到队列中处理
+                        tableFullSyncWorker.pushRowEvent(rowEventData);
                     }
                     else
                     {
@@ -505,32 +491,12 @@ public class BinlogSyncWorker extends Thread
                     rowEventData.binLogPosition = ((EventHeaderV4)event.getHeader()).getNextPosition();
                     rowEventData.binlogTimestamp = event.getHeader().getTimestamp();
 
-                    if (tableFullSyncWorkers.containsKey(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName))
+                    if (tableFullSyncScheduler.tableFullSyncWorkers.containsKey(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName))
                     {
-                        // 如果这个表已经正在全量同步
-                        TableFullSyncWorker tableFullSyncWorker = tableFullSyncWorkers.get(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName);
-                        if (tableFullSyncWorker.syncCompleted)
-                        {
-                            // 消费可能存在的剩余内容
-                            while (true) {
-                                // 推给消费者
-                                RowEventData rowEventDataQueue = tableFullSyncWorker.cachedBinLogEvents.take(0);
-                                if (rowEventDataQueue == null)
-                                {
-                                    break;
-                                }
-                                this.binLogConsumerMap.get(tableInfo.syncTaskName).consumeQueue.put(rowEventDataQueue);
-                            }
-                            tableFullSyncWorkers.remove(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName);
-                            tableInfo.fullSyncStatus = false;
-                            // 本次事件推给消费者
-                            this.binLogConsumerMap.get(tableInfo.syncTaskName).consumeQueue.put(rowEventData);
-                        }
-                        else
-                        {
-                            // 全量同步还没有完成，暂时无法处理该事件，积压到队列中处理
-                            tableFullSyncWorker.pushRowEvent(rowEventData);
-                        }
+                        TableFullSyncWorker tableFullSyncWorker =
+                                tableFullSyncScheduler.tableFullSyncWorkers.get(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName);
+                        // 全量同步还没有完成，暂时无法处理该事件，积压到队列中处理
+                        tableFullSyncWorker.pushRowEvent(rowEventData);
                     }
                     else
                     {
@@ -571,32 +537,12 @@ public class BinlogSyncWorker extends Thread
                     rowEventData.binLogPosition = ((EventHeaderV4)event.getHeader()).getNextPosition();
                     rowEventData.binlogTimestamp = event.getHeader().getTimestamp();
 
-                    if (tableFullSyncWorkers.containsKey(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName))
+                    if (tableFullSyncScheduler.tableFullSyncWorkers.containsKey(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName))
                     {
-                        // 如果这个表已经正在全量同步
-                        TableFullSyncWorker tableFullSyncWorker = tableFullSyncWorkers.get(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName);
-                        if (tableFullSyncWorker.syncCompleted)
-                        {
-                            // 消费可能存在的剩余内容
-                            while (true) {
-                                // 推给消费者
-                                RowEventData rowEventDataQueue = tableFullSyncWorker.cachedBinLogEvents.take(0);
-                                if (rowEventDataQueue == null)
-                                {
-                                    break;
-                                }
-                                this.binLogConsumerMap.get(tableInfo.syncTaskName).consumeQueue.put(rowEventDataQueue);
-                            }
-                            tableFullSyncWorkers.remove(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName);
-                            tableInfo.fullSyncStatus = false;
-                            // 本次事件推给消费者
-                            this.binLogConsumerMap.get(tableInfo.syncTaskName).consumeQueue.put(rowEventData);
-                        }
-                        else
-                        {
-                            // 全量同步还没有完成，暂时无法处理该事件，积压到队列中处理
-                            tableFullSyncWorker.pushRowEvent(rowEventData);
-                        }
+                        TableFullSyncWorker tableFullSyncWorker =
+                                tableFullSyncScheduler.tableFullSyncWorkers.get(tableInfo.sourceSchemaName + "." + tableInfo.sourceTableName);
+                        // 全量同步还没有完成，暂时无法处理该事件，积压到队列中处理
+                        tableFullSyncWorker.pushRowEvent(rowEventData);
                     }
                     else
                     {
@@ -644,6 +590,10 @@ public class BinlogSyncWorker extends Thread
         // 添加事件处理回调函数
         BinaryLogClient binaryLogClient = connectorHandler.binlogClient;
         binaryLogClient.registerEventListener(this::processBinaryLogEvent);
+
+        // 启动新的线程用来检查全量同步的状态，并维护全量同步的信息
+        tableFullSyncScheduler.setLogger(logger);
+        tableFullSyncScheduler.start();
 
         try {
             // 处理逻辑为一个生产者，负责监听消息，若干消费者负责处理消息

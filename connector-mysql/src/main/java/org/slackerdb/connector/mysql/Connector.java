@@ -122,6 +122,10 @@ public class Connector {
     public void validateBinlogFile(Connection sourceConnection, String lastBinlogFileName, long lastBinlogPosition)
             throws ConnectorMysqlBinlogOffsetError, SQLException
     {
+        if (lastBinlogFileName.isEmpty() && lastBinlogPosition == 0)
+        {
+            return;
+        }
         Statement statement = null;
         ResultSet rs = null;
         try {
@@ -147,7 +151,7 @@ public class Connector {
             statement.close();
             if (!fileExists) {
                 throw new ConnectorMysqlBinlogNotExist(
-                        String.format("lastBinlogFileName %s does not exist.", lastBinlogFileName));
+                        String.format("lastBinlogFileName [%s] does not exist.", lastBinlogFileName));
             }
         }
         finally {

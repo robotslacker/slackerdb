@@ -98,6 +98,16 @@ public class ConnectorTask {
         this.targetSchemaRule = pTargetSchemaRule;
     }
 
+    public String getSourceSchemaRule()
+    {
+        return sourceSchemaRule;
+    }
+
+    public String getSourceTableRule()
+    {
+        return sourceTableRule;
+    }
+
     public void setTargetTableRule(String pTargetTableRule)
     {
         this.targetTableRule = pTargetTableRule;
