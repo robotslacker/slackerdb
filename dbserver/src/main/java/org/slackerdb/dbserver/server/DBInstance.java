@@ -299,20 +299,21 @@ public class DBInstance {
                         Statement sqlHistoryStmt = backendSqlHistoryConn.createStatement();
                         sqlHistoryStmt.execute("CREATE SCHEMA IF NOT EXISTS sysaux");
                         sqlHistoryStmt.execute(
-                                "CREATE TABLE IF NOT EXISTS SYSAUX.SQL_HISTORY\n" +
-                                        "(\n" +
-                                        "    ID             BIGINT PRIMARY KEY,\n" +
-                                        "    SessionID      INT,\n" +
-                                        "    ClientIP       TEXT,\n" +
-                                        "    StartTime      TIMESTAMP,\n" +
-                                        "    EndTime        TIMESTAMP,\n" +
-                                        "    Elapsed        INT GENERATED ALWAYS AS (DATEDIFF('SECOND', StartTime, EndTime)),\n" +
-                                        "    SqlID          INT,\n" +
-                                        "    SQL            TEXT,\n" +
-                                        "    SqlCode        INT,\n" +
-                                        "    AffectedRows   BIGINT,\n" +
-                                        "    ErrorMsg       TEXT\n" +
-                                        ");");
+                                """
+                                        CREATE TABLE IF NOT EXISTS SYSAUX.SQL_HISTORY
+                                        (
+                                            ID             BIGINT PRIMARY KEY,
+                                            SessionID      INT,
+                                            ClientIP       TEXT,
+                                            StartTime      TIMESTAMP,
+                                            EndTime        TIMESTAMP,
+                                            Elapsed        INT GENERATED ALWAYS AS (DATEDIFF('SECOND', StartTime, EndTime)),
+                                            SqlID          INT,
+                                            SQL            TEXT,
+                                            SqlCode        INT,
+                                            AffectedRows   BIGINT,
+                                            ErrorMsg       TEXT
+                                        );""");
                         sqlHistoryStmt.close();
                         logger.info("[SERVER] Backend sql history database opened (bundle mode).");
                     }
@@ -330,20 +331,21 @@ public class DBInstance {
                         }
                         stmt = backendSqlHistoryConn.createStatement();
                         stmt.execute("CREATE SCHEMA IF NOT EXISTS sysaux");
-                        String sql = "CREATE TABLE IF NOT EXISTS sysaux.SQL_HISTORY\n " +
-                                "(\n" +
-                                "    ID             BIGINT PRIMARY KEY,\n" +
-                                "    SessionID      INT,\n" +
-                                "    ClientIP       TEXT,\n" +
-                                "    StartTime      TIMESTAMP,\n" +
-                                "    EndTime        TIMESTAMP,\n" +
-                                "    Elapsed        INT GENERATED ALWAYS AS (DATEDIFF('SECOND', StartTime, EndTime)), \n" +
-                                "    SqlID          INT,\n" +
-                                "    SQL            TEXT,\n" +
-                                "    SqlCode        INT,\n" +
-                                "    AffectedRows   BIGINT\n," +
-                                "    ErrorMsg       TEXT\n" +
-                                ")";
+                        String sql = """
+                                CREATE TABLE IF NOT EXISTS sysaux.SQL_HISTORY
+                                (
+                                    ID             BIGINT PRIMARY KEY,
+                                    SessionID      INT,
+                                    ClientIP       TEXT,
+                                    StartTime      TIMESTAMP,
+                                    EndTime        TIMESTAMP,
+                                    Elapsed        INT GENERATED ALWAYS AS (DATEDIFF('SECOND', StartTime, EndTime)),\s
+                                    SqlID          INT,
+                                    SQL            TEXT,
+                                    SqlCode        INT,
+                                    AffectedRows   BIGINT,
+                                    ErrorMsg       TEXT
+                                )""";
                         stmt.execute(sql);
                         stmt.close();
 
@@ -362,6 +364,17 @@ public class DBInstance {
                             }
                         }
                     }
+
+                    // 获取之前最大的SqlHistory的ID
+                    String sql = "Select Max(ID) From sysaux.SQL_HISTORY";
+                    Statement statement = backendSqlHistoryConn.createStatement();
+                    ResultSet resultSet = statement.executeQuery(sql);
+                    if (resultSet.next())
+                    {
+                        this.backendSqlHistoryId.set(resultSet.getLong(1) + 1);
+                    }
+                    resultSet.close();
+                    statement.close();
 
                     // 希望连接池能够复用数据库连接
                     this.backendSqlHistoryConnectionPool.add(backendSqlHistoryConn);

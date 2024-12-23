@@ -372,7 +372,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         }
         catch (SQLException se)
         {
-            throw new ParseSQLException("SQL Error: [" + sql + "]\n", se);
+            throw new ParseSQLException("SQL Error: [" + sql + "] (" + se.getMessage() + ")", se);
         }
         return null;
     }
@@ -739,7 +739,12 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                 visitor.visit(tree);
             } catch (EventTermination ignored) {
             }
-        } catch (RuntimeException re)
+        }
+        catch (ParseSQLException parseSQLException)
+        {
+            throw parseSQLException;
+        }
+        catch (RuntimeException re)
         {
             throw new ParseSQLException("Parser Error:", re);
         }

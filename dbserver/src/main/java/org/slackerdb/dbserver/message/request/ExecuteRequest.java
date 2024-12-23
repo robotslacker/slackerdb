@@ -8,6 +8,7 @@ import org.slackerdb.dbserver.entity.PostgresTypeOids;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.*;
+import org.slackerdb.plsql.ParseSQLException;
 import org.slackerdb.plsql.PlSqlVisitor;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.common.utils.Utils;
@@ -245,6 +246,7 @@ public class ExecuteRequest extends PostgresRequest {
                 // 运行PLSQL代码
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = parsedStatement.sql;
                 nSqlHistoryId = insertSqlHistory(ctx);
+
                 PlSqlVisitor.runPlSql(conn, parsedStatement.sql);
                 if (nSqlHistoryId != -1) {
                     updateSqlHistory(nSqlHistoryId, 0, -1, "");
@@ -488,6 +490,23 @@ public class ExecuteRequest extends PostgresRequest {
             if (nSqlHistoryId != -1)
             {
                 updateSqlHistory(nSqlHistoryId, 0, nRowsAffected, "");
+            }
+        }
+        catch (ParseSQLException e)
+        {
+            // 生成一个错误消息
+            ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+            errorResponse.setErrorFile("ExecuteRequest");
+            errorResponse.setErrorResponse("PLSQL-ERROR: -1", e.getMessage());
+            errorResponse.process(ctx, request, out);
+
+            // 发送并刷新返回消息
+            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+            // 更新SQL历史信息
+            if (nSqlHistoryId != -1)
+            {
+                updateSqlHistory(nSqlHistoryId, -1, nRowsAffected, e.getMessage());
             }
         }
         catch (SQLException e) {
