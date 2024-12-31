@@ -68,6 +68,8 @@ public class ExecuteRequest extends PostgresRequest {
             {
                 String columnTypeName = rsmd.getColumnTypeName(i);
                 switch (columnTypeName.toUpperCase()) {
+                    case "TINYINT":
+                    case "SMALLINT":
                     case "INTEGER":
                         column.columnLength = 4;
                         column.columnValue = Utils.int32ToBytes(rs.getInt(i));

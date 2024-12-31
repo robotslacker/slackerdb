@@ -35,7 +35,7 @@ public class Sanity01Test {
         ServerConfiguration serverConfiguration = new ServerConfiguration();
         serverConfiguration.setPort(dbPort);
         serverConfiguration.setData("mem");
-        serverConfiguration.setLog_level("INFO");
+        serverConfiguration.setLog_level("TRACE");
 
         // 初始化数据库
         dbInstance = new DBInstance(serverConfiguration);
@@ -271,6 +271,7 @@ public class Sanity01Test {
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
 
+        pgConn1.rollback();
         pgConn1.createStatement().execute("Create TABLE testFailedHybridSQL (id int)");
         pgConn1.commit();
 

@@ -249,12 +249,15 @@ public class DBInstance {
             if (serverConfiguration.getAccess_mode().equals("READ_ONLY")) {
                 connectProperties.setProperty("duckdb.read_only", "true");
             }
+            // DuckDB并不需要用户名和密码，但是这里也要设置为空，以保证Hakari工作
+            connectProperties.setProperty("user", "");
+            connectProperties.setProperty("password", "");
+
             // 容许未签名的扩展
             connectProperties.setProperty("allow_unsigned_extensions", "true");
             backendSysConnection = DriverManager.getConnection(backendConnectString, connectProperties);
             logger.info("[SERVER] Backend database [{}:{}] mounted.",
                     serverConfiguration.getData_Dir(), serverConfiguration.getData());
-
             Statement stmt = backendSysConnection.createStatement();
             if (!serverConfiguration.getTemp_dir().isEmpty()) {
                 logger.debug("SET temp_directory = '{}'", serverConfiguration.getTemp_dir());

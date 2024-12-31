@@ -60,6 +60,8 @@ public class ServerConfiguration extends Throwable {
     private final Locale default_locale = Locale.getDefault();
     // 系统的PID文件
     private final String default_pid = "";
+    // 系统支持的最大同时客户端连接
+    private final int    default_max_connections = 256;
 
     private String   data;
 
@@ -82,6 +84,7 @@ public class ServerConfiguration extends Throwable {
     private String   sqlHistory;
     private Locale   locale;
     private String   pid;
+    private int      max_connections;
 
     public ServerConfiguration() throws ServerException
     {
@@ -106,6 +109,7 @@ public class ServerConfiguration extends Throwable {
         sqlHistoryPort = default_sqlHistoryPort;
         locale = default_locale;
         pid = default_pid;
+        max_connections = default_max_connections;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -117,7 +121,7 @@ public class ServerConfiguration extends Throwable {
         // 系统默认内存为系统可用内存的60%
         OperatingSystemMXBean operatingSystemMXBean = (OperatingSystemMXBean)ManagementFactory.getOperatingSystemMXBean();
         default_memory_limit =
-                (int) ((operatingSystemMXBean.getTotalPhysicalMemorySize() * 0.6 )/ 1024 / 1024 /1024) + "G";
+                (int) ((operatingSystemMXBean.getTotalMemorySize() * 0.6 )/ 1024 / 1024 /1024) + "G";
         memory_limit = default_memory_limit;
     }
 
@@ -239,6 +243,15 @@ public class ServerConfiguration extends Throwable {
                     }
                     else {
                         setAccess_mode(entry.getValue().toString());
+                    }
+                    break;
+                case "MAX_CONNECTIONS":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        max_connections = this.default_max_connections;
+                    }
+                    else {
+                        setMax_connections(entry.getValue().toString());
                     }
                     break;
                 case "MAX_WORKERS":
@@ -364,6 +377,8 @@ public class ServerConfiguration extends Throwable {
     {
         return max_workers;
     }
+
+    public int getMax_connections() { return max_connections; }
 
     public String getTemp_dir()
     {
@@ -529,6 +544,25 @@ public class ServerConfiguration extends Throwable {
         {
             throw new ServerException(
                     Utils.getMessage("SLACKERDB-00005", "max_workers", pMax_workers)
+            );
+        }
+    }
+
+    public void setMax_connections(String pMax_connections) throws ServerException
+    {
+        try {
+            max_connections = Integer.parseInt(pMax_connections);
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "max_connections", pMax_connections)
+            );
+        }
+        if (max_connections <= 0)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "max_connections", pMax_connections)
             );
         }
     }
