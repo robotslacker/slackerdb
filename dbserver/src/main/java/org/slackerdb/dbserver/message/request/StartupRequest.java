@@ -168,7 +168,7 @@ public class StartupRequest  extends PostgresRequest {
             // 把查询路径指向新的schema
             Connection conn;
             synchronized (this) {
-                conn = this.dbInstance.connectionPool.poll();
+                conn = this.dbInstance.dbDataSourcePool.getConnection();
                 if (conn == null)
                 {
                     conn = ((DuckDBConnection) this.dbInstance.backendSysConnection).duplicate();

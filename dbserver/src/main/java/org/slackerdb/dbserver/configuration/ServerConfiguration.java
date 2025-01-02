@@ -63,6 +63,12 @@ public class ServerConfiguration extends Throwable {
     // 系统支持的最大同时客户端连接
     private final int    default_max_connections = 256;
 
+    // 设置数据库连接池的各项参数
+    private final int default_connection_pool_minimum_idle = 3;
+    private final int default_connection_pool_maximum_idle = 10;
+    private final int default_connection_pool_maximum_lifecycle_time = 15*60*1000;
+    private final String default_connection_pool_validation_sql = "";
+
     private String   data;
 
     private String   data_dir;
@@ -85,6 +91,11 @@ public class ServerConfiguration extends Throwable {
     private Locale   locale;
     private String   pid;
     private int      max_connections;
+
+    private int connection_pool_minimum_idle;
+    private int connection_pool_maximum_idle;
+    private int connection_pool_maximum_lifecycle_time;
+    private String connection_pool_validation_sql;
 
     public ServerConfiguration() throws ServerException
     {
@@ -110,6 +121,10 @@ public class ServerConfiguration extends Throwable {
         locale = default_locale;
         pid = default_pid;
         max_connections = default_max_connections;
+        connection_pool_minimum_idle = default_connection_pool_minimum_idle;
+        connection_pool_maximum_idle = default_connection_pool_maximum_idle;
+        connection_pool_maximum_lifecycle_time = default_connection_pool_maximum_lifecycle_time;
+        connection_pool_validation_sql = default_connection_pool_validation_sql;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -326,10 +341,78 @@ public class ServerConfiguration extends Throwable {
                         setPid(entry.getValue().toString());
                     }
                     break;
+                case "CONNECTION_POOL_MINIMUM_IDLE":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        connection_pool_minimum_idle = this.default_connection_pool_minimum_idle;
+                    }
+                    else {
+                        setConnection_pool_minimum_idle(Integer.parseInt(entry.getValue().toString()));
+                    }
+                    break;
+                case "CONNECTION_POOL_MAXIMUM_IDLE":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        connection_pool_maximum_idle = this.default_connection_pool_maximum_idle;
+                    }
+                    else {
+                        setConnection_pool_maximum_idle(Integer.parseInt(entry.getValue().toString()));
+                    }
+                    break;
+                case "CONNECTION_POOL_MAXIMUM_LIFECYCLE_TIME":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        connection_pool_maximum_lifecycle_time = this.default_connection_pool_maximum_lifecycle_time;
+                    }
+                    else {
+                        setConnection_pool_maximum_lifecycle_time(Integer.parseInt(entry.getValue().toString()));
+                    }
+                    break;
+                case "CONNECTION_POOL_VALIDATION_SQL":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        connection_pool_validation_sql = this.default_connection_pool_validation_sql;
+                    }
+                    else {
+                        setConnection_pool_validation_sql(entry.getValue().toString());
+                    }
+                    break;
                 default:
                     throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));
             }
         }
+    }
+
+    public void setConnection_pool_maximum_idle(int connection_pool_maximum_idle) {
+        this.connection_pool_maximum_idle = connection_pool_maximum_idle;
+    }
+
+    public void setConnection_pool_minimum_idle(int connection_pool_minimum_idle) {
+        this.connection_pool_minimum_idle = connection_pool_minimum_idle;
+    }
+
+    public void setConnection_pool_maximum_lifecycle_time(int connection_pool_maximum_lifecycle_time) {
+        this.connection_pool_maximum_lifecycle_time = connection_pool_maximum_lifecycle_time;
+    }
+
+    public String getConnection_pool_validation_sql() {
+        return connection_pool_validation_sql;
+    }
+
+    public int getConnection_pool_maximum_idle() {
+        return connection_pool_maximum_idle;
+    }
+
+    public int getConnection_pool_minimum_idle() {
+        return connection_pool_minimum_idle;
+    }
+
+    public int getConnection_pool_maximum_lifecycle_time() {
+        return connection_pool_maximum_lifecycle_time;
+    }
+
+    public void setConnection_pool_validation_sql(String connection_pool_validation_sql) {
+        this.connection_pool_validation_sql = connection_pool_validation_sql;
     }
 
     public String getLog()

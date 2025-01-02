@@ -96,8 +96,7 @@ public class DBSession {
                     }
                 }
             }
-            dbInstance.connectionPool.add(dbConnection);
-            dbConnection = null;
+            dbInstance.dbDataSourcePool.releaseConnection(dbConnection);
         }
     }
 
@@ -132,8 +131,7 @@ public class DBSession {
                     }
                 }
             }
-            dbInstance.connectionPool.add(dbConnection);
-            dbConnection = null;
+            dbInstance.dbDataSourcePool.releaseConnection(dbConnection);
         }
     }
 

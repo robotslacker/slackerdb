@@ -163,9 +163,10 @@ public class AdminClientRequest  extends PostgresRequest {
 
             // 显示数据库基本信息
             feedBackMsg.append("SERVER USAGE: \n");
-            feedBackMsg.append("  Max Connections(High water mark): ").append(this.dbInstance.connectionPool.size()).append("\n");
+            feedBackMsg.append("  Max Connections(High water mark): ").append(this.dbInstance.dbDataSourcePool.getHighWaterMark()).append("\n");
+            feedBackMsg.append("  Current Connections: ").append(this.dbInstance.dbDataSourcePool.getUsedConnectionPoolSize()).append("\n");
+            feedBackMsg.append("  Idle Connections: ").append(this.dbInstance.dbDataSourcePool.getIdleConnectionPoolSize()).append("\n");
             feedBackMsg.append("  Active Sessions: ").append(this.dbInstance.activeSessions).append("\n");
-            feedBackMsg.append("  Connection Pool Size: ").append(this.dbInstance.connectionPool.size()).append("\n");
             feedBackMsg.append("  SQL History Connection Pool Size: ").append(this.dbInstance.backendSqlHistoryConnectionPool.size()).append("\n");
 
             // 显示当前的数据库会话情况

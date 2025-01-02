@@ -41,9 +41,7 @@ public class DBInstance {
     public Logger logger;
 
     // DuckDB的数据库连接池
-    public final Queue<Connection> connectionPool = new ConcurrentLinkedQueue<>();
-    private DBDataSourcePoolConfig dbDataSourcePoolConfig;
-    private DBDataSourcePool dbDataSourcePool;
+    public DBDataSourcePool dbDataSourcePool;
 
     // 资源文件，记录各种消息，以及日后可能的翻译信息
     public ResourceBundle resourceBundle;
@@ -411,23 +409,22 @@ public class DBInstance {
                 logger.info("Init schema completed.");
             }
 
-//            // 初始化数据库连接池
-//            this.dbDataSourcePoolConfig = new DBDataSourcePoolConfig();
-//            this.dbDataSourcePoolConfig.setMinimumIdle(3);
-//            this.dbDataSourcePoolConfig.setMaximumIdle(10);
-//            this.dbDataSourcePoolConfig.setMaximumLifeCycleTime(180*1000);
-//            this.dbDataSourcePoolConfig.setMaximumPoolSize(serverConfiguration.getMax_connections());
-//            this.dbDataSourcePoolConfig.setValidationSQL("SELECT 1");
-//            this.dbDataSourcePoolConfig.setJdbcURL(backendConnectString);
-//            this.dbDataSourcePoolConfig.setConnectProperties(connectProperties);
-//            try {
-//                this.dbDataSourcePool = new DBDataSourcePool(this.dbDataSourcePoolConfig, logger);
-//            }
-//            catch (SQLException sqlException)
-//            {
-//                throw new ServerException("Init connection pool error [" + instanceName + "]", sqlException);
-//            }
-
+            // 初始化数据库连接池
+            DBDataSourcePoolConfig dbDataSourcePoolConfig = new DBDataSourcePoolConfig();
+            dbDataSourcePoolConfig.setMinimumIdle(serverConfiguration.getConnection_pool_minimum_idle());
+            dbDataSourcePoolConfig.setMaximumIdle(serverConfiguration.getConnection_pool_maximum_idle());
+            dbDataSourcePoolConfig.setMaximumLifeCycleTime(serverConfiguration.getConnection_pool_maximum_lifecycle_time());
+            dbDataSourcePoolConfig.setMaximumPoolSize(serverConfiguration.getMax_connections());
+            dbDataSourcePoolConfig.setValidationSQL(serverConfiguration.getConnection_pool_validation_sql());
+            dbDataSourcePoolConfig.setJdbcURL(backendConnectString);
+            dbDataSourcePoolConfig.setConnectProperties(connectProperties);
+            try {
+                this.dbDataSourcePool = new DBDataSourcePool(dbDataSourcePoolConfig, logger);
+            }
+            catch (SQLException sqlException)
+            {
+                throw new ServerException("Init connection pool error [" + instanceName + "]", sqlException);
+            }
         }
         catch(SQLException | IOException e){
             logger.error("[SERVER] Init backend connection error. ", e);
@@ -475,22 +472,14 @@ public class DBInstance {
         // 数据库强制进行检查点操作
         forceCheckPoint();
 
-//        // 关闭数据库连接池
-//        if (this.dbDataSourcePool != null)
-//        {
-//            this.dbDataSourcePool.shutdown();
-//        }
-//
+        // 关闭数据库连接池
+        if (this.dbDataSourcePool != null)
+        {
+            this.dbDataSourcePool.shutdown();
+        }
+
         // 关闭数据库
         try {
-            // 关闭所有的连接
-            for (Connection conn : connectionPool)
-            {
-                if (!conn.isClosed()) {
-                    conn.close();
-                }
-            }
-            connectionPool.clear();
             for (Connection conn : backendSqlHistoryConnectionPool)
             {
                 if (!conn.isClosed()) {
