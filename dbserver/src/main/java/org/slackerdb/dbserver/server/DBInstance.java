@@ -42,6 +42,8 @@ public class DBInstance {
 
     // DuckDB的数据库连接池
     public final Queue<Connection> connectionPool = new ConcurrentLinkedQueue<>();
+    private DBDataSourcePoolConfig dbDataSourcePoolConfig;
+    private DBDataSourcePool dbDataSourcePool;
 
     // 资源文件，记录各种消息，以及日后可能的翻译信息
     public ResourceBundle resourceBundle;
@@ -408,6 +410,24 @@ public class DBInstance {
                 }
                 logger.info("Init schema completed.");
             }
+
+//            // 初始化数据库连接池
+//            this.dbDataSourcePoolConfig = new DBDataSourcePoolConfig();
+//            this.dbDataSourcePoolConfig.setMinimumIdle(3);
+//            this.dbDataSourcePoolConfig.setMaximumIdle(10);
+//            this.dbDataSourcePoolConfig.setMaximumLifeCycleTime(180*1000);
+//            this.dbDataSourcePoolConfig.setMaximumPoolSize(serverConfiguration.getMax_connections());
+//            this.dbDataSourcePoolConfig.setValidationSQL("SELECT 1");
+//            this.dbDataSourcePoolConfig.setJdbcURL(backendConnectString);
+//            this.dbDataSourcePoolConfig.setConnectProperties(connectProperties);
+//            try {
+//                this.dbDataSourcePool = new DBDataSourcePool(this.dbDataSourcePoolConfig, logger);
+//            }
+//            catch (SQLException sqlException)
+//            {
+//                throw new ServerException("Init connection pool error [" + instanceName + "]", sqlException);
+//            }
+
         }
         catch(SQLException | IOException e){
             logger.error("[SERVER] Init backend connection error. ", e);
@@ -455,6 +475,12 @@ public class DBInstance {
         // 数据库强制进行检查点操作
         forceCheckPoint();
 
+//        // 关闭数据库连接池
+//        if (this.dbDataSourcePool != null)
+//        {
+//            this.dbDataSourcePool.shutdown();
+//        }
+//
         // 关闭数据库
         try {
             // 关闭所有的连接

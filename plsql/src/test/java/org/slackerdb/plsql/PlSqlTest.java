@@ -14,11 +14,12 @@ public class PlSqlTest {
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
         PlSqlVisitor.runPlSql(pgConn,
-                "Declare\n" +
-                "   x  int;\n" +
-                "begin\n" +
-                "\tpass;\n" +
-                "end;");
+                """
+                        Declare
+                           x  int;
+                        begin
+                            pass;
+                        end;""");
         pgConn.close();
     }
 
@@ -33,24 +34,25 @@ public class PlSqlTest {
                 "col1 int, col2 text, col3 double, col4 bigint," +
                 "col5 date, col6 timestamp, col7 float)");
         PlSqlVisitor.runPlSql(pgConn,
-                "Declare\n" +
-                "   x  int;\n" +
-                "   y  text;\n" +
-                "   z  double;\n" +
-                "   m  bigint;\n" +
-                "   n  date;\n" +
-                "   o  timestamp;\n" +
-                "   p  float;\n" +
-                "begin\n" +
-                "    let x = 3;\n" +
-                "    let y = 'Hello World';\n" +
-                "    let z = 1.2;\n" +
-                "    let m = 20002;\n" +
-                "    let n = '2024-07-08';\n" +
-                "    let o = '2024-10-08 23:12:31';\n" +
-                "    let p = 3.04;\n" +
-                "    insert into testDeclareVariables values(:x,:y, :z, :m, :n, :o, :p);\n" +
-                "end;");
+                """
+                        Declare
+                           x  int;
+                           y  text;
+                           z  double;
+                           m  bigint;
+                           n  date;
+                           o  timestamp;
+                           p  float;
+                        begin
+                            let x = 3;
+                            let y = 'Hello World';
+                            let z = 1.2;
+                            let m = 20002;
+                            let n = '2024-07-08';
+                            let o = '2024-10-08 23:12:31';
+                            let p = 3.04;
+                            insert into testDeclareVariables values(:x,:y, :z, :m, :n, :o, :p);
+                        end;""");
         ResultSet rs = stmt.executeQuery("select * from testDeclareVariables order by 1");
         if (rs.next())
         {
@@ -78,31 +80,32 @@ public class PlSqlTest {
                 "col1 int, col2 text, col3 double, col4 bigint," +
                 "col5 date, col6 timestamp, col7 float)");
         PlSqlVisitor.runPlSql(pgConn,
-                "Declare\n" +
-                "   x  int;\n" +
-                "   y  text;\n" +
-                "   z  double;\n" +
-                "   m  bigint;\n" +
-                "   n  date;\n" +
-                "   o  timestamp;\n" +
-                "   p  float;\n" +
-                "begin\n" +
-                "    let x = 3;\n" +
-                "    let y = 'Hello World';\n" +
-                "    let z = 1.2;\n" +
-                "    let m = 20002;\n" +
-                "    let n = '2024-07-08';\n" +
-                "    let o = '2024-10-08 23:12:31';\n" +
-                "    let p = 3.04;\n" +
-                "    let x = :x *2;\n" +
-                "    let y = :y || :y;\n" +
-                "    let z = :z *2;\n" +
-                "    let m = :m *2;\n" +
-                "    let n = '2024-07-08';\n" +
-                "    let o = '2024-10-08 23:12:31';\n" +
-                "    let p = :p * 2;\n" +
-                "    insert into testVariablesCompute values(:x,:y, :z, :m, :n, :o, :p);\n" +
-                "end;");
+                """
+                        Declare
+                           x  int;
+                           y  text;
+                           z  double;
+                           m  bigint;
+                           n  date;
+                           o  timestamp;
+                           p  float;
+                        begin
+                            let x = 3;
+                            let y = 'Hello World';
+                            let z = 1.2;
+                            let m = 20002;
+                            let n = '2024-07-08';
+                            let o = '2024-10-08 23:12:31';
+                            let p = 3.04;
+                            let x = :x *2;
+                            let y = :y || :y;
+                            let z = :z *2;
+                            let m = :m *2;
+                            let n = '2024-07-08';
+                            let o = '2024-10-08 23:12:31';
+                            let p = :p * 2;
+                            insert into testVariablesCompute values(:x,:y, :z, :m, :n, :o, :p);
+                        end;""");
         ResultSet rs = stmt.executeQuery("select * from testVariablesCompute order by 1");
         if (rs.next())
         {
@@ -212,11 +215,12 @@ public class PlSqlTest {
 
         // 正向，正常测试，测试后数据会被更新到5
         String sql =
-                "Begin\n" +
-                "   Update testException set num = 5;\n" +
-                "Exception:\n" +
-                "   pass;\n" +
-                "End;";
+                """
+                        Begin
+                           Update testException set num = 5;
+                        Exception:
+                           pass;
+                        End;""";
         PlSqlVisitor.runPlSql(pgConn, sql);
         Statement stmt = pgConn.createStatement();
         ResultSet rs = stmt.executeQuery("select * from testException order by 1");
@@ -227,11 +231,12 @@ public class PlSqlTest {
         pgConn.commit();
 
         // 不会有例外发生，所以数据保持5
-        sql = "Begin\n" +
-                "   Update testException set num = 5;\n" +
-                "Exception:\n" +
-                "   Update testException set num = 6;\n" +
-                "End;";
+        sql = """
+                Begin
+                   Update testException set num = 5;
+                Exception:
+                   Update testException set num = 6;
+                End;""";
         PlSqlVisitor.runPlSql(pgConn, sql);
         stmt = pgConn.createStatement();
         rs = stmt.executeQuery("select * from testException order by 1");
@@ -242,12 +247,13 @@ public class PlSqlTest {
         pgConn.commit();
 
         // 更新字符会出现错误，会导致结果成为6
-        sql = "Begin\n" +
-                "   Update testException set num = 'bcd';\n" +
-                "Exception:\n" +
-                "   Rollback;\n" +
-                "   Update testException set num = 6;\n" +
-                "End;";
+        sql = """
+                Begin
+                   Update testException set num = 'bcd';
+                Exception:
+                   Rollback;
+                   Update testException set num = 6;
+                End;""";
         PlSqlVisitor.runPlSql(pgConn, sql);
         stmt = pgConn.createStatement();
         rs = stmt.executeQuery("select * from testException order by 1");
@@ -257,11 +263,12 @@ public class PlSqlTest {
         }
 
         // 测试直接忽略错误的情况, 结果仍然是6
-        sql = "Begin\n" +
-                "   Update testException set num = 'xxxx';\n" +
-                "Exception:\n" +
-                "   Pass;\n" +
-                "End;";
+        sql = """
+                Begin
+                   Update testException set num = 'xxxx';
+                Exception:
+                   Pass;
+                End;""";
         PlSqlVisitor.runPlSql(pgConn, sql);
         stmt = pgConn.createStatement();
         rs = stmt.executeQuery("select * from testException order by 1");
@@ -271,15 +278,16 @@ public class PlSqlTest {
         }
 
         // 测试Exception的嵌套，结果保持不变
-        sql = "Begin\n" +
-                "   Update testException set num = 'xxxx';\n" +
-                "Exception:\n" +
-                "   Begin\n" +
-                "       Rollback;\n" +
-                "   Exception:\n" +
-                "       Pass;\n" +
-                "   End;\n" +
-                "End;";
+        sql = """
+                Begin
+                   Update testException set num = 'xxxx';
+                Exception:
+                   Begin
+                       Rollback;
+                   Exception:
+                       Pass;
+                   End;
+                End;""";
         PlSqlVisitor.runPlSql(pgConn, sql);
         stmt = pgConn.createStatement();
         rs = stmt.executeQuery("select * from testException order by 1");
@@ -299,11 +307,12 @@ public class PlSqlTest {
         pgConn.setAutoCommit(false);
         pgConn.createStatement().execute("create table main.tab1 (id int)");
         PlSqlVisitor.runPlSql(pgConn,
-                "Declare\n" +
-                        "   x  int;\n" +
-                        "begin\n" +
-                        "    insert into main.tab1 values(10);\n" +
-                        "end;");
+                """
+                        Declare
+                           x  int;
+                        begin
+                            insert into main.tab1 values(10);
+                        end;""");
         pgConn.close();
     }
 
@@ -322,7 +331,7 @@ public class PlSqlTest {
                         Begin
                             let x = 10;
                             let y = 'Hello World';
-                            insert into main.testEnvIdentifier values(${x}, '${y}');
+                            insert into main.testEnvIdentifier values(__x__, '__y__');
                         End;
                         """);
         ResultSet rs = pgConn.createStatement().executeQuery(

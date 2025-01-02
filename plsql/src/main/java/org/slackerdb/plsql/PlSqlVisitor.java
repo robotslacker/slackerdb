@@ -341,18 +341,15 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                     sql = sql.replace(tokenCtx.bindIdentifier().getText(), "?");
                 }
             }
-            // 替换${}标记的变量
-            // 定义匹配 ${xxx} 的正则表达式
-            Pattern pattern = Pattern.compile("\\$\\{(\\w+)}");
+            // 替换__XX__标记的变量
+            // 定义匹配 __XX__ 的正则表达式
+            Pattern pattern = Pattern.compile("__(\\w+)__");
             while (true) {
                 Matcher matcher = pattern.matcher(sql);
                 if (matcher.find()) {
                     String variableName = matcher.group(1);
-                    if (!declareVariables.containsKey("__" + variableName + "__")) {
-                        throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
-                                "Variable [" + variableName + "] has not been declared.");
-                    } else {
-                        sql = sql.replace("${" + variableName + "}", String.valueOf(declareVariables.get("__" + variableName + "__")));
+                    if (declareVariables.containsKey("__" + variableName + "__")) {
+                        sql = sql.replace("__" + variableName + "__", String.valueOf(declareVariables.get("__" + variableName + "__")));
                     }
                 }
                 else
@@ -693,7 +690,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
             }
             else
             {
-                throw new ParserError("waht ？ " + bindingObjectEntry.getValue().getClass().getName());
+                throw new ParserError("Evaluate Error:" + bindingObjectEntry.getValue().getClass().getName());
             }
         }
         try {
