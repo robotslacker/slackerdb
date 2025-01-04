@@ -111,9 +111,8 @@ public class PostgresProxyServer {
         {
             // 打印所有收到的字节内容（16进制）
             if (logger.getLevel().levelStr.equals("TRACE")) {
-                if (obj instanceof ProxyRequest)
+                if (obj instanceof ProxyRequest proxyRequest)
                 {
-                    ProxyRequest proxyRequest = (ProxyRequest) obj;
                     logger.trace("[PROXY][RX CONTENT ]: {},{} {} {}->{}",
                             obj.getClass().getSimpleName(), proxyRequest.encode().length,
                             proxyRequest.getMessageClass(),

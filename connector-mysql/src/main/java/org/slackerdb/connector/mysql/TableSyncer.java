@@ -23,7 +23,7 @@ public class TableSyncer {
     public String syncFilter;
 
     // 事件队列，有最大容量，如果超过容量，则阻塞
-    BlockingQueue<Event> eventQueue = new ArrayBlockingQueue<>(5);
+    BlockingQueue<Event> eventQueue;
 
     // 过滤来源表，看是否属于这个同步任务来完成
     public boolean belongThisGroup(String sourceTableName)

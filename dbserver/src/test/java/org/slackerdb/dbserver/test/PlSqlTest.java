@@ -33,7 +33,7 @@ public class PlSqlTest {
 
 
     @AfterAll
-    static void tearDownAll() throws Exception{
+    static void tearDownAll(){
         dbInstance.stop();
     }
 
@@ -44,11 +44,15 @@ public class PlSqlTest {
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
         Statement stmt = pgConn.createStatement();
-        stmt.execute("DO $$\nDeclare\n" +
-                "   x  int;\n" +
-                "begin\n" +
-                "\tpass;\n" +
-                "end;$$");
+        stmt.execute("""
+                DO $$
+                Declare
+                   x  int;
+                begin
+                    pass;
+                end;
+                $$
+                """);
         stmt.close();
         pgConn.close();
     }
@@ -61,11 +65,15 @@ public class PlSqlTest {
         pgConn.setAutoCommit(false);
         Statement stmt = pgConn.createStatement();
         stmt.execute(
-                "$$\nDeclare\n" +
-                "   x  int;\n" +
-                "begin\n" +
-                "    pass;\n" +
-                "end;$$");
+                """
+                        $$
+                        Declare
+                           x  int;
+                        begin
+                            pass;
+                        end;
+                        $$
+                        """);
         stmt.close();
         pgConn.close();
     }
@@ -79,12 +87,15 @@ public class PlSqlTest {
         pgConn.setAutoCommit(false);
         Statement stmt = pgConn.createStatement();
         stmt.execute(
-                "Drop table if exists aaa;\n" +
-                        "$$\n" +
-                        "begin\n" +
-                        "    create table aaa(num int);\n" +
-                        "    insert into aaa values(10);\n" +
-                        "end;$$");
+                """
+                        Drop table if exists aaa;
+                        $$
+                        begin
+                            create table aaa(num int);
+                            insert into aaa values(10);
+                        end;
+                        $$
+                        """);
         ResultSet rs = stmt.executeQuery("select * from aaa");
         while (rs.next())
         {

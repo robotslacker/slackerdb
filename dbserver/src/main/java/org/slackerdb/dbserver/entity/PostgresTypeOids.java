@@ -10,7 +10,7 @@ public class PostgresTypeOids {
     private static final Map<String, Integer> postgresTypeAndOid = new HashMap<>();
     private static final Map<Integer, String> postgresOidAndType = new HashMap<>();
 
-    private static void LoadTypeAndOid()
+    static
     {
         postgresTypeAndOid.put("BIGINT", 20);
         postgresTypeAndOid.put("HUGEINT", 20);
@@ -57,10 +57,7 @@ public class PostgresTypeOids {
         postgresTypeAndOid.put("VARCHAR[]", 1043);
 
         postgresTypeAndOid.put("UNKNOWN", 0);
-    }
 
-    private static void LoadOidAndType()
-    {
         postgresOidAndType.put(0, "UNKNOWN");
 
         postgresOidAndType.put(20, "BIGINT");
@@ -98,17 +95,11 @@ public class PostgresTypeOids {
         postgresOidAndType.put(2277, "ARRAY");
     }
 
-    public static int getTypeOidFromTypeName(DBInstance dbInstance, String columnTypeName)
+    public static int getTypeOidFromTypeName(String columnTypeName)
     {
         if (columnTypeName.startsWith("DECIMAL"))
         {
             columnTypeName = "DECIMAL";
-        }
-        if (postgresTypeAndOid.isEmpty())
-        {
-            synchronized (PostgresTypeOids.class) {
-                LoadTypeAndOid();
-            }
         }
 
         if (postgresTypeAndOid.containsKey(columnTypeName)) {
@@ -123,13 +114,6 @@ public class PostgresTypeOids {
 
     public static String getTypeNameFromTypeOid(DBInstance dbInstance, int columnTypeOid)
     {
-        if (postgresOidAndType.isEmpty())
-        {
-            synchronized (PostgresTypeOids.class) {
-                LoadOidAndType();
-            }
-        }
-
         if (postgresOidAndType.containsKey(columnTypeOid)) {
             return postgresOidAndType.get(columnTypeOid);
         }

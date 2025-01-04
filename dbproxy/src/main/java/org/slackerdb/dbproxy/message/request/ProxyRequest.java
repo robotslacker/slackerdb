@@ -30,34 +30,21 @@ public class ProxyRequest  extends PostgresRequest {
     }
 
     public String getMessageClass() {
-        switch ((char) messageType) {
-            case 'P':
-                return "ParseRequest";
-            case 'B':
-                return "BindRequest";
-            case 'E':
-                return "ExecuteRequest";
-            case 'S':
-                return "SyncRequest";
-            case 'D':
-                return "DescribeRequest";
-            case 'Q':
-                return "QueryRequest";
-            case 'd':
-                return "CopyDataRequest";
-            case 'c':
-                return "CopyDoneRequest";
-            case 'C':
-                return "CloseRequest";
-            case 'X':
-                return "TerminateRequest";
-            case 'F':
-                return "CancelRequest";
-            case '!':
-                return "AdminClientRequest";
-            default:
-                return "Unknown";
-        }
+        return switch ((char) messageType) {
+            case 'P' -> "ParseRequest";
+            case 'B' -> "BindRequest";
+            case 'E' -> "ExecuteRequest";
+            case 'S' -> "SyncRequest";
+            case 'D' -> "DescribeRequest";
+            case 'Q' -> "QueryRequest";
+            case 'd' -> "CopyDataRequest";
+            case 'c' -> "CopyDoneRequest";
+            case 'C' -> "CloseRequest";
+            case 'X' -> "TerminateRequest";
+            case 'F' -> "CancelRequest";
+            case '!' -> "AdminClientRequest";
+            default -> "Unknown";
+        };
     }
 
     public byte[] getRequestContent()

@@ -39,7 +39,7 @@ public class BinlogSyncWorker extends Thread
     private final Map<Long, String> tableInfoCacheById = new HashMap<>();
     // 记录所有需要全量同步的数据
     // SourceSchemaName.SourceTableName, FullSyncWorker
-    private TableFullSyncScheduler tableFullSyncScheduler = new TableFullSyncScheduler();
+    private final TableFullSyncScheduler tableFullSyncScheduler = new TableFullSyncScheduler();
 
     // 记录每个任务所对应的处理实例
     private final Map<String, BinLogConsumer> binLogConsumerMap = new HashMap<>();

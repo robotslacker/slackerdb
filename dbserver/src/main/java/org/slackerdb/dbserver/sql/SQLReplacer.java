@@ -4,18 +4,17 @@ import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.common.utils.LRUCache;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class SQLReplacer {
-    public static final ArrayList<QueryReplacerItem> SQLReplaceItems = new ArrayList<>();
-
-    private static boolean isLoaded = false;
+    public static final List<QueryReplacerItem> SQLReplaceItems = Collections.synchronizedList(new ArrayList<>());
 
     private static final LRUCache lruCache = new LRUCache();
 
-    private static void load(DBInstance dbInstance)
+    public static void load(DBInstance dbInstance)
     {
         String   catalogName;
 
@@ -176,14 +175,9 @@ public class SQLReplacer {
                         ".*pg_catalog.pg_event_trigger.*", "",true,false
                 )
         );
-        isLoaded = true;
     }
 
     public static String replaceSQL(DBInstance pDbInstance, String sql) {
-        if (!isLoaded) {
-            load(pDbInstance);
-        }
-
         // 如果有缓存的SQL记录，则直接读取缓存的内容
         String sourceSQL = sql;
         String replacedSQL = lruCache.getReplacedSql(sql);
@@ -202,15 +196,15 @@ public class SQLReplacer {
             String oldSql = sqlItems.get(i);
             String newSql = oldSql.trim();
             for (QueryReplacerItem item : SQLReplaceItems) {
-                if (item.isSampleReplace())
+                if (item.sampleReplace())
                 {
-                    String regex = "(?i)" + Pattern.quote(item.getToFind());
-                    newSql = newSql.replaceAll(regex, item.getToReplace());
+                    String regex = "(?i)" + Pattern.quote(item.toFind());
+                    newSql = newSql.replaceAll(regex, item.toReplace());
                     continue;
                 }
-                var find = item.getToFind().replaceAll("\r\n", "\n").trim();
-                var repl = item.getToReplace().replaceAll("\r\n", "\n").trim();
-                if (item.isRegex())
+                var find = item.toFind().replaceAll("\r\n", "\n").trim();
+                var repl = item.toReplace().replaceAll("\r\n", "\n").trim();
+                if (item.regex())
                 {
                     Pattern pattern = Pattern.compile(find, Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
                     Matcher matcher = pattern.matcher(newSql);

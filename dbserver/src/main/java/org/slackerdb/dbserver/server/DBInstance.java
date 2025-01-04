@@ -7,6 +7,7 @@ import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.logger.AppLogger;
 import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.common.utils.Utils;
+import org.slackerdb.dbserver.sql.SQLReplacer;
 
 import java.io.File;
 import java.io.IOException;
@@ -86,7 +87,7 @@ public class DBInstance {
     private int maxSessionId = 1000;
 
     // 记录会话列表
-    public final Map<Integer, DBSession> dbSessions = new HashMap<>();
+    public final Map<Integer, DBSession> dbSessions = Collections.synchronizedMap(new HashMap<>());
 
     // PID进程锁信息
     private RandomAccessFile pidRandomAccessFile;
@@ -255,6 +256,8 @@ public class DBInstance {
 
             // 容许未签名的扩展
             connectProperties.setProperty("allow_unsigned_extensions", "true");
+            // 用后台线程来异步清除未完成的内存分配
+            connectProperties.setProperty("allocator_background_threads", "true");
             backendSysConnection = DriverManager.getConnection(backendConnectString, connectProperties);
             logger.info("[SERVER] Backend database [{}:{}] mounted.",
                     serverConfiguration.getData_Dir(), serverConfiguration.getData());
@@ -425,6 +428,9 @@ public class DBInstance {
             {
                 throw new ServerException("Init connection pool error [" + instanceName + "]", sqlException);
             }
+
+            // SQL替换，DuckDB并不支持所有的PG语法，所以需要进行转义替换
+            SQLReplacer.load(this);
         }
         catch(SQLException | IOException e){
             logger.error("[SERVER] Init backend connection error. ", e);

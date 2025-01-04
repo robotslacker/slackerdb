@@ -211,4 +211,12 @@ public class Utils {
         }
         return content.toString();
     }
+
+    public static String formatBytes(long bytes) {
+        if (bytes < 1024) return bytes + "B";
+        int unit = 1024;
+        String[] units = {"KB", "MB", "GB", "TB", "PB", "EB"};
+        int exp = (int) (Math.log(bytes) / Math.log(unit));
+        return String.format("%.1f%s", bytes / Math.pow(unit, exp), units[exp - 1]);
+    }
 }

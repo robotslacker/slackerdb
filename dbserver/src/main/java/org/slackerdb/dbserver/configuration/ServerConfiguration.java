@@ -507,7 +507,7 @@ public class ServerConfiguration extends Throwable {
         {
             if (data_dir.isEmpty() || data_dir.equalsIgnoreCase(":MEMORY:"))
             {
-                return ":mem:";
+                return ":memory:";
             }
             else
             {

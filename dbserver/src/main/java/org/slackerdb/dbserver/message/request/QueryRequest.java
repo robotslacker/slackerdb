@@ -177,7 +177,7 @@ public class QueryRequest  extends PostgresRequest {
                     field.name = resultSetMetaData.getColumnName(i);
                     field.objectIdOfTable = 0;
                     field.attributeNumberOfColumn = 0;
-                    field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(dbInstance, columnTypeName);
+                    field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(columnTypeName);
                     field.dataTypeSize = (short) 2147483647;
                     field.dataTypeModifier = -1;
                     // 一律文本返回

@@ -71,9 +71,8 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
             return;
         }
 
-        if (msg instanceof StartupRequest) {
+        if (msg instanceof StartupRequest startupRequest) {
             // Startup消息要转发回复
-            StartupRequest startupRequest = (StartupRequest)msg;
 
             // 获得所有的连接选项
             Map<String, String> connectParameters = startupRequest.getStartupOptions();
@@ -146,18 +145,15 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
             return;
         }
 
-        if (msg instanceof AdminClientRequest)
+        if (msg instanceof AdminClientRequest adminClientRequest)
         {
-            AdminClientRequest adminClientRequest = (AdminClientRequest)msg;
             adminClientRequest.process(ctx, null);
-
             return;
         }
 
-        if (msg instanceof ProxyRequest)
+        if (msg instanceof ProxyRequest proxyRequest)
         {
             // 处理代理转发消息
-            ProxyRequest proxyRequest = (ProxyRequest)msg;
             ByteBuf byteBuf = Unpooled.buffer();
             byteBuf.writeByte(proxyRequest.getMessageType());
             byteBuf.writeBytes(Utils.int32ToBytes(proxyRequest.getRequestContent().length + 4));
@@ -226,8 +222,7 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
         }
         Thread.currentThread().setName("Session-" + sessionId);
 
-        if (evt instanceof IdleStateEvent) {
-            IdleStateEvent event = (IdleStateEvent) evt;
+        if (evt instanceof IdleStateEvent event) {
             if (event.state() == IdleState.READER_IDLE) {
                 logger.trace("[PROXY] Connection {} error. Read timeout. ", ctx.channel().remoteAddress());
             } else if (event.state() == IdleState.WRITER_IDLE) {

@@ -130,8 +130,7 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
         // 关闭会话
         dbInstance.abortSession((int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get());
 
-        if (evt instanceof IdleStateEvent) {
-            IdleStateEvent event = (IdleStateEvent) evt;
+        if (evt instanceof IdleStateEvent event) {
             if (event.state() == IdleState.READER_IDLE) {
                 logger.trace("[SERVER] Connection {} error. Read timeout. ", ctx.channel().remoteAddress());
             } else if (event.state() == IdleState.WRITER_IDLE) {

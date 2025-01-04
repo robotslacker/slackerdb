@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class TableSyncerGroup {
-    private String syncerGroupName;
+    private final String syncerGroupName;
     public TableSyncerGroup(String groupName)
     {
         this.syncerGroupName = groupName;

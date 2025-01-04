@@ -18,8 +18,8 @@ import org.slackerdb.connector.mysql.Connector;
 import org.slackerdb.connector.mysql.ConnectorTask;
 
 public class MysqlConnectorCommandVisitor extends MysqlConnectorSyntaxBaseVisitor<Void> {
-    private CharStream inputStream;
-    private Connection conn;
+    private final CharStream inputStream;
+    private final Connection conn;
     private Logger logger = null;
     static class EventTermination extends RuntimeException {}
     static class ParserCommandError extends RuntimeException {

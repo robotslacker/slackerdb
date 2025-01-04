@@ -9,7 +9,7 @@ public class RingBuffer<T> {
     private int head = 0;
     private int tail = 0;
     private int size = 0;
-    private int capacity = 0;
+    private final int capacity;
 
     private final Lock lock = new ReentrantLock();
     private final Condition notEmpty = lock.newCondition();

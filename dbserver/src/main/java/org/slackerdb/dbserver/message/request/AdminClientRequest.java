@@ -2,15 +2,20 @@ package org.slackerdb.dbserver.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.common.exceptions.ServerException;
+import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.AdminClientResp;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.dbserver.server.DBSession;
 
+import java.lang.management.ManagementFactory;
+import com.sun.management.OperatingSystemMXBean;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.management.ThreadMXBean;
 import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -168,6 +173,13 @@ public class AdminClientRequest  extends PostgresRequest {
             feedBackMsg.append("  Idle Connections: ").append(this.dbInstance.dbDataSourcePool.getIdleConnectionPoolSize()).append("\n");
             feedBackMsg.append("  Active Sessions: ").append(this.dbInstance.activeSessions).append("\n");
             feedBackMsg.append("  SQL History Connection Pool Size: ").append(this.dbInstance.backendSqlHistoryConnectionPool.size()).append("\n");
+            OperatingSystemMXBean osBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
+            feedBackMsg.append(String.format("  CPU Load: %.2f%%", osBean.getProcessCpuLoad() * 100)).append("\n");
+            ThreadMXBean threadBean = ManagementFactory.getThreadMXBean();
+            feedBackMsg.append("  Active Threads:   ").append(threadBean.getThreadCount()).append("\n");
+            feedBackMsg.append(String.format("  Heap Memory: %s, Non-Heap Memory: %s",
+                    Utils.formatBytes(Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()),
+                    Utils.formatBytes(ManagementFactory.getMemoryMXBean().getNonHeapMemoryUsage().getUsed()))).append("\n");
 
             // 显示当前的数据库会话情况
             feedBackMsg.append("SERVER SESSIONS: \n");

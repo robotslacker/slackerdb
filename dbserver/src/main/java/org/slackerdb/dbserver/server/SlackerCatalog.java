@@ -11,34 +11,36 @@ public class SlackerCatalog {
 
         // 以下为了解决DBeaver的显示问题
         fakeCatalogDDLList.add("create schema if not exists duck_catalog");
-        fakeCatalogDDLList.add("CREATE or replace TABLE duck_catalog.pg_roles\n" +
-                "(\n" +
-                "\trolname varchar,\n" +
-                "\trolsuper bool NULL,\n" +
-                "\trolinherit bool NULL,\n" +
-                "\trolcreaterole bool NULL,\n" +
-                "\trolcreatedb bool NULL,\n" +
-                "\trolcanlogin bool NULL,\n" +
-                "\trolreplication bool NULL,\n" +
-                "\trolconnlimit int4 NULL,\n" +
-                "\trolpassword text NULL,\n" +
-                "\trolvaliduntil timestamptz NULL,\n" +
-                "\trolbypassrls bool NULL,\n" +
-                "\trolconfig varchar,\n" +
-                "\t\"oid\" oid NULL\n" +
-                ")");
-        fakeCatalogDDLList.add("\n" +
-                "CREATE TABLE if not exists duck_catalog.pg_shdescription (\n" +
-                "    objoid oid,\n" +
-                "    classoid oid,\n" +
-                "    description text\n" +
-                ")");
-        fakeCatalogDDLList.add("create or replace view duck_catalog.pg_namespace \n" +
-                "as\n" +
-                "select oid, schema_name as nspname, 0 as nspowner, null as nspacl, null as description \n" +
-                "FROM   duckdb_schemas \n" +
-                "where  database_name = getvariable('current_database') \n" +
-                "and    schema_name not in ('duck_catalog', 'SCHEMA_NAME_UPPER_FOR_EXT', 'pg_catalog')");
+        fakeCatalogDDLList.add("""
+                CREATE or replace TABLE duck_catalog.pg_roles
+                (
+                    rolname varchar,
+                    rolsuper bool NULL,
+                    rolinherit bool NULL,
+                    rolcreaterole bool NULL,
+                    rolcreatedb bool NULL,
+                    rolcanlogin bool NULL,
+                    rolreplication bool NULL,
+                    rolconnlimit int4 NULL,
+                    rolpassword text NULL,
+                    rolvaliduntil timestamptz NULL,
+                    rolbypassrls bool NULL,
+                    rolconfig varchar,
+                    "oid" oid NULL
+                )""");
+        fakeCatalogDDLList.add("""                
+                CREATE TABLE if not exists duck_catalog.pg_shdescription (
+                    objoid oid,
+                    classoid oid,
+                    description text
+                )""");
+        fakeCatalogDDLList.add("""
+                create or replace view duck_catalog.pg_namespace
+                as
+                select oid, schema_name as nspname, 0 as nspowner, null as nspacl, null as description
+                FROM   duckdb_schemas
+                where  database_name = getvariable('current_database')
+                and    schema_name not in ('duck_catalog', 'SCHEMA_NAME_UPPER_FOR_EXT', 'pg_catalog')""");
         fakeCatalogDDLList.add("create or replace view duck_catalog.pg_database \n" +
                 " as\n" +
                 " select oid, oid as datlastsysoid, " +
@@ -49,50 +51,54 @@ public class SlackerCatalog {
                 "  6 as encoding,   \n" +
                 " FROM \tpg_catalog.pg_database\n" +
                 " where datname not in ('system', 'temp')");
-        fakeCatalogDDLList.add("create or replace table duck_catalog.pg_proc\n" +
-                "(\n" +
-                " oid             int          ,\n" +
-                " proname         text         ,\n" +
-                " pronamespace    int          ,\n" +
-                " proowner        int          ,\n" +
-                " prolang         int          ,\n" +
-                " procost         real         ,\n" +
-                " prorows         real         ,\n" +
-                " provariadic     int          ,\n" +
-                " prosupport      text         ,\n" +
-                " prokind         char         ,\n" +
-                " prosecdef       boolean      ,\n" +
-                " proleakproof    boolean      ,\n" +
-                " proisstrict     boolean      ,\n" +
-                " proretset       boolean      ,\n" +
-                " provolatile     char         ,\n" +
-                " proparallel     char         ,\n" +
-                " pronargs        smallint     ,\n" +
-                " pronargdefaults smallint     ,\n" +
-                " prorettype      int          ,\n" +
-                " proargtypes     text         ,\n" +
-                " proallargtypes  int          ,\n" +
-                " proargmodes     text         ,\n" +
-                " proargnames     text         ,\n" +
-                " proargdefaults  text         ,\n" +
-                " protrftypes     int          ,\n" +
-                " prosrc          text         ,\n" +
-                " probin          text         ,\n" +
-                " prosqlbody      text         ,\n" +
-                " proconfig       text         ,\n" +
-                " proacl          text\n" +
-                ");\n");
-        fakeCatalogDDLList.add("CREATE or replace TABLE  duck_catalog.pg_extension\n" +
-                "(\n" +
-                " oid               int,\n" +
-                " extname           text,\n" +
-                " extowner          int,\n" +
-                " extnamespace      int,\n" +
-                " extrelocatable    bool,\n" +
-                " extversion        text,\n" +
-                " extconfig         int,\n" +
-                " extcondition      text\n" +
-                ");\n");
+        fakeCatalogDDLList.add("""
+                create or replace table duck_catalog.pg_proc
+                (
+                 oid             int          ,
+                 proname         text         ,
+                 pronamespace    int          ,
+                 proowner        int          ,
+                 prolang         int          ,
+                 procost         real         ,
+                 prorows         real         ,
+                 provariadic     int          ,
+                 prosupport      text         ,
+                 prokind         char         ,
+                 prosecdef       boolean      ,
+                 proleakproof    boolean      ,
+                 proisstrict     boolean      ,
+                 proretset       boolean      ,
+                 provolatile     char         ,
+                 proparallel     char         ,
+                 pronargs        smallint     ,
+                 pronargdefaults smallint     ,
+                 prorettype      int          ,
+                 proargtypes     text         ,
+                 proallargtypes  int          ,
+                 proargmodes     text         ,
+                 proargnames     text         ,
+                 proargdefaults  text         ,
+                 protrftypes     int          ,
+                 prosrc          text         ,
+                 probin          text         ,
+                 prosqlbody      text         ,
+                 proconfig       text         ,
+                 proacl          text
+                );
+                """);
+        fakeCatalogDDLList.add("""
+                CREATE or replace TABLE  duck_catalog.pg_extension
+                (
+                 oid               int,
+                 extname           text,
+                 extowner          int,
+                 extnamespace      int,
+                 extrelocatable    bool,
+                 extversion        text,
+                 extconfig         int,
+                 extcondition      text
+                );
+                """);
         fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_get_userbyid(a) AS (select 'system')");
         fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_encoding_to_char(a) AS (select 'UTF8')");
         fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_tablespace_location(a) AS (select '')");

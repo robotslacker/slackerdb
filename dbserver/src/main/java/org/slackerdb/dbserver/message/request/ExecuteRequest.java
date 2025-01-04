@@ -367,7 +367,7 @@ public class ExecuteRequest extends PostgresRequest {
                             field.name = resultSetMetaData.getColumnName(i);
                             field.objectIdOfTable = 0;
                             field.attributeNumberOfColumn = 0;
-                            field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(dbInstance, columnTypeName);
+                            field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(columnTypeName);
                             if (field.dataTypeId == -1 )
                             {
                                 this.dbInstance.logger.error("executeSQL: {}" , executeSQL);
