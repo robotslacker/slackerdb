@@ -1,5 +1,6 @@
 package org.slackerdb.dbserver.test;
 
+import org.junit.jupiter.api.Test;
 import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.dbserver.server.DBInstance;
@@ -16,13 +17,18 @@ import java.util.concurrent.atomic.AtomicLong;
 
 
     目前测试结果：
-        笔记本下： 基于20线程，持续运行1分钟，可以正常完成
+        笔记本(16GMem, 8Core, 10thread.  i5 2.5GHz, Windows11)下： 持续运行2170秒，完成事务100万次
+        服务器1(256GMem, 36Core, 40thread.  i9 3.0GHz, DebianLinux)下： 持续运行200秒，完成事务100万次
+        服务器2(256GMem, 48Core, 40thread.  Xeon 2.9GHz, CentOS8)下： 持续运行220秒，完成事务100万次
+
 * */
 
 public class DatabaseStabilityTest {
-    private static final int THREAD_COUNT = 20;
-    private static final long TEST_DURATION_MS = 1 * 60 * 1000;
-    public static void main(String[] args) {
+    private static final int THREAD_COUNT = 10;
+    private static final long taskCount = 100*10000;
+
+    @Test
+    public void testDatabaseStability() {
         // 强制使用UTC时区，以避免时区问题在PG和后端数据库中不一致的行为
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
 
@@ -40,7 +46,6 @@ public class DatabaseStabilityTest {
         printSystemStatus();
 
         ExecutorService executor = Executors.newFixedThreadPool(THREAD_COUNT);
-        long endTime = System.currentTimeMillis() + TEST_DURATION_MS;
 
         AtomicLong totalFinishedTest = new AtomicLong(0);
 
@@ -51,16 +56,16 @@ public class DatabaseStabilityTest {
                 long  bootTime = System.currentTimeMillis();
                 String tableName = "test_table_" + threadId;
                 boolean tableCreated = false;
-                while (System.currentTimeMillis() < endTime) {
+                while (totalFinishedTest.get() < taskCount) {
                     if (System.currentTimeMillis() - bootTime > 10000)
                     {
-                        System.out.println("Test has passed " + totalFinishedTest.get() + ". Time elapsed " + (System.currentTimeMillis() - startTime));
+                        System.out.println("Thread " + threadId + ": Test has passed " + totalFinishedTest.get() + ". Time elapsed " + (System.currentTimeMillis() - startTime));
                         bootTime = System.currentTimeMillis();
                     }
 
                     totalFinishedTest.incrementAndGet();
                     try {
-                        Connection conn = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:4309/mem", "", "");
+                        Connection conn = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:4309/mem?socketTimeout=60", "", "");
                         conn.setAutoCommit(false);
                         if (!tableCreated)
                         {

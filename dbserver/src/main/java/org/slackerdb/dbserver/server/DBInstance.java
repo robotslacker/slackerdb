@@ -19,7 +19,9 @@ import java.sql.*;
 import java.text.MessageFormat;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
@@ -84,10 +86,10 @@ public class DBInstance {
     }
 
     // 为每个连接创建一个会话ID
-    private int maxSessionId = 1000;
+    private final AtomicInteger maxSessionId = new AtomicInteger(1000);
 
     // 记录会话列表
-    public final Map<Integer, DBSession> dbSessions = Collections.synchronizedMap(new HashMap<>());
+    public final Map<Integer, DBSession> dbSessions = new ConcurrentHashMap<>();
 
     // PID进程锁信息
     private RandomAccessFile pidRandomAccessFile;
@@ -527,11 +529,7 @@ public class DBInstance {
     // 初始化一个新的数据库会话
     public int newSession(DBSession dbSession)
     {
-        int currentSessionId;
-        synchronized (PostgresServerHandler.class) {
-            maxSessionId ++;
-            currentSessionId = maxSessionId;
-        }
+        int currentSessionId = maxSessionId.incrementAndGet();
         dbSessions.put(currentSessionId, dbSession);
         return currentSessionId;
     }

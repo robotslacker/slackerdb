@@ -1,17 +1,16 @@
 ![机器人小懒](robotslacker.jpg)
 
-# SlackerDB (DUCKDB Postgres proxy)
+# SlackerDB (DuckDB Postgres proxy)
 
 ## Quick Note
 This program implements the JDBC V3 protocol of PG.  
-The SQL engine and storage engine behind it are both DUCKDB.
+The SQL engine and storage engine behind it are both DuckDB.
 
-Slackerdb is currently has two parts:  
+Slackerdb is currently has three parts:  
 * A proxy program, used to forward PG protocol to remote.  
 1.  PG protocol proxy, so that you can connect to multi db services distributed on same or different machines through a unified service port.
 2.  If necessary, you can also use this proxy to forward ordinary PG requests, which is no different.
 3.  Remote user/password/serviceName can different with proxy if you think this is what your want.
-4.  TODO: weight, max_latency, max_repl_lag support
 * A plsql parser(experimental version), you can write plsql code.
 1.  Support Begin .... Exception ... End;
 2.  Support Loop, For;
@@ -25,7 +24,7 @@ Slackerdb is currently has two parts:
 ## Usage
 ### Build from source:
 ```
-    # Download JDK11 and maven 3.6+, and install them.
+    # Download JDK17 and maven 3.6+, and install them.
     # Download source code
     git clone ...
     # compile it
@@ -34,19 +33,19 @@ Slackerdb is currently has two parts:
 ```
 ### Start db server
 ``` 
-    java -jar slackerdb-dbserver-0.0.9-standalone.jar start
+    java -jar dbserver/target/slackerdb-dbserver-0.1.1-standalone.jar start
 ```
 ### Start db proxy
 ``` 
-    java -jar slackerdb-dbproxy-0.0.9-standalone.jar start
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.1-standalone.jar start
 ```
 ### Stop db server
 ``` 
-    java -jar slackerdb-dbserver-0.0.9-standalone.jar stop
+    java -jar dbserver/target/slackerdb-dbserver-0.1.1-standalone.jar stop
 ```
 ### Stop db proxy
 ``` 
-    java -jar slackerdb-dbproxy-0.0.9-standalone.jar stop
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.1-standalone.jar stop
 ```
 
 ### Server configuration file template
@@ -70,16 +69,16 @@ temp_dir=
 # If not set, it defaults to $HOME/.duckdb/extensions
 extension_dir=
 
-# The location where the log file is saved
-# CONSOLE means output to the console, and others mean output to a file
-# Multiple logs can be output at the same time, separated by commas, for example, console, logs/xx.log
-log=CONSOLE,logs/slackerdb.log
-
 # PID file. Used to describe the process id of running server process.
 # When server is running, the file will be exclusively locked.
 # If this file is locked by other process, server will abort and not continue start.
 # If not configured, this file will not be generated and the lock will not be checked.
 pid=
+
+# The location where the log file is saved
+# CONSOLE means output to the console, and others mean output to a file
+# Multiple logs can be output at the same time, separated by commas, for example, console, logs/xx.log
+log=CONSOLE,logs/slackerdb.log
 
 # Log level
 log_level=INFO
@@ -99,12 +98,17 @@ client_timeout=600
 # Database opening mode
 access_mode=READ_WRITE
 
+# The maximum number of client that can connect to server at the same time
+# The default is 256
+max_connections=
+
 # The maximum number of threads that the service layer can process at the same time
 # The default is the number of CPU cores
 max_workers=
 
 # Maximum number of threads used on the DB side
 # Default is 50% of the number of cores
+# Best Practice: Aim for 5-10 GB memory per thread
 threads=
 
 # Maximum memory size used
@@ -139,6 +143,27 @@ sql_history_port=
 # Disk mode:   If not set, it defaults to the same as data_dir.
 # Memory mode: If not set, it defaults to save it in memory.
 sql_history_dir=
+
+# Specifies the minimum number of idle database connections that the connection pool maintains at any time.
+# These connections are pre-established and kept available to handle incoming requests, helping to reduce latency during operations.
+# Default Value: 3
+connection_pool_minimum_idle=3
+
+# Defines the maximum number of idle database connections that the connection pool can retain.
+# Connections exceeding this limit will be closed to conserve system resources.
+# Default Value: 10
+connection_pool_maximum_idle=10
+
+# Determines the maximum lifecycle time (in milliseconds) for a connection in the pool, regardless of whether it is active or idle.
+# Once the lifecycle time is exceeded, the connection is closed and removed from the pool.
+# Default Value: 900000 (15 minutes)
+connection_pool_maximum_lifecycle_time=900000
+
+# SQL statement used to validate the health of a connection before it is handed over to the application.
+# If left empty, the validation process will not start.
+# Default Value: Empty ('')
+connection_pool_validation_sql=
+
 ```
 Note: All parameters are optional.   
 You can keep only the parameters you need to modify.   
@@ -183,7 +208,7 @@ Note: All parameters are optional.
 You can keep only the parameters you need to modify.   
 For parameters that are not configured, means default values  will be used.
 
-### Embed the dbserver in your code
+### Embed the db server in your code
 ``` 
   // create configuration,  and update as your need
   ServerConfiguration serverConfiguration = new ServerConfiguration();
@@ -204,7 +229,7 @@ For parameters that are not configured, means default values  will be used.
 
 ```
 
-### Embed the dbproxy in your code
+### Embed the db proxy in your code
 ``` 
     ServerConfiguration proxyConfiguration = new ServerConfiguration();
     proxyConfiguration.setPort(dbPort);

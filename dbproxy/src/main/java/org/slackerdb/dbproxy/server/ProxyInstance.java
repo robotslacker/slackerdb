@@ -14,6 +14,7 @@ import java.nio.channels.FileLock;
 import java.text.MessageFormat;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ProxyInstance {
     // 服务器启动模式
@@ -44,11 +45,11 @@ public class ProxyInstance {
     private FileLock pidFileLockHandler;
 
     // 记录会话列表
-    public final Map<Integer, ProxySession> proxySessions = new HashMap<>();
+    public final Map<Integer, ProxySession> proxySessions = new ConcurrentHashMap<>();
 
-    private final Map<String, Boolean> proxyAlias = new HashMap<>();
+    private final Map<String, Boolean> proxyAlias = new ConcurrentHashMap<>();
 
-    private final Map<String, List<PostgresProxyTarget>> proxyTarget = new HashMap<>();
+    private final Map<String, List<PostgresProxyTarget>> proxyTarget = new ConcurrentHashMap<>();
 
     public ProxyInstance(ServerConfiguration pServerConfiguration) throws ServerException
     {
