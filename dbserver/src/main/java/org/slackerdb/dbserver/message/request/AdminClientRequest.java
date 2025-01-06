@@ -153,8 +153,6 @@ public class AdminClientRequest  extends PostgresRequest {
             feedBackMsg.append(String.format("%-20s", "  Data:")).append(this.dbInstance.serverConfiguration.getData()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Data_Dir:")).append(this.dbInstance.serverConfiguration.getData_Dir()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Temp_Dir:")).append(this.dbInstance.serverConfiguration.getTemp_dir()).append("\n");
-            feedBackMsg.append(String.format("%-20s", "  SQLHistory_Dir:")).append(this.dbInstance.serverConfiguration.getSqlHistoryDir()).append("\n");
-            feedBackMsg.append(String.format("%-20s", "  SQLHistory_Port:")).append(this.dbInstance.serverConfiguration.getSqlHistoryPort()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  SQLHistory:")).append(this.dbInstance.serverConfiguration.getSqlHistory()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Extension_Dir:")).append(this.dbInstance.serverConfiguration.getExtension_dir()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Threads:")).append(this.dbInstance.serverConfiguration.getThreads()).append("\n");
@@ -172,7 +170,6 @@ public class AdminClientRequest  extends PostgresRequest {
             feedBackMsg.append("  Current Connections: ").append(this.dbInstance.dbDataSourcePool.getUsedConnectionPoolSize()).append("\n");
             feedBackMsg.append("  Idle Connections: ").append(this.dbInstance.dbDataSourcePool.getIdleConnectionPoolSize()).append("\n");
             feedBackMsg.append("  Active Sessions: ").append(this.dbInstance.activeSessions).append("\n");
-            feedBackMsg.append("  SQL History Connection Pool Size: ").append(this.dbInstance.backendSqlHistoryConnectionPool.size()).append("\n");
             OperatingSystemMXBean osBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
             feedBackMsg.append(String.format("  CPU Load: %.2f%%", osBean.getProcessCpuLoad() * 100)).append("\n");
             ThreadMXBean threadBean = ManagementFactory.getThreadMXBean();

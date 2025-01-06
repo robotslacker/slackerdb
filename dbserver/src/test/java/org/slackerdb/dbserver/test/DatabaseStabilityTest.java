@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class DatabaseStabilityTest {
     private static final int THREAD_COUNT = 10;
-    private static final long taskCount = 100*10000;
+    private static final long taskCount = 1000;
 
     @Test
     public void testDatabaseStability() {

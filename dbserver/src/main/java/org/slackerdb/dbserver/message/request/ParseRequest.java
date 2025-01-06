@@ -193,7 +193,7 @@ public class ParseRequest extends PostgresRequest {
                     preparedStatement.execute();
                     preparedStatement.close();
                     // 希望连接池能够复用数据库连接
-                    this.dbInstance.backendSqlHistoryConnectionPool.add(backendSqlHistoryConnection);
+                    this.dbInstance.dbDataSourcePool.releaseConnection(backendSqlHistoryConnection);
                 }
                 catch (SQLException se)
                 {

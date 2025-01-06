@@ -49,13 +49,7 @@ public class ServerConfiguration extends Throwable {
     // 默认不配置初始化脚本
     private final String default_init_schema = "";
     // 默认不记录SQL执行历史信息
-    private final String default_sqlHistory = "";
-    // 内存模式和文件模式的默认值不同
-    // 内存模式: data
-    // 文件模式: 等同data_dir
-    private final String default_sqlHistoryDir = "";
-    // 默认的SqlHistory对外开放端口
-    private final int default_sqlHistoryPort = 0;
+    private final String default_sqlHistory = "OFF";
     // 默认设置系统默认的语言集
     private final Locale default_locale = Locale.getDefault();
     // 系统的PID文件
@@ -73,7 +67,6 @@ public class ServerConfiguration extends Throwable {
 
     private String   data_dir;
     private String   temp_dir;
-    private String   sqlHistoryDir;
 
     private String   extension_dir;
     private String   log;
@@ -86,7 +79,6 @@ public class ServerConfiguration extends Throwable {
     private int      max_workers;
     private int      client_timeout;
     private String   init_schema;
-    private int      sqlHistoryPort;
     private String   sqlHistory;
     private Locale   locale;
     private String   pid;
@@ -104,7 +96,6 @@ public class ServerConfiguration extends Throwable {
 
         data_dir = default_data_dir;
         temp_dir = default_temp_dir;
-        sqlHistoryDir = default_sqlHistoryDir;
         extension_dir = default_extension_dir;
 
         log = default_log;
@@ -117,7 +108,6 @@ public class ServerConfiguration extends Throwable {
         client_timeout = default_client_timeout;
         init_schema = default_init_schema;
         sqlHistory = default_sqlHistory;
-        sqlHistoryPort = default_sqlHistoryPort;
         locale = default_locale;
         pid = default_pid;
         max_connections = default_max_connections;
@@ -314,24 +304,6 @@ public class ServerConfiguration extends Throwable {
                         setSqlHistory(entry.getValue().toString());
                     }
                     break;
-                case "SQL_HISTORY_PORT":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        sqlHistoryPort= this.default_sqlHistoryPort;
-                    }
-                    else {
-                        setSqlHistoryPort(entry.getValue().toString());
-                    }
-                    break;
-                case "SQL_HISTORY_DIR":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        sqlHistoryDir= this.default_sqlHistoryDir;
-                    }
-                    else {
-                        setSqlHistoryDir(entry.getValue().toString());
-                    }
-                    break;
                 case "PID":
                     if (entry.getValue().toString().isEmpty())
                     {
@@ -491,33 +463,9 @@ public class ServerConfiguration extends Throwable {
         return init_schema;
     }
 
-    public int getSqlHistoryPort()
-    {
-        return sqlHistoryPort;
-    }
-
     public String getSqlHistory()
     {
         return sqlHistory;
-    }
-
-    public String getSqlHistoryDir()
-    {
-        if (sqlHistoryDir.isEmpty())
-        {
-            if (data_dir.isEmpty() || data_dir.equalsIgnoreCase(":MEMORY:"))
-            {
-                return ":memory:";
-            }
-            else
-            {
-                return data_dir;
-            }
-        }
-        else
-        {
-            return sqlHistoryDir;
-        }
     }
 
     public Locale getLocale()
@@ -701,41 +649,13 @@ public class ServerConfiguration extends Throwable {
     }
     public void setSqlHistory(String pSQLHistory)
     {
-        sqlHistory = pSQLHistory;
-    }
-
-    public void setSqlHistoryPort(String pSQLHistoryPort) throws ServerException
-    {
-        int tempPort;
-        try {
-            tempPort = Integer.parseInt(pSQLHistoryPort);
+        if (pSQLHistory.trim().equalsIgnoreCase("ON") || (pSQLHistory.trim().equalsIgnoreCase("OFF"))) {
+            sqlHistory = pSQLHistory.trim().toUpperCase();
         }
-        catch (NumberFormatException ignored)
+        else
         {
-            throw new ServerException(
-                    Utils.getMessage("SLACKERDB-00005", "sql_history_port", pSQLHistoryPort)
-            );
+            throw new ServerException("[SERVER] Invalid config of sql history. ON or OFF only.");
         }
-        if (tempPort == 0) {
-            try (ServerSocket socket = new ServerSocket(0)) {
-                tempPort = socket.getLocalPort();
-            } catch (IOException e) {
-                throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
-            }
-        }
-
-        if (tempPort < -1)
-        {
-            throw new ServerException(
-                    Utils.getMessage("SLACKERDB-00005", "sql_history_port", pSQLHistoryPort)
-            );
-        }
-        sqlHistoryPort = tempPort;
-    }
-
-    public void setSqlHistoryDir(String pSQLHistoryDir)
-    {
-        sqlHistoryDir = pSQLHistoryDir;
     }
 
     public void setLocale(String pLocale) throws ServerException

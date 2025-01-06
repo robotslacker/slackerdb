@@ -1,7 +1,6 @@
 package org.slackerdb.dbserver.server;
 
 import ch.qos.logback.classic.Logger;
-import org.duckdb.DuckDBConnection;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.logger.AppLogger;
@@ -20,7 +19,6 @@ import java.text.MessageFormat;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
@@ -55,8 +53,6 @@ public class DBInstance {
     // DuckDB对应的后端长数据库连接
     public Connection backendSysConnection;
 
-    // SQLHistory的连接池，H2或者DuckDB的连接池
-    public final Queue<Connection> backendSqlHistoryConnectionPool = new ConcurrentLinkedQueue<>();
     // SqlHistoryId 当前SQL历史的主键ID
     public AtomicLong backendSqlHistoryId = new AtomicLong(1);
 
@@ -296,97 +292,6 @@ public class DBInstance {
                     logger.error("[SERVER] Init backend connection error. ", e);
                     throw new ServerException(e);
                 }
-
-                // 启用SQLHistory记录
-                if (!serverConfiguration.getSqlHistory().trim().isEmpty())
-                {
-                    Connection backendSqlHistoryConn = getSqlHistoryConn();
-                    if (serverConfiguration.getSqlHistory().trim().equalsIgnoreCase("BUNDLE"))
-                    {
-                        // SQL History会保存在数据库内部。
-                        Statement sqlHistoryStmt = backendSqlHistoryConn.createStatement();
-                        sqlHistoryStmt.execute("CREATE SCHEMA IF NOT EXISTS sysaux");
-                        sqlHistoryStmt.execute(
-                                """
-                                        CREATE TABLE IF NOT EXISTS SYSAUX.SQL_HISTORY
-                                        (
-                                            ID             BIGINT PRIMARY KEY,
-                                            SessionID      INT,
-                                            ClientIP       TEXT,
-                                            StartTime      TIMESTAMP,
-                                            EndTime        TIMESTAMP,
-                                            Elapsed        INT GENERATED ALWAYS AS (DATEDIFF('SECOND', StartTime, EndTime)),
-                                            SqlID          INT,
-                                            SQL            TEXT,
-                                            SqlCode        INT,
-                                            AffectedRows   BIGINT,
-                                            ErrorMsg       TEXT
-                                        );""");
-                        sqlHistoryStmt.close();
-                        logger.info("[SERVER] Backend sql history database opened (bundle mode).");
-                    }
-                    else {
-                        String sqlHistoryDir = serverConfiguration.getSqlHistoryDir();
-                        if (sqlHistoryDir.trim().isEmpty()) {
-                            sqlHistoryDir = serverConfiguration.getData_Dir();
-                        }
-                        if (sqlHistoryDir.equalsIgnoreCase(":memory:") || sqlHistoryDir.equalsIgnoreCase(":mem:")) {
-                            logger.info("[SERVER] Backend sql history database [mem:{}] opened (memory mode).",
-                                    this.serverConfiguration.getSqlHistory());
-                        } else {
-                            String sqlHistoryFile = Path.of(sqlHistoryDir, serverConfiguration.getSqlHistory().trim()).toString();
-                            logger.info("[SERVER] Backend sql history database [{}] opened (disk mode).", sqlHistoryFile);
-                        }
-                        stmt = backendSqlHistoryConn.createStatement();
-                        stmt.execute("CREATE SCHEMA IF NOT EXISTS sysaux");
-                        String sql = """
-                                CREATE TABLE IF NOT EXISTS sysaux.SQL_HISTORY
-                                (
-                                    ID             BIGINT PRIMARY KEY,
-                                    SessionID      INT,
-                                    ClientIP       TEXT,
-                                    StartTime      TIMESTAMP,
-                                    EndTime        TIMESTAMP,
-                                    Elapsed        INT GENERATED ALWAYS AS (DATEDIFF('SECOND', StartTime, EndTime)),\s
-                                    SqlID          INT,
-                                    SQL            TEXT,
-                                    SqlCode        INT,
-                                    AffectedRows   BIGINT,
-                                    ErrorMsg       TEXT
-                                )""";
-                        stmt.execute(sql);
-                        stmt.close();
-
-                        // 对外提供TCP连接
-                        if (serverConfiguration.getSqlHistoryPort() != -1) {
-                            org.h2.tools.Server h2TcpServer = org.h2.tools.Server.createTcpServer(
-                                    "-tcpPort", String.valueOf(serverConfiguration.getSqlHistoryPort()),
-                                    "-tcpAllowOthers", "-tcpDaemon"
-                            );
-                            h2TcpServer.start();
-                            logger.info("[SERVER] SQLHistory Server TCP Port started at :{}",
-                                    serverConfiguration.getSqlHistoryPort());
-                        } else {
-                            if (serverConfiguration.getSqlHistoryPort() == -1) {
-                                logger.info("[SERVER] SQLHistory Server started without port.");
-                            }
-                        }
-                    }
-
-                    // 获取之前最大的SqlHistory的ID
-                    String sql = "Select Max(ID) From sysaux.SQL_HISTORY";
-                    Statement statement = backendSqlHistoryConn.createStatement();
-                    ResultSet resultSet = statement.executeQuery(sql);
-                    if (resultSet.next())
-                    {
-                        this.backendSqlHistoryId.set(resultSet.getLong(1) + 1);
-                    }
-                    resultSet.close();
-                    statement.close();
-
-                    // 希望连接池能够复用数据库连接
-                    this.backendSqlHistoryConnectionPool.add(backendSqlHistoryConn);
-                }
             }
 
             // 执行初始化脚本，如果有必要的话
@@ -429,6 +334,47 @@ public class DBInstance {
             catch (SQLException sqlException)
             {
                 throw new ServerException("Init connection pool error [" + instanceName + "]", sqlException);
+            }
+
+            // 初始化SQLHistory连接池
+            if (serverConfiguration.getSqlHistory().equalsIgnoreCase("ON")) {
+                // 启用SQLHistory记录
+                Connection backendSqlHistoryConn = this.dbDataSourcePool.getConnection();
+                // SQL History会保存在数据库内部。
+                Statement sqlHistoryStmt = backendSqlHistoryConn.createStatement();
+                sqlHistoryStmt.execute("CREATE SCHEMA IF NOT EXISTS sysaux");
+                sqlHistoryStmt.execute(
+                        """
+                                CREATE TABLE IF NOT EXISTS SYSAUX.SQL_HISTORY
+                                (
+                                    ID             BIGINT PRIMARY KEY,
+                                    SessionID      INT,
+                                    ClientIP       TEXT,
+                                    StartTime      TIMESTAMP,
+                                    EndTime        TIMESTAMP,
+                                    Elapsed        INT GENERATED ALWAYS AS (DATEDIFF('SECOND', StartTime, EndTime)),
+                                    SqlID          INT,
+                                    SQL            TEXT,
+                                    SqlCode        INT,
+                                    AffectedRows   BIGINT,
+                                    ErrorMsg       TEXT
+                                );""");
+                sqlHistoryStmt.close();
+                logger.info("[SERVER] Backend sql history database opened (bundle mode).");
+
+                // 获取之前最大的SqlHistory的ID
+                String sql = "Select Max(ID) From sysaux.SQL_HISTORY";
+                Statement statement = backendSqlHistoryConn.createStatement();
+                ResultSet resultSet = statement.executeQuery(sql);
+                if (resultSet.next())
+                {
+                    this.backendSqlHistoryId.set(resultSet.getLong(1) + 1);
+                }
+                resultSet.close();
+                statement.close();
+
+                // 希望连接池能够复用数据库连接
+                this.dbDataSourcePool.releaseConnection(backendSqlHistoryConn);
             }
 
             // SQL替换，DuckDB并不支持所有的PG语法，所以需要进行转义替换
@@ -480,25 +426,17 @@ public class DBInstance {
         // 数据库强制进行检查点操作
         forceCheckPoint();
 
-        // 关闭数据库连接池
-        if (this.dbDataSourcePool != null)
-        {
-            this.dbDataSourcePool.shutdown();
-        }
-
-        // 关闭数据库
         try {
-            for (Connection conn : backendSqlHistoryConnectionPool)
-            {
-                if (!conn.isClosed()) {
-                    conn.close();
-                }
+            // 关闭数据库连接池
+            if (this.dbDataSourcePool != null) {
+                this.dbDataSourcePool.shutdown();
             }
-            backendSqlHistoryConnectionPool.clear();
+
             // 关闭BackendSysConnection
             backendSysConnection.close();
-        } catch (SQLException e) {
-            logger.error("Error closing backend connection", e);
+        }
+        catch (SQLException e) {
+            logger.error("[SERVER] Close backend connection error. ", e);
         }
 
         // 删除PID文件
@@ -571,39 +509,11 @@ public class DBInstance {
     // 获得sqlHistory的数据库连接
     public Connection getSqlHistoryConn() throws SQLException
     {
-        if (serverConfiguration.getSqlHistory().trim().isEmpty())
+        if (serverConfiguration.getSqlHistory().equalsIgnoreCase("OFF"))
         {
             // 没有开启日志服务
             return null;
         }
-        Connection sqlHistoryConn = this.backendSqlHistoryConnectionPool.poll();
-        if (sqlHistoryConn != null)
-        {
-            return sqlHistoryConn;
-        }
-        else {
-            if (serverConfiguration.getSqlHistory().trim().equalsIgnoreCase("BUNDLE")) {
-                // SQL History信息保存在内部
-                return ((DuckDBConnection)backendSysConnection).duplicate();
-            }
-            else
-            {
-                // SQL History信息保存在H2中
-                String sqlHistoryDir = serverConfiguration.getSqlHistoryDir();
-                if (sqlHistoryDir.trim().isEmpty()) {
-                    sqlHistoryDir = serverConfiguration.getData_Dir();
-                }
-                if (sqlHistoryDir.equalsIgnoreCase(":memory:") || sqlHistoryDir.equalsIgnoreCase(":mem:")) {
-                    // 内存模式
-                    String backendSqlHistoryURL = "jdbc:h2:mem:" + this.serverConfiguration.getSqlHistory() + ";DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE";
-                    return DriverManager.getConnection(backendSqlHistoryURL, "", "");
-                } else {
-                    // 文件模式
-                    String sqlHistoryFile = Path.of(sqlHistoryDir, serverConfiguration.getSqlHistory().trim()).toString();
-                    String backendSqlHistoryURL = "jdbc:h2:" + sqlHistoryFile + ";DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE";
-                    return DriverManager.getConnection(backendSqlHistoryURL, "", "");
-                }
-            }
-        }
+        return this.dbDataSourcePool.getConnection();
     }
 }

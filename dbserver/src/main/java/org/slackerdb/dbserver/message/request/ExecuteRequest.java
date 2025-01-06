@@ -160,6 +160,7 @@ public class ExecuteRequest extends PostgresRequest {
             // 没有开始日志服务
             return -1;
         }
+
         long sqlHistoryId = this.dbInstance.backendSqlHistoryId.incrementAndGet();
         String historySQL = "Insert INTO sysaux.SQL_HISTORY(ID, SessionId, ClientIP, SQL, SqlId, StartTime) " +
                 "VALUES(?, ?,?,?,?, current_timestamp)";
@@ -174,7 +175,7 @@ public class ExecuteRequest extends PostgresRequest {
             preparedStatement.executeUpdate();
             preparedStatement.close();
             // 希望连接池能够复用数据库连接
-            this.dbInstance.backendSqlHistoryConnectionPool.add(backendSqlHistoryConnection);
+            this.dbInstance.dbDataSourcePool.releaseConnection(backendSqlHistoryConnection);
         }
         catch (SQLException se)
         {
@@ -218,7 +219,7 @@ public class ExecuteRequest extends PostgresRequest {
             preparedStatement.execute();
             preparedStatement.close();
             // 希望连接池能够复用数据库连接
-            this.dbInstance.backendSqlHistoryConnectionPool.add(backendSqlHistoryConnection);
+            this.dbInstance.dbDataSourcePool.releaseConnection(backendSqlHistoryConnection);
         }
         catch (SQLException se)
         {

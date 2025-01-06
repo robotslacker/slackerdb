@@ -36,6 +36,7 @@ public class Sanity01Test {
         serverConfiguration.setPort(dbPort);
         serverConfiguration.setData("mem");
         serverConfiguration.setLog_level("INFO");
+        serverConfiguration.setSqlHistory("OFF");
 
         // 初始化数据库
         dbInstance = new DBInstance(serverConfiguration);

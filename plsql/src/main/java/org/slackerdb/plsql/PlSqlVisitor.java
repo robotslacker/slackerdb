@@ -343,7 +343,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
             }
             // 替换__XX__标记的变量
             // 定义匹配 __XX__ 的正则表达式
-            Pattern pattern = Pattern.compile("__(\\w+)__");
+            Pattern pattern = Pattern.compile("__(\\w+?)__");
             while (true) {
                 Matcher matcher = pattern.matcher(sql);
                 if (matcher.find()) {

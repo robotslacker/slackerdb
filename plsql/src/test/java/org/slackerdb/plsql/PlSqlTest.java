@@ -332,17 +332,18 @@ public class PlSqlTest {
                             let x = 10;
                             let y = 'Hello World';
                             insert into main.testEnvIdentifier values(__x__, '__y__');
+                            insert into main.testEnvIdentifier values(__x__ + 1, '__y__ Me');
                         End;
                         """);
         ResultSet rs = pgConn.createStatement().executeQuery(
-                "Select count(*) recount, min(id),min(col1) " +
-                        " FROM main.testEnvIdentifier");
-        if (rs.next())
-        {
-            assert rs.getInt(1) == 1;
-            assert rs.getInt(2) == 10;
-            assert rs.getString(3).equals("Hello World");
-        }
+                "Select id, col1 " +
+                        " FROM main.testEnvIdentifier order by id");
+        rs.next();
+        assert rs.getInt(1) == 10;
+        assert rs.getString(2).equals("Hello World");
+        rs.next();
+        assert rs.getInt(1) == 11;
+        assert rs.getString(2).equals("Hello World Me");
         rs.close();
         pgConn.close();
     }
