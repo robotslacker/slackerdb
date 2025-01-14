@@ -162,8 +162,8 @@ public class ExecuteRequest extends PostgresRequest {
         }
 
         long sqlHistoryId = this.dbInstance.backendSqlHistoryId.incrementAndGet();
-        String historySQL = "Insert INTO sysaux.SQL_HISTORY(ID, SessionId, ClientIP, SQL, SqlId, StartTime) " +
-                "VALUES(?, ?,?,?,?, current_timestamp)";
+        String historySQL = "Insert INTO sysaux.SQL_HISTORY(ID, ServerId, SessionId, ClientIP, SQL, SqlId, StartTime) " +
+                "VALUES(?, " + ProcessHandle.current().pid() + ",?,?,?,?, current_timestamp)";
         try {
             PreparedStatement preparedStatement =
                     backendSqlHistoryConnection.prepareStatement(historySQL);

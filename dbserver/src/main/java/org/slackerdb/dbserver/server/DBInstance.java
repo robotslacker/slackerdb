@@ -91,6 +91,36 @@ public class DBInstance {
     private RandomAccessFile pidRandomAccessFile;
     private FileLock pidFileLockHandler;
 
+    // 监控线程
+    class DBInstanceMonitorThread extends Thread
+    {
+        @Override
+        @SuppressWarnings("BusyWait")
+        public void run()
+        {
+            while (!isInterrupted())
+            {
+                try
+                {
+                    if (getRegisteredConnectionsCount() > serverConfiguration.getMax_Workers())
+                    {
+                        logger.warn(
+                                "[SERVER] The system is overloaded. " +
+                                        "The current number of connection requests is {} " +
+                                        "and the current maximum worker setting of the system is {}.",
+                                getRegisteredConnectionsCount(), serverConfiguration.getMax_Workers());
+                    }
+                    Thread.sleep(5*1000);
+                }
+                catch (InterruptedException ignored)
+                {
+                    this.interrupt();
+                }
+            }
+        }
+    }
+    private DBInstanceMonitorThread dbInstanceMonitorThread = null;
+
     // 终止会话
     // 默认回滚所有会话
     public void abortSession(int sessionId) throws SQLException {
@@ -248,7 +278,7 @@ public class DBInstance {
             if (serverConfiguration.getAccess_mode().equals("READ_ONLY")) {
                 connectProperties.setProperty("duckdb.read_only", "true");
             }
-            // DuckDB并不需要用户名和密码，但是这里也要设置为空，以保证Hakari工作
+            // DuckDB并不需要用户名和密码，但是这里也要设置为空，以保证Hikari工作
             connectProperties.setProperty("user", "");
             connectProperties.setProperty("password", "");
 
@@ -348,10 +378,11 @@ public class DBInstance {
                                 CREATE TABLE IF NOT EXISTS SYSAUX.SQL_HISTORY
                                 (
                                     ID             BIGINT PRIMARY KEY,
+                                    ServerID       INT,
                                     SessionID      INT,
                                     ClientIP       TEXT,
-                                    StartTime      TIMESTAMP,
-                                    EndTime        TIMESTAMP,
+                                    StartTime      DateTime,
+                                    EndTime        DateTime,
                                     Elapsed        INT GENERATED ALWAYS AS (DATEDIFF('SECOND', StartTime, EndTime)),
                                     SqlID          INT,
                                     SQL            TEXT,
@@ -399,6 +430,13 @@ public class DBInstance {
             while (!protocolServer.isPortReady()) {
                 // 等待Netty进程就绪
                 Sleeper.sleep(1000);
+            }
+
+            // 启动监控线程
+            if (dbInstanceMonitorThread == null)
+            {
+                dbInstanceMonitorThread = new DBInstanceMonitorThread();
+                dbInstanceMonitorThread.start();
             }
         }
         else
@@ -460,8 +498,21 @@ public class DBInstance {
             }
         }
 
+        // 关闭监控线程
+        if (dbInstanceMonitorThread != null) {
+            if (dbInstanceMonitorThread.isAlive()) {
+                dbInstanceMonitorThread.interrupt();
+            }
+            dbInstanceMonitorThread = null;
+        }
+
         // 数据库标记为空闲
         this.instanceState = "IDLE";
+    }
+
+    public int getRegisteredConnectionsCount()
+    {
+        return this.protocolServer.getRegisteredConnectionsCount();
     }
 
     // 初始化一个新的数据库会话

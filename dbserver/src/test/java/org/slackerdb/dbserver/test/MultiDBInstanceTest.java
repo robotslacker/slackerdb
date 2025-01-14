@@ -29,11 +29,11 @@ public class MultiDBInstanceTest {
     void testMultiDBInstance() throws ServerException, SQLException {
         // 修改默认的db启动端口
         ServerConfiguration serverConfiguration1 = new ServerConfiguration();
-        serverConfiguration1.setPort(4309);
+        serverConfiguration1.setPort(0);
         serverConfiguration1.setData("data1");
 
         ServerConfiguration serverConfiguration2 = new ServerConfiguration();
-        serverConfiguration2.setPort(4310);
+        serverConfiguration2.setPort(0);
         serverConfiguration2.setData("data2");
 
         // 初始化数据库
@@ -47,11 +47,11 @@ public class MultiDBInstanceTest {
         assert dbInstance1.instanceState.equalsIgnoreCase("RUNNING");
         assert dbInstance2.instanceState.equalsIgnoreCase("RUNNING");
 
-        String connectURL = "jdbc:postgresql://127.0.0.1:4309/data1";
+        String connectURL = "jdbc:postgresql://127.0.0.1:" + serverConfiguration1.getPort() + "/data1";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
-        connectURL = "jdbc:postgresql://127.0.0.1:4310/data2";
+        connectURL = "jdbc:postgresql://127.0.0.1:" + serverConfiguration2.getPort() + "/data2";
         Connection pgConn2 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn2.setAutoCommit(false);
@@ -89,7 +89,7 @@ public class MultiDBInstanceTest {
     void testDuplicateStart() throws ServerException {
         // 修改默认的db启动端口
         ServerConfiguration serverConfiguration1 = new ServerConfiguration();
-        serverConfiguration1.setPort(4309);
+        serverConfiguration1.setPort(0);
         serverConfiguration1.setData("data1");
 
         // 初始化数据库
@@ -115,7 +115,7 @@ public class MultiDBInstanceTest {
     void testStartStopStartAgain() throws ServerException {
         // 修改默认的db启动端口
         ServerConfiguration serverConfiguration1 = new ServerConfiguration();
-        serverConfiguration1.setPort(4309);
+        serverConfiguration1.setPort(0);
         serverConfiguration1.setData("data1");
 
         // 初始化数据库
@@ -136,15 +136,15 @@ public class MultiDBInstanceTest {
     void testMultiDBInstancesManager() throws ServerException {
         // 修改默认的db启动端口
         ServerConfiguration serverConfiguration1 = new ServerConfiguration();
-        serverConfiguration1.setPort(4309);
+        serverConfiguration1.setPort(0);
         serverConfiguration1.setData("data1");
 
         ServerConfiguration serverConfiguration2 = new ServerConfiguration();
-        serverConfiguration2.setPort(4310);
+        serverConfiguration2.setPort(0);
         serverConfiguration2.setData("data1");
 
         ServerConfiguration serverConfiguration3 = new ServerConfiguration();
-        serverConfiguration3.setPort(4309);
+        serverConfiguration3.setPort(0);
         serverConfiguration3.setData("data3");
 
         // 初始化数据库

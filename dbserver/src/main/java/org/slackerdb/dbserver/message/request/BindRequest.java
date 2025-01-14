@@ -274,9 +274,9 @@ public class BindRequest extends PostgresRequest {
             }
             if (backendSqlHistoryConnection != null)
             {
-                String historySQL = "Insert INTO sysaux.SQL_HISTORY(ID, SessionId, ClientIP, SQL, SqlId, StartTime, EndTime," +
+                String historySQL = "Insert INTO sysaux.SQL_HISTORY(ID, ServerID, SessionId, ClientIP, SQL, SqlId, StartTime, EndTime," +
                         "SQLCode, AffectedRows, ErrorMsg) " +
-                        "VALUES(?, ?,?,?,?, current_timestamp, current_timestamp, ?, 0, ?)";
+                        "VALUES(?," + ProcessHandle.current().pid() + ", ?,?,?,?, current_timestamp, current_timestamp, ?, 0, ?)";
                 try {
                     PreparedStatement preparedStatement =
                             backendSqlHistoryConnection.prepareStatement(historySQL);

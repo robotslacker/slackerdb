@@ -170,6 +170,7 @@ public class AdminClientRequest  extends PostgresRequest {
             feedBackMsg.append("  Current Connections: ").append(this.dbInstance.dbDataSourcePool.getUsedConnectionPoolSize()).append("\n");
             feedBackMsg.append("  Idle Connections: ").append(this.dbInstance.dbDataSourcePool.getIdleConnectionPoolSize()).append("\n");
             feedBackMsg.append("  Active Sessions: ").append(this.dbInstance.activeSessions).append("\n");
+            feedBackMsg.append("  Active Channels: ").append(this.dbInstance.getRegisteredConnectionsCount()).append("\n");
             OperatingSystemMXBean osBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
             feedBackMsg.append(String.format("  CPU Load: %.2f%%", osBean.getProcessCpuLoad() * 100)).append("\n");
             ThreadMXBean threadBean = ManagementFactory.getThreadMXBean();

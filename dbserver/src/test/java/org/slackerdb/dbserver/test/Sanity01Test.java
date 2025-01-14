@@ -33,11 +33,12 @@ public class Sanity01Test {
 
         // 修改默认的db启动端口
         ServerConfiguration serverConfiguration = new ServerConfiguration();
-        serverConfiguration.setPort(dbPort);
+        serverConfiguration.setPort(0);
         serverConfiguration.setData("mem");
         serverConfiguration.setLog_level("INFO");
         serverConfiguration.setSqlHistory("OFF");
-
+        dbPort = serverConfiguration.getPort();
+        
         // 初始化数据库
         dbInstance = new DBInstance(serverConfiguration);
         dbInstance.start();

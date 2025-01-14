@@ -12,6 +12,7 @@ import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.AttributeKey;
+import io.netty.util.concurrent.EventExecutor;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.request.*;
@@ -390,6 +391,19 @@ public class PostgresServer {
         protected void encode(ChannelHandlerContext ctx, ByteBuffer msg, ByteBuf out) {
             out.writeBytes(msg);
         }
+    }
+
+    public int getRegisteredConnectionsCount()
+    {
+        int registeredConnectionsCount = 0;
+        for (EventExecutor eventExecutor : workerGroup) {
+            SingleThreadEventLoop eventLoop = (SingleThreadEventLoop) eventExecutor;
+
+            if (eventLoop.registeredChannels() != -1) {
+                registeredConnectionsCount = registeredConnectionsCount + eventLoop.registeredChannels();
+            }
+        }
+        return registeredConnectionsCount;
     }
 
     private void run() throws InterruptedException, ServerException {
