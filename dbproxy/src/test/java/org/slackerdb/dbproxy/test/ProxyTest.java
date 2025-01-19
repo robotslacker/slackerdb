@@ -14,7 +14,7 @@ import java.util.TimeZone;
 public class ProxyTest {
     private static DBInstance dbInstance;
     private static ProxyInstance proxyInstance;
-    private static final int dbPort = 4309;
+    private static int dbPort = 0;
 
     @BeforeAll
     static void initAll() throws ServerException {
@@ -31,9 +31,10 @@ public class ProxyTest {
 
         org.slackerdb.dbproxy.configuration.ServerConfiguration proxyConfiguration =
                 new org.slackerdb.dbproxy.configuration.ServerConfiguration();
-        proxyConfiguration.setPort(dbPort);
+        proxyConfiguration.setPort(0);
         proxyInstance = new ProxyInstance(proxyConfiguration);
         proxyInstance.start();
+        dbPort = proxyConfiguration.getPort();
 
         // 等待Netty进程就绪
         while (!proxyInstance.instanceState.equalsIgnoreCase("RUNNING")) {
@@ -52,7 +53,7 @@ public class ProxyTest {
 
 
     @AfterAll
-    static void tearDownAll() throws Exception{
+    static void tearDownAll(){
         proxyInstance.stop();
         dbInstance.stop();
     }
