@@ -76,7 +76,7 @@ public class TPCDSTest {
     }
 
     @AfterAll
-    static void tearDownAll() throws Exception {
+    static void tearDownAll() {
         dbInstance.stop();
 
         File dbFile = new File(String.valueOf(Path.of(dbInstance.serverConfiguration.getData_Dir(),
@@ -109,7 +109,10 @@ public class TPCDSTest {
                 pgConn = DriverManager.getConnection(connectURL, props);
                 break;
             } catch (SQLException ignored) {}
-            Sleeper.sleep(2*1000);
+            try {
+                Sleeper.sleep(2 * 1000);
+            }
+            catch (InterruptedException ignored) {}
         }
         Thread.currentThread().setName("RUN-" + name + "-CONNECTED." );
 
@@ -217,7 +220,10 @@ public class TPCDSTest {
                 for (Thread thread : threads) {
                     if (thread.isAlive()) {
                         // 还有测试线程没有结束
-                        Sleeper.sleep(1000);
+                        try {
+                            Sleeper.sleep(1000);
+                        }
+                        catch (InterruptedException ignored) {}
                         allThreadsDone = false;
                         break;
                     }

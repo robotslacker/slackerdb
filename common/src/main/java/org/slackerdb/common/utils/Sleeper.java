@@ -10,12 +10,10 @@ public class Sleeper {
      *
      * @param timeoutMillis Timeout in ms
      */
-    public static void sleep(long timeoutMillis) {
-        try {
-            Object obj = new Object();
-            synchronized (obj) {
-                obj.wait(timeoutMillis);
-            }
-        } catch (Exception ignored) {}
+    public static void sleep(long timeoutMillis) throws InterruptedException {
+        Object obj = new Object();
+        synchronized (obj) {
+            obj.wait(timeoutMillis);
+        }
     }
 }

@@ -40,7 +40,10 @@ public class TableFullSyncWorker extends Thread
         this.abortSync = true;
         while (!abortCompleted)
         {
-            Sleeper.sleep(500);
+            try {
+                Sleeper.sleep(500);
+            }
+            catch (InterruptedException ignored) {}
         }
     }
 

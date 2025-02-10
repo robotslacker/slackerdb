@@ -38,7 +38,10 @@ public class ProxyTest {
 
         // 等待Netty进程就绪
         while (!proxyInstance.instanceState.equalsIgnoreCase("RUNNING")) {
-            Sleeper.sleep(1000);
+            try {
+                Sleeper.sleep(1000);
+            }
+            catch (InterruptedException ignored) {}
         }
 
         // 添加代理规则

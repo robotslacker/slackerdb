@@ -95,24 +95,22 @@ public class DBInstance {
     class DBInstanceMonitorThread extends Thread
     {
         @Override
-        @SuppressWarnings("BusyWait")
         public void run()
         {
             while (!isInterrupted())
             {
-                try
+                if (getRegisteredConnectionsCount() > serverConfiguration.getMax_Workers())
                 {
-                    if (getRegisteredConnectionsCount() > serverConfiguration.getMax_Workers())
-                    {
-                        logger.warn(
-                                "[SERVER] The system is overloaded. " +
-                                        "The current number of connection requests is {} " +
-                                        "and the current maximum worker setting of the system is {}.",
-                                getRegisteredConnectionsCount(), serverConfiguration.getMax_Workers());
-                    }
-                    Thread.sleep(5*1000);
+                    logger.warn(
+                            "[SERVER] The system is overloaded. " +
+                                    "The current number of connection requests is {} " +
+                                    "and the current maximum worker setting of the system is {}.",
+                            getRegisteredConnectionsCount(), serverConfiguration.getMax_Workers());
                 }
-                catch (InterruptedException ignored)
+                try {
+                    Sleeper.sleep(5 * 1000);
+                }
+                catch (InterruptedException interruptedException)
                 {
                     this.interrupt();
                 }
@@ -429,7 +427,10 @@ public class DBInstance {
             protocolServer.start();
             while (!protocolServer.isPortReady()) {
                 // 等待Netty进程就绪
-                Sleeper.sleep(1000);
+                try {
+                    Sleeper.sleep(1000);
+                }
+                catch (InterruptedException ignored) {}
             }
 
             // 启动监控线程

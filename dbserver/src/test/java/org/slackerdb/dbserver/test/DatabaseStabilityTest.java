@@ -122,7 +122,10 @@ public class DatabaseStabilityTest {
         executor.shutdown();
         while (!executor.isTerminated()) {
             // 等待所有任务完成
-            Sleeper.sleep(10*1000);
+            try {
+                Sleeper.sleep(10 * 1000);
+            }
+            catch (InterruptedException ignored) {}
         }
         // 运行后再次打印当前系统资源
         printSystemStatus();

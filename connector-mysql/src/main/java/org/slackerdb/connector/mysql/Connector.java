@@ -388,7 +388,10 @@ public class Connector {
                 logger.error(
                         "[MYSQL-BINLOG] Started failed. Source database connected failed . Will retry after 10 seconds. {}",
                         sqlException.getMessage());
-                Sleeper.sleep(10*1000L);
+                try {
+                    Sleeper.sleep(10 * 1000L);
+                }
+                catch (InterruptedException ignored) {}
             }
         }
         if (minBinlogFileName == null)

@@ -2,6 +2,7 @@ package org.slackerdb.dbserver.server;
 
 import ch.qos.logback.classic.Logger;
 import org.slackerdb.common.exceptions.ServerException;
+import org.slackerdb.common.utils.Sleeper;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -68,7 +69,7 @@ public class DBDataSourcePool {
                 }
 
                 try {
-                    Thread.sleep(10 * 1000);
+                    Sleeper.sleep(10 * 1000);
                 }
                 catch (InterruptedException ignored)
                 {

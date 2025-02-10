@@ -134,7 +134,10 @@ public class ProxyInstance {
         protocolServer.start();
         while (!protocolServer.isPortReady()) {
             // 等待Netty进程就绪
-            Sleeper.sleep(1000);
+            try {
+                Sleeper.sleep(1000);
+            }
+            catch (InterruptedException ignored) {}
         }
 
         // 标记服务已经启动完成

@@ -9,6 +9,7 @@ package org.slackerdb.dbserver;
  */
 
 import ch.qos.logback.classic.Logger;
+import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.dbserver.client.AdminClient;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.logger.AppLogger;
@@ -231,7 +232,7 @@ public class Main {
                 dbInstance.start();
 
                 // 这里永远等待，不退出
-                try {Thread.sleep(Long.MAX_VALUE);} catch (InterruptedException ignored) {}
+                Sleeper.sleep(Long.MAX_VALUE);
             }
             else
             {
