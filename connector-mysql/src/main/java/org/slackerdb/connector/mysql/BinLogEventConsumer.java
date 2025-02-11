@@ -62,7 +62,7 @@ public class BinLogEventConsumer {
             duckDBAppender.beginRow();
             for (Serializable serializable : row) {
                 if (serializable == null) {
-                    duckDBAppender.append(null);
+                    duckDBAppender.append((byte[])null);
                 } else {
                     switch (serializable.getClass().getSimpleName()) {
                         case "Integer":
@@ -106,7 +106,7 @@ public class BinLogEventConsumer {
                 {
                     Serializable serializable = row.getValue()[i-1];
                     if (serializable == null) {
-                        duckDBAppender1.append(null);
+                        duckDBAppender1.append((byte[]) null);
                     } else {
                         switch (serializable.getClass().getSimpleName()) {
                             case "Integer":
@@ -160,7 +160,7 @@ public class BinLogEventConsumer {
                 {
                     Serializable serializable = row.getValue()[i-1];
                     if (serializable == null) {
-                        duckDBAppender.append(null);
+                        duckDBAppender.append((byte[]) null);
                     } else {
                         switch (serializable.getClass().getSimpleName()) {
                             case "Integer":
@@ -205,7 +205,7 @@ public class BinLogEventConsumer {
                 {
                     Serializable serializable = row.getValue()[i-1];
                     if (serializable == null) {
-                        duckDBAppender.append(null);
+                        duckDBAppender.append((byte[]) null);
                     } else {
                         switch (serializable.getClass().getSimpleName()) {
                             case "Integer":
@@ -256,7 +256,7 @@ public class BinLogEventConsumer {
             {
                 Serializable serializable = row[i-1];
                 if (serializable == null) {
-                    duckDBAppender.append(null);
+                    duckDBAppender.append((byte[]) null);
                 } else {
                     switch (serializable.getClass().getSimpleName()) {
                         case "Integer":
