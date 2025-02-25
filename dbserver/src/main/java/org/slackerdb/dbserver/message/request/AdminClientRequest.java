@@ -162,7 +162,7 @@ public class AdminClientRequest  extends PostgresRequest {
             feedBackMsg.append(String.format("%-20s", "  Log:")).append(this.dbInstance.serverConfiguration.getLog()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Log_Level:")).append(this.dbInstance.serverConfiguration.getLog_level().levelStr).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Locale:")).append(this.dbInstance.serverConfiguration.getLocale()).append("\n");
-            feedBackMsg.append(String.format("%-20s", "  Client_TimeOut:")).append(this.dbInstance.serverConfiguration.getClient_timeout()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Client_Timeout:")).append(this.dbInstance.serverConfiguration.getClient_timeout()).append("\n");
 
             // 显示数据库基本信息
             feedBackMsg.append("SERVER USAGE: \n");

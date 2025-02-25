@@ -80,7 +80,7 @@ public class CopyDataRequest extends PostgresRequest {
                     duckDBAppender.beginRow();
                     for (Integer copyTableDbColumnMapPo : copyTableDbColumnMapPos) {
                         if (copyTableDbColumnMapPo == -1) {
-                            duckDBAppender.append((byte[]) null);
+                            duckDBAppender.append(null);
                         } else {
                             duckDBAppender.append(csvRecord.get(copyTableDbColumnMapPo));
                         }

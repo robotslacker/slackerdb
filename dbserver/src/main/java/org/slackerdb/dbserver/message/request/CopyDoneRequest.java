@@ -55,7 +55,7 @@ public class CopyDoneRequest extends PostgresRequest {
                     duckDBAppender.beginRow();
                     for (Integer copyTableDbColumnMapPo : copyTableDbColumnMapPos) {
                         if (copyTableDbColumnMapPo == -1) {
-                            duckDBAppender.append((byte[]) null);
+                            duckDBAppender.append(null);
                         } else {
                             duckDBAppender.append(record.get(copyTableDbColumnMapPo));
                         }

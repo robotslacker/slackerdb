@@ -382,4 +382,23 @@ public class PlSqlTest {
         rs.close();
         pgConn.close();
     }
+
+    @Test
+    void testVariableInSql() throws SQLException
+    {
+        String  connectURL = "jdbc:duckdb::memory:";
+        Connection pgConn = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn.setAutoCommit(false);
+        PlSqlVisitor.runPlSql(pgConn,
+                """
+                        declare
+                            current int;
+                        begin
+                            let current = 10;
+                            select '___current__';
+                        end;
+                        """);
+        pgConn.close();
+    }
 }

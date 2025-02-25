@@ -343,7 +343,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
             }
             // 替换__XX__标记的变量
             // 定义匹配 __XX__ 的正则表达式
-            Pattern pattern = Pattern.compile("__(\\w+?)__");
+            Pattern pattern = Pattern.compile("__(?!_)(\\w+?)__");
             while (true) {
                 Matcher matcher = pattern.matcher(sql);
                 if (matcher.find()) {
@@ -351,13 +351,16 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                     if (declareVariables.containsKey("__" + variableName + "__")) {
                         sql = sql.replace("__" + variableName + "__", String.valueOf(declareVariables.get("__" + variableName + "__")));
                     }
+                    else
+                    {
+                        sql = sql.replace("__" + variableName + "__", "**UNKNOWN**");
+                    }
                 }
                 else
                 {
                     break;
                 }
             }
-
             PreparedStatement pStmt = this.conn.prepareStatement(sql);
             int nBindPos = 1;
             for (Object obj : bindObjects)
@@ -676,7 +679,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                         String.valueOf(bindingObjectEntry.getValue()));
             } else if (bindingObjectEntry.getValue() instanceof String) {
                 expression = expression.replaceAll("\\b" + bindingObjectEntry.getKey() + "\\b",
-                       "'" +  bindingObjectEntry.getValue() + "'");
+                        "'" +  bindingObjectEntry.getValue() + "'");
             } else if (bindingObjectEntry.getValue() instanceof Double) {
                 expression = expression.replaceAll("\\b" + bindingObjectEntry.getKey() + "\\b",
                         String.valueOf(bindingObjectEntry.getValue()));

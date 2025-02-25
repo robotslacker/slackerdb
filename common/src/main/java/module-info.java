@@ -10,4 +10,5 @@ module common {
     requires org.slf4j;
     requires org.apache.commons.io;
     requires spring.core;
+    requires java.sql;
 }
