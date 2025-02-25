@@ -1,9 +1,12 @@
 package org.slackerdb.connector.postgres;
 
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import org.apache.activemq.broker.BrokerService;
 import org.duckdb.DuckDBConnection;
 import org.slackerdb.common.utils.DBUtil;
 import org.slackerdb.connector.postgres.exception.ConnectorException;
+import org.slf4j.LoggerFactory;
 
 import java.sql.*;
 import java.util.ArrayList;
@@ -18,9 +21,15 @@ public class Connector {
     public final ConcurrentHashMap<String, ConnectorTask> connectorTasks
             = new ConcurrentHashMap<>();
 
-    // 只能使用newConnector, 或者load的方式来加载
-    private Connector() {
+    public static BrokerService embeddedBrokerService = null;
 
+    // 只能使用newConnector, 或者load的方式来加载
+    private Connector() throws Exception {
+        synchronized (this) {
+            if (embeddedBrokerService == null) {
+                embeddedBrokerService = EmbeddedActiveMQ.startBroker();
+            }
+        }
     }
 
     private Logger logger;
@@ -28,6 +37,11 @@ public class Connector {
     public void setLogger(Logger logger)
     {
         this.logger = logger;
+    }
+
+    public Logger getLogger()
+    {
+        return this.logger;
     }
 
     public Connection getTargetDBConnection()
@@ -51,7 +65,7 @@ public class Connector {
     }
 
     // 创建同步进程需要的数据字典
-    private void createCatalogIfNotExist(Connection catalogConnection) throws SQLException
+    private static void createCatalogIfNotExist(Connection catalogConnection) throws SQLException
     {
         Statement stmt = catalogConnection.createStatement();
 
@@ -90,7 +104,7 @@ public class Connector {
         catalogConnection.commit();
 
     }
-    public static Connector newConnector(Connection targetDBConnection, String connectorName, String connectorURL) throws SQLException {
+    public static Connector newConnector(Connection targetDBConnection, String connectorName, String connectorURL) throws Exception {
         Connector connector = new Connector();
 
         // 创建数据字典，如果不存在
@@ -148,10 +162,12 @@ public class Connector {
     }
 
     // 从数据库中加载之前的持久化connector
-    public static ConcurrentHashMap<String, Connector> load(Connection targetDBConnection, Logger logger) throws SQLException
+    public static ConcurrentHashMap<String, Connector> load(Connection targetDBConnection, Logger logger) throws Exception
     {
         ConcurrentHashMap<String, Connector> connectors = new ConcurrentHashMap<>();
 
+        // 创建数据字典
+        Connector.createCatalogIfNotExist(targetDBConnection);
         // 从数据字典中加载连接器
         String sql = """
                 SELECT  *
@@ -165,7 +181,6 @@ public class Connector {
 
             // 创建数据字典，如果不存在
             connector.setTargetDBConnection(targetDBConnection);
-            connector.createCatalogIfNotExist(targetDBConnection);
 
             connector.connectorURL = rs.getString("connectorURL");
             connector.connectorName = rs.getString("connectorName");

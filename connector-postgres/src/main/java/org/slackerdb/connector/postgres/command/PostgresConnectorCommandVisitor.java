@@ -126,7 +126,7 @@ public class PostgresConnectorCommandVisitor extends PostgresConnectorSyntaxBase
             connector = Connector.newConnector(this.conn, connectorName, connectOptions);
             connector.setLogger(logger);
         }
-        catch (SQLException sqlException)
+        catch (Exception sqlException)
         {
             throw new ParserCommandError("[POSTGRES-WAL] Create failed. ", sqlException);
         }
@@ -169,7 +169,7 @@ public class PostgresConnectorCommandVisitor extends PostgresConnectorSyntaxBase
         return super.visitShutdownConnector(ctx);
     }
 
-    public PostgresConnectorCommandVisitor(Connection conn, CharStream charStream, Logger logger) throws SQLException {
+    public PostgresConnectorCommandVisitor(Connection conn, CharStream charStream, Logger logger) throws Exception {
         this.conn = conn;
         this.inputStream = charStream;
         this.logger = logger;
@@ -201,7 +201,7 @@ public class PostgresConnectorCommandVisitor extends PostgresConnectorSyntaxBase
                 visitor.visit(tree);
             } catch (EventTermination ignored) {
             }
-        } catch (RuntimeException | SQLException re)
+        } catch (Exception re)
         {
             throw new ParserCommandError("Parser Error:", re);
         }

@@ -1,5 +1,7 @@
 package org.slackerdb.connector.postgres;
 
+import ch.qos.logback.classic.Logger;
+import org.duckdb.DuckDBConnection;
 import org.slackerdb.connector.postgres.Connector;
 
 import java.sql.*;
@@ -10,6 +12,7 @@ import java.util.regex.Pattern;
 
 public class ConnectorTask {
     private Connector       connector;
+    private Connection      conn;
     public  String          taskName;
     public  long            pullInterval = 0; // wal的刷新时间间隔
     private String          sourceSchemaRule;
@@ -21,12 +24,33 @@ public class ConnectorTask {
     private String          errorMsg;
     private LocalDateTime   updateTime;
     private WALSyncWorker   walSyncWorker;
+    private Logger          logger;
 
     private ConnectorTask() {}
+
+    public Logger getLogger()
+    {
+        return this.logger;
+    }
 
     public Connector getConnector()
     {
         return connector;
+    }
+
+    public String  getStatus()
+    {
+        return this.status;
+    }
+
+    public void setStatus(String status)
+    {
+        this.status = status;
+    }
+
+    public void setLatestLSN(String latestLSN)
+    {
+        this.latestLSN = latestLSN;
     }
 
     public static ConnectorTask newTask(
@@ -71,6 +95,8 @@ public class ConnectorTask {
         pStmt.close();
 
         // 创建同步线程
+        connectorTask.conn = ((DuckDBConnection)connector.getTargetDBConnection()).duplicate();
+        connectorTask.logger = connector.getLogger();
         connectorTask.walSyncWorker = new WALSyncWorker(connectorTask);
         return connectorTask;
     }
@@ -110,6 +136,9 @@ public class ConnectorTask {
             }
         }
         // 创建同步线程
+        connectorTask.conn = ((DuckDBConnection)connector.getTargetDBConnection()).duplicate();
+        connectorTask.conn.setAutoCommit(false);
+        connectorTask.logger = connector.getLogger();
         connectorTask.walSyncWorker = new WALSyncWorker(connectorTask);
         return connectorTask;
     }
@@ -127,5 +156,31 @@ public class ConnectorTask {
     public String getSourceTableRule()
     {
         return sourceTableRule;
+    }
+
+    public String getTargetSchemaRule()
+    {
+        return targetSchemaRule;
+    }
+
+    public String getTargetTableRule()
+    {
+        return targetTableRule;
+    }
+
+    public void save() throws SQLException {
+        String sql = """
+                UPDATE sysaux.connector_postgres_task
+                SET    status = ?, latestLSN = ?
+                Where  connectorName = ? And taskName = ?
+                """;
+        PreparedStatement pStmt = conn.prepareStatement(sql);
+        pStmt.setString(1, this.status);
+        pStmt.setString(2, this.latestLSN);
+        pStmt.setString(3, this.connector.connectorName);
+        pStmt.setString(4, this.taskName);
+        pStmt.execute();
+        pStmt.close();
+        conn.commit();
     }
 }
