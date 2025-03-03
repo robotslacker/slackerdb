@@ -25,12 +25,15 @@ import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
 
 public class WALSyncWorker extends Thread implements IWALMessage{
-    private final ConnectorTask connectorTask;
-    private Connection sourceConnection;
+    // 目标数据库连接
     private Connection targetConnection;
+
+    private final ConnectorTask connectorTask;
     private final Logger logger;
     private final ConcurrentHashMap<String, String> syncObjectMap = new ConcurrentHashMap<>();
     private final EmbeddedActiveMQ embeddedBrokerService;
+    private long  messageProcessed = 0;
+    private long  messageLastCommitTime;
 
     public WALSyncWorker(ConnectorTask connectorTask, EmbeddedActiveMQ embeddedBrokerService)
     {
@@ -42,7 +45,16 @@ public class WALSyncWorker extends Thread implements IWALMessage{
     @Override
     public void consumeMessage(String textMessage)
     {
+        messageProcessed = messageProcessed + 1;
+        if (messageProcessed > 5000)
+        {
+//            this.targetConnection.commit();
+        }
         System.out.println("HaHa " + textMessage);
+
+        // 定时提交
+
+
     }
 
     @Override
@@ -51,9 +63,13 @@ public class WALSyncWorker extends Thread implements IWALMessage{
         // 连接源数据库
         try {
             // 获取数据源的连接
-            sourceConnection = DBUtil.getJdbcConnection(this.connectorTask.getConnector().getConnectorURL());
-            targetConnection = ((DuckDBConnection)this.connectorTask.getConnector().getTargetDBConnection()).duplicate();
-            String slotName = connectorTask.getConnector().connectorName.toLowerCase() + "_" + connectorTask.taskName.toLowerCase();
+            Connection sourceConnection = DBUtil.getJdbcConnection(this.connectorTask.getConnector().getConnectorURL());
+            sourceConnection.setAutoCommit(false);
+            this.targetConnection = ((DuckDBConnection) this.connectorTask.getConnector().getTargetDBConnection()).duplicate();
+            targetConnection.setAutoCommit(false);
+
+            // 创建一个消息队列，用来异步处理接收到的消息
+            embeddedBrokerService.newMessageChannel(connectorTask.taskName, this);
 
             // 从数据字典中检索需要同步的对象清单，并构建映射关系
             List<String> schemaList = new ArrayList<>();
@@ -79,7 +95,6 @@ public class WALSyncWorker extends Thread implements IWALMessage{
                     if (Pattern.compile(connectorTask.getSourceTableRule()).matcher(rs.getString("tablename")).matches())
                     {
                         schemaAndTableList.add(schemaName + "." + rs.getString("tablename"));
-                        embeddedBrokerService.newMessageChannel(schemaName + "." + rs.getString("tablename"), this);
                     }
                 }
                 rs.close();
@@ -117,6 +132,9 @@ public class WALSyncWorker extends Thread implements IWALMessage{
                     statement.close();
                 }
             }
+
+            // 每一个任务工作在不同的槽中
+            String slotName = connectorTask.getConnector().connectorName.toLowerCase() + "_" + connectorTask.taskName.toLowerCase();
 
             // 如果任务状态为CREATED，表示这是第一次创建，需要建立复制槽
             if (connectorTask.getStatus().equalsIgnoreCase("CREATED")) {
@@ -186,74 +204,41 @@ public class WALSyncWorker extends Thread implements IWALMessage{
             if (connectorTask.getStatus().equalsIgnoreCase("SYNCING"))
             {
                 String latestlsn = "";
+                // noinspection InfiniteLoopStatement
                 while (true) {
-                    int prefetchSize = 5000;
-                    boolean bHasWalRecored =false;
-                    stmt = sourceConnection.createStatement();
-                    rs = stmt.executeQuery(
-                            "SELECT * FROM pg_logical_slot_peek_changes('" + slotName + "', NULL, " + prefetchSize + ", " +
-                                    "'include-timestamp', '1', 'include-schemas', '1', 'include-pk', '1')");
-                    while (rs.next()) {
-                        bHasWalRecored = true;
-                        latestlsn = rs.getString("lsn");
-
-                        JSONObject changeDataEvent = JSONObject.parseObject(rs.getString("data"));
-                        JSONArray changeDataArray = changeDataEvent.getJSONArray("change");
-                        for (Object changeRow : changeDataArray) {
-                            String tableName = ((JSONObject) changeRow).getString("schema") + "." +
-                                    ((JSONObject) changeRow).getString("table");
-                            embeddedBrokerService.sendMessage(tableName, changeRow.toString());
-                        }
-                        try {
-                            Thread.sleep(3 * 1000);
-                        } catch (InterruptedException ignored) {}
-
-                    }
-                    rs.close();
-
-                    // 推进序列
-                    if (bHasWalRecored) {
+                    try {
+                        int prefetchSize = 5000;
+                        boolean bHasWalRecored = false;
+                        stmt = sourceConnection.createStatement();
                         rs = stmt.executeQuery(
-                                "SELECT * FROM pg_replication_slot_advance('" + slotName + "', '" + latestlsn + "')");
+                                "SELECT * FROM pg_logical_slot_peek_changes('" + slotName + "', NULL, " + prefetchSize + ", " +
+                                        "'include-timestamp', '1', 'include-schemas', '1', 'include-pk', '1')");
+                        while (rs.next()) {
+                            bHasWalRecored = true;
+                            latestlsn = rs.getString("lsn");
+
+                            JSONObject changeDataEvent = JSONObject.parseObject(rs.getString("data"));
+                            JSONArray changeDataArray = changeDataEvent.getJSONArray("change");
+                            for (Object changeRow : changeDataArray) {
+                                String tableName = ((JSONObject) changeRow).getString("schema") + "." +
+                                        ((JSONObject) changeRow).getString("table");
+                                embeddedBrokerService.sendMessage(tableName, changeRow.toString());
+                            }
+                        }
                         rs.close();
-                    }
-                    else
-                    {
-                        try {
-                            Thread.sleep(3 * 1000);
-                        } catch (InterruptedException ignored) {}
-                    }
+
+                        // 推进序列
+                        if (bHasWalRecored) {
+                            rs = stmt.executeQuery(
+                                    "SELECT * FROM pg_replication_slot_advance('" + slotName + "', '" + latestlsn + "')");
+                            rs.close();
+                        } else {
+                            // 没有任何数据需要处理，则休息10秒钟
+                            Sleeper.sleep(3 * 1000);
+                        }
+                    } catch (InterruptedException ignored) {Thread.currentThread().interrupt();}
                 }
-//                while (rs.next()) {
-//                    String latestLsn = rs.getString("lsn");
-//                    JSONObject changeDataEvent = JSONObject.parseObject(rs.getString("data"));
-//                    String latestTimeStamp = changeDataEvent.getString("timestamp");
-//                    JSONArray changeDataArray = changeDataEvent.getJSONArray("change");
-//                    for (Object changeRow : changeDataArray) {
-//                        String eventKind = ((JSONObject) changeRow).getString("kind");
-//                        String tableName = ((JSONObject) changeRow).getString("schema") + "." +
-//                                ((JSONObject) changeRow).getString("table");
-//                        if (syncObjectMap.containsKey(tableName))
-//                        {
-//                            SyncBaseHandler cdcSyncHandler = cdcSyncMap.get(tableName);
-//                            if (eventKind.equals("update") || eventKind.equals("delete")) {
-//                                if (cdcSyncHandler.getPrimaryKeyColumns().size() == 0) {
-//                                    // 在没有主键的情况下，没法处理update和delete事件，跳过
-//                                    continue;
-//                                }
-//                            }
-//                            cdcSyncHandler.pushEvent((JSONObject) changeRow);
-//                            processRowCount = processRowCount + 1;
-//                        }
-//                    }
-//                }
-//                rs.close();
             }
-
-            int processRowCount = 0;
-            int processEventCount = 0;
-
-
         }
         catch (SQLException | IOException sqlException)
         {
@@ -261,9 +246,6 @@ public class WALSyncWorker extends Thread implements IWALMessage{
         } catch (JMSException e) {
             throw new RuntimeException(e);
         }
-        try {
-            Sleeper.sleep(30000);
-        }
-        catch (InterruptedException ignored) {}
+        try { Sleeper.sleep(3 * 1000);} catch (InterruptedException ignored) {}
     }
 }
