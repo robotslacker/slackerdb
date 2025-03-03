@@ -15,10 +15,6 @@ import java.util.List;
 public class Main {
     public static void main(String[] args) throws SQLException {
         Logger logger = AppLogger.createLogger("testCDC", "TRACE", "CONSOLE");
-        Logger nettyLogger = (Logger) LoggerFactory.getLogger("org.apache.activemq");
-//        if (!logger.getLevel().equals(Level.TRACE)) {
-            nettyLogger.setLevel(Level.OFF);
-//        }
 
         // 创建目标数据库
 //        String  connectURL = "jdbc:duckdb::memory:";

@@ -3,11 +3,11 @@ package org.slackerdb.connector.postgres;
 import ch.qos.logback.classic.Logger;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import jakarta.jms.JMSException;
 import org.duckdb.DuckDBConnection;
 import org.postgresql.copy.CopyOut;
 import org.slackerdb.common.utils.DBUtil;
 import org.slackerdb.common.utils.Sleeper;
-import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.nio.file.Files;
@@ -17,26 +17,32 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
-import org.postgresql.PGConnection;
 
-public class WALSyncWorker extends Thread{
+public class WALSyncWorker extends Thread implements IWALMessage{
     private final ConnectorTask connectorTask;
     private Connection sourceConnection;
     private Connection targetConnection;
     private final Logger logger;
     private final ConcurrentHashMap<String, String> syncObjectMap = new ConcurrentHashMap<>();
+    private final EmbeddedActiveMQ embeddedBrokerService;
 
-    public WALSyncWorker(ConnectorTask connectorTask)
+    public WALSyncWorker(ConnectorTask connectorTask, EmbeddedActiveMQ embeddedBrokerService)
     {
         this.connectorTask = connectorTask;
         this.logger = connectorTask.getLogger();
+        this.embeddedBrokerService = embeddedBrokerService;
+    }
+
+    @Override
+    public void consumeMessage(String textMessage)
+    {
+        System.out.println("HaHa " + textMessage);
     }
 
     @Override
@@ -73,6 +79,7 @@ public class WALSyncWorker extends Thread{
                     if (Pattern.compile(connectorTask.getSourceTableRule()).matcher(rs.getString("tablename")).matches())
                     {
                         schemaAndTableList.add(schemaName + "." + rs.getString("tablename"));
+                        embeddedBrokerService.newMessageChannel(schemaName + "." + rs.getString("tablename"), this);
                     }
                 }
                 rs.close();
@@ -178,19 +185,44 @@ public class WALSyncWorker extends Thread{
             // 如果任务状态为SYNCING， 需要接收后面的消息，放入消息队列
             if (connectorTask.getStatus().equalsIgnoreCase("SYNCING"))
             {
+                String latestlsn = "";
                 while (true) {
                     int prefetchSize = 5000;
+                    boolean bHasWalRecored =false;
                     stmt = sourceConnection.createStatement();
                     rs = stmt.executeQuery(
                             "SELECT * FROM pg_logical_slot_peek_changes('" + slotName + "', NULL, " + prefetchSize + ", " +
                                     "'include-timestamp', '1', 'include-schemas', '1', 'include-pk', '1')");
-                    for (int i = 0; i < rs.getMetaData().getColumnCount(); i++) {
-                        System.out.println(rs.getMetaData().getColumnName(i+1));
+                    while (rs.next()) {
+                        bHasWalRecored = true;
+                        latestlsn = rs.getString("lsn");
+
+                        JSONObject changeDataEvent = JSONObject.parseObject(rs.getString("data"));
+                        JSONArray changeDataArray = changeDataEvent.getJSONArray("change");
+                        for (Object changeRow : changeDataArray) {
+                            String tableName = ((JSONObject) changeRow).getString("schema") + "." +
+                                    ((JSONObject) changeRow).getString("table");
+                            embeddedBrokerService.sendMessage(tableName, changeRow.toString());
+                        }
+                        try {
+                            Thread.sleep(3 * 1000);
+                        } catch (InterruptedException ignored) {}
+
                     }
-                    try {
-                        System.out.println("111");
-                        Thread.sleep(4 * 1000);
-                    } catch (InterruptedException ignored) {}
+                    rs.close();
+
+                    // 推进序列
+                    if (bHasWalRecored) {
+                        rs = stmt.executeQuery(
+                                "SELECT * FROM pg_replication_slot_advance('" + slotName + "', '" + latestlsn + "')");
+                        rs.close();
+                    }
+                    else
+                    {
+                        try {
+                            Thread.sleep(3 * 1000);
+                        } catch (InterruptedException ignored) {}
+                    }
                 }
 //                while (rs.next()) {
 //                    String latestLsn = rs.getString("lsn");
@@ -226,6 +258,8 @@ public class WALSyncWorker extends Thread{
         catch (SQLException | IOException sqlException)
         {
             logger.error("[POSTGRES-WAL] : Connector task [{}] sync fail", connectorTask, sqlException);
+        } catch (JMSException e) {
+            throw new RuntimeException(e);
         }
         try {
             Sleeper.sleep(30000);

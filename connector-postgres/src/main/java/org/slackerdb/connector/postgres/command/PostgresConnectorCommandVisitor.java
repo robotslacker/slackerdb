@@ -123,8 +123,7 @@ public class PostgresConnectorCommandVisitor extends PostgresConnectorSyntaxBase
         // 信息持久化到数据库中
         Connector connector;
         try {
-            connector = Connector.newConnector(this.conn, connectorName, connectOptions);
-            connector.setLogger(logger);
+            connector = Connector.newConnector(this.conn, connectorName, connectOptions, logger);
         }
         catch (Exception sqlException)
         {

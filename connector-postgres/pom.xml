@@ -36,6 +36,21 @@
             <artifactId>activemq-kahadb-store</artifactId>
             <version>6.1.5</version>
         </dependency>
+        <dependency>
+            <groupId>org.apache.activemq</groupId>
+            <artifactId>activemq-pool</artifactId>
+            <version>6.1.5</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.activemq</groupId>
+            <artifactId>activemq-client</artifactId>
+            <version>6.1.5</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.activemq</groupId>
+            <artifactId>artemis-jakarta-client</artifactId>
+            <version>2.39.0</version>
+        </dependency>
 
         <!-- DuckDB 数据库驱动 -->
         <dependency>

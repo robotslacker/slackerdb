@@ -21,16 +21,7 @@ public class Connector {
     public final ConcurrentHashMap<String, ConnectorTask> connectorTasks
             = new ConcurrentHashMap<>();
 
-    public static BrokerService embeddedBrokerService = null;
-
-    // 只能使用newConnector, 或者load的方式来加载
-    private Connector() throws Exception {
-        synchronized (this) {
-            if (embeddedBrokerService == null) {
-                embeddedBrokerService = EmbeddedActiveMQ.startBroker();
-            }
-        }
-    }
+    public static EmbeddedActiveMQ embeddedBrokerService = null;
 
     private Logger logger;
 
@@ -104,11 +95,20 @@ public class Connector {
         catalogConnection.commit();
 
     }
-    public static Connector newConnector(Connection targetDBConnection, String connectorName, String connectorURL) throws Exception {
+    public static Connector newConnector(
+            Connection targetDBConnection,
+            String connectorName, String connectorURL,
+            Logger logger
+    ) throws Exception {
         Connector connector = new Connector();
 
         // 创建数据字典，如果不存在
-        connector.createCatalogIfNotExist(targetDBConnection);
+        createCatalogIfNotExist(targetDBConnection);
+        // 创建消息队列，如果不存在的话
+        if (embeddedBrokerService == null) {
+            embeddedBrokerService = new EmbeddedActiveMQ(logger);
+            embeddedBrokerService.startBroker(26126);
+        }
 
         // 数据保存到数据字典中
         String sql = """
@@ -129,36 +129,14 @@ public class Connector {
         connector.targetDBConnection = targetDBConnection;
         connector.connectorURL = connectorURL;
         connector.status = "CREATED";
+        connector.setLogger(logger);
+
         return connector;
     }
 
     public void addTask(ConnectorTask connectorTask)
     {
         connectorTasks.put(connectorTask.taskName, connectorTask);
-    }
-
-    public static List<String> list(Connection targetDBConnection) throws SQLException
-    {
-        List<String> connectorLists = new ArrayList<>();
-
-        if (!DuckdbUtil.isTableExists(targetDBConnection, "sysaux", "connector_postgres"))
-        {
-            return connectorLists;
-        }
-
-        String sql = """
-                SELECT  connectorName
-                FROM    sysaux.connector_postgres
-                """;
-        PreparedStatement preparedStatement = targetDBConnection.prepareStatement(sql);
-        ResultSet rs = preparedStatement.executeQuery();
-        while (rs.next())
-        {
-            connectorLists.add(rs.getString("connectorName"));
-        }
-        rs.close();
-
-        return connectorLists;
     }
 
     // 从数据库中加载之前的持久化connector
@@ -168,6 +146,12 @@ public class Connector {
 
         // 创建数据字典
         Connector.createCatalogIfNotExist(targetDBConnection);
+        // 创建消息队列，如果不存在的话
+        if (embeddedBrokerService == null) {
+            embeddedBrokerService = new EmbeddedActiveMQ(logger);
+            embeddedBrokerService.startBroker(26126);
+        }
+
         // 从数据字典中加载连接器
         String sql = """
                 SELECT  *

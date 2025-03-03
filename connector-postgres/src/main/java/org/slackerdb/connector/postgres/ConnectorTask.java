@@ -2,13 +2,8 @@ package org.slackerdb.connector.postgres;
 
 import ch.qos.logback.classic.Logger;
 import org.duckdb.DuckDBConnection;
-import org.slackerdb.connector.postgres.Connector;
-
 import java.sql.*;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Pattern;
 
 public class ConnectorTask {
     private Connector       connector;
@@ -97,7 +92,7 @@ public class ConnectorTask {
         // 创建同步线程
         connectorTask.conn = ((DuckDBConnection)connector.getTargetDBConnection()).duplicate();
         connectorTask.logger = connector.getLogger();
-        connectorTask.walSyncWorker = new WALSyncWorker(connectorTask);
+        connectorTask.walSyncWorker = new WALSyncWorker(connectorTask, Connector.embeddedBrokerService);
         return connectorTask;
     }
 
@@ -116,7 +111,6 @@ public class ConnectorTask {
             pStmt.setString(1, connector.connectorName);
             pStmt.setString(2, taskName);
             try (ResultSet rs = pStmt.executeQuery()) {
-                ;
                 if (rs.next()) {
                     // 返回一个任务实例
                     connectorTask.taskName = taskName;
@@ -139,7 +133,7 @@ public class ConnectorTask {
         connectorTask.conn = ((DuckDBConnection)connector.getTargetDBConnection()).duplicate();
         connectorTask.conn.setAutoCommit(false);
         connectorTask.logger = connector.getLogger();
-        connectorTask.walSyncWorker = new WALSyncWorker(connectorTask);
+        connectorTask.walSyncWorker = new WALSyncWorker(connectorTask, Connector.embeddedBrokerService);
         return connectorTask;
     }
 
