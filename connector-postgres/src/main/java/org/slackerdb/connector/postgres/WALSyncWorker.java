@@ -5,6 +5,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import jakarta.jms.JMSException;
+import org.apache.activemq.transport.nio.SelectorSelection;
 import org.duckdb.DuckDBAppender;
 import org.duckdb.DuckDBConnection;
 import org.postgresql.copy.CopyOut;
@@ -233,36 +234,12 @@ public class WALSyncWorker extends Thread implements IWALMessage{
             // 每一个任务工作在不同的槽中
             String slotName = connectorTask.getConnector().connectorName.toLowerCase() + "_" + connectorTask.taskName.toLowerCase();
 
-            boolean bInitSyncing = false;
-
             // 如果任务状态为CREATED或者之前就处于初始同步中，需要同步第一次数据
             if (
                     // 第一次建立或者之前正在同步中
                     (connectorTask.getStatus().equalsIgnoreCase("CREATED")) ||
                             (connectorTask.getStatus().equalsIgnoreCase("INITIAL SYNCING"))
-            ) {
-                bInitSyncing = true;
-            }
-            else
-            {
-                sql = """
-                            SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) AS replication_lag
-                            FROM pg_replication_slots
-                            WHERE slot_name = ?;
-                        """;
-                pStmt = sourceConnection.prepareStatement(sql);
-                pStmt.setString(1, slotName);
-                rs = pStmt.executeQuery();
-                if (!rs.next())
-                {
-                    // 复制槽不存在, 需要重新全量同步
-                    bInitSyncing = true;
-                }
-                rs.close();
-                stmt.close();
-            }
-
-            if (bInitSyncing)
+            )
             {
                 logger.trace("[POSTGRES-WAL] : Sync worker will do initial syncing ...");
 
@@ -327,8 +304,40 @@ public class WALSyncWorker extends Thread implements IWALMessage{
                 connectorTask.save();
                 logger.trace("[POSTGRES-WAL] : Connector slot [{}] has created for sync.", slotName);
 
-                // 提交源数据库连接，避免长期持有
+                // 提交目的数据库连接，避免长期持有
                 DuckdbUtil.peacefulCommit(targetConnection);
+                // 提交源数据库连接，避免长期持有
+                sourceConnection.commit();
+            }
+            else
+            {
+                // 接替上次的同步信息继续进行同步
+
+                // 删除之前的slot信息，
+                rs = stmt.executeQuery(
+                        "SELECT * FROM pg_replication_slots " +
+                                "WHERE slot_name = '" + slotName + "'");
+                if (rs.next()) {
+                    // 存在之前建立的复制槽，将尝试删除
+                    stmt.executeQuery("SELECT * FROM pg_drop_replication_slot('" + slotName + "')");
+                }
+                rs.close();
+                stmt.close();
+                sourceConnection.commit();
+
+                // 重建slot，指定restart_lsn
+                stmt = sourceConnection.createStatement();
+                rs = stmt.executeQuery(
+                        "SELECT * FROM pg_create_logical_replication_slot('" + slotName + "', " +
+                                "'wal2json', false, " +
+                                " restart_lsn := '" + connectorTask.getLatestLSN() + "')");
+                if (rs.next())
+                {
+                    connectorTask.setLatestLSN(rs.getString("lsn"));
+                }
+                stmt.close();
+                // 提交源数据库连接，避免长期持有
+                sourceConnection.commit();
             }
 
             // 创建一个消息队列，用来异步处理接收到的消息

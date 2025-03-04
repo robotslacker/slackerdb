@@ -43,6 +43,11 @@ public class ConnectorTask {
         this.latestLSN = latestLSN;
     }
 
+    public String getLatestLSN()
+    {
+        return this.latestLSN;
+    }
+
     public void setErrorMsg(String errorMsg)
     {
         this.errorMsg = errorMsg;

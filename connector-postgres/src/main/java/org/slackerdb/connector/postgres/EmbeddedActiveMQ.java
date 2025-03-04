@@ -36,14 +36,14 @@ public class EmbeddedActiveMQ {
         this.logger = logger;
     }
 
-    public void startBroker(int port) throws Exception {
+    public void startBroker() throws Exception {
         int defaultMaxJmsConnections = 10;
-        startBroker(port, defaultMaxJmsConnections);
+        startBroker(defaultMaxJmsConnections);
     }
 
-    public void startBroker(int port, int maxJmsConnections) throws Exception {
+    public void startBroker(int maxJmsConnections) throws Exception {
         String brokerName = "localhost";
-        String brokerAddress = "tcp://" + brokerName + ":" + port;
+        String brokerAddress = "vm://" + brokerName;
 
         if (brokerService == null)
         {

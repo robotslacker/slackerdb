@@ -107,7 +107,7 @@ public class Connector {
         // 创建消息队列，如果不存在的话
         if (embeddedBrokerService == null) {
             embeddedBrokerService = new EmbeddedActiveMQ(logger);
-            embeddedBrokerService.startBroker(26126);
+            embeddedBrokerService.startBroker();
         }
 
         // 数据保存到数据字典中
@@ -149,7 +149,7 @@ public class Connector {
         // 创建消息队列，如果不存在的话
         if (embeddedBrokerService == null) {
             embeddedBrokerService = new EmbeddedActiveMQ(logger);
-            embeddedBrokerService.startBroker(26126);
+            embeddedBrokerService.startBroker();
         }
 
         // 从数据字典中加载连接器
