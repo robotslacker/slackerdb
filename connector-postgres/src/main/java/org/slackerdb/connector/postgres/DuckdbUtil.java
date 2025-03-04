@@ -46,4 +46,19 @@ public class DuckdbUtil {
         preparedStatement.close();
         return ret;
     }
+
+    public static void peacefulCommit(Connection connection) throws SQLException
+    {
+        try
+        {
+            connection.commit();
+        }
+        catch (SQLException e)
+        {
+            if (!e.getMessage().contains("no transaction is active"))
+            {
+                throw e;
+            }
+        }
+    }
 }

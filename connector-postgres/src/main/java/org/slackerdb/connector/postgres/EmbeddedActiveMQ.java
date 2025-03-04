@@ -67,7 +67,7 @@ public class EmbeddedActiveMQ {
             return;
         }
         Connection jmsConn = connectionFactory.createConnection();
-        Session session = jmsConn.createSession(false, Session.AUTO_ACKNOWLEDGE);
+        Session session = jmsConn.createSession(false, Session.CLIENT_ACKNOWLEDGE);
         EmbeddedMessageProducer embeddedMessageProducer = new EmbeddedMessageProducer();
         Queue queue = session.createQueue(queueName);
         MessageProducer messageProducer = session.createProducer(embeddedMessageProducer.queue);
@@ -80,21 +80,29 @@ public class EmbeddedActiveMQ {
         this.messageProducerMap.put(queueName, embeddedMessageProducer);
 
         // 创建消费者
-        jmsConn.start();
-        // 创建消费者
         MessageConsumer consumer = session.createConsumer(queue);
         // 监听消息（异步）
         consumer.setMessageListener(message -> {
             if (message instanceof TextMessage textMessage) {
                 try {
                     consumeMessage.consumeMessage(textMessage.getText());
+                    message.acknowledge();
                 } catch (JMSException e) {
                     logger.error("", e);
+                    try {
+                        session.recover();
+                    }
+                    catch (JMSException ex)
+                    {
+                        logger.error("", ex);
+                    }
                 }
             } else {
                 logger.error("Unknown message type: {}", message);
             }
         });
+        // 启动消费者
+        jmsConn.start();
         this.messageConsumerMap.put(queueName, consumer);
     }
 
@@ -103,6 +111,7 @@ public class EmbeddedActiveMQ {
         TextMessage message = embeddedMessageProducer.session.createTextMessage(textMessage);
         embeddedMessageProducer.producer.send(embeddedMessageProducer.queue, message);
     }
+
     public void stopBroker() throws Exception {
         synchronized (this) {
             for (MessageConsumer messageConsumer : this.messageConsumerMap.values())

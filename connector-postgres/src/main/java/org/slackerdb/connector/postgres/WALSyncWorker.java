@@ -56,7 +56,7 @@ public class WALSyncWorker extends Thread implements IWALMessage{
         JSONArray columnValues = changeEvent.getJSONArray("columnvalues");
         PreparedStatement insertPStmt = null;
 
-        System.out.println("textMessage = " + textMessage);
+        System.out.println("textMessage = " +  ((int)(Math.random() * 1000) + 1) +  "  " + textMessage);
         try {
             if (changeEvent.get("kind").equals("insert")) {
                 if (insertStmtCacheMap.containsKey(schemaName + "." + tableName))
@@ -211,6 +211,7 @@ public class WALSyncWorker extends Thread implements IWALMessage{
                 if (!DuckdbUtil.isSchemaExists(targetConnection, targetSchemaName))
                 {
                     // 如果schema不存在,自动创建新的schema
+                    logger.trace("[POSTGRES-WAL] : Will create schema [{}] on target database ...", targetSchemaName);
                     Statement statement = targetConnection.createStatement();
                     statement.execute("CREATE SCHEMA " + targetSchemaName);
                     statement.close();
@@ -218,12 +219,15 @@ public class WALSyncWorker extends Thread implements IWALMessage{
                 if (!DuckdbUtil.isTableExists(targetConnection, targetSchemaName, targetTableName))
                 {
                     // 如果目标表不存在，自动创新的目标表
+                    logger.trace("[POSTGRES-WAL] : Will create table [{}.{}] on target database ...",
+                            targetSchemaName, targetTableName);
                     Statement statement = targetConnection.createStatement();
                     String tableDDL = PGUtil.getTableDDL(sourceConnection, sourceSchemaName, sourceTableName);
                     tableDDL = tableDDL.replace("CREATE TABLE （.*?) (", "CREATE TABLE " + targetSchemaName + "." + targetTableName + "(");
                     statement.execute(tableDDL);
                     statement.close();
                 }
+                targetConnection.commit();
             }
 
             // 每一个任务工作在不同的槽中
@@ -234,7 +238,7 @@ public class WALSyncWorker extends Thread implements IWALMessage{
             // 如果任务状态为CREATED或者之前就处于初始同步中，需要同步第一次数据
             if (
                     // 第一次建立或者之前正在同步中
-                    (connectorTask.getStatus().equalsIgnoreCase("CREATED")) &&
+                    (connectorTask.getStatus().equalsIgnoreCase("CREATED")) ||
                             (connectorTask.getStatus().equalsIgnoreCase("INITIAL SYNCING"))
             ) {
                 bInitSyncing = true;
@@ -277,6 +281,7 @@ public class WALSyncWorker extends Thread implements IWALMessage{
                 }
                 rs.close();
                 stmt.close();
+                sourceConnection.commit();
 
                 // 设置隔离模式必须是事务语句中的第一句, 所以这里首先执行commit后再执行
                 stmt = sourceConnection.createStatement();
@@ -323,7 +328,7 @@ public class WALSyncWorker extends Thread implements IWALMessage{
                 logger.trace("[POSTGRES-WAL] : Connector slot [{}] has created for sync.", slotName);
 
                 // 提交源数据库连接，避免长期持有
-                sourceConnection.commit();
+                DuckdbUtil.peacefulCommit(targetConnection);
             }
 
             // 创建一个消息队列，用来异步处理接收到的消息
@@ -351,6 +356,7 @@ public class WALSyncWorker extends Thread implements IWALMessage{
                             JSONObject changeDataEvent = JSONObject.parseObject(rs.getString("data"));
                             JSONArray changeDataArray = changeDataEvent.getJSONArray("change");
                             for (Object changeRow : changeDataArray) {
+                                System.out.println("push ... " + ((int)(Math.random() * 1000) + 1) + "  " + changeRow.toString() + "  " + latestlsn);
                                 embeddedBrokerService.sendMessage(connectorTask.taskName, changeRow.toString());
                             }
                         }

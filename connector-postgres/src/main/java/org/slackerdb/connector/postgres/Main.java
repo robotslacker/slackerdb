@@ -37,6 +37,7 @@ public class Main {
         }
         catch (InterruptedException interruptedException)
         {
+
             Thread.currentThread().interrupt();
         }
         }
