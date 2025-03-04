@@ -27,8 +27,8 @@ public class Main {
                 pgConn, "Create connector if not exists testCDC connect to 'postgres/postgres@jdbc:postgresql://192.168.40.129:5432/jtls_db'", logger);
         PostgresConnectorCommandVisitor.runConnectorCommand(
                 pgConn, "alter connector testCDC add task if not exists ddd 'sourceSchema=aa   sourceTable=^(.*)$ targetTable=$1'", logger);
-        PostgresConnectorCommandVisitor.runConnectorCommand(
-                pgConn, "alter connector testCDC add task if not exists eee 'sourceSchema=bb   sourceTable=^(.*)$ targetTable=$1'", logger);
+//        PostgresConnectorCommandVisitor.runConnectorCommand(
+//                pgConn, "alter connector testCDC add task if not exists eee 'sourceSchema=bb   sourceTable=^(.*)$ targetTable=$1'", logger);
         PostgresConnectorCommandVisitor.runConnectorCommand(
                 pgConn, "Start connector testCDC", logger);
 

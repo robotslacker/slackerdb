@@ -6,46 +6,46 @@ import java.sql.*;
 import java.time.LocalDateTime;
 
 public class ConnectorTask {
-    private Connector       connector;
-    private Connection      conn;
-    public  String          taskName;
-    public  long            pullInterval = 0; // wal的刷新时间间隔
-    private String          sourceSchemaRule;
-    private String          sourceTableRule;
-    private String          targetSchemaRule;
-    private String          targetTableRule;
-    private String          latestLSN;
-    private String          status;
-    private String          errorMsg;
-    private LocalDateTime   updateTime;
-    private WALSyncWorker   walSyncWorker;
-    private Logger          logger;
+    private Connector connector;
+    private Connection conn;
+    public String taskName;
+    public long pullInterval = 0; // wal的刷新时间间隔
+    private String sourceSchemaRule;
+    private String sourceTableRule;
+    private String targetSchemaRule;
+    private String targetTableRule;
+    private String latestLSN;
+    private String status;
+    private String errorMsg;
+    private LocalDateTime updateTime;
+    private WALSyncWorker walSyncWorker;
+    private Logger logger;
 
     private ConnectorTask() {}
 
-    public Logger getLogger()
-    {
+    public Logger getLogger() {
         return this.logger;
     }
 
-    public Connector getConnector()
-    {
+    public Connector getConnector() {
         return connector;
     }
 
-    public String  getStatus()
-    {
+    public String getStatus() {
         return this.status;
     }
 
-    public void setStatus(String status)
-    {
+    public void setStatus(String status) {
         this.status = status;
     }
 
-    public void setLatestLSN(String latestLSN)
-    {
+    public void setLatestLSN(String latestLSN) {
         this.latestLSN = latestLSN;
+    }
+
+    public void setErrorMsg(String errorMsg)
+    {
+        this.errorMsg = errorMsg;
     }
 
     public static ConnectorTask newTask(
@@ -139,6 +139,7 @@ public class ConnectorTask {
 
     public void start()
     {
+        logger.info("[POSTGRES-WAL] : Connector task [{}] started ...", connector.connectorName + "-" + this.taskName);
         this.walSyncWorker.start();
     }
 
@@ -165,14 +166,15 @@ public class ConnectorTask {
     public void save() throws SQLException {
         String sql = """
                 UPDATE sysaux.connector_postgres_task
-                SET    status = ?, latestLSN = ?
+                SET    status = ?, latestLSN = ?, errorMsg = ?, updateTime = now()
                 Where  connectorName = ? And taskName = ?
                 """;
         PreparedStatement pStmt = conn.prepareStatement(sql);
         pStmt.setString(1, this.status);
         pStmt.setString(2, this.latestLSN);
-        pStmt.setString(3, this.connector.connectorName);
-        pStmt.setString(4, this.taskName);
+        pStmt.setString(3, this.errorMsg);
+        pStmt.setString(4, this.connector.connectorName);
+        pStmt.setString(5, this.taskName);
         pStmt.execute();
         pStmt.close();
         conn.commit();

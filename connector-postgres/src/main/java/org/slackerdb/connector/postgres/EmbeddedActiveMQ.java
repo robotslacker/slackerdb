@@ -30,9 +30,9 @@ public class EmbeddedActiveMQ {
     public EmbeddedActiveMQ(Logger logger)
     {
         Logger mqLogger = (Logger) LoggerFactory.getLogger("org.apache.activemq");
-        if (!logger.getLevel().equals(Level.TRACE)) {
+//        if (!logger.getLevel().equals(Level.TRACE)) {
             mqLogger.setLevel(Level.OFF);
-        }
+//        }
         this.logger = logger;
     }
 

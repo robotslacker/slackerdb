@@ -1,9 +1,11 @@
 package org.slackerdb.connector.postgres;
 
 import ch.qos.logback.classic.Logger;
+import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import jakarta.jms.JMSException;
+import org.duckdb.DuckDBAppender;
 import org.duckdb.DuckDBConnection;
 import org.postgresql.copy.CopyOut;
 import org.slackerdb.common.utils.DBUtil;
@@ -12,11 +14,10 @@ import org.slackerdb.common.utils.Sleeper;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.*;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,7 +34,9 @@ public class WALSyncWorker extends Thread implements IWALMessage{
     private final ConcurrentHashMap<String, String> syncObjectMap = new ConcurrentHashMap<>();
     private final EmbeddedActiveMQ embeddedBrokerService;
     private long  messageProcessed = 0;
-    private long  messageLastCommitTime;
+    private long  messageLastCommitTime = Instant.now().toEpochMilli();
+    private HashMap<String, PreparedStatement> insertStmtCacheMap = new HashMap<>();
+    private long  batchInserted = 0;
 
     public WALSyncWorker(ConnectorTask connectorTask, EmbeddedActiveMQ embeddedBrokerService)
     {
@@ -45,16 +48,103 @@ public class WALSyncWorker extends Thread implements IWALMessage{
     @Override
     public void consumeMessage(String textMessage)
     {
-        messageProcessed = messageProcessed + 1;
-        if (messageProcessed > 5000)
-        {
-//            this.targetConnection.commit();
+        JSONObject changeEvent = JSONObject.parseObject(textMessage);
+        String schemaName = changeEvent.getString("schema");
+        String tableName = changeEvent.getString("table");
+        JSONArray columnNames = changeEvent.getJSONArray("columnnames");
+        JSONArray columnTypes = changeEvent.getJSONArray("columntypes");
+        JSONArray columnValues = changeEvent.getJSONArray("columnvalues");
+        PreparedStatement insertPStmt = null;
+
+        System.out.println("textMessage = " + textMessage);
+        try {
+            if (changeEvent.get("kind").equals("insert")) {
+                if (insertStmtCacheMap.containsKey(schemaName + "." + tableName))
+                {
+                    // 构建插入语句, 并缓存起来。减少下次开销
+                    String sql = "INSERT INTO " + schemaName + "." + tableName + "({columns}) VALUES({values})";
+                    StringBuilder columns, values;
+                    columns = new StringBuilder();
+                    values = new StringBuilder();
+                    int nPos = 1;
+                    for (Object columnObj : columnNames) {
+                        String columnName = columnObj.toString();
+                        nPos = nPos + 1;
+                        if (columns.toString().isEmpty()) {
+                            columns = new StringBuilder(columnName);
+                            values = new StringBuilder("?");
+                        } else {
+                            columns.append(",").append(columnName);
+                            values.append(",?");
+                        }
+                    }
+                    sql = sql.replace("{columns}", columns.toString());
+                    sql = sql.replace("{values}", values.toString());
+                    PreparedStatement preparedStatement = targetConnection.prepareStatement(sql);
+                    insertStmtCacheMap.put(schemaName + "." + tableName, preparedStatement);
+                    insertPStmt = preparedStatement;
+                }
+                else
+                {
+                    insertPStmt = insertStmtCacheMap.get(schemaName + "." + tableName);
+                }
+                // 绑定列
+                for (int nPos = 0; nPos < columnValues.size(); nPos++) {
+                    insertPStmt.setObject(nPos + 1, columnValues.get(nPos));
+                }
+                insertPStmt.addBatch();
+                batchInserted = batchInserted + 1;
+            }
+            else
+            {
+                System.out.println("not imple");
+            }
         }
-        System.out.println("HaHa " + textMessage);
+        catch (SQLException sqlException)
+        {
+            // 同步出现了错误
+            logger.error("[WALSyncWorker] Consume message failed.", sqlException);
+            connectorTask.setStatus("ERROR");
+            connectorTask.setErrorMsg(sqlException.getMessage());
+            try {
+                connectorTask.save();
+            }
+            catch (SQLException sqlException1)
+            {
+                logger.error("[WALSyncWorker] Consume message failed.", sqlException1);
+            }
+            return;
+        }
 
-        // 定时提交
-
-
+        // 记录数超过5000或者上次提交时间超过5秒，则提交
+        messageProcessed = messageProcessed + 1;
+        try {
+            if (messageProcessed > 5000) {
+                if (changeEvent.get("kind").equals("insert") && batchInserted != 0)
+                {
+                    if (insertPStmt != null) {
+                        insertPStmt.executeBatch();
+                    }
+                }
+                this.targetConnection.commit();
+                messageProcessed = 0;
+                messageLastCommitTime = Instant.now().toEpochMilli();
+            }
+        }
+        catch (SQLException sqlException)
+        {
+            // 同步出现了错误
+            logger.error("[WALSyncWorker] Consume message failed.", sqlException);
+            connectorTask.setStatus("ERROR");
+            connectorTask.setErrorMsg(sqlException.getMessage());
+            try {
+                connectorTask.save();
+            }
+            catch (SQLException sqlException1)
+            {
+                logger.error("[WALSyncWorker] Consume message failed.", sqlException1);
+            }
+        }
     }
 
     @Override
@@ -62,19 +152,22 @@ public class WALSyncWorker extends Thread implements IWALMessage{
     {
         // 连接源数据库
         try {
+            // 设置线程名称
+            this.setName(this.connectorTask.getConnector().connectorName + "-" + this.connectorTask.taskName);
+
+            logger.trace("[POSTGRES-WAL] : Sync worker starting ...");
+            String sql; Statement stmt; ResultSet rs; PreparedStatement pStmt;
+
             // 获取数据源的连接
             Connection sourceConnection = DBUtil.getJdbcConnection(this.connectorTask.getConnector().getConnectorURL());
             sourceConnection.setAutoCommit(false);
             this.targetConnection = ((DuckDBConnection) this.connectorTask.getConnector().getTargetDBConnection()).duplicate();
             targetConnection.setAutoCommit(false);
 
-            // 创建一个消息队列，用来异步处理接收到的消息
-            embeddedBrokerService.newMessageChannel(connectorTask.taskName, this);
-
             // 从数据字典中检索需要同步的对象清单，并构建映射关系
             List<String> schemaList = new ArrayList<>();
-            Statement stmt = sourceConnection.createStatement();
-            ResultSet rs = stmt.executeQuery("SELECT nspname FROM pg_namespace");
+            stmt = sourceConnection.createStatement();
+            rs = stmt.executeQuery("SELECT nspname FROM pg_namespace");
             while (rs.next())
             {
                 String schemaName = rs.getString("nspName");
@@ -136,11 +229,42 @@ public class WALSyncWorker extends Thread implements IWALMessage{
             // 每一个任务工作在不同的槽中
             String slotName = connectorTask.getConnector().connectorName.toLowerCase() + "_" + connectorTask.taskName.toLowerCase();
 
-            // 如果任务状态为CREATED，表示这是第一次创建，需要建立复制槽
-            if (connectorTask.getStatus().equalsIgnoreCase("CREATED")) {
-                logger.trace(
-                        "[POSTGRES-WAL] : Connector task [{}] first start, will create new replication slot ...",
-                        connectorTask.taskName);
+            boolean bInitSyncing = false;
+
+            // 如果任务状态为CREATED或者之前就处于初始同步中，需要同步第一次数据
+            if (
+                    // 第一次建立或者之前正在同步中
+                    (connectorTask.getStatus().equalsIgnoreCase("CREATED")) &&
+                            (connectorTask.getStatus().equalsIgnoreCase("INITIAL SYNCING"))
+            ) {
+                bInitSyncing = true;
+            }
+            else
+            {
+                sql = """
+                            SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) AS replication_lag
+                            FROM pg_replication_slots
+                            WHERE slot_name = ?;
+                        """;
+                pStmt = sourceConnection.prepareStatement(sql);
+                pStmt.setString(1, slotName);
+                rs = pStmt.executeQuery();
+                if (!rs.next())
+                {
+                    // 复制槽不存在, 需要重新全量同步
+                    bInitSyncing = true;
+                }
+                rs.close();
+                stmt.close();
+            }
+
+            if (bInitSyncing)
+            {
+                logger.trace("[POSTGRES-WAL] : Sync worker will do initial syncing ...");
+
+                // 开始第一次同步
+                connectorTask.setStatus("INITIAL SYNCING");
+                connectorTask.save();
                 stmt = sourceConnection.createStatement();
 
                 // 首先删除之前的残留数据槽
@@ -189,20 +313,27 @@ public class WALSyncWorker extends Thread implements IWALMessage{
 
                     // 删除数据文件
                     var ignored = tempFile.toFile().delete();
+
+                    logger.trace("[POSTGRES-WAL] : Sync worker finished initial syncing.");
                 }
 
                 // 标记任务开始进行后续同步...
                 connectorTask.setStatus("SYNCING");
                 connectorTask.save();
-                logger.trace("[POSTGRES-WAL] : Connector slot [{}] has created.", slotName);
+                logger.trace("[POSTGRES-WAL] : Connector slot [{}] has created for sync.", slotName);
 
                 // 提交源数据库连接，避免长期持有
                 sourceConnection.commit();
             }
 
+            // 创建一个消息队列，用来异步处理接收到的消息
+            embeddedBrokerService.newMessageChannel(connectorTask.taskName, this);
+
             // 如果任务状态为SYNCING， 需要接收后面的消息，放入消息队列
             if (connectorTask.getStatus().equalsIgnoreCase("SYNCING"))
             {
+                logger.trace("[POSTGRES-WAL] : Sync worker start syncing ...");
+
                 String latestlsn = "";
                 // noinspection InfiniteLoopStatement
                 while (true) {
@@ -220,9 +351,7 @@ public class WALSyncWorker extends Thread implements IWALMessage{
                             JSONObject changeDataEvent = JSONObject.parseObject(rs.getString("data"));
                             JSONArray changeDataArray = changeDataEvent.getJSONArray("change");
                             for (Object changeRow : changeDataArray) {
-                                String tableName = ((JSONObject) changeRow).getString("schema") + "." +
-                                        ((JSONObject) changeRow).getString("table");
-                                embeddedBrokerService.sendMessage(tableName, changeRow.toString());
+                                embeddedBrokerService.sendMessage(connectorTask.taskName, changeRow.toString());
                             }
                         }
                         rs.close();
@@ -234,15 +363,27 @@ public class WALSyncWorker extends Thread implements IWALMessage{
                             rs.close();
                         } else {
                             // 没有任何数据需要处理，则休息10秒钟
+                            logger.trace("[WALSyncWorker] No more data received. Waiting ... ");
                             Sleeper.sleep(3 * 1000);
                         }
-                    } catch (InterruptedException ignored) {Thread.currentThread().interrupt();}
+                    }
+                    catch (InterruptedException ignored)
+                    {
+                        Thread.currentThread().interrupt();
+                    }
+                    catch (SQLException sqlException)
+                    {
+                        connectorTask.setStatus("ERROR");
+                        connectorTask.setErrorMsg(sqlException.getMessage());
+                        connectorTask.save();
+                        logger.error("[WALSyncWorker] Consume message failed.", sqlException);
+                    }
                 }
             }
         }
         catch (SQLException | IOException sqlException)
         {
-            logger.error("[POSTGRES-WAL] : Connector task [{}] sync fail", connectorTask, sqlException);
+            logger.error("[POSTGRES-WAL] : Connector task [{}] sync fail.", connectorTask, sqlException);
         } catch (JMSException e) {
             throw new RuntimeException(e);
         }
