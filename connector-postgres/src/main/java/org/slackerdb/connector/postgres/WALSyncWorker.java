@@ -22,6 +22,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
@@ -38,6 +40,17 @@ public class WALSyncWorker extends Thread implements IWALMessage{
     private long  messageLastCommitTime = Instant.now().toEpochMilli();
     private HashMap<String, PreparedStatement> insertStmtCacheMap = new HashMap<>();
     private long  batchInserted = 0;
+    private Lock  syncWorkerLocker = new ReentrantLock();
+
+    // 定时作业来提交数据入库
+    private class WALTargetCommitter implements Runnable {
+        @Override
+        public void run() {
+            syncWorkerLocker.lock();
+            System.out.println(batchInserted);
+            syncWorkerLocker.unlock();
+        }
+    }
 
     public WALSyncWorker(ConnectorTask connectorTask, EmbeddedActiveMQ embeddedBrokerService)
     {
@@ -57,6 +70,7 @@ public class WALSyncWorker extends Thread implements IWALMessage{
         JSONArray columnValues = changeEvent.getJSONArray("columnvalues");
         PreparedStatement insertPStmt = null;
 
+        syncWorkerLocker.lock();
         System.out.println("textMessage = " +  ((int)(Math.random() * 1000) + 1) +  "  " + textMessage);
         try {
             if (changeEvent.get("kind").equals("insert")) {
@@ -116,36 +130,7 @@ public class WALSyncWorker extends Thread implements IWALMessage{
             }
             return;
         }
-
-        // 记录数超过5000或者上次提交时间超过5秒，则提交
-        messageProcessed = messageProcessed + 1;
-        try {
-            if (messageProcessed > 5000) {
-                if (changeEvent.get("kind").equals("insert") && batchInserted != 0)
-                {
-                    if (insertPStmt != null) {
-                        insertPStmt.executeBatch();
-                    }
-                }
-                this.targetConnection.commit();
-                messageProcessed = 0;
-                messageLastCommitTime = Instant.now().toEpochMilli();
-            }
-        }
-        catch (SQLException sqlException)
-        {
-            // 同步出现了错误
-            logger.error("[WALSyncWorker] Consume message failed.", sqlException);
-            connectorTask.setStatus("ERROR");
-            connectorTask.setErrorMsg(sqlException.getMessage());
-            try {
-                connectorTask.save();
-            }
-            catch (SQLException sqlException1)
-            {
-                logger.error("[WALSyncWorker] Consume message failed.", sqlException1);
-            }
-        }
+        syncWorkerLocker.unlock();
     }
 
     @Override
@@ -342,6 +327,9 @@ public class WALSyncWorker extends Thread implements IWALMessage{
 
             // 创建一个消息队列，用来异步处理接收到的消息
             embeddedBrokerService.newMessageChannel(connectorTask.taskName, this);
+
+            // 启动一个定时作业，用来每5秒钟提交一次数据库
+            new Thread(new WALTargetCommitter()).start();
 
             // 如果任务状态为SYNCING， 需要接收后面的消息，放入消息队列
             if (connectorTask.getStatus().equalsIgnoreCase("SYNCING"))
