@@ -756,6 +756,38 @@ public class Sanity01Test {
         preparedStatement.setString(1, Timestamp.valueOf(LocalDateTime.now()).toString());
         preparedStatement.execute();
 
+        preparedStatement.close();
+        pgConn1.close();
+    }
+
+    @Test
+    void testMultiStatement() throws SQLException
+    {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.createStatement().execute("create table testMultiStatement(id int)");
+        pgConn1.createStatement().execute("""
+                """);
+        pgConn1.createStatement().execute("""
+                insert into testMultiStatement values(1);
+                insert into testMultiStatement values(2);
+                -- insert into testMultiStatement values(10);
+                insert into testMultiStatement values(3);
+                """);
+        ResultSet rs = pgConn1.createStatement().executeQuery("Select Sum(Id) from testMultiStatement");
+        if (rs.next())
+        {
+            assert  rs.getInt(1) == 6;
+        }
+        else
+        {
+            assert false;
+        }
+        rs.close();
+        pgConn1.close();
     }
 }
 

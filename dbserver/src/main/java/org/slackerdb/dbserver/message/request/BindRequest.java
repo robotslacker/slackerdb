@@ -160,6 +160,11 @@ public class BindRequest extends PostgresRequest {
                     // 发送并刷新返回消息
                     PostgresMessage.writeAndFlush(ctx, BindComplete.class.getSimpleName(), out, this.dbInstance.logger);
                     out.close();
+
+                    // 空语句，也要送回去一个空的Port信息
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+                            "Portal" + "-" + portalName, null);
+
                     break tryBlock;
                 }
 

@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.robotslacker</groupId>
         <artifactId>slackerdb</artifactId>
-        <version>0.1.1</version>
+        <version>0.1.2</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -31,7 +31,7 @@
         <dependency>
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
-            <version>1.1.3</version>
+            <version>1.2.1</version>
         </dependency>
         <!-- NETTY 驱动 -->
         <dependency>
@@ -102,8 +102,9 @@
                     <argLine>--add-opens java.base/java.lang=ALL-UNNAMED</argLine>
                     <includes>
                         <include>**/Sanity01Test.java</include>
+                        <include>**/Sanity02Test.java</include>
                         <include>**/MultiDBInstanceTest.java</include>
-                        <include>**/DatabaseStability.java</include>
+                        <include>**/DatabaseStabilityTest.java</include>
                     </includes>
                     <parallel>none</parallel> <!-- Disable parallel execution -->
                     <forkCount>1</forkCount>  <!-- Execute tests in a single process -->

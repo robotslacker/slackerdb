@@ -8,6 +8,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 public class SQLReplacer {
     public static final List<QueryReplacerItem> SQLReplaceItems = Collections.synchronizedList(new ArrayList<>());
@@ -191,7 +192,8 @@ public class SQLReplacer {
         }
 
         sql = sql.trim();
-        List<String> sqlItems = new ArrayList<>(List.of(sql.split(";")));
+        // 按照分号分割，但不要处理带有转义字符的内容
+        List<String> sqlItems = new ArrayList<>(List.of(sql.split(("(?<!\\\\);"))));
         for (int i=0; i<sqlItems.size(); i++) {
             String oldSql = sqlItems.get(i);
             String newSql = oldSql.trim();
@@ -233,7 +235,8 @@ public class SQLReplacer {
                 sqlItems.set(i, newSql);
             }
         }
-        replacedSQL = String.join(";", sqlItems);
+        // 过滤以 -- 开头的字符串‌
+        replacedSQL = sqlItems.stream().filter(sqlItem -> !sqlItem.startsWith("--")).collect(Collectors.joining(";"));
         lruCache.put(sourceSQL, replacedSQL);
         if (!sourceSQL.equals(replacedSQL))
         {

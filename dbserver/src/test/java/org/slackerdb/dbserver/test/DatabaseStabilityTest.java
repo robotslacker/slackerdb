@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /*
     受限于Windows操作系统的限制，可能会出现客户端端口不够用的情况，非程序问题。可进行如下调整
-    netsh int ipv4 set dynamicport tcp start=1024 num=64511
+    netsh int ipv4 set dynamicPort tcp start=1024 num=64511
 
 
     目前测试结果：
@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class DatabaseStabilityTest {
     private static final int THREAD_COUNT = 10;
     private static final long taskCount = 1000;
+    private int dbPort = 4309;
 
     @Test
     public void testDatabaseStability() {
@@ -34,9 +35,11 @@ public class DatabaseStabilityTest {
 
         // 修改默认的db启动端口
         ServerConfiguration serverConfiguration = new ServerConfiguration();
-        serverConfiguration.setPort(4309);
+        serverConfiguration.setPort(0);
         serverConfiguration.setData("mem");
         serverConfiguration.setLog_level("INFO");
+        serverConfiguration.setSqlHistory("ON");
+        dbPort = serverConfiguration.getPort();
 
         // 初始化数据库
         DBInstance dbInstance = new DBInstance(serverConfiguration);
@@ -65,7 +68,7 @@ public class DatabaseStabilityTest {
 
                     totalFinishedTest.incrementAndGet();
                     try {
-                        Connection conn = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:4309/mem?socketTimeout=60", "", "");
+                        Connection conn = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:" + dbPort + "/mem?socketTimeout=60", "", "");
                         conn.setAutoCommit(false);
                         if (!tableCreated)
                         {
@@ -98,6 +101,7 @@ public class DatabaseStabilityTest {
                         try (PreparedStatement selectStmt = conn.prepareStatement("SELECT * FROM " + tableName + " WHERE name = ?")) {
                             selectStmt.setString(1, "TestName");
                             try (ResultSet rs = selectStmt.executeQuery()) {
+                                //noinspection ALL
                                 while (rs.next()) {
 //                                    System.out.println("Thread " + threadId + " - Name: " + rs.getString("name") + ", Value: " + rs.getInt("value"));
                                 }
@@ -123,7 +127,7 @@ public class DatabaseStabilityTest {
         while (!executor.isTerminated()) {
             // 等待所有任务完成
             try {
-                Sleeper.sleep(10 * 1000);
+                Sleeper.sleep(3 * 1000);
             }
             catch (InterruptedException ignored) {}
         }

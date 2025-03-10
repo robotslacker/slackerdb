@@ -34,7 +34,6 @@ public class DBDataSourcePool {
         }
 
         @Override
-        @SuppressWarnings("BusyWait")
         public void run()
         {
             setName("DBDataSourcePoolMonitor");
@@ -235,7 +234,8 @@ public class DBDataSourcePool {
         for (Connection connection : this.usedConnectionPool) {
             try {
                 if (connection != null && !connection.isClosed()) {
-                    this.logger.trace("[SERVER][CONN POOL  ]: Will close connection {} .", connectionMetaDataMap.get(connection).getConnectionId());
+                    this.logger.trace("[SERVER][CONN POOL  ]: Will close used connection {} .",
+                            connectionMetaDataMap.get(connection).getConnectionId());
                     connection.close();
                 }
             } catch (SQLException ignored) {
@@ -244,7 +244,8 @@ public class DBDataSourcePool {
         for (Connection connection : this.idleConnectionPool) {
             try {
                 if (connection != null && !connection.isClosed()) {
-                    this.logger.trace("[SERVER][CONN POOL  ]: Will close connection {} .", connectionMetaDataMap.get(connection).getConnectionId());
+                    this.logger.trace("[SERVER][CONN POOL  ]: Will close idle connection {} .",
+                            connectionMetaDataMap.get(connection).getConnectionId());
                     connection.close();
                 }
             } catch (SQLException ignored) {
