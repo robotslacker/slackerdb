@@ -789,5 +789,43 @@ public class Sanity01Test {
         rs.close();
         pgConn1.close();
     }
+
+    @Test
+    void testMultiStatement2() throws SQLException
+    {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.createStatement().execute("""
+                    drop table if exists testMultiStatement2;
+                    -- VICTIM_BATCH_NUM 可能为Null，当空空交战目标为导弹的时候
+                    -- LAUNCH_TIME 为104事件时间
+                    CREATE OR REPLACE TABLE testMultiStatement2
+                    (
+                        TIME                              DATETIME,
+                        CHECKPOINT                        VARCHAR(25),
+                        UNIQUE_ID                         DECIMAL(20),
+                        KILLER_ID                         DECIMAL(20)
+                    );
+                    COMMENT ON TABLE testMultiStatement2 IS '空空打击事件记录';
+                """);
+        pgConn1.close();
+    }
+    @Test
+    void testMultiStatement3() throws SQLException
+    {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.createStatement().execute("""
+                    select 'POLYGON((118.960556 32.067500;129.787222 28.348333;123.650833 20.096111;118.928333 20.096111;112.342500 24.552222;118.960556 32.067500))';
+                    select 'POLYGON((118.960556 32.067500;129.787222 28.348333;123.650833 20.096111;118.928333 20.096111;112.342500 24.552222;118.960556 32.067500))';
+                """);
+        pgConn1.close();
+    }
 }
 

@@ -8,7 +8,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 public class SQLReplacer {
     public static final List<QueryReplacerItem> SQLReplaceItems = Collections.synchronizedList(new ArrayList<>());
@@ -178,24 +177,66 @@ public class SQLReplacer {
         );
     }
 
+    public static String removeSQLComments(String sql)
+    {
+        return sql.replaceAll("--.*?(\\r?\\n|$)","").trim();
+    }
+
+    public static List<String> splitSQL(String sql) {
+        List<String> result = new ArrayList<>();
+        StringBuilder currentSegment = new StringBuilder();
+        boolean inSingleQuote = false;
+        boolean inDoubleQuote = false;
+
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+
+            // 处理单引号字符串
+            if (c == '\'' && (i == 0 || sql.charAt(i - 1) != '\\')) {
+                inSingleQuote = !inSingleQuote;
+            }
+            // 处理双引号字符串
+            else if (c == '"' && (i == 0 || sql.charAt(i - 1) != '\\')) {
+                inDoubleQuote = !inDoubleQuote;
+            }
+
+            // 只有在 **不在引号内部** 时，才把 `;` 作为分隔符
+            if (c == ';' && !inSingleQuote && !inDoubleQuote) {
+                result.add(currentSegment.toString().trim());
+                currentSegment.setLength(0); // 清空当前片段
+            } else {
+                currentSegment.append(c);
+            }
+        }
+
+        // 添加最后一个 SQL 片段
+        if (!currentSegment.isEmpty()) {
+            result.add(currentSegment.toString().trim());
+        }
+        return result;
+    }
+
     public static String replaceSQL(DBInstance pDbInstance, String sql) {
         // 如果有缓存的SQL记录，则直接读取缓存的内容
-        String sourceSQL = sql;
         String replacedSQL = lruCache.getReplacedSql(sql);
         if (replacedSQL != null)
         {
-            if (!sourceSQL.equals(replacedSQL))
+            if (!sql.equals(replacedSQL))
             {
-                pDbInstance.logger.trace("[SERVER] SQL Rewrote: [{}] -> [{}]", sourceSQL, replacedSQL);
+                pDbInstance.logger.trace("[SERVER] SQL Rewrote: [{}] -> [{}]", sql, replacedSQL);
             }
             return replacedSQL;
         }
 
-        sql = sql.trim();
         // 按照分号分割，但不要处理带有转义字符的内容
-        List<String> sqlItems = new ArrayList<>(List.of(sql.split(("(?<!\\\\);"))));
+        List<String> sqlItems = splitSQL(sql.trim());
         for (int i=0; i<sqlItems.size(); i++) {
-            String oldSql = sqlItems.get(i);
+            String oldSql = removeSQLComments(sqlItems.get(i));
+            if (oldSql.isEmpty())
+            {
+                // 空语句，不再执行
+                continue;
+            }
             String newSql = oldSql.trim();
             for (QueryReplacerItem item : SQLReplaceItems) {
                 if (item.sampleReplace())
@@ -235,12 +276,13 @@ public class SQLReplacer {
                 sqlItems.set(i, newSql);
             }
         }
+
         // 过滤以 -- 开头的字符串‌
-        replacedSQL = sqlItems.stream().filter(sqlItem -> !sqlItem.startsWith("--")).collect(Collectors.joining(";"));
-        lruCache.put(sourceSQL, replacedSQL);
-        if (!sourceSQL.equals(replacedSQL))
+        replacedSQL = String.join("\n", sqlItems);
+        lruCache.put(sql, replacedSQL);
+        if (!sql.equals(replacedSQL))
         {
-            pDbInstance.logger.trace("[SERVER] SQL Rewrote: [{}] -> [{}]", sourceSQL, replacedSQL);
+            pDbInstance.logger.trace("[SERVER] SQL Rewrote: [{}] -> [{}]", sql, replacedSQL);
         }
         return replacedSQL;
     }
