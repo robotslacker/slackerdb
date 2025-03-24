@@ -800,8 +800,8 @@ public class Sanity01Test {
 
         pgConn1.createStatement().execute("""
                     drop table if exists testMultiStatement2;
-                    -- VICTIM_BATCH_NUM 可能为Null，当空空交战目标为导弹的时候
-                    -- LAUNCH_TIME 为104事件时间
+                    -- VICTIM_XX1
+                    -- VICTIM_XX1 HELLO
                     CREATE OR REPLACE TABLE testMultiStatement2
                     (
                         TIME                              DATETIME,
@@ -809,7 +809,7 @@ public class Sanity01Test {
                         UNIQUE_ID                         DECIMAL(20),
                         KILLER_ID                         DECIMAL(20)
                     );
-                    COMMENT ON TABLE testMultiStatement2 IS '空空打击事件记录';
+                    COMMENT ON TABLE testMultiStatement2 IS 'MultiStatement';
                 """);
         pgConn1.close();
     }

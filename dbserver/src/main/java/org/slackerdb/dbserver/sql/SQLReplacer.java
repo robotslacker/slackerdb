@@ -182,11 +182,10 @@ public class SQLReplacer {
         return sql.replaceAll("--.*?(\\r?\\n|$)","").trim();
     }
 
-    public static List<String> splitSQL(String sql) {
+    public static List<String> splitSQLWithSemicolon(String sql) {
         List<String> result = new ArrayList<>();
         StringBuilder currentSegment = new StringBuilder();
         boolean inSingleQuote = false;
-        boolean inDoubleQuote = false;
 
         for (int i = 0; i < sql.length(); i++) {
             char c = sql.charAt(i);
@@ -195,13 +194,9 @@ public class SQLReplacer {
             if (c == '\'' && (i == 0 || sql.charAt(i - 1) != '\\')) {
                 inSingleQuote = !inSingleQuote;
             }
-            // 处理双引号字符串
-            else if (c == '"' && (i == 0 || sql.charAt(i - 1) != '\\')) {
-                inDoubleQuote = !inDoubleQuote;
-            }
 
             // 只有在 **不在引号内部** 时，才把 `;` 作为分隔符
-            if (c == ';' && !inSingleQuote && !inDoubleQuote) {
+            if (c == ';' && !inSingleQuote) {
                 result.add(currentSegment.toString().trim());
                 currentSegment.setLength(0); // 清空当前片段
             } else {
@@ -229,7 +224,7 @@ public class SQLReplacer {
         }
 
         // 按照分号分割，但不要处理带有转义字符的内容
-        List<String> sqlItems = splitSQL(sql.trim());
+        List<String> sqlItems = splitSQLWithSemicolon(sql.trim());
         for (int i=0; i<sqlItems.size(); i++) {
             String oldSql = removeSQLComments(sqlItems.get(i));
             if (oldSql.isEmpty())

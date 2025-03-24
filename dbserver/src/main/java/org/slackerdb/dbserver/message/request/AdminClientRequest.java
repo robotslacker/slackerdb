@@ -70,6 +70,7 @@ public class AdminClientRequest  extends PostgresRequest {
             // 包括使用的内存大小，文件大小
             String  database_size = "";
             String  memory_usage = "";
+            String  wal_size = "";
             String  database_version = "";
             try {
                 Statement stmt = this.dbInstance.backendSysConnection.createStatement();
@@ -82,6 +83,7 @@ public class AdminClientRequest  extends PostgresRequest {
                     database_size = rs.getString("database_size");
                     memory_usage = rs.getString("memory_usage");
                     database_version = rs.getString("version");
+                    wal_size = rs.getString("wal_size");
                 }
                 rs.close();
                 stmt.close();
@@ -145,6 +147,7 @@ public class AdminClientRequest  extends PostgresRequest {
             feedBackMsg.append("  DB VERSION  : ").append(database_version).append("\n");
             feedBackMsg.append("  DB SIZE     : ").append(database_size).append("\n");
             feedBackMsg.append("  MEMORY USAGE: ").append(memory_usage).append("\n");
+            feedBackMsg.append("  WAL SIZE    : ").append(wal_size).append("\n");
 
             // 打印服务器的运行参数
             feedBackMsg.append("SERVER PARAMETER: \n");

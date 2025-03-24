@@ -19,8 +19,7 @@ public class Main {
         // 创建目标数据库
 //        String  connectURL = "jdbc:duckdb::memory:";
         String connectURL = "jdbc:duckdb:xx.db";
-        Connection pgConn = DriverManager.getConnection(
-                connectURL, "", "");
+        Connection pgConn = DriverManager.getConnection(connectURL, "", "");
         pgConn.setAutoCommit(false);
 
         PostgresConnectorCommandVisitor.runConnectorCommand(
@@ -37,9 +36,7 @@ public class Main {
         }
         catch (InterruptedException interruptedException)
         {
-
             Thread.currentThread().interrupt();
         }
         }
-
     }
