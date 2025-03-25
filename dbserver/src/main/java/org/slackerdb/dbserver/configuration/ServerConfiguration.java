@@ -47,7 +47,8 @@ public class ServerConfiguration extends Throwable {
     // 默认客户端的超时时间
     private final int default_client_timeout = 600;
     // 默认不配置初始化脚本
-    private final String default_init_schema = "";
+    private final String default_init_script = "";
+    private final String default_startup_script = "";
     // 默认不记录SQL执行历史信息
     private final String default_sqlHistory = "OFF";
     // 默认设置系统默认的语言集
@@ -78,7 +79,8 @@ public class ServerConfiguration extends Throwable {
     private String   access_mode;
     private int      max_workers;
     private int      client_timeout;
-    private String   init_schema;
+    private String   init_script;
+    private String   startup_script;
     private String   sqlHistory;
     private Locale   locale;
     private String   pid;
@@ -106,7 +108,8 @@ public class ServerConfiguration extends Throwable {
         access_mode = default_access_mode;
         max_workers = default_max_workers;
         client_timeout = default_client_timeout;
-        init_schema = default_init_schema;
+        init_script = default_init_script;
+        startup_script = default_startup_script;
         sqlHistory = default_sqlHistory;
         locale = default_locale;
         pid = default_pid;
@@ -286,13 +289,22 @@ public class ServerConfiguration extends Throwable {
                         setMemory_limit(entry.getValue().toString());
                     }
                     break;
-                case "INIT_SCHEMA":
+                case "INIT_SCRIPT":
                     if (entry.getValue().toString().isEmpty())
                     {
-                        init_schema= this.default_init_schema;
+                        init_script= this.default_init_script;
                     }
                     else {
-                        setInit_schema(entry.getValue().toString());
+                        setInit_script(entry.getValue().toString());
+                    }
+                    break;
+                case "STARTUP_SCRIPT":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        startup_script= this.default_startup_script;
+                    }
+                    else {
+                        setStartup_script(entry.getValue().toString());
                     }
                     break;
                 case "SQL_HISTORY":
@@ -458,9 +470,13 @@ public class ServerConfiguration extends Throwable {
     {
         return extension_dir;
     }
-    public String getInit_schema()
+    public String getInit_script()
     {
-        return init_schema;
+        return init_script;
+    }
+    public String getStartup_script()
+    {
+        return startup_script;
     }
 
     public String getSqlHistory()
@@ -643,10 +659,17 @@ public class ServerConfiguration extends Throwable {
     {
         memory_limit = pMemory_limit;
     }
-    public void setInit_schema(String pInit_schema)
+
+    public void setInit_script(String pInit_script)
     {
-        init_schema = pInit_schema;
+        init_script = pInit_script;
     }
+
+    public void setStartup_script(String pStartup_script)
+    {
+        startup_script = pStartup_script;
+    }
+
     public void setSqlHistory(String pSQLHistory)
     {
         if (pSQLHistory.trim().equalsIgnoreCase("ON") || (pSQLHistory.trim().equalsIgnoreCase("OFF"))) {

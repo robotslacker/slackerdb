@@ -170,29 +170,24 @@ public class DBInstance {
 
     // 执行指定的脚本
     private void executeScript(String scriptFileName) throws IOException, SQLException {
-        logger.info("Init schema, Executing script {} ...", scriptFileName);
+        logger.info("Executing script {} ...", scriptFileName);
 
         // 从文件中读取所有内容到字符串
         String sqlFileContents = new String(Files.readAllBytes(Path.of(scriptFileName)));
-        // 去除多行注释
-        sqlFileContents = sqlFileContents.replaceAll("/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/", "");
-        // 去除单行注释
-        sqlFileContents = sqlFileContents.replaceAll("--.*", "");
-        // 去除多余的空白字符（包括多余的换行符和空格）
-        sqlFileContents = sqlFileContents.replaceAll("\\s+", " ").trim();
 
         // 按分号分隔语句
-        String[] statements = sqlFileContents.split(";");
         Statement stmt = backendSysConnection.createStatement();
-        for (String sql: statements)
-        {
-            try {
-                logger.debug("Init schema, executing sql: {} ...", sql);
-                stmt.execute(sql);
-            }
-            catch (SQLException e) {
-                logger.error("Init schema, SQL Error: {}", sql);
-                throw e;
+        List<String> sqlItems = SQLReplacer.splitSQLWithSemicolon(sqlFileContents);
+        for (String sqlItem : sqlItems) {
+            String sql = SQLReplacer.removeSQLComments(sqlItem);
+            if (!sql.isEmpty()) {
+                try {
+                    logger.debug("  Executing sql: {} ...", sql);
+                    stmt.execute(sql);
+                } catch (SQLException e) {
+                    logger.error("  SQL Error: {}", sql);
+                    throw e;
+                }
             }
         }
         stmt.close();
@@ -349,12 +344,12 @@ public class DBInstance {
 
             // 执行初始化脚本，如果有必要的话
             // 只有内存数据库或者文件数据库第一次启动的时候需要执行
-            if (databaseFirstOpened && !serverConfiguration.getInit_schema().trim().isEmpty()) {
-                List<String> initScriptFiles = new ArrayList<>();
-                if (new File(serverConfiguration.getInit_schema()).isFile()) {
-                    initScriptFiles.add(new File(serverConfiguration.getInit_schema()).getAbsolutePath());
-                } else if (new File(serverConfiguration.getInit_schema()).isDirectory()) {
-                    File[] files = new File(serverConfiguration.getInit_schema()).listFiles();
+            List<String> initScriptFiles = new ArrayList<>();
+            if (databaseFirstOpened && !serverConfiguration.getInit_script().trim().isEmpty()) {
+                if (new File(serverConfiguration.getInit_script()).isFile()) {
+                    initScriptFiles.add(new File(serverConfiguration.getInit_script()).getAbsolutePath());
+                } else if (new File(serverConfiguration.getInit_script()).isDirectory()) {
+                    File[] files = new File(serverConfiguration.getInit_script()).listFiles();
                     if (files != null) {
                         for (File file : files) {
                             if (file.isFile() && file.getName().endsWith(".sql")) {
@@ -363,14 +358,34 @@ public class DBInstance {
                         }
                     }
                 } else {
-                    throw new ServerException("Init schema [" + serverConfiguration.getInit_schema() + "] does not exist!");
+                    logger.warn("[SERVER] Init script [{}] does not exist!", serverConfiguration.getInit_script());
                 }
-                Collections.sort(initScriptFiles);
-                for (String initScriptFile : initScriptFiles) {
-                    executeScript(initScriptFile);
-                }
-                logger.info("Init schema completed.");
             }
+
+            // 执行系统启动脚本，如果有必要的话
+            if (!serverConfiguration.getStartup_script().trim().isEmpty()) {
+                if (new File(serverConfiguration.getStartup_script()).isFile()) {
+                    initScriptFiles.add(new File(serverConfiguration.getStartup_script()).getAbsolutePath());
+                } else if (new File(serverConfiguration.getStartup_script()).isDirectory()) {
+                    File[] files = new File(serverConfiguration.getStartup_script()).listFiles();
+                    if (files != null) {
+                        for (File file : files) {
+                            if (file.isFile() && file.getName().endsWith(".sql")) {
+                                initScriptFiles.add(file.getAbsolutePath());
+                            }
+                        }
+                    }
+                } else {
+                    logger.warn("[SERVER] Startup script [{}] does not exist!", serverConfiguration.getStartup_script());
+                }
+            }
+
+            // 脚本按照名称来排序
+            Collections.sort(initScriptFiles);
+            for (String initScriptFile : initScriptFiles) {
+                executeScript(initScriptFile);
+            }
+            logger.info("[SERVER] Init/Startup script(s) execute completed.");
 
             // 初始化数据库连接池
             DBDataSourcePoolConfig dbDataSourcePoolConfig = new DBDataSourcePoolConfig();

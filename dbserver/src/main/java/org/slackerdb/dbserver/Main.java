@@ -57,8 +57,9 @@ public class Main {
         System.out.println("  --data_dir          database file directory. default is :memory:");
         System.out.println("  --temp_dir          database temporary file directory. default is os dependent.");
         System.out.println("  --extension_dir     extension file directory. default is $HOME/.duckdb/extensions.");
-        System.out.println("  --init_schema       system init script or script directory. default is none.");
-        System.out.println("  --sql_history       sql history database name. default is none.");
+        System.out.println("  --init_script       system init script or script directory. default is none.");
+        System.out.println("  --startup_script    system startup script or script directory. default is none.");
+        System.out.println("  --sql_history       enable or disable sql history feature(ON|OFF). default is off.");
         System.out.println("  --sql_history_port  sql history database remote service port. default is none.");
         System.out.println("  --sql_history_dir   sql history database file directory. default is none.");
     }
@@ -199,9 +200,13 @@ public class Main {
             {
                 serverConfiguration.setExtension_dir(appOptions.get("extension_dir"));
             }
-            if (appOptions.containsKey("init_schema"))
+            if (appOptions.containsKey("init_script"))
             {
-                serverConfiguration.setInit_schema(appOptions.get("init_schema"));
+                serverConfiguration.setInit_script(appOptions.get("init_script"));
+            }
+            if (appOptions.containsKey("startup_script"))
+            {
+                serverConfiguration.setStartup_script(appOptions.get("startup_script"));
             }
             if (appOptions.containsKey("sql_history"))
             {
