@@ -28,7 +28,7 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
         InetSocketAddress remoteAddress = (InetSocketAddress) ctx.channel().remoteAddress();
 
         // 创建一个初始会话，并在ctx的信息中进行记录
-        DBSession dbSession = new DBSession(dbInstance);
+        DBSession dbSession = new DBSession(dbInstance, ctx);
         dbSession.connectedTime = LocalDateTime.now();
         dbSession.status = "connected";
         dbSession.clientAddress = remoteAddress.toString();

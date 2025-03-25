@@ -426,6 +426,7 @@ public class PostgresServer {
                     // 禁用堆外内存的池化以求获得更高的内存使用率
                     .option(ChannelOption.ALLOCATOR, UnpooledByteBufAllocator.DEFAULT)
                     .option(ChannelOption.SO_RCVBUF, 4096)
+                    .option(ChannelOption.SO_KEEPALIVE, true)
                     .option(ChannelOption.SO_REUSEADDR, true)
                     .option(ChannelOption.SO_BACKLOG, 128)
                     .childHandler(new ChannelInitializer<SocketChannel>() {

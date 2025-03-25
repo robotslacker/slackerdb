@@ -85,7 +85,7 @@ public class DBInstance {
     private final AtomicInteger maxSessionId = new AtomicInteger(1000);
 
     // 记录会话列表
-    public final Map<Integer, DBSession> dbSessions = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, DBSession> dbSessions = new ConcurrentHashMap<>();
 
     // PID进程锁信息
     private RandomAccessFile pidRandomAccessFile;
@@ -99,16 +99,39 @@ public class DBInstance {
         {
             while (!isInterrupted())
             {
-                if (getRegisteredConnectionsCount() > serverConfiguration.getMax_Workers())
-                {
-                    logger.warn(
-                            "[SERVER] The system is overloaded. " +
-                                    "The current number of connection requests is {} " +
-                                    "and the current maximum worker setting of the system is {}.",
-                            getRegisteredConnectionsCount(), serverConfiguration.getMax_Workers());
-                }
                 try {
-                    Sleeper.sleep(5 * 1000);
+                    // 检查服务器是否过载
+                    if (getRegisteredConnectionsCount() > serverConfiguration.getMax_Workers()) {
+                        logger.warn(
+                                "[SERVER] The system is overloaded. " +
+                                        "The current number of connection requests is {} " +
+                                        "and the current maximum worker setting of the system is {}.",
+                                getRegisteredConnectionsCount(), serverConfiguration.getMax_Workers());
+                    }
+                    // 检查是否有会话被异常终止，要进行清理，避免连接数过多
+                    for (Map.Entry<Integer, DBSession> sessionItem : dbSessions.entrySet()) {
+                        if (sessionItem.getValue().getContext() == null) {
+                            logger.debug("[SERVER] Session [{}] has disconnected. Remove it from session pool.",
+                                    sessionItem.getKey());
+                            dbSessions.remove(sessionItem.getKey());
+                            continue;
+                        }
+                        if (!sessionItem.getValue().getContext().channel().isActive()) {
+                            logger.debug("[SERVER] Session [{}] from [{}] has disconnected. Remove it from session pool.",
+                                    sessionItem.getKey(),
+                                    sessionItem.getValue().getContext().channel().remoteAddress().toString());
+                            dbSessions.remove(sessionItem.getKey());
+                            sessionItem.getValue().getContext().channel().close();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.error("[SERVER] DBInstanceMonitorThread got unexpected internal error.", ex);
+                }
+                // 每10秒钟检测一次
+                try {
+                    Sleeper.sleep(10 * 1000);
                 }
                 catch (InterruptedException interruptedException)
                 {
@@ -162,7 +185,7 @@ public class DBInstance {
         for (String sql: statements)
         {
             try {
-                logger.trace("Init schema, executing sql: {} ...", sql);
+                logger.debug("Init schema, executing sql: {} ...", sql);
                 stmt.execute(sql);
             }
             catch (SQLException e) {

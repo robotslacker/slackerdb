@@ -197,7 +197,7 @@ public class ParseRequest extends PostgresRequest {
                 }
                 catch (SQLException se)
                 {
-                    this.dbInstance.logger.trace("[SERVER] Save to sql history failed.", se);
+                    this.dbInstance.logger.debug("[SERVER] Save to sql history failed.", se);
                 }
             }
 

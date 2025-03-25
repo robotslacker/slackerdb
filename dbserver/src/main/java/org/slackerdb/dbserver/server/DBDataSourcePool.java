@@ -46,7 +46,7 @@ public class DBDataSourcePool {
                             for (int i = this.dbDataSourcePool.dbDataSourcePoolConfig.getMaximumIdle(); i<currentIdleConnectionPoolSize; i++) {
                                 Connection connection = this.dbDataSourcePool.idleConnectionPool.poll();
                                 if (connection != null) {
-                                    logger.trace("[SERVER][CONN POOL  ]: Free connection {}. ", this.dbDataSourcePool.connectionMetaDataMap.get(connection).getConnectionId());
+                                    logger.debug("[SERVER][CONN POOL  ]: Free connection {}. ", this.dbDataSourcePool.connectionMetaDataMap.get(connection).getConnectionId());
                                     this.dbDataSourcePool.connectionMetaDataMap.remove(connection);
                                     if (!connection.isClosed()) {
                                         connection.close();
@@ -105,7 +105,7 @@ public class DBDataSourcePool {
             Logger logger) throws SQLException {
 
         this.logger = logger;
-        this.logger.trace("[SERVER][CONN POOL  ]: DBDataSourcePool started ..");
+        this.logger.debug("[SERVER][CONN POOL  ]: DBDataSourcePool started ..");
 
         if (config.getMinimumIdle() < 0)
         {
@@ -161,7 +161,7 @@ public class DBDataSourcePool {
                     if (connection.isClosed())
                     {
                         // 对连接进行生命周期验证
-                        logger.trace("[SERVER][CONN POOL  ]: Connection {} has closed, remove it.",
+                        logger.debug("[SERVER][CONN POOL  ]: Connection {} has closed, remove it.",
                                 connectionMetaDataMap.get(connection).getConnectionId());
                         connectionMetaDataMap.remove(connection);
                         continue;
@@ -170,7 +170,7 @@ public class DBDataSourcePool {
                         if (System.currentTimeMillis() - connectionMetaDataMap.get(connection).getCreatedTime() >
                                 this.dbDataSourcePoolConfig.getMaximumLifeCycleTime()) {
                             // 对连接进行生命周期验证
-                            logger.trace("[SERVER][CONN POOL  ]: Connection {} has retired, remove it.",
+                            logger.debug("[SERVER][CONN POOL  ]: Connection {} has retired, remove it.",
                                     connectionMetaDataMap.get(connection).getConnectionId());
                             connectionMetaDataMap.remove(connection);
                             // 已经超过最大生命周期，没有必要继续保留
@@ -183,7 +183,7 @@ public class DBDataSourcePool {
                     }
                     if (!this.validateConnection(connection)) {
                         // 对连接进行验证
-                        logger.trace("[SERVER][CONN POOL  ]: Connection {} can't pass validation, remove it.",
+                        logger.debug("[SERVER][CONN POOL  ]: Connection {} can't pass validation, remove it.",
                                 connectionMetaDataMap.get(connection).getConnectionId());
                         connectionMetaDataMap.remove(connection);
                         try {
@@ -193,7 +193,7 @@ public class DBDataSourcePool {
                         continue;
                     }
                     usedConnectionPool.offer(connection);
-                    logger.trace("[SERVER][CONN POOL  ]: Offer reused connection {}.", connectionMetaDataMap.get(connection).getConnectionId());
+                    logger.debug("[SERVER][CONN POOL  ]: Offer reused connection {}.", connectionMetaDataMap.get(connection).getConnectionId());
                     return connection;
                 }
             }
@@ -201,7 +201,7 @@ public class DBDataSourcePool {
     }
 
     public void releaseConnection(Connection connection) {
-        this.logger.trace("[SERVER][CONN POOL  ]: Release connection {}.", connectionMetaDataMap.get(connection).getConnectionId());
+        this.logger.debug("[SERVER][CONN POOL  ]: Release connection {}.", connectionMetaDataMap.get(connection).getConnectionId());
         this.usedConnectionPool.remove(connection);
 
         // 将连接放入连接池，准备复用
@@ -227,14 +227,14 @@ public class DBDataSourcePool {
 
     public void shutdown()
     {
-        this.logger.trace("[SERVER][CONN POOL  ]: DBDataSourcePool will shutdown ... ");
+        this.logger.debug("[SERVER][CONN POOL  ]: DBDataSourcePool will shutdown ... ");
         dbDataSourcePoolMonitor.interrupt();
 
         // 关闭连接
         for (Connection connection : this.usedConnectionPool) {
             try {
                 if (connection != null && !connection.isClosed()) {
-                    this.logger.trace("[SERVER][CONN POOL  ]: Will close used connection {} .",
+                    this.logger.debug("[SERVER][CONN POOL  ]: Will close used connection {} .",
                             connectionMetaDataMap.get(connection).getConnectionId());
                     connection.close();
                 }
@@ -244,7 +244,7 @@ public class DBDataSourcePool {
         for (Connection connection : this.idleConnectionPool) {
             try {
                 if (connection != null && !connection.isClosed()) {
-                    this.logger.trace("[SERVER][CONN POOL  ]: Will close idle connection {} .",
+                    this.logger.debug("[SERVER][CONN POOL  ]: Will close idle connection {} .",
                             connectionMetaDataMap.get(connection).getConnectionId());
                     connection.close();
                 }
@@ -279,7 +279,7 @@ public class DBDataSourcePool {
         connectionMetaData.setConnectionId(connectionId);
         connectionMetaData.setCreatedTime(System.currentTimeMillis());
         this.connectionMetaDataMap.put(connection, connectionMetaData);
-        logger.trace("[SERVER][CONN POOL  ]: Create new connection {}.",connectionId);
+        logger.debug("[SERVER][CONN POOL  ]: Create new connection {}.",connectionId);
 
         // 标记连接池的最高水位线
         if (this.highWaterMark < this.usedConnectionPool.size())
