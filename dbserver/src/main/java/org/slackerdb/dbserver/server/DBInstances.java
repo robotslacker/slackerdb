@@ -8,7 +8,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class DBInstances {
-    public static Map<String, DBInstance> dbInstanceMap = new HashMap<>();
+    public static final Map<String, DBInstance> dbInstanceMap = new HashMap<>();
 
     public static synchronized DBInstance createInstance(ServerConfiguration serverConfiguration) throws ServerException {
         String instanceName = serverConfiguration.getData();

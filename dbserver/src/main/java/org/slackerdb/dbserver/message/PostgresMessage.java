@@ -14,7 +14,7 @@ import java.util.MissingResourceException;
 
 public abstract class PostgresMessage {
     // 数据库实例
-    protected DBInstance dbInstance;
+    protected final DBInstance dbInstance;
 
 
     public  PostgresMessage(DBInstance pDbInstance)

@@ -33,7 +33,7 @@ public class DBInstance {
     public LocalDateTime bootTime = null;
 
     // 服务器配置参数
-    public ServerConfiguration serverConfiguration;
+    public final ServerConfiguration serverConfiguration;
 
     // 服务器对应的PG协议转发器
     private PostgresServer protocolServer;
@@ -45,7 +45,7 @@ public class DBInstance {
     public DBDataSourcePool dbDataSourcePool;
 
     // 资源文件，记录各种消息，以及日后可能的翻译信息
-    public ResourceBundle resourceBundle;
+    public final ResourceBundle resourceBundle;
 
     // 实例的状态
     public String instanceState = "IDLE";
@@ -54,7 +54,7 @@ public class DBInstance {
     public Connection backendSysConnection;
 
     // SqlHistoryId 当前SQL历史的主键ID
-    public AtomicLong backendSqlHistoryId = new AtomicLong(1);
+    public final AtomicLong backendSqlHistoryId = new AtomicLong(1);
 
     // 系统活动的会话数，指保持在DB侧正在执行语句的会话数
     public int    activeSessions = 0;
@@ -113,6 +113,7 @@ public class DBInstance {
                         if (sessionItem.getValue().getContext() == null) {
                             logger.debug("[SERVER] Session [{}] has disconnected. Remove it from session pool.",
                                     sessionItem.getKey());
+                            sessionItem.getValue().abortSession();
                             dbSessions.remove(sessionItem.getKey());
                             continue;
                         }
@@ -120,8 +121,9 @@ public class DBInstance {
                             logger.debug("[SERVER] Session [{}] from [{}] has disconnected. Remove it from session pool.",
                                     sessionItem.getKey(),
                                     sessionItem.getValue().getContext().channel().remoteAddress().toString());
-                            dbSessions.remove(sessionItem.getKey());
+                            sessionItem.getValue().abortSession();
                             sessionItem.getValue().getContext().channel().close();
+                            dbSessions.remove(sessionItem.getKey());
                         }
                     }
                 }
@@ -512,13 +514,13 @@ public class DBInstance {
                 File pidFile = new File(this.serverConfiguration.getPid());
                 if (pidFile.exists()) {
                     if (!pidFile.delete()) {
-                        logger.warn("[SERVER] {}", Utils.getMessage("SLACKERDB-00014"));
+                        logger.warn("[SERVER] {} 1", Utils.getMessage("SLACKERDB-00014"));
                     }
                 }
                 pidRandomAccessFile = null;
             }
             catch (IOException ignored) {
-                logger.warn("[SERVER] {}", Utils.getMessage("SLACKERDB-00014"));
+                logger.warn("[SERVER] {} 2", Utils.getMessage("SLACKERDB-00014"));
             }
         }
 

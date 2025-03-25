@@ -15,22 +15,22 @@ import java.util.*;
 
 
 public class TPCDSTest {
-    static int dbPort=4309;
+    static final int dbPort=4309;
     // 一共需要运行几轮
-    static int round = 1000;
+    static final int round = 1000;
     // 需要几个线程并发测试
-    static int parallel = 8;
+    static final int parallel = 8;
     // 数据集的规模， 1代表1G
-    static int scale = 1;
+    static final int scale = 1;
     // 服务端工作线程数量
-    static int threads = 4;
+    static final int threads = 4;
     // 工作最大内存限制
-    static String memory_limit = "4G";
+    static final String memory_limit = "4G";
 
-    static int max_nio_workers = 2;
+    static final int max_nio_workers = 2;
 
     static Map<String, String> tpcdsSQLMap = new HashMap<>();
-    static List<String> tpcdsTestTaskList = new ArrayList<>();
+    static final List<String> tpcdsTestTaskList = new ArrayList<>();
 
     static int roundSuccessfulCount = 0;
     static int roundFailedCount = 0;
@@ -174,7 +174,7 @@ public class TPCDSTest {
         }
     }
 
-    void runTPCDSTest() throws SQLException {
+    void runTPCDSTest() {
         String  taskName;
         while (true) {
             synchronized (TPCDSTest.class) {
@@ -204,13 +204,7 @@ public class TPCDSTest {
             Thread[] threads = new Thread[parallel];
             for (int j = 0; j < threads.length; j++) {
                 // Listener thread
-                threads[j] = new Thread(() -> {
-                    try {
-                        runTPCDSTest();
-                    } catch (SQLException e) {
-                        throw new RuntimeException(e);
-                    }
-                });
+                threads[j] = new Thread(this::runTPCDSTest);
                 threads[j].start();
             }
 

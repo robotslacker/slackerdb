@@ -57,7 +57,7 @@ public class DBSession {
     // 当前正在执行的句柄
     public PreparedStatement executingPreparedStatement = null;
     // SqlId, 考虑到SQL的分批执行情况，这里用SqlId来表示对应的信息
-    public AtomicLong executingSqlId = new AtomicLong();
+    public final AtomicLong executingSqlId = new AtomicLong();
 
     public DBSession(DBInstance pDbInstance, ChannelHandlerContext pCtx)
     {

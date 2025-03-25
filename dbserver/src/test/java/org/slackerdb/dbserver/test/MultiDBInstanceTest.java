@@ -1,6 +1,5 @@
 package org.slackerdb.dbserver.test;
 
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
@@ -19,10 +18,6 @@ public class MultiDBInstanceTest {
     static void initAll() {
         // 强制使用UTC时区，以避免时区问题在PG和后端数据库中不一致的行为
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
-    }
-
-    @AfterAll
-    static void tearDownAll() {
     }
 
     @Test

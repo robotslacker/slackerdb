@@ -11,7 +11,7 @@ import java.sql.*;
 import java.util.TimeZone;
 
 public class PlSqlTest {
-    static int dbPort=4309;
+    static final int dbPort=4309;
     static DBInstance dbInstance ;
 
     @BeforeAll
