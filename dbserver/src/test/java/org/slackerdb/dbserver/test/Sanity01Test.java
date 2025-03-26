@@ -35,7 +35,7 @@ public class Sanity01Test {
         ServerConfiguration serverConfiguration = new ServerConfiguration();
         serverConfiguration.setPort(0);
         serverConfiguration.setData("mem");
-        serverConfiguration.setLog_level("INFO");
+        serverConfiguration.setLog_level("TRACE");
         serverConfiguration.setSqlHistory("OFF");
         dbPort = serverConfiguration.getPort();
         
@@ -825,6 +825,106 @@ public class Sanity01Test {
                     select 'POLYGON((118.960556 32.067500;129.787222 28.348333;123.650833 20.096111;118.928333 20.096111;112.342500 24.552222;118.960556 32.067500))';
                     select 'POLYGON((118.960556 32.067500;129.787222 28.348333;123.650833 20.096111;118.928333 20.096111;112.342500 24.552222;118.960556 32.067500))';
                 """);
+        pgConn1.close();
+    }
+
+    @Test
+    void testComplexStatement() throws SQLException
+    {
+        // 忽略hakiri的日志，避免刷屏
+        Logger hakiriLogger = (Logger) LoggerFactory.getLogger("com.zaxxer");
+        hakiriLogger.setLevel(Level.OFF);
+
+        // 创建HikariConfig实例并配置数据库连接信息
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl("jdbc:postgresql://127.0.0.1:" + dbPort + "/mem");
+        config.setUsername("");
+        config.setPassword("");
+
+        // 创建HikariDataSource实例
+        HikariDataSource hikariDataSource = new HikariDataSource(config);
+
+//        Connection pgConn1 = hikariDataSource.getConnection();
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.createStatement().execute("""
+                    Create Table testComplexStatement(id int, name varchar);
+                    insert into testComplexStatement values(10,'AA');
+                    insert into testComplexStatement values(20,'BB');
+                    insert into testComplexStatement values(30,'CC');
+                    insert into testComplexStatement values(40,'DD');
+                    insert into testComplexStatement values(50,'EE');
+                    insert into testComplexStatement values(60,'FF');
+                    insert into testComplexStatement values(70,'GG');
+                    insert into testComplexStatement values(80,'HH');
+                """);
+        PreparedStatement preparedStatement;
+        Statement stmt;
+        preparedStatement = pgConn1.prepareStatement("Select * From testComplexStatement Where id = ? and name = ?");
+        ResultSet rs;
+        preparedStatement.setInt(1, 10);
+        preparedStatement.setString(2, "AA");
+        rs = preparedStatement.executeQuery();
+        rs.next();
+        assert rs.getString(2).equals("AA") ;
+
+        preparedStatement.setInt(1, 20);
+        preparedStatement.setString(2, "BB");
+        rs = preparedStatement.executeQuery();
+        rs.next();
+        assert rs.getString(2).equals("BB") ;
+
+        preparedStatement.setInt(1, 30);
+        preparedStatement.setString(2, "CC");
+        rs = preparedStatement.executeQuery();
+        rs.next();
+        assert rs.getString(2).equals("CC") ;
+//
+        preparedStatement.setInt(1, 40);
+        preparedStatement.setString(2, "DD");
+        rs = preparedStatement.executeQuery();
+        rs.next();
+        assert rs.getString(2).equals("DD") ;
+
+        preparedStatement.setInt(1, 50);
+        preparedStatement.setString(2, "EE");
+        rs = preparedStatement.executeQuery();
+        rs.next();
+        assert rs.getString(2).equals("EE") ;
+
+        stmt = pgConn1.createStatement();
+        stmt.execute("create or replace table testComplexStatement22(num int)");
+        stmt.close();
+
+        preparedStatement.setInt(1, 60);
+        preparedStatement.setString(2, "FF");
+        rs = preparedStatement.executeQuery();
+        rs.next();
+        assert rs.getString(2).equals("FF") ;
+
+//        stmt = pgConn1.createStatement();
+//        stmt.execute("create or replace table testComplexStatement22(num int)");
+//        stmt.close();
+//        preparedStatement.setInt(1, 70);
+//        preparedStatement.setString(2, "GG");
+//        rs = preparedStatement.executeQuery();
+//        rs.next();
+//        assert rs.getString(2).equals("GG") ;
+//
+//        stmt = pgConn1.createStatement();
+//        stmt.execute("create or replace table testComplexStatement22(num int)");
+//        stmt.close();
+//        preparedStatement.setInt(1, 80);
+//        preparedStatement.setString(2, "HH");
+//        rs = preparedStatement.executeQuery();
+//        rs.next();
+//        assert rs.getString(2).equals("HH") ;
+
+        preparedStatement.close();
         pgConn1.close();
     }
 }

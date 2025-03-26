@@ -272,6 +272,14 @@ public class ExecuteRequest extends PostgresRequest {
             }
             if (parsedStatement == null || parsedStatement.preparedStatement == null || parsedStatement.preparedStatement.isClosed())
             {
+                // 即使没有数据，也要返回一个空的CommandComplete
+                CommandComplete commandComplete = new CommandComplete(this.dbInstance);
+                commandComplete.process(ctx, request, out);
+
+                // 发送并刷新返回消息
+                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
+                out.close();
+
                 // 之前语句解析或者绑定出了错误, 没有继续执行的必要
                 break tryBlock;
             }
@@ -328,7 +336,7 @@ public class ExecuteRequest extends PostgresRequest {
                 // 所有的记录查询完毕
                 rs.close();
                 nRowsAffected = parsedStatement.nRowsAffected + rowsReturned;
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
+//                this.dbInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
             }
             else
             {
@@ -397,8 +405,9 @@ public class ExecuteRequest extends PostgresRequest {
 
                     ResultSet rs = parsedStatement.preparedStatement.getResultSet();
                     parsedStatement.resultSet = rs;
-                    // 保留当前的ResultSet到Portal中
-                    this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement("Portal" + "-" + portalName, parsedStatement);
+
+//                    // 保留当前的ResultSet到Portal中
+//                    this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement("Portal" + "-" + portalName, parsedStatement);
 
                     ResultSetMetaData rsmd = rs.getMetaData();
                     while (rs.next()) {
@@ -429,7 +438,7 @@ public class ExecuteRequest extends PostgresRequest {
                     }
                     rs.close();
                     nRowsAffected = parsedStatement.nRowsAffected + rowsReturned;
-                    this.dbInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
+//                    this.dbInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
                 }
                 else
                 {
