@@ -4,11 +4,16 @@ import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.server.DBInstance;
 
+import java.nio.charset.StandardCharsets;
+
 public class DescribeRequest  extends PostgresRequest {
 
     public DescribeRequest(DBInstance pDbInstance) {
         super(pDbInstance);
     }
+
+    public char describeType;
+    public String portalName;
 
     @Override
     public void decode(byte[] data) {
@@ -24,6 +29,9 @@ public class DescribeRequest  extends PostgresRequest {
         //       to describe (an empty string selects the unnamed prepared statement or portal).
 
         //        String portalName = new String(data, StandardCharsets.UTF_8);
+        portalName = new String(data, StandardCharsets.UTF_8);
+        describeType = portalName.charAt(0);
+        portalName = portalName.substring(1);
 
         super.decode(data);
     }

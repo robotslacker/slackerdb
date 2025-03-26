@@ -357,13 +357,17 @@ public class ExecuteRequest extends PostgresRequest {
                         throw e;
                     }
                 }
+
                 int rowsReturned = 0;
+                // 是否之前发送过DescribeRequest
+                boolean describeRequestExist = this.dbInstance.getSession(getCurrentSessionId(ctx)).hasDescribeRequest;
                 if (isResultSet) {
+                    // 处理有结果集的情况
                     DataRow dataRow = new DataRow(this.dbInstance);
 
-                    boolean describeRequestExist = this.dbInstance.getSession(getCurrentSessionId(ctx)).hasDescribeRequest;
+                    // 之前发送过describeRequest，需要返回RowDescription
                     if (describeRequestExist) {
-                        // 如果之前有describeRequest， 则返回RowsDescription； 否则直接返回结果
+                        // 每个describeRequest， 对应一个返回
                         this.dbInstance.getSession(getCurrentSessionId(ctx)).hasDescribeRequest = false;
 
                         List<Field> fields = new ArrayList<>();
@@ -427,6 +431,7 @@ public class ExecuteRequest extends PostgresRequest {
                             PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out, this.dbInstance.logger);
                             // 返回等待下一次ExecuteRequest
                             out.close();
+
                             parsedStatement.nRowsAffected += rowsReturned;
                             // 更新SQL历史信息
                             if (nSqlHistoryId != -1)
@@ -442,6 +447,17 @@ public class ExecuteRequest extends PostgresRequest {
                 }
                 else
                 {
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).hasDescribeRequest = false;
+
+                    // 之前没有发送过describeRequest，需要返回NO_DATA
+                    if (describeRequestExist) {
+                        NoDataResp noDataResp = new NoDataResp(this.dbInstance);
+                        noDataResp.process(ctx, request, out);
+
+                        // 发送并刷新RowsDescription消息
+                        PostgresMessage.writeAndFlush(ctx, NoDataResp.class.getSimpleName(), out, this.dbInstance.logger);
+                    }
+
                     // 记录更新的行数
                     if (parsedStatement.preparedStatement.isClosed())
                     {

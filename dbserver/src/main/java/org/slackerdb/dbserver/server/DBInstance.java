@@ -385,7 +385,7 @@ public class DBInstance {
             for (String initScriptFile : initScriptFiles) {
                 executeScript(initScriptFile);
             }
-            logger.info("[SERVER] Init/Startup script(s) execute completed.");
+            logger.debug("[SERVER] Init/Startup script(s) execute completed.");
 
             // 初始化数据库连接池
             DBDataSourcePoolConfig dbDataSourcePoolConfig = new DBDataSourcePoolConfig();
