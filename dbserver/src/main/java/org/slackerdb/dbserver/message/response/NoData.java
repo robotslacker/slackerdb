@@ -8,8 +8,8 @@ import org.slackerdb.dbserver.server.DBInstance;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
-public class NoDataResp  extends PostgresMessage {
-    public NoDataResp(DBInstance pDbInstance) {
+public class NoData extends PostgresMessage {
+    public NoData(DBInstance pDbInstance) {
         super(pDbInstance);
     }
 

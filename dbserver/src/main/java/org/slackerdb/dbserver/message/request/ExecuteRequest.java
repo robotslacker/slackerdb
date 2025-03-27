@@ -336,7 +336,6 @@ public class ExecuteRequest extends PostgresRequest {
                 // 所有的记录查询完毕
                 rs.close();
                 nRowsAffected = parsedStatement.nRowsAffected + rowsReturned;
-//                this.dbInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
             }
             else
             {
@@ -410,9 +409,6 @@ public class ExecuteRequest extends PostgresRequest {
                     ResultSet rs = parsedStatement.preparedStatement.getResultSet();
                     parsedStatement.resultSet = rs;
 
-//                    // 保留当前的ResultSet到Portal中
-//                    this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement("Portal" + "-" + portalName, parsedStatement);
-
                     ResultSetMetaData rsmd = rs.getMetaData();
                     while (rs.next()) {
                         // 绑定列的信息
@@ -443,7 +439,6 @@ public class ExecuteRequest extends PostgresRequest {
                     }
                     rs.close();
                     nRowsAffected = parsedStatement.nRowsAffected + rowsReturned;
-//                    this.dbInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement("Portal" + "-" + portalName);
                 }
                 else
                 {
@@ -451,11 +446,11 @@ public class ExecuteRequest extends PostgresRequest {
 
                     // 之前没有发送过describeRequest，需要返回NO_DATA
                     if (describeRequestExist) {
-                        NoDataResp noDataResp = new NoDataResp(this.dbInstance);
-                        noDataResp.process(ctx, request, out);
+                        NoData noData = new NoData(this.dbInstance);
+                        noData.process(ctx, request, out);
 
                         // 发送并刷新RowsDescription消息
-                        PostgresMessage.writeAndFlush(ctx, NoDataResp.class.getSimpleName(), out, this.dbInstance.logger);
+                        PostgresMessage.writeAndFlush(ctx, NoData.class.getSimpleName(), out, this.dbInstance.logger);
                     }
 
                     // 记录更新的行数
