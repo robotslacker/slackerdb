@@ -57,7 +57,7 @@ public class DBInstance {
     public final AtomicLong backendSqlHistoryId = new AtomicLong(1);
 
     // 系统活动的会话数，指保持在DB侧正在执行语句的会话数
-    public int    activeSessions = 0;
+    public AtomicInteger    activeSessions = new AtomicInteger(0);
 
     // 从资源文件中获取消息，为未来的多语言做准备
     private String getMessage(String code, Object... contents) {
@@ -97,40 +97,21 @@ public class DBInstance {
         @Override
         public void run()
         {
+            // 设置线程名称
+            setName(serverConfiguration.getData() + "-DBInstanceMonitor");
+
+            // 每10秒钟检测一下当前负载状况
             while (!isInterrupted())
             {
-                try {
-                    // 检查服务器是否过载
-                    if (getRegisteredConnectionsCount() > serverConfiguration.getMax_Workers()) {
-                        logger.warn(
-                                "[SERVER] The system is overloaded. " +
-                                        "The current number of connection requests is {} " +
-                                        "and the current maximum worker setting of the system is {}.",
-                                getRegisteredConnectionsCount(), serverConfiguration.getMax_Workers());
-                    }
-                    // 检查是否有会话被异常终止，要进行清理，避免连接数过多
-                    for (Map.Entry<Integer, DBSession> sessionItem : dbSessions.entrySet()) {
-                        if (sessionItem.getValue().getContext() == null) {
-                            logger.debug("[SERVER] Session [{}] has disconnected. Remove it from session pool.",
-                                    sessionItem.getKey());
-                            sessionItem.getValue().abortSession();
-                            dbSessions.remove(sessionItem.getKey());
-                            continue;
-                        }
-                        if (!sessionItem.getValue().getContext().channel().isActive()) {
-                            logger.debug("[SERVER] Session [{}] from [{}] has disconnected. Remove it from session pool.",
-                                    sessionItem.getKey(),
-                                    sessionItem.getValue().getContext().channel().remoteAddress().toString());
-                            sessionItem.getValue().abortSession();
-                            sessionItem.getValue().getContext().channel().close();
-                            dbSessions.remove(sessionItem.getKey());
-                        }
-                    }
+                // 检查服务器是否过载
+                if (getRegisteredConnectionsCount() > serverConfiguration.getMax_Workers()) {
+                    logger.warn(
+                            "[SERVER] The system is overloaded. " +
+                                    "The current number of connection requests is {} " +
+                                    "and the current maximum worker setting of the system is {}.",
+                            getRegisteredConnectionsCount(), serverConfiguration.getMax_Workers());
                 }
-                catch (Exception ex)
-                {
-                    logger.error("[SERVER] DBInstanceMonitorThread got unexpected internal error.", ex);
-                }
+
                 // 每10秒钟检测一次
                 try {
                     Sleeper.sleep(10 * 1000);
@@ -150,9 +131,10 @@ public class DBInstance {
         // 销毁会话保持的数据库信息
         DBSession dbSession = dbSessions.get(sessionId);
         if (dbSession != null) {
-            dbSession.abortSession();
-            // 移除会话信息
+            // 首先移除会话信息
             dbSessions.remove(sessionId);
+            // 放弃会话
+            dbSession.abortSession();
         }
     }
 
@@ -162,9 +144,10 @@ public class DBInstance {
         // 销毁会话保持的数据库信息
         DBSession dbSession = dbSessions.get(sessionId);
         if (dbSession != null) {
-            dbSession.closeSession();
             // 移除会话信息
             dbSessions.remove(sessionId);
+            // 关闭会话
+            dbSession.closeSession();
         }
     }
 

@@ -117,11 +117,13 @@ public class DBSession {
         // 默认abort的时候要执行Rollback操作
         for (ParsedStatement parsedStatement : parsedStatements.values())
         {
-            if (parsedStatement.preparedStatement != null && !parsedStatement.preparedStatement.isClosed()) {
-                parsedStatement.preparedStatement.close();
-            }
-            if (parsedStatement.resultSet != null && !parsedStatement.resultSet.isClosed()) {
-                parsedStatement.resultSet.close();
+            if (parsedStatement != null) {
+                if (parsedStatement.preparedStatement != null && !parsedStatement.preparedStatement.isClosed()) {
+                    parsedStatement.preparedStatement.close();
+                }
+                if (parsedStatement.resultSet != null && !parsedStatement.resultSet.isClosed()) {
+                    parsedStatement.resultSet.close();
+                }
             }
         }
         if (copyTableAppender != null)

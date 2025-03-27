@@ -23,7 +23,7 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
     }
 
     @Override
-    public void channelRegistered(ChannelHandlerContext ctx) {
+    public void channelRegistered(ChannelHandlerContext ctx) throws Exception{
         // 获取远端的 IP 地址和端口号
         InetSocketAddress remoteAddress = (InetSocketAddress) ctx.channel().remoteAddress();
 
@@ -40,21 +40,21 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
         // 设置线程名称，并打印调试信息
         Thread.currentThread().setName("Session-" + sessionId);
         logger.trace("[SERVER] Accepted connection from {}", remoteAddress.toString());
+
+        // 传递消息
+        super.channelRegistered(ctx);
+    }
+
+    @Override
+    public void channelActive(ChannelHandlerContext ctx) throws Exception{
+        logger.trace("[SERVER] Connection has been activated.");
+        super.channelActive(ctx);
     }
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
-        // 设置线程名称
-        int sessionId = 0;
-        if (ctx.channel().hasAttr(AttributeKey.valueOf("SessionId"))) {
-            sessionId = (int) ctx.channel().attr(AttributeKey.valueOf("SessionId")).get();
-        }
-        Thread.currentThread().setName("Session-" + sessionId);
-
         // 开始处理，标记活跃会话数加一
-        synchronized (dbInstance) {
-            dbInstance.activeSessions++;
-        }
+        dbInstance.activeSessions.incrementAndGet();
         try {
             PostgresRequest postgresRequest = (PostgresRequest) msg;
             postgresRequest.process(ctx, msg);
@@ -62,9 +62,7 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
             logger.error("[SERVER] Error processing request", e);
         }
         // 结束处理，标记活跃会话数减一
-        synchronized (dbInstance) {
-            dbInstance.activeSessions--;
-        }
+        dbInstance.activeSessions.decrementAndGet();
     }
 
     @Override
@@ -74,13 +72,6 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-        // 设置线程名称
-        int sessionId = 0;
-        if (ctx.channel().hasAttr(AttributeKey.valueOf("SessionId"))) {
-            sessionId = (int) ctx.channel().attr(AttributeKey.valueOf("SessionId")).get();
-        }
-        Thread.currentThread().setName("Session-" + sessionId);
-
         // 关闭会话
         dbInstance.abortSession((int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get());
 
@@ -90,20 +81,19 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
 
         // 释放资源
         super.channelInactive(ctx);
+    }
 
-        // 清理会话
-        ctx.close();
+    @Override
+    public void channelUnregistered(ChannelHandlerContext ctx) throws Exception
+    {
+        logger.trace("[SERVER] Connection channel has been unregistered.");
+
+        // 释放资源
+        super.channelUnregistered(ctx);
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception{
-        // 设置线程名称
-        int sessionId = 0;
-        if (ctx.channel().hasAttr(AttributeKey.valueOf("SessionId"))) {
-            sessionId = (int) ctx.channel().attr(AttributeKey.valueOf("SessionId")).get();
-        }
-        Thread.currentThread().setName("Session-" + sessionId);
-
         // 关闭会话
         dbInstance.abortSession((int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get());
 
@@ -120,13 +110,6 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
-        // 设置线程名称
-        int sessionId = 0;
-        if (ctx.channel().hasAttr(AttributeKey.valueOf("SessionId"))) {
-            sessionId = (int) ctx.channel().attr(AttributeKey.valueOf("SessionId")).get();
-        }
-        Thread.currentThread().setName("Session-" + sessionId);
-
         // 关闭会话
         dbInstance.abortSession((int)ctx.channel().attr(AttributeKey.valueOf("SessionId")).get());
 
@@ -136,7 +119,7 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
             } else if (event.state() == IdleState.WRITER_IDLE) {
                 logger.trace("[SERVER] Connection {} error. Write timeout. ", ctx.channel().remoteAddress());
             } else if (event.state() == IdleState.ALL_IDLE) {
-                logger.trace("[SERVER] Connection {} error. all timeout. ", ctx.channel().remoteAddress());
+                logger.trace("[SERVER] Connection {} error. All timeout. ", ctx.channel().remoteAddress());
             }
 
             // 释放资源

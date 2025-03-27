@@ -114,7 +114,7 @@ public class PostgresServer {
             if (logger.getLevel().levelStr.equals("TRACE")) {
                 PostgresRequest postgresRequest = (PostgresRequest)obj;
                 logger.trace("[SERVER][RX CONTENT ]: {},{}",
-                        obj.getClass().getSimpleName(), postgresRequest.encode().length);
+                        obj.getClass().getSimpleName(),postgresRequest.encode().length);
                 for (String dumpMessage : Utils.bytesToHexList(postgresRequest.encode())) {
                     logger.trace("[SERVER][RX CONTENT ]: {}", dumpMessage);
                 }
@@ -159,7 +159,6 @@ public class PostgresServer {
                     else if (Arrays.equals(data, AdminClientRequest.AdminClientRequestHeader))
                     {
                         // 不需要回复Admin的握手请求
-
                         // 标记当前步骤
                         lastRequestCommand = AdminClientRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
@@ -425,10 +424,14 @@ public class PostgresServer {
                     .channel(NioServerSocketChannel.class)
                     // 禁用堆外内存的池化以求获得更高的内存使用率
                     .option(ChannelOption.ALLOCATOR, UnpooledByteBufAllocator.DEFAULT)
-                    .option(ChannelOption.SO_RCVBUF, 4096)
+                    // 接收缓冲区大小
+                    .option(ChannelOption.SO_RCVBUF, 65536)
+                    // 启用 TCP 层保活机制，检测无效连接
                     .option(ChannelOption.SO_KEEPALIVE, true)
+                    // 允许绑定处于 TIME_WAIT 状态的端口，快速重启服务
                     .option(ChannelOption.SO_REUSEADDR, true)
-                    .option(ChannelOption.SO_BACKLOG, 128)
+                    // 定义操作系统未完成连接队列的最大长度
+                    .option(ChannelOption.SO_BACKLOG, 1024)
                     .childHandler(new ChannelInitializer<SocketChannel>() {
                         @Override
                         protected void initChannel(SocketChannel ch) {
