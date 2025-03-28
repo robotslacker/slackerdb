@@ -205,20 +205,15 @@ public class BindRequest extends PostgresRequest {
                                 } else {
                                     // Binary mode
                                     switch (columnTypeName) {
-                                        case "VARCHAR":
-                                        case "UNKNOWN":
-                                            preparedStatement.setString(i + 1, new String(bindParameters[i], StandardCharsets.UTF_8));
-                                            break;
-                                        case "INTEGER":
-                                            preparedStatement.setInt(i + 1, Utils.bytesToInt32(bindParameters[i]));
-                                            break;
-                                        case "BIGINT":
-                                            preparedStatement.setLong(i + 1, Utils.bytesToInt64(bindParameters[i]));
-                                            break;
-                                        case "BOOLEAN":
-                                            preparedStatement.setBoolean(i + 1, bindParameters[i][0] == (byte) 0);
-                                            break;
-                                        case "DECIMAL":
+                                        case "VARCHAR", "UNKNOWN" ->
+                                                preparedStatement.setString(i + 1, new String(bindParameters[i], StandardCharsets.UTF_8));
+                                        case "INTEGER" ->
+                                                preparedStatement.setInt(i + 1, Utils.bytesToInt32(bindParameters[i]));
+                                        case "BIGINT" ->
+                                                preparedStatement.setLong(i + 1, Utils.bytesToInt64(bindParameters[i]));
+                                        case "BOOLEAN" ->
+                                                preparedStatement.setBoolean(i + 1, bindParameters[i][0] == (byte) 0);
+                                        case "DECIMAL" -> {
                                             ByteBuffer buffer = ByteBuffer.wrap(bindParameters[i]);
                                             short nDigits = buffer.getShort();
                                             short weight = buffer.getShort();
@@ -238,16 +233,13 @@ public class BindRequest extends PostgresRequest {
                                                 result = result.negate();
                                             }
                                             preparedStatement.setBigDecimal(i + 1, result.setScale(dScale, RoundingMode.UNNECESSARY));
-                                            break;
-                                        case "FLOAT":
-                                            preparedStatement.setFloat(i + 1, ByteBuffer.wrap(bindParameters[i]).getFloat());
-                                            break;
-                                        case "DOUBLE":
-                                            preparedStatement.setDouble(i + 1, ByteBuffer.wrap(bindParameters[i]).getDouble());
-                                            break;
-                                        default:
-                                            this.dbInstance.logger.error("Not supported type in BindRequest: {}", columnTypeName);
-                                            break;
+                                        }
+                                        case "FLOAT" ->
+                                                preparedStatement.setFloat(i + 1, ByteBuffer.wrap(bindParameters[i]).getFloat());
+                                        case "DOUBLE" ->
+                                                preparedStatement.setDouble(i + 1, ByteBuffer.wrap(bindParameters[i]).getDouble());
+                                        default ->
+                                                this.dbInstance.logger.error("Not supported type in BindRequest: {}", columnTypeName);
                                     }
                                 }
                             }
@@ -301,7 +293,7 @@ public class BindRequest extends PostgresRequest {
                     preparedStatement.execute();
                     preparedStatement.close();
                     // 希望连接池能够复用数据库连接
-                    this.dbInstance.dbDataSourcePool.releaseConnection(backendSqlHistoryConnection);
+                    this.dbInstance.releaseSqlHistoryConn(backendSqlHistoryConnection);
                 }
                 catch (SQLException se)
                 {

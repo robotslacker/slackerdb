@@ -1,7 +1,6 @@
 package org.slackerdb.dbserver.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
-import org.duckdb.DuckDBConnection;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.*;
@@ -38,8 +37,6 @@ public class StartupRequest  extends PostgresRequest {
     //      The parameter value.
 
     private final Map<String, String> startupOptions = new HashMap<>();
-    private byte[] rawMessage;
-
     public StartupRequest(DBInstance pDbInstance) {
         super(pDbInstance);
     }
@@ -49,11 +46,6 @@ public class StartupRequest  extends PostgresRequest {
         return startupOptions;
     }
 
-    public byte[] getRawMessage()
-    {
-        return rawMessage;
-    }
-
     @Override
     public void decode(byte[] data) {
         // 跳过前面4个字节的协议版本号. 目前没有对这个信息进行处理
@@ -61,7 +53,6 @@ public class StartupRequest  extends PostgresRequest {
         for (int i = 0; i < result.length-1; i=i+2) {
             startupOptions.put(new String(result[i]), new String(result[i+1]));
         }
-        rawMessage = data;
         super.decode(data);
     }
 
@@ -166,14 +157,7 @@ public class StartupRequest  extends PostgresRequest {
             }
 
             // 把查询路径指向新的schema
-            Connection conn;
-            synchronized (this) {
-                conn = this.dbInstance.dbDataSourcePool.getConnection();
-                if (conn == null)
-                {
-                    conn = ((DuckDBConnection) this.dbInstance.backendSysConnection).duplicate();
-                }
-            }
+            Connection conn = this.dbInstance.dbDataSourcePool.getConnection();
             Statement stmt = conn.createStatement();
             stmt.execute("set variable current_database = '" + startupOptions.get("database") + "'");
 

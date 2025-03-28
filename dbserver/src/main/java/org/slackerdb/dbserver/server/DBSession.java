@@ -1,6 +1,5 @@
 package org.slackerdb.dbserver.server;
 
-import io.netty.channel.ChannelHandlerContext;
 import org.duckdb.DuckDBAppender;
 import org.slackerdb.dbserver.entity.ParsedStatement;
 
@@ -16,8 +15,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public class DBSession {
     // 数据库实例
     private final DBInstance dbInstance;
-    // TCP连接句柄
-    private final ChannelHandlerContext ctx;
     // 数据库连接
     public Connection dbConnection = null;
     // 客户端连接建立时间
@@ -59,15 +56,9 @@ public class DBSession {
     // SqlId, 考虑到SQL的分批执行情况，这里用SqlId来表示对应的信息
     public final AtomicLong executingSqlId = new AtomicLong();
 
-    public DBSession(DBInstance pDbInstance, ChannelHandlerContext pCtx)
+    public DBSession(DBInstance pDbInstance)
     {
         dbInstance = pDbInstance;
-        ctx = pCtx;
-    }
-
-    public ChannelHandlerContext getContext()
-    {
-        return ctx;
     }
 
     public ParsedStatement getParsedStatement(String portalName) {
@@ -152,6 +143,7 @@ public class DBSession {
     {
         parsedStatements.put(portalName, parsedPrepareStatement);
     }
+
     public void clearParsedStatement(String portalName) throws SQLException
     {
         if (parsedStatements.containsKey(portalName))

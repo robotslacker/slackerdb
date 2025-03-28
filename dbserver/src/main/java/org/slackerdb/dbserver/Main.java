@@ -158,7 +158,7 @@ public class Main {
             // 如果有配置文件，用配置文件中数据进行更新
             if (appOptions.containsKey("conf"))
             {
-                serverConfiguration.LoadConfigurationFile(appOptions.get("conf"));
+                serverConfiguration.loadConfigurationFile(appOptions.get("conf"));
             }
             if (appOptions.containsKey("locale"))
             {

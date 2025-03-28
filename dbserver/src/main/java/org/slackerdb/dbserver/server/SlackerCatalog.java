@@ -41,6 +41,24 @@ public class SlackerCatalog {
                 FROM   duckdb_schemas
                 where  database_name = getvariable('current_database')
                 and    schema_name not in ('duck_catalog', 'SCHEMA_NAME_UPPER_FOR_EXT', 'pg_catalog')""");
+        fakeCatalogDDLList.add("""
+                CREATE or replace MACRO duck_catalog.pg_total_relation_size(a) AS
+                (
+                	select 	estimated_size
+                	from 	duckdb_tables
+                	where  	table_oid = a
+                	and 	database_name = getvariable('current_database')
+                )
+                """);
+        fakeCatalogDDLList.add("""
+                CREATE or replace MACRO duck_catalog.pg_relation_size(a) AS
+                (
+                	select 	estimated_size
+                	from 	duckdb_tables
+                	where  	table_oid = a
+                	and 	database_name = getvariable('current_database')
+                )
+                """);
         fakeCatalogDDLList.add("create or replace view duck_catalog.pg_database \n" +
                 " as\n" +
                 " select oid, oid as datlastsysoid, " +
@@ -98,6 +116,14 @@ public class SlackerCatalog {
                  extconfig         int,
                  extcondition      text
                 );
+                """);
+        fakeCatalogDDLList.add("""
+                create or replace table duck_catalog.pg_inherits
+                (
+                	inhrelid   int,
+                	inhparent   int,
+                	inhseqno    int
+                )
                 """);
         fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_get_userbyid(a) AS (select 'system')");
         fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_encoding_to_char(a) AS (select 'UTF8')");

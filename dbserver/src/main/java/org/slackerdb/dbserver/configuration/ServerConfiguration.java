@@ -134,7 +134,7 @@ public class ServerConfiguration extends Throwable {
     }
 
     // 读取参数配置文件
-    public void LoadConfigurationFile(String configurationFileName) throws ServerException {
+    public void loadConfigurationFile(String configurationFileName) throws ServerException {
         Properties appProperties = new Properties();
         File configurationFile;
 
@@ -152,217 +152,170 @@ public class ServerConfiguration extends Throwable {
 
         // 加载配置信息，根据参数配置信息修改默认配置
         for (Map.Entry<Object, Object> entry : appProperties.entrySet()) {
-            switch (entry.getKey().toString().toUpperCase())
-            {
-                case "LOCALE":
-                    if (entry.getValue().toString().isEmpty())
-                    {
+            switch (entry.getKey().toString().toUpperCase()) {
+                case "LOCALE" -> {
+                    if (entry.getValue().toString().isEmpty()) {
                         locale = this.default_locale;
-                    }
-                    else {
+                    } else {
                         setLocale(entry.getValue().toString());
                     }
-                    break;
-                case "DATA":
-                    if (entry.getValue().toString().isEmpty())
-                    {
+                }
+                case "DATA" -> {
+                    if (entry.getValue().toString().isEmpty()) {
                         data = this.default_data;
-                    }
-                    else {
+                    } else {
                         setData(entry.getValue().toString());
                     }
-                    break;
-                case "DATA_DIR":
-                    if (entry.getValue().toString().isEmpty())
-                    {
+                }
+                case "DATA_DIR" -> {
+                    if (entry.getValue().toString().isEmpty()) {
                         data_dir = this.default_data_dir;
-                    }
-                    else {
+                    } else {
                         setData_dir(entry.getValue().toString());
                     }
-                    break;
-                case "TEMP_DIR":
-                    if (entry.getValue().toString().isEmpty())
-                    {
+                }
+                case "TEMP_DIR" -> {
+                    if (entry.getValue().toString().isEmpty()) {
                         temp_dir = this.default_temp_dir;
-                    }
-                    else {
+                    } else {
                         setTemp_dir(entry.getValue().toString());
                     }
-                    break;
-                case "EXTENSION_DIR":
-                    if (entry.getValue().toString().isEmpty())
-                    {
+                }
+                case "EXTENSION_DIR" -> {
+                    if (entry.getValue().toString().isEmpty()) {
                         extension_dir = this.default_extension_dir;
-                    }
-                    else {
+                    } else {
                         setExtension_dir(entry.getValue().toString());
                     }
-                    break;
-                case "LOG":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        log= this.default_log;
-                    }
-                    else {
+                }
+                case "LOG" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        log = this.default_log;
+                    } else {
                         setLog(entry.getValue().toString());
                     }
-                    break;
-                case "LOG_LEVEL":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        log_level= this.default_log_level;
-                    }
-                    else {
+                }
+                case "LOG_LEVEL" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        log_level = this.default_log_level;
+                    } else {
                         setLog_level(entry.getValue().toString());
                     }
-                    break;
-                case "PORT":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        port= this.default_port;
-                    }
-                    else {
+                }
+                case "PORT" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        port = this.default_port;
+                    } else {
                         setPort(entry.getValue().toString());
                     }
-                    break;
-                case "BIND":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        bind= this.default_bind;
-                    }
-                    else {
+                }
+                case "BIND" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        bind = this.default_bind;
+                    } else {
                         setBindHost(entry.getValue().toString());
                     }
-                    break;
-                case "CLIENT_TIMEOUT":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        client_timeout= this.default_client_timeout;
-                    }
-                    else {
+                }
+                case "CLIENT_TIMEOUT" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        client_timeout = this.default_client_timeout;
+                    } else {
                         setClient_timeout(entry.getValue().toString());
                     }
-                    break;
-                case "ACCESS_MODE":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        access_mode= this.default_access_mode;
-                    }
-                    else {
+                }
+                case "ACCESS_MODE" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        access_mode = this.default_access_mode;
+                    } else {
                         setAccess_mode(entry.getValue().toString());
                     }
-                    break;
-                case "MAX_CONNECTIONS":
-                    if (entry.getValue().toString().isEmpty())
-                    {
+                }
+                case "MAX_CONNECTIONS" -> {
+                    if (entry.getValue().toString().isEmpty()) {
                         max_connections = this.default_max_connections;
-                    }
-                    else {
+                    } else {
                         setMax_connections(entry.getValue().toString());
                     }
-                    break;
-                case "MAX_WORKERS":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        max_workers= this.default_max_workers;
-                    }
-                    else {
+                }
+                case "MAX_WORKERS" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        max_workers = this.default_max_workers;
+                    } else {
                         setMax_workers(entry.getValue().toString());
                     }
-                    break;
-                case "THREADS":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        threads= this.default_threads;
-                    }
-                    else {
+                }
+                case "THREADS" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        threads = this.default_threads;
+                    } else {
                         setThreads(entry.getValue().toString());
                     }
-                    break;
-                case "MEMORY_LIMIT":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        memory_limit= this.default_memory_limit;
-                    }
-                    else {
+                }
+                case "MEMORY_LIMIT" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        memory_limit = this.default_memory_limit;
+                    } else {
                         setMemory_limit(entry.getValue().toString());
                     }
-                    break;
-                case "INIT_SCRIPT":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        init_script= this.default_init_script;
-                    }
-                    else {
+                }
+                case "INIT_SCRIPT" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        init_script = this.default_init_script;
+                    } else {
                         setInit_script(entry.getValue().toString());
                     }
-                    break;
-                case "STARTUP_SCRIPT":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        startup_script= this.default_startup_script;
-                    }
-                    else {
+                }
+                case "STARTUP_SCRIPT" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        startup_script = this.default_startup_script;
+                    } else {
                         setStartup_script(entry.getValue().toString());
                     }
-                    break;
-                case "SQL_HISTORY":
-                    if (entry.getValue().toString().isEmpty())
-                    {
-                        sqlHistory= this.default_sqlHistory;
-                    }
-                    else {
+                }
+                case "SQL_HISTORY" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        sqlHistory = this.default_sqlHistory;
+                    } else {
                         setSqlHistory(entry.getValue().toString());
                     }
-                    break;
-                case "PID":
-                    if (entry.getValue().toString().isEmpty())
-                    {
+                }
+                case "PID" -> {
+                    if (entry.getValue().toString().isEmpty()) {
                         pid = this.default_pid;
-                    }
-                    else {
+                    } else {
                         setPid(entry.getValue().toString());
                     }
-                    break;
-                case "CONNECTION_POOL_MINIMUM_IDLE":
-                    if (entry.getValue().toString().isEmpty())
-                    {
+                }
+                case "CONNECTION_POOL_MINIMUM_IDLE" -> {
+                    if (entry.getValue().toString().isEmpty()) {
                         connection_pool_minimum_idle = this.default_connection_pool_minimum_idle;
-                    }
-                    else {
+                    } else {
                         setConnection_pool_minimum_idle(Integer.parseInt(entry.getValue().toString()));
                     }
-                    break;
-                case "CONNECTION_POOL_MAXIMUM_IDLE":
-                    if (entry.getValue().toString().isEmpty())
-                    {
+                }
+                case "CONNECTION_POOL_MAXIMUM_IDLE" -> {
+                    if (entry.getValue().toString().isEmpty()) {
                         connection_pool_maximum_idle = this.default_connection_pool_maximum_idle;
-                    }
-                    else {
+                    } else {
                         setConnection_pool_maximum_idle(Integer.parseInt(entry.getValue().toString()));
                     }
-                    break;
-                case "CONNECTION_POOL_MAXIMUM_LIFECYCLE_TIME":
-                    if (entry.getValue().toString().isEmpty())
-                    {
+                }
+                case "CONNECTION_POOL_MAXIMUM_LIFECYCLE_TIME" -> {
+                    if (entry.getValue().toString().isEmpty()) {
                         connection_pool_maximum_lifecycle_time = this.default_connection_pool_maximum_lifecycle_time;
-                    }
-                    else {
+                    } else {
                         setConnection_pool_maximum_lifecycle_time(Integer.parseInt(entry.getValue().toString()));
                     }
-                    break;
-                case "CONNECTION_POOL_VALIDATION_SQL":
-                    if (entry.getValue().toString().isEmpty())
-                    {
+                }
+                case "CONNECTION_POOL_VALIDATION_SQL" -> {
+                    if (entry.getValue().toString().isEmpty()) {
                         connection_pool_validation_sql = this.default_connection_pool_validation_sql;
-                    }
-                    else {
+                    } else {
                         setConnection_pool_validation_sql(entry.getValue().toString());
                     }
-                    break;
-                default:
-                    throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));
+                }
+                default ->
+                        throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));
             }
         }
     }

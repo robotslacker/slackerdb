@@ -41,8 +41,13 @@ public class DBInstance {
     // 实例对应的日志句柄
     public Logger logger;
 
+    // 实例的名称
+    public String instanceName;
+
     // DuckDB的数据库连接池
-    public DBDataSourcePool dbDataSourcePool;
+    public DBDataSourcePool dbDataSourcePool = null;
+    // SQL历史记录的连接池
+    public DBDataSourcePool sqlHistoryDataSourcePool = null;
 
     // 资源文件，记录各种消息，以及日后可能的翻译信息
     public final ResourceBundle resourceBundle;
@@ -57,7 +62,7 @@ public class DBInstance {
     public final AtomicLong backendSqlHistoryId = new AtomicLong(1);
 
     // 系统活动的会话数，指保持在DB侧正在执行语句的会话数
-    public AtomicInteger    activeSessions = new AtomicInteger(0);
+    public final  AtomicInteger  activeSessions = new AtomicInteger(0);
 
     // 从资源文件中获取消息，为未来的多语言做准备
     private String getMessage(String code, Object... contents) {
@@ -82,7 +87,7 @@ public class DBInstance {
     }
 
     // 为每个连接创建一个会话ID
-    private final AtomicInteger maxSessionId = new AtomicInteger(1000);
+    private final AtomicInteger maxSessionId = new AtomicInteger(100000);
 
     // 记录会话列表
     public final ConcurrentHashMap<Integer, DBSession> dbSessions = new ConcurrentHashMap<>();
@@ -98,7 +103,7 @@ public class DBInstance {
         public void run()
         {
             // 设置线程名称
-            setName(serverConfiguration.getData() + "-DBInstanceMonitor");
+            setName("Session-Mon");
 
             // 每10秒钟检测一下当前负载状况
             while (!isInterrupted())
@@ -153,7 +158,7 @@ public class DBInstance {
 
     // 执行指定的脚本
     private void executeScript(String scriptFileName) throws IOException, SQLException {
-        logger.info("Executing script {} ...", scriptFileName);
+        logger.debug("Executing script {} ...", scriptFileName);
 
         // 从文件中读取所有内容到字符串
         String sqlFileContents = new String(Files.readAllBytes(Path.of(scriptFileName)));
@@ -188,16 +193,17 @@ public class DBInstance {
         // 检查是否包含路径分隔符
         String instanceName = serverConfiguration.getData();
         if (instanceName.contains("/") || instanceName.contains("\\")) {
-            throw new ServerException("Invalid instance name [" + instanceName + "]");
+            throw new ServerException("Invalid character. Invalid instance name [" + instanceName + "]");
         }
         // 检查是否包含不合法字符
         if (Pattern.compile("[\\\\/:*?\"<>|]").matcher(instanceName).find()) {
-            throw new ServerException("Invalid instance name [" + instanceName + "]");
+            throw new ServerException("Invalid character. Invalid instance name [" + instanceName + "]");
         }
         // 检查文件名长度（假设文件系统限制为255字符）
         if (instanceName.isEmpty() || instanceName.length() > 255) {
-            throw new ServerException("Invalid instance name [" + instanceName + "]");
+            throw new ServerException("Instance name is too long(>255). Invalid instance name [" + instanceName + "]");
         }
+        this.instanceName = instanceName;
     }
 
     // 根据参数配置文件启动数据库实例
@@ -268,7 +274,7 @@ public class DBInstance {
             if (!dataFile.exists()) {
                 // 文件的第一次被使用
                 databaseFirstOpened = true;
-                logger.info("[SERVER] Database first opened, will execute init script if you have ...");
+                logger.info("[SERVER][STARTUP    ] Database first opened, will execute init script if you have ...");
             }
             backendConnectString = backendConnectString + dataFile.getAbsolutePath();
         }
@@ -288,23 +294,23 @@ public class DBInstance {
             // 用后台线程来异步清除未完成的内存分配
             connectProperties.setProperty("allocator_background_threads", "true");
             backendSysConnection = DriverManager.getConnection(backendConnectString, connectProperties);
-            logger.info("[SERVER] Backend database [{}:{}] mounted.",
+            logger.info("[SERVER][STARTUP    ] Backend database [{}:{}] mounted.",
                     serverConfiguration.getData_Dir(), serverConfiguration.getData());
             Statement stmt = backendSysConnection.createStatement();
             if (!serverConfiguration.getTemp_dir().isEmpty()) {
-                logger.debug("SET temp_directory = '{}'", serverConfiguration.getTemp_dir());
+                logger.debug("[SERVER][STARTUP    ] SET temp_directory = '{}'", serverConfiguration.getTemp_dir());
                 stmt.execute("SET temp_directory = '" + serverConfiguration.getTemp_dir() + "'");
             }
             if (!serverConfiguration.getExtension_dir().isEmpty()) {
-                logger.debug("SET extension_directory = '{}'", serverConfiguration.getExtension_dir());
+                logger.debug("[SERVER][STARTUP    ] SET extension_directory = '{}'", serverConfiguration.getExtension_dir());
                 stmt.execute("SET extension_directory = '" + serverConfiguration.getExtension_dir() + "'");
             }
             if (!serverConfiguration.getMemory_limit().isEmpty()) {
-                logger.debug("SET Memory_limit = '{}'", serverConfiguration.getMemory_limit());
+                logger.debug("[SERVER][STARTUP    ] SET Memory_limit = '{}'", serverConfiguration.getMemory_limit());
                 stmt.execute("SET memory_limit = '" + serverConfiguration.getMemory_limit() + "'");
             }
             if (serverConfiguration.getThreads() != 0) {
-                logger.debug("SET threads = '{}'", serverConfiguration.getThreads());
+                logger.debug("[SERVER][STARTUP    ] SET threads = '{}'", serverConfiguration.getThreads());
                 stmt.execute("SET threads = " + serverConfiguration.getThreads());
             }
             stmt.close();
@@ -320,7 +326,7 @@ public class DBInstance {
                     stmt.execute("PRAGMA enable_checkpoint_on_shutdown");
                     stmt.close();
                 } catch (SQLException e) {
-                    logger.error("[SERVER] Init backend connection error. ", e);
+                    logger.error("[SERVER][STARTUP    ] Init backend connection error. ", e);
                     throw new ServerException(e);
                 }
             }
@@ -341,34 +347,41 @@ public class DBInstance {
                         }
                     }
                 } else {
-                    logger.warn("[SERVER] Init script [{}] does not exist!", serverConfiguration.getInit_script());
+                    logger.warn("[SERVER][STARTUP    ] Init script [{}] does not exist!", serverConfiguration.getInit_script());
                 }
             }
-
-            // 执行系统启动脚本，如果有必要的话
-            if (!serverConfiguration.getStartup_script().trim().isEmpty()) {
-                if (new File(serverConfiguration.getStartup_script()).isFile()) {
-                    initScriptFiles.add(new File(serverConfiguration.getStartup_script()).getAbsolutePath());
-                } else if (new File(serverConfiguration.getStartup_script()).isDirectory()) {
-                    File[] files = new File(serverConfiguration.getStartup_script()).listFiles();
-                    if (files != null) {
-                        for (File file : files) {
-                            if (file.isFile() && file.getName().endsWith(".sql")) {
-                                initScriptFiles.add(file.getAbsolutePath());
-                            }
-                        }
-                    }
-                } else {
-                    logger.warn("[SERVER] Startup script [{}] does not exist!", serverConfiguration.getStartup_script());
-                }
-            }
-
             // 脚本按照名称来排序
             Collections.sort(initScriptFiles);
             for (String initScriptFile : initScriptFiles) {
                 executeScript(initScriptFile);
             }
-            logger.debug("[SERVER] Init/Startup script(s) execute completed.");
+            logger.debug("[SERVER][STARTUP    ] Init {} script(s) execute completed.", initScriptFiles.size());
+
+            // 执行系统启动脚本，如果有必要的话
+            // 每次启动都要执行的部分
+            List<String> startupScriptFiles = new ArrayList<>();
+            if (!serverConfiguration.getStartup_script().trim().isEmpty()) {
+                if (new File(serverConfiguration.getStartup_script()).isFile()) {
+                    startupScriptFiles.add(new File(serverConfiguration.getStartup_script()).getAbsolutePath());
+                } else if (new File(serverConfiguration.getStartup_script()).isDirectory()) {
+                    File[] files = new File(serverConfiguration.getStartup_script()).listFiles();
+                    if (files != null) {
+                        for (File file : files) {
+                            if (file.isFile() && file.getName().endsWith(".sql")) {
+                                startupScriptFiles.add(file.getAbsolutePath());
+                            }
+                        }
+                    }
+                } else {
+                    logger.warn("[SERVER][STARTUP    ] Startup script [{}] does not exist!", serverConfiguration.getStartup_script());
+                }
+            }
+            // 脚本按照名称来排序
+            Collections.sort(startupScriptFiles);
+            for (String startupScriptFile : startupScriptFiles) {
+                executeScript(startupScriptFile);
+            }
+            logger.debug("[SERVER][STARTUP    ] Startup {} script(s) execute completed.", startupScriptFiles.size());
 
             // 初始化数据库连接池
             DBDataSourcePoolConfig dbDataSourcePoolConfig = new DBDataSourcePoolConfig();
@@ -380,7 +393,7 @@ public class DBInstance {
             dbDataSourcePoolConfig.setJdbcURL(backendConnectString);
             dbDataSourcePoolConfig.setConnectProperties(connectProperties);
             try {
-                this.dbDataSourcePool = new DBDataSourcePool(dbDataSourcePoolConfig, logger);
+                this.dbDataSourcePool = new DBDataSourcePool("DATABASE", dbDataSourcePoolConfig, logger);
             }
             catch (SQLException sqlException)
             {
@@ -388,9 +401,31 @@ public class DBInstance {
             }
 
             // 初始化SQLHistory连接池
-            if (serverConfiguration.getSqlHistory().equalsIgnoreCase("ON")) {
+            if (!serverConfiguration.getAccess_mode().equals("READ_ONLY") &&
+                    serverConfiguration.getSqlHistory().equalsIgnoreCase("ON")) {
+                DBDataSourcePoolConfig sqlHistoryDataSourcePoolConfig = new DBDataSourcePoolConfig();
+                int poolMinHandle = 20;
+                if (poolMinHandle > serverConfiguration.getMax_Workers())
+                {
+                    poolMinHandle = serverConfiguration.getMax_Workers();
+                }
+                sqlHistoryDataSourcePoolConfig.setMinimumIdle(poolMinHandle);
+                sqlHistoryDataSourcePoolConfig.setMaximumIdle(serverConfiguration.getMax_Workers());
+                sqlHistoryDataSourcePoolConfig.setMaximumLifeCycleTime(0);
+                sqlHistoryDataSourcePoolConfig.setMaximumPoolSize(serverConfiguration.getMax_Workers());
+                sqlHistoryDataSourcePoolConfig.setValidationSQL(null);
+                sqlHistoryDataSourcePoolConfig.setJdbcURL(backendConnectString);
+                sqlHistoryDataSourcePoolConfig.setConnectProperties(connectProperties);
+                try {
+                    this.sqlHistoryDataSourcePool = new DBDataSourcePool("HISTORY", sqlHistoryDataSourcePoolConfig, logger);
+                }
+                catch (SQLException sqlException)
+                {
+                    throw new ServerException("Init sql history connection pool error [" + instanceName + "]", sqlException);
+                }
+
                 // 启用SQLHistory记录
-                Connection backendSqlHistoryConn = this.dbDataSourcePool.getConnection();
+                Connection backendSqlHistoryConn = this.sqlHistoryDataSourcePool.getConnection();
                 // SQL History会保存在数据库内部。
                 Statement sqlHistoryStmt = backendSqlHistoryConn.createStatement();
                 sqlHistoryStmt.execute("CREATE SCHEMA IF NOT EXISTS sysaux");
@@ -412,7 +447,7 @@ public class DBInstance {
                                     ErrorMsg       TEXT
                                 );""");
                 sqlHistoryStmt.close();
-                logger.info("[SERVER] Backend sql history database opened (bundle mode).");
+                logger.info("[SERVER][STARTUP    ] Backend sql history database opened (bundle mode).");
 
                 // 获取之前最大的SqlHistory的ID
                 String sql = "Select Max(ID) From sysaux.SQL_HISTORY";
@@ -426,14 +461,14 @@ public class DBInstance {
                 statement.close();
 
                 // 希望连接池能够复用数据库连接
-                this.dbDataSourcePool.releaseConnection(backendSqlHistoryConn);
+                this.sqlHistoryDataSourcePool.releaseConnection(backendSqlHistoryConn);
             }
 
             // SQL替换，DuckDB并不支持所有的PG语法，所以需要进行转义替换
             SQLReplacer.load(this);
         }
         catch(SQLException | IOException e){
-            logger.error("[SERVER] Init backend connection error. ", e);
+            logger.error("[SERVER][STARTUP    ] Init backend connection error. ", e);
             throw new ServerException(e);
         }
         // 标记服务已经挂载成功
@@ -465,7 +500,7 @@ public class DBInstance {
         }
         else
         {
-            logger.info("[SERVER] {}", Utils.getMessage("SLACKERDB-00008"));
+            logger.info("[SERVER][STARTUP    ] Listener has been disabled.");
         }
         // 标记服务已经启动完成
         this.instanceState = "RUNNING";
@@ -498,7 +533,7 @@ public class DBInstance {
             backendSysConnection.close();
         }
         catch (SQLException e) {
-            logger.error("[SERVER] Close backend connection error. ", e);
+            logger.error("[SERVER][STARTUP    ] Close backend connection error. ", e);
         }
 
         // 删除PID文件
@@ -511,14 +546,12 @@ public class DBInstance {
                 pidRandomAccessFile.close();
                 File pidFile = new File(this.serverConfiguration.getPid());
                 if (pidFile.exists()) {
-                    if (!pidFile.delete()) {
-                        logger.warn("[SERVER] {} 1", Utils.getMessage("SLACKERDB-00014"));
-                    }
+                    var ignored = pidFile.delete();
                 }
                 pidRandomAccessFile = null;
             }
             catch (IOException ignored) {
-                logger.warn("[SERVER] {} 2", Utils.getMessage("SLACKERDB-00014"));
+                logger.warn("[SERVER][STARTUP    ] Remove pid file failed, reason unknown!");
             }
         }
 
@@ -589,6 +622,11 @@ public class DBInstance {
             // 没有开启日志服务
             return null;
         }
-        return this.dbDataSourcePool.getConnection();
+        return this.sqlHistoryDataSourcePool.getConnection();
+    }
+
+    public void releaseSqlHistoryConn(Connection sqlHistoryConn)
+    {
+        this.sqlHistoryDataSourcePool.releaseConnection(sqlHistoryConn);
     }
 }

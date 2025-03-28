@@ -28,7 +28,7 @@ public class SQLReplacer {
         }
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "format_type(nullif(t.typbasetype, 0), t.typtypmod)","null::TEXT",
+                        "format_type(nullif(t.typbasetype, 0), t.typtypmod)","t.typname",
                         false, true
                 )
         );
@@ -61,6 +61,26 @@ public class SQLReplacer {
         SQLReplaceItems.add(
                 new QueryReplacerItem(
                         "pg_catalog.pg_extension", catalogName + ".duck_catalog.pg_extension",
+                        true, true)
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_total_relation_size", catalogName + ".duck_catalog.pg_total_relation_size",
+                        true, true)
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_relation_size", catalogName + ".duck_catalog.pg_relation_size",
+                        true, true)
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_extension", catalogName + ".duck_catalog.pg_extension",
+                        true, true)
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_inherits", catalogName + ".duck_catalog.pg_inherits",
                         true, true)
         );
 
@@ -218,7 +238,7 @@ public class SQLReplacer {
         {
             if (!sql.equals(replacedSQL))
             {
-                pDbInstance.logger.trace("[SERVER] SQL Rewrote: [{}] -> [{}]", sql, replacedSQL);
+                pDbInstance.logger.trace("[SERVER][SQL Rewrote]: [{}] -> [{}]", sql, replacedSQL);
             }
             return replacedSQL;
         }
@@ -277,7 +297,7 @@ public class SQLReplacer {
         lruCache.put(sql, replacedSQL);
         if (!sql.equals(replacedSQL))
         {
-            pDbInstance.logger.trace("[SERVER] SQL Rewrote: [{}] -> [{}]", sql, replacedSQL);
+            pDbInstance.logger.trace("[SERVER][SQL Rewrote]: [{}] -> [{}]", sql, replacedSQL);
         }
         return replacedSQL;
     }

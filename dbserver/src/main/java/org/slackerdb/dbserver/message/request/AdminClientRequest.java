@@ -172,10 +172,16 @@ public class AdminClientRequest  extends PostgresRequest {
             // 显示数据库基本信息
             feedBackMsg.append("SERVER USAGE: \n");
             feedBackMsg.append("  Max Connections(High water mark): ").append(this.dbInstance.dbDataSourcePool.getHighWaterMark()).append("\n");
-            feedBackMsg.append("  Current Connections: ").append(this.dbInstance.dbDataSourcePool.getUsedConnectionPoolSize()).append("\n");
-            feedBackMsg.append("  Idle Connections: ").append(this.dbInstance.dbDataSourcePool.getIdleConnectionPoolSize()).append("\n");
+            feedBackMsg.append("  Current Connections(DB): ").append(this.dbInstance.dbDataSourcePool.getUsedConnectionPoolSize()).append("\n");
+            feedBackMsg.append("  Idle Connections(DB): ").append(this.dbInstance.dbDataSourcePool.getIdleConnectionPoolSize()).append("\n");
+            if (this.dbInstance.sqlHistoryDataSourcePool != null)
+            {
+                feedBackMsg.append("  Current Connections(SQLHistory): ").append(this.dbInstance.sqlHistoryDataSourcePool.getUsedConnectionPoolSize()).append("\n");
+                feedBackMsg.append("  Idle Connections(SQLHistory): ").append(this.dbInstance.sqlHistoryDataSourcePool.getIdleConnectionPoolSize()).append("\n");
+            }
             feedBackMsg.append("  Active Sessions: ").append(this.dbInstance.activeSessions).append("\n");
             feedBackMsg.append("  Active Channels: ").append(this.dbInstance.getRegisteredConnectionsCount()).append("\n");
+
             OperatingSystemMXBean osBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
             feedBackMsg.append(String.format("  CPU Load: %.2f%%", osBean.getProcessCpuLoad() * 100)).append("\n");
             ThreadMXBean threadBean = ManagementFactory.getThreadMXBean();

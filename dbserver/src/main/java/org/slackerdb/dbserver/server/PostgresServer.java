@@ -246,7 +246,7 @@ public class PostgresServer {
                 in.readBytes(data);
 
                 switch (messageType) {
-                    case 'P':
+                    case 'P' -> {
                         ParseRequest parseRequest = new ParseRequest(dbInstance);
                         parseRequest.decode(data);
 
@@ -256,8 +256,8 @@ public class PostgresServer {
                         // 标记当前步骤
                         lastRequestCommand = ParseRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
-                        break;
-                    case 'B':
+                    }
+                    case 'B' -> {
                         BindRequest bindRequest = new BindRequest(dbInstance);
                         bindRequest.decode(data);
 
@@ -267,8 +267,8 @@ public class PostgresServer {
                         // 标记当前步骤
                         lastRequestCommand = BindRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
-                        break;
-                    case 'E':
+                    }
+                    case 'E' -> {
                         ExecuteRequest executeRequest = new ExecuteRequest(dbInstance);
                         executeRequest.decode(data);
 
@@ -278,8 +278,8 @@ public class PostgresServer {
                         // 标记当前步骤
                         lastRequestCommand = ExecuteRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
-                        break;
-                    case 'S':
+                    }
+                    case 'S' -> {
                         SyncRequest syncRequest = new SyncRequest(dbInstance);
                         syncRequest.decode(data);
 
@@ -289,8 +289,8 @@ public class PostgresServer {
                         // 标记当前步骤
                         lastRequestCommand = SyncRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
-                        break;
-                    case 'D':
+                    }
+                    case 'D' -> {
                         DescribeRequest describeRequest = new DescribeRequest(dbInstance);
                         describeRequest.decode(data);
 
@@ -300,8 +300,8 @@ public class PostgresServer {
                         // 标记当前步骤
                         lastRequestCommand = DescribeRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
-                        break;
-                    case 'Q':
+                    }
+                    case 'Q' -> {
                         QueryRequest queryRequest = new QueryRequest(dbInstance);
                         queryRequest.decode(data);
 
@@ -311,8 +311,8 @@ public class PostgresServer {
                         // 标记当前步骤
                         lastRequestCommand = DescribeRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
-                        break;
-                    case 'd':
+                    }
+                    case 'd' -> {
                         CopyDataRequest copyDataRequest = new CopyDataRequest(dbInstance);
                         copyDataRequest.decode(data);
 
@@ -322,8 +322,8 @@ public class PostgresServer {
                         // 标记当前步骤
                         lastRequestCommand = CopyDataRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
-                        break;
-                    case 'c':
+                    }
+                    case 'c' -> {
                         CopyDoneRequest copyDoneRequest = new CopyDoneRequest(dbInstance);
                         copyDoneRequest.decode(data);
 
@@ -333,8 +333,8 @@ public class PostgresServer {
                         // 标记当前步骤
                         lastRequestCommand = CopyDoneRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
-                        break;
-                    case 'C':
+                    }
+                    case 'C' -> {
                         CloseRequest closeRequest = new CloseRequest(dbInstance);
                         closeRequest.decode(data);
 
@@ -344,8 +344,8 @@ public class PostgresServer {
                         // 标记当前步骤
                         lastRequestCommand = CloseRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
-                        break;
-                    case 'X':
+                    }
+                    case 'X' -> {
                         TerminateRequest terminateRequest = new TerminateRequest(dbInstance);
                         terminateRequest.decode(data);
 
@@ -354,8 +354,8 @@ public class PostgresServer {
 
                         // 清理会话
                         ctx.close();
-                        break;
-                    case 'F':
+                    }
+                    case 'F' -> {
                         CancelRequest cancelRequest = new CancelRequest(dbInstance);
                         cancelRequest.decode(data);
 
@@ -365,8 +365,8 @@ public class PostgresServer {
                         // 标记当前步骤
                         lastRequestCommand = CancelRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
-                        break;
-                    case '!':
+                    }
+                    case '!' -> {
                         AdminClientRequest adminClientRequest = new AdminClientRequest(dbInstance);
                         adminClientRequest.decode(data);
 
@@ -376,9 +376,8 @@ public class PostgresServer {
                         // 标记当前步骤
                         lastRequestCommand = AdminClientRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
-                        break;
-                    default:
-                        logger.error("[SERVER] Unknown message type: {}", messageType);
+                    }
+                    default -> logger.error("[SERVER] Unknown message type: {}", messageType);
                 }
             }
         }
@@ -426,8 +425,6 @@ public class PostgresServer {
                     .option(ChannelOption.ALLOCATOR, UnpooledByteBufAllocator.DEFAULT)
                     // 接收缓冲区大小
                     .option(ChannelOption.SO_RCVBUF, 65536)
-                    // 启用 TCP 层保活机制，检测无效连接
-                    .option(ChannelOption.SO_KEEPALIVE, true)
                     // 允许绑定处于 TIME_WAIT 状态的端口，快速重启服务
                     .option(ChannelOption.SO_REUSEADDR, true)
                     // 定义操作系统未完成连接队列的最大长度
