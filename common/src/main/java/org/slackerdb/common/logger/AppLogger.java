@@ -51,7 +51,7 @@ public class AppLogger {
                 consoleAppender.setContext(context);
                 consoleAppender.setName("CONSOLE");
                 PatternLayout consoleLayout = new PatternLayout();
-                consoleLayout.setPattern("%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n");
+                consoleLayout.setPattern("%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} -%msg %n");
                 consoleLayout.setContext(context);
                 consoleLayout.start();
                 consoleAppender.setLayout(consoleLayout);
@@ -66,7 +66,7 @@ public class AppLogger {
                 fileAppender.setName("FILE");
                 fileAppender.setFile(log.trim()); // 指定输出文件
                 PatternLayout fileLayout = new PatternLayout();
-                fileLayout.setPattern("%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n");
+                fileLayout.setPattern("%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg %n");
                 fileLayout.setContext(context);
                 fileLayout.start();
                 fileAppender.setLayout(fileLayout);

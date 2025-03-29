@@ -9,6 +9,7 @@ package org.slackerdb.dbserver;
  */
 
 import ch.qos.logback.classic.Logger;
+import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.dbserver.client.AdminClient;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
@@ -68,6 +69,7 @@ public class Main {
         // 处理应用程序参数
         Map<String, String> appOptions = new HashMap<>();
         StringBuilder subCommand = null;
+        Logger logger = null;
 
         String paramName = null;
         String paramValue;
@@ -160,6 +162,11 @@ public class Main {
             {
                 serverConfiguration.loadConfigurationFile(appOptions.get("conf"));
             }
+            // 如果有其他的指定，以指定的内容为准
+            if (appOptions.containsKey("access_mode"))
+            {
+                serverConfiguration.setAccess_mode(appOptions.get("access_mode"));
+            }
             if (appOptions.containsKey("locale"))
             {
                 serverConfiguration.setLocale(appOptions.get("locale"));
@@ -217,7 +224,7 @@ public class Main {
                 serverConfiguration.setPid(appOptions.get("pid"));
             }
             // 初始化日志服务
-            Logger logger = AppLogger.createLogger(
+            logger = AppLogger.createLogger(
                     "SLACKERDB",
                     serverConfiguration.getLog_level().levelStr,
                     serverConfiguration.getLog());
@@ -253,10 +260,25 @@ public class Main {
             // 退出应用程序
             System.exit(0);
         }
+        catch (ServerException serverException)
+        {
+            if (logger != null)
+            {
+                logger.error(serverException.getErrorMessage());
+                System.exit(255);
+            }
+        }
         catch (Exception se)
         {
-            System.err.println("Error: unexpected internal error.");
-            se.printStackTrace(System.err);
+            if (logger != null)
+            {
+                logger.error("Internal error: {}", se.getMessage());
+                logger.trace("Internal error: ", se);
+            }
+            else
+            {
+                se.printStackTrace(System.err);
+            }
             System.exit(255);
         }
     }

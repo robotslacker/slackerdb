@@ -443,7 +443,6 @@ public class PostgresServer {
                     });
             ChannelFuture future =
                     bootstrap.bind(new InetSocketAddress(bind, port)).sync();
-                    logger.info("[SERVER] Listening on {}:{}", bind, port);
             portReady = true;
             future.channel().closeFuture().sync();
         } finally {

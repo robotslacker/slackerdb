@@ -274,9 +274,16 @@ public class DBInstance {
             if (!dataFile.exists()) {
                 // 文件的第一次被使用
                 databaseFirstOpened = true;
-                logger.info("[SERVER][STARTUP    ] Database first opened, will execute init script if you have ...");
             }
             backendConnectString = backendConnectString + dataFile.getAbsolutePath();
+        }
+
+        // 不可能在内存中启动一个只读数据库
+        if (
+                serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:") &&
+                        serverConfiguration.getAccess_mode().equals("READ_ONLY")
+        ) {
+            throw new ServerException("Server startup failed. You can't start an in-memory database with read only mode.");
         }
 
         // 初始化一个DB连接，以保证即使所有客户端都断开连接，服务端会话仍然会继续存在
@@ -294,8 +301,17 @@ public class DBInstance {
             // 用后台线程来异步清除未完成的内存分配
             connectProperties.setProperty("allocator_background_threads", "true");
             backendSysConnection = DriverManager.getConnection(backendConnectString, connectProperties);
-            logger.info("[SERVER][STARTUP    ] Backend database [{}:{}] mounted.",
-                    serverConfiguration.getData_Dir(), serverConfiguration.getData());
+            if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:"))
+            {
+                logger.info("[SERVER][STARTUP    ] Backend database [{}:{}] mounted with {} mode.",
+                        serverConfiguration.getData_Dir(), serverConfiguration.getData(),
+                        serverConfiguration.getAccess_mode());
+            }
+            else {
+                logger.info("[SERVER][STARTUP    ] Backend database [{}.db] mounted with {} mode.",
+                        Path.of(serverConfiguration.getData_Dir(), serverConfiguration.getData()).toAbsolutePath(),
+                        serverConfiguration.getAccess_mode());
+            }
             Statement stmt = backendSysConnection.createStatement();
             if (!serverConfiguration.getTemp_dir().isEmpty()) {
                 logger.debug("[SERVER][STARTUP    ] SET temp_directory = '{}'", serverConfiguration.getTemp_dir());
@@ -315,7 +331,6 @@ public class DBInstance {
             }
             stmt.close();
 
-            // 处理初始化脚本
             if (!serverConfiguration.getAccess_mode().equals("READ_ONLY")) {
                 try {
                     // 虚构一些PG的数据字典，以满足后续各种工具对数据字典的查找
@@ -329,59 +344,59 @@ public class DBInstance {
                     logger.error("[SERVER][STARTUP    ] Init backend connection error. ", e);
                     throw new ServerException(e);
                 }
-            }
 
-            // 执行初始化脚本，如果有必要的话
-            // 只有内存数据库或者文件数据库第一次启动的时候需要执行
-            List<String> initScriptFiles = new ArrayList<>();
-            if (databaseFirstOpened && !serverConfiguration.getInit_script().trim().isEmpty()) {
-                if (new File(serverConfiguration.getInit_script()).isFile()) {
-                    initScriptFiles.add(new File(serverConfiguration.getInit_script()).getAbsolutePath());
-                } else if (new File(serverConfiguration.getInit_script()).isDirectory()) {
-                    File[] files = new File(serverConfiguration.getInit_script()).listFiles();
-                    if (files != null) {
-                        for (File file : files) {
-                            if (file.isFile() && file.getName().endsWith(".sql")) {
-                                initScriptFiles.add(file.getAbsolutePath());
+                // 执行初始化脚本，如果有必要的话
+                // 只有内存数据库或者文件数据库第一次启动的时候需要执行
+                List<String> initScriptFiles = new ArrayList<>();
+                if (databaseFirstOpened && !serverConfiguration.getInit_script().trim().isEmpty()) {
+                    if (new File(serverConfiguration.getInit_script()).isFile()) {
+                        initScriptFiles.add(new File(serverConfiguration.getInit_script()).getAbsolutePath());
+                    } else if (new File(serverConfiguration.getInit_script()).isDirectory()) {
+                        File[] files = new File(serverConfiguration.getInit_script()).listFiles();
+                        if (files != null) {
+                            for (File file : files) {
+                                if (file.isFile() && file.getName().endsWith(".sql")) {
+                                    initScriptFiles.add(file.getAbsolutePath());
+                                }
                             }
                         }
+                    } else {
+                        logger.warn("[SERVER][STARTUP    ] Init script(s) [{}] does not exist!", serverConfiguration.getInit_script());
                     }
-                } else {
-                    logger.warn("[SERVER][STARTUP    ] Init script [{}] does not exist!", serverConfiguration.getInit_script());
                 }
-            }
-            // 脚本按照名称来排序
-            Collections.sort(initScriptFiles);
-            for (String initScriptFile : initScriptFiles) {
-                executeScript(initScriptFile);
-            }
-            logger.debug("[SERVER][STARTUP    ] Init {} script(s) execute completed.", initScriptFiles.size());
+                // 脚本按照名称来排序
+                Collections.sort(initScriptFiles);
+                for (String initScriptFile : initScriptFiles) {
+                    executeScript(initScriptFile);
+                }
+                logger.debug("[SERVER][STARTUP    ] Init {} script(s) execute completed.", initScriptFiles.size());
 
-            // 执行系统启动脚本，如果有必要的话
-            // 每次启动都要执行的部分
-            List<String> startupScriptFiles = new ArrayList<>();
-            if (!serverConfiguration.getStartup_script().trim().isEmpty()) {
-                if (new File(serverConfiguration.getStartup_script()).isFile()) {
-                    startupScriptFiles.add(new File(serverConfiguration.getStartup_script()).getAbsolutePath());
-                } else if (new File(serverConfiguration.getStartup_script()).isDirectory()) {
-                    File[] files = new File(serverConfiguration.getStartup_script()).listFiles();
-                    if (files != null) {
-                        for (File file : files) {
-                            if (file.isFile() && file.getName().endsWith(".sql")) {
-                                startupScriptFiles.add(file.getAbsolutePath());
+                // 执行系统启动脚本，如果有必要的话
+                // 每次启动都要执行的部分
+                List<String> startupScriptFiles = new ArrayList<>();
+                if (!serverConfiguration.getStartup_script().trim().isEmpty()) {
+                    if (new File(serverConfiguration.getStartup_script()).isFile()) {
+                        startupScriptFiles.add(new File(serverConfiguration.getStartup_script()).getAbsolutePath());
+                    } else if (new File(serverConfiguration.getStartup_script()).isDirectory()) {
+                        File[] files = new File(serverConfiguration.getStartup_script()).listFiles();
+                        if (files != null) {
+                            for (File file : files) {
+                                if (file.isFile() && file.getName().endsWith(".sql")) {
+                                    startupScriptFiles.add(file.getAbsolutePath());
+                                }
                             }
                         }
+                    } else {
+                        logger.warn("[SERVER][STARTUP    ] Startup script(s) [{}] does not exist!", serverConfiguration.getStartup_script());
                     }
-                } else {
-                    logger.warn("[SERVER][STARTUP    ] Startup script [{}] does not exist!", serverConfiguration.getStartup_script());
                 }
+                // 脚本按照名称来排序
+                Collections.sort(startupScriptFiles);
+                for (String startupScriptFile : startupScriptFiles) {
+                    executeScript(startupScriptFile);
+                }
+                logger.debug("[SERVER][STARTUP    ] Startup {} script(s) execute completed.", startupScriptFiles.size());
             }
-            // 脚本按照名称来排序
-            Collections.sort(startupScriptFiles);
-            for (String startupScriptFile : startupScriptFiles) {
-                executeScript(startupScriptFile);
-            }
-            logger.debug("[SERVER][STARTUP    ] Startup {} script(s) execute completed.", startupScriptFiles.size());
 
             // 初始化数据库连接池
             DBDataSourcePoolConfig dbDataSourcePoolConfig = new DBDataSourcePoolConfig();
@@ -463,14 +478,15 @@ public class DBInstance {
                 // 希望连接池能够复用数据库连接
                 this.sqlHistoryDataSourcePool.releaseConnection(backendSqlHistoryConn);
             }
-
-            // SQL替换，DuckDB并不支持所有的PG语法，所以需要进行转义替换
-            SQLReplacer.load(this);
         }
         catch(SQLException | IOException e){
-            logger.error("[SERVER][STARTUP    ] Init backend connection error. ", e);
-            throw new ServerException(e);
+            throw new ServerException("Init backend connection error. ", e);
         }
+
+        // SQL替换
+        // DuckDB并不支持所有的PG语法，所以需要进行转义替换，以保证第三方工具能够正确使用
+        SQLReplacer.load(this);
+
         // 标记服务已经挂载成功
         this.instanceState = "MOUNTED";
 
@@ -488,7 +504,9 @@ public class DBInstance {
                 try {
                     Sleeper.sleep(1000);
                 }
-                catch (InterruptedException ignored) {}
+                catch (InterruptedException ignored) {
+                    throw new ServerException("Server terminated due to user cancelled.");
+                }
             }
 
             // 启动监控线程
@@ -497,6 +515,8 @@ public class DBInstance {
                 dbInstanceMonitorThread = new DBInstanceMonitorThread();
                 dbInstanceMonitorThread.start();
             }
+            logger.info("[SERVER][STARTUP    ] Listening on {}:{}.",
+                    serverConfiguration.getBindHost(), serverConfiguration.getPort());
         }
         else
         {
@@ -550,8 +570,8 @@ public class DBInstance {
                 }
                 pidRandomAccessFile = null;
             }
-            catch (IOException ignored) {
-                logger.warn("[SERVER][STARTUP    ] Remove pid file failed, reason unknown!");
+            catch (IOException ioException) {
+                logger.warn("[SERVER][STARTUP    ] Remove pid file failed, reason unknown!", ioException);
             }
         }
 
