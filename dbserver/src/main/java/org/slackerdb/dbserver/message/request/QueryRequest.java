@@ -76,11 +76,14 @@ public class QueryRequest  extends PostgresRequest {
             if (m.find()) {
                 // 执行COPY IN的命令
                 String copyTableName = m.group(2);
-                String[] columns = m.group(5).split(",");
+                // 如果没有制定COLUMNS，则表示为全部的COLUMNS
                 Map<String, Integer> targetColumnMap = new HashMap<>();
-                for (int i = 0; i < columns.length; i++) {
-
-                    targetColumnMap.put(columns[i].trim().toUpperCase(), i);
+                if (m.group(5) != null) {
+                    String[] columns;
+                    columns = m.group(5).split(",");
+                    for (int i = 0; i < columns.length; i++) {
+                        targetColumnMap.put(columns[i].trim().toUpperCase(), i);
+                    }
                 }
                 String copyTableFormat = m.group(7);
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableName = copyTableName;
@@ -98,6 +101,7 @@ public class QueryRequest  extends PostgresRequest {
                 DuckDBConnection conn = (DuckDBConnection) this.dbInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = conn.createAppender(targetSchemaName, targetTableName);
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows = 0;
+
                 // 获取表名的实际表名，DUCK并不支持部分字段的Appender操作。所以要追加列表中不存在的相关信息
                 List<Integer> copyTableDbColumnMapPos = new ArrayList<>();
                 String executeSql;
@@ -109,12 +113,22 @@ public class QueryRequest  extends PostgresRequest {
                 PreparedStatement ps = conn.prepareStatement(executeSql);
                 ResultSet rs = ps.executeQuery();
                 rs.next();
-                for (int i = 0; i < rs.getMetaData().getColumnCount(); i++) {
-                    copyTableDbColumnMapPos.add(targetColumnMap.getOrDefault(
-                            rs.getMetaData().getColumnName(i + 1).toUpperCase(), -1));
+                if (!targetColumnMap.isEmpty()) {
+                    for (int i = 0; i < rs.getMetaData().getColumnCount(); i++) {
+                        copyTableDbColumnMapPos.add(targetColumnMap.getOrDefault(
+                                rs.getMetaData().getColumnName(i + 1).toUpperCase(), -1));
+                    }
+                }
+                else
+                {
+                    // 没有指定任何列名，则认为所有列都需要写入
+                    for (int i = 0; i < rs.getMetaData().getColumnCount(); i++) {
+                        copyTableDbColumnMapPos.add(i);
+                    }
                 }
                 rs.close();
                 ps.close();
+
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos = copyTableDbColumnMapPos;
 
                 // 发送CopyInResponse

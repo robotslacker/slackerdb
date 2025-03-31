@@ -12,7 +12,7 @@ import java.io.IOException;
 import java.io.StringReader;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import org.apache.commons.csv.CSVFormat;
@@ -41,6 +41,18 @@ public class CopyDataRequest extends PostgresRequest {
         super.decode(data);
     }
 
+    private static int lastIndexOf(byte[] array, byte target)
+    {
+        for (int i = array.length - 1; i>=0; i--)
+        {
+            if (array[i] == target)
+            {
+                return  i;
+            }
+        }
+        return -1;
+    }
+
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         // 记录会话的开始时间，以及业务类型
@@ -51,38 +63,74 @@ public class CopyDataRequest extends PostgresRequest {
         long nCopiedRows = 0;
         try {
             if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat.equalsIgnoreCase("CSV")) {
-                List<CSVRecord> records = new ArrayList<>();
                 String sourceStr;
-
-                // 和上次没有解析完全的字符串要拼接起来
-                if (!this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.isEmpty()) {
-                    sourceStr = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained + new String(copyData);
-                } else {
-                    sourceStr = new String(copyData);
+                if (copyData[copyData.length - 1] == (byte) 0x0A) {
+                    // 本次传输结束，和上次没有解析完全的字符串要拼接起来
+                    if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.length != 0) {
+                        sourceStr = new String(this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained) + new String(copyData);
+                    } else {
+                        sourceStr = new String(copyData);
+                    }
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained = new byte[0];
+                }
+                else
+                {
+                    // 本次传输还有尾巴
+                    int lastIndex = lastIndexOf(copyData, (byte) 0x0A);
+                    if (lastIndex == -1)
+                    {
+                        // 本次也就传输了一半，啥也不是. 合并两个一半数组
+                        if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.length != 0) {
+                            byte[] ret = Arrays.copyOf(this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained,
+                                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.length + copyData.length);
+                            System.arraycopy(copyData, 0, ret, this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.length, copyData.length);
+                            this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained = ret;
+                        }
+                        else
+                        {
+                            this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained = copyData;
+                        }
+                        return;
+                    }
+                    else
+                    {
+                        // 拆分。 前半部分合并，后半部分单独留下
+                        if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.length != 0) {
+                            sourceStr = new String(this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained) +
+                                    new String(Arrays.copyOfRange(copyData, 0, lastIndex));
+                        }
+                        else
+                        {
+                            sourceStr = new String(Arrays.copyOfRange(copyData, 0, lastIndex));
+                        }
+                        this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained =
+                                Arrays.copyOfRange(copyData, lastIndex + 1, copyData.length);
+                    }
                 }
 
+                // 解析CSV内容
                 Iterable<CSVRecord> parsedRecords = CSVFormat.DEFAULT.parse(new StringReader(sourceStr));
-                for (CSVRecord record : parsedRecords) {
-                    records.add(record);
-                }
-                if (copyData[copyData.length - 1] == (byte) 0x10) {
-                    // 如果最后一个字符是换行符号，则所有信息都要处理
-                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained = "";
-                } else {
-                    // 如果最后一个字符不是换行符号，则消息无法处理，留待下次或者结束时候处理
-                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained =
-                            sourceStr.substring((int) records.get(records.size() - 1).getCharacterPosition());
-                    records.remove(records.size() - 1);
-                }
-                for (CSVRecord csvRecord : records) {
+                for (CSVRecord csvRecord : parsedRecords) {
                     DuckDBAppender duckDBAppender = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
                     List<Integer> copyTableDbColumnMapPos = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
+                    if (csvRecord.size() != copyTableDbColumnMapPos.size()) {
+                        // CSV字节数量不对等
+                        ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                        errorResponse.setErrorResponse("SLACKER-0099",
+                                "CSV Format error (column size not match). [" + csvRecord +"].");
+                        errorResponse.process(ctx, request, out);
+
+                        // 发送并刷新返回消息
+                        PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+                        return;
+                    }
                     duckDBAppender.beginRow();
-                    for (Integer copyTableDbColumnMapPo : copyTableDbColumnMapPos) {
-                        if (copyTableDbColumnMapPo == -1) {
+                    for (Integer nPos : copyTableDbColumnMapPos) {
+                        if (nPos == -1) {
                             duckDBAppender.append((String)null);
                         } else {
-                            duckDBAppender.append(csvRecord.get(copyTableDbColumnMapPo));
+                            duckDBAppender.append(csvRecord.get(nPos));
                         }
                     }
                     duckDBAppender.endRow();

@@ -42,7 +42,7 @@ public class DBSession {
     // 记录这个目标表在数据库的实际列名
     public List<Integer> copyTableDbColumnMapPos;
     // 上次由于不完整而没有复制的Copy剩余命令
-    public String copyLastRemained = "";
+    public byte[] copyLastRemained = new byte[0];
     public long copyAffectedRows = 0;
 
     // 当前执行任务的语句

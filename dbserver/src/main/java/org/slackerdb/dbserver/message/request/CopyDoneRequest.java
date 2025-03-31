@@ -46,9 +46,9 @@ public class CopyDoneRequest extends PostgresRequest {
 
             String  sourceStr;
             // 和上次没有解析完全的字符串要拼接起来
-            if (!this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.isEmpty())
+            if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.length != 0)
             {
-                sourceStr = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained;
+                sourceStr = new String(this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained);
                 List<Integer> copyTableDbColumnMapPos = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
                 Iterable<CSVRecord> parsedRecords = CSVFormat.DEFAULT.parse(new StringReader(sourceStr));
                 for (CSVRecord record : parsedRecords) {
