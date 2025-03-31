@@ -51,12 +51,12 @@
             <artifactId>HikariCP</artifactId>
             <version>6.2.1</version>
         </dependency>
-<!--        <dependency>-->
-<!--            <groupId>com.github.spotbugs</groupId>-->
-<!--            <artifactId>spotbugs-annotations</artifactId>-->
-<!--            <version>RELEASE</version>-->
-<!--            <scope>compile</scope>-->
-<!--        </dependency>-->
+        <!-- SQL语法解析 -->
+        <dependency>
+            <groupId>org.antlr</groupId>
+            <artifactId>antlr4-runtime</artifactId>
+            <version>4.13.2</version>
+        </dependency>
     </dependencies>
     <build>
         <resources>
@@ -136,30 +136,6 @@
                     </execution>
                 </executions>
             </plugin>
-<!--            <plugin>-->
-<!--                <groupId>org.graalvm.buildtools</groupId>-->
-<!--                <artifactId>native-maven-plugin</artifactId>-->
-<!--                <version>0.10.6</version>-->
-<!--                <configuration>-->
-<!--                    <imageName>${project.artifactId}</imageName>-->
-<!--                    <mainClass>-->
-<!--                        org.slackerdb.dbserver.Main-->
-<!--                    </mainClass>-->
-<!--                    <buildArgs>-->
-<!--                        <buildArg>-H:IncludeResources=".*"</buildArg>-->
-<!--                        <buildArg>&#45;&#45;no-fallback</buildArg>-->
-<!--                    </buildArgs>-->
-<!--                </configuration>-->
-<!--                <executions>-->
-<!--                    <execution>-->
-<!--                        <id>build-native</id>-->
-<!--                        <goals>-->
-<!--                            <goal>compile-no-fork</goal>-->
-<!--                        </goals>-->
-<!--                        <phase>none</phase>-->
-<!--                    </execution>-->
-<!--                </executions>-->
-<!--            </plugin>-->
         </plugins>
     </build>
 </project>
