@@ -13,6 +13,7 @@ import org.slackerdb.common.utils.Utils;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.MathContext;
 import java.math.RoundingMode;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -41,7 +42,7 @@ public class BindRequest extends PostgresRequest {
     //        The parameter format codes. Each must presently be zero (text) or one (binary).
     //      Int16
     //        The number of parameter values that follow (possibly zero). This must match the number of parameters needed by the query.
-    //        Next, the following pair of fields appear for each parameter:    //
+    //        Next, the following pair of fields appear for each parameter:
     //        Int32
     //          The length of the parameter value, in bytes (this count does not include itself). Can be zero.
     //          As a special case, -1 indicates a NULL parameter value. No value bytes follow in the NULL case.
@@ -227,7 +228,13 @@ public class BindRequest extends PostgresRequest {
                                             BigDecimal base = BigDecimal.valueOf(10000); // 每个短整数表示4位十进制数字
                                             for (int j = 0; j < nDigits; j++) {
                                                 BigDecimal digitValue = BigDecimal.valueOf(digits[j]);
-                                                result = result.add(digitValue.multiply(base.pow(weight - j)));
+                                                if (weight -j >= 0) {
+                                                    result = result.add(digitValue.multiply(base.pow(weight - j)));
+                                                }
+                                                else
+                                                {
+                                                    result = result.add(digitValue.multiply(base.pow(weight - j, new MathContext(j+1))));
+                                                }
                                             }
                                             if (sign == 1) {
                                                 result = result.negate();

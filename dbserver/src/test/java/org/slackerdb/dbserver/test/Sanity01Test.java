@@ -913,5 +913,37 @@ public class Sanity01Test {
         preparedStatement.close();
         pgConn1.close();
     }
+
+    @Test
+    void testBindDecimal() throws SQLException
+    {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.createStatement().execute("create or replace table testtestBindDecimal(col decimal(10,2))");
+
+        PreparedStatement preparedStatement = pgConn1.prepareStatement("insert into testtestBindDecimal values(?)");
+        preparedStatement.setBigDecimal(1, BigDecimal.valueOf(100.2));
+        preparedStatement.addBatch();
+        preparedStatement.executeBatch();
+        preparedStatement.close();
+        pgConn1.commit();
+
+        preparedStatement = pgConn1.prepareStatement("select * from testtestBindDecimal");
+        ResultSet rs = preparedStatement.executeQuery();
+        if (rs.next())
+        {
+            assert  rs.getBigDecimal(1).toPlainString().equals("100.20");
+        }
+        else
+        {
+            assert false;
+        }
+        rs.close();
+        preparedStatement.close();
+        pgConn1.close();
+    }
 }
 
