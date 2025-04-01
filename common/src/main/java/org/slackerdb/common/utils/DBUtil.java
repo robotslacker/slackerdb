@@ -1,13 +1,16 @@
 package org.slackerdb.common.utils;
 
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.nio.ByteBuffer;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.nio.ByteOrder;
+import java.math.RoundingMode;
 
 public class DBUtil {
     public static Map<String, String> parseJdbcUrl(String jdbcUrl) {
@@ -79,4 +82,88 @@ public class DBUtil {
         }
         return DriverManager.getConnection(jdbcConnectUrl.toString(), jdbcConnectProperties);
     }
+
+    public static BigDecimal convertPGByteToBigDecimal(byte[] buf)
+    {
+        ByteBuffer buffer = ByteBuffer.wrap(buf);
+
+        short nDigits = buffer.getShort();
+        short weight = buffer.getShort();
+        short sign = buffer.getShort();
+        short dScale = buffer.getShort();
+        int[] digits = new int[nDigits];
+        for (int j = 0; j < nDigits; j++) {
+            digits[j] = buffer.getShort();
+        }
+        BigDecimal result = BigDecimal.ZERO;
+        BigDecimal base = BigDecimal.valueOf(10000);
+
+        // 每个短整数表示4位十进制数字
+        for (int j = 0; j < nDigits; j++) {
+            BigDecimal digitValue = BigDecimal.valueOf(digits[j]);
+            if (weight -j >= 0) {
+                result = result.add(digitValue.multiply(base.pow(weight - j)));
+            }
+            else
+            {
+                result = result.add(digitValue.multiply(base.pow(weight - j, new MathContext(j+1))));
+            }
+        }
+        if (sign == 1) {
+            result = result.negate();
+        }
+        result = result.setScale(dScale, RoundingMode.UNNECESSARY);
+        return result;
+    }
+
+    public static byte[] convertPGBigDecimalToByte(BigDecimal value)
+    {
+        // 解析符号
+        short sign = (value.signum() < 0) ? (short)1 : (short)0x0000;
+        // 计算过程中不考虑正负数
+        value = value.abs();
+
+        // 获取小数位数（scale）
+        short scale = (short)value.scale();
+
+        // 计算小数部分占用的 digit 数量
+        int scaleDigits = (scale + 3) / 4;
+
+        // 提取未缩放值和标度（dScale）
+        BigDecimal scaledValue = value.setScale(scale, RoundingMode.HALF_UP);
+
+        // 分解未缩放值为基数10000的数字列表
+        BigDecimal  base = BigDecimal.valueOf(10000);
+        List<Short> digitsList = new ArrayList<>();
+        // 处理整数部分
+        while (scaledValue.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal[] divRem = scaledValue.divideAndRemainder(base);
+            digitsList.add(0, divRem[1].shortValue());  // 存储低位
+            scaledValue = divRem[0];  // 更新剩余部分
+        }
+        // 处理小数部分
+        BigDecimal fractionalPart = value.subtract(value.setScale(0, RoundingMode.FLOOR)).setScale(scale, RoundingMode.HALF_UP);
+        for (int i = 0; i < scaleDigits; i++) {
+            fractionalPart = fractionalPart.multiply(base);
+            short digit = fractionalPart.setScale(0, RoundingMode.FLOOR).shortValue();
+            digitsList.add(digit);
+            fractionalPart = fractionalPart.subtract(BigDecimal.valueOf(digit));
+        }
+
+        short nDigits = (short)digitsList.size();
+        short weight = (short)(nDigits - scaleDigits - 1);
+
+        // 整理输出结果
+        ByteBuffer buffer = ByteBuffer.allocate(2 + 2 + 2 + 2 + (nDigits * 2)).order(ByteOrder.BIG_ENDIAN);
+        buffer.putShort(nDigits);
+        buffer.putShort(weight);
+        buffer.putShort(sign);
+        buffer.putShort(scale);
+        for (short digit : digitsList) {
+            buffer.putShort(digit);
+        }
+
+        return buffer.array();
+    }
+
 }
