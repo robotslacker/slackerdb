@@ -29,6 +29,18 @@ public interface CopyStatementVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitQuery(CopyStatementParser.QueryContext ctx);
 	/**
+	 * Visit a parse tree produced by {@link CopyStatementParser#column}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitColumn(CopyStatementParser.ColumnContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link CopyStatementParser#columns}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitColumns(CopyStatementParser.ColumnsContext ctx);
+	/**
 	 * Visit a parse tree produced by {@link CopyStatementParser#filePath}.
 	 * @param ctx the parse tree
 	 * @return the visitor result

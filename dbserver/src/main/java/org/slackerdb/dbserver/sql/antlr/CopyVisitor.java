@@ -9,7 +9,7 @@ import org.antlr.v4.runtime.tree.ParseTree;
 
 public class CopyVisitor extends CopyStatementBaseVisitor<Void> {
     private CharStream inputStream;
-    private JSONObject ret = new JSONObject();
+    private final JSONObject ret = new JSONObject();
 
     public CopyVisitor(CharStream charStream)
     {
@@ -23,6 +23,11 @@ public class CopyVisitor extends CopyStatementBaseVisitor<Void> {
         {
             ret.put("copyType", "table");
             ret.put("table", ctx.tableName().getText());
+            if (ctx.columns() != null)
+            {
+                ret.put("columns", new JSONArray());
+                visitColumns(ctx.columns());
+            }
         }
         else
         {
@@ -43,6 +48,23 @@ public class CopyVisitor extends CopyStatementBaseVisitor<Void> {
         {
             visitOptions(ctx.options());
         }
+        return null;
+    }
+
+    @Override
+    public Void visitColumns(CopyStatementParser.ColumnsContext ctx)
+    {
+        for (CopyStatementParser.ColumnContext columnCtx : ctx.column())
+        {
+            visitColumn(columnCtx);
+        }
+        return null;
+    }
+
+    @Override
+    public Void visitColumn(CopyStatementParser.ColumnContext ctx)
+    {
+        ret.getJSONArray("columns").add(ctx.getText());
         return null;
     }
 

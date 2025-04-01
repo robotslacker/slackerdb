@@ -1,5 +1,7 @@
 package org.slackerdb.dbserver.message.request;
 
+import com.alibaba.fastjson2.JSONArray;
+import com.alibaba.fastjson2.JSONObject;
 import io.netty.channel.ChannelHandlerContext;
 import org.duckdb.DuckDBConnection;
 import org.slackerdb.dbserver.entity.Column;
@@ -10,6 +12,8 @@ import org.slackerdb.dbserver.message.response.*;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.sql.SQLReplacer;
 import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.dbserver.sql.antlr.CopyStatementParser;
+import org.slackerdb.dbserver.sql.antlr.CopyVisitor;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -70,6 +74,52 @@ public class QueryRequest  extends PostgresRequest {
 
         tryBlock:
         try {
+//            JSONObject parseObject = CopyVisitor.parseCopyStatement(sql);
+//            if (parseObject.getInteger("errorCode") == 0)
+//            {
+//                // 这次一个Copy语句
+//                if (!parseObject.getString("copyDirection").equals("FROM") ||
+//                        !parseObject.getString("copyFilePath").equals("STDIN") ||
+//                        !parseObject.getString("copyType").equals("table")
+//                )
+//                {
+//                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+//                    errorResponse.setErrorResponse(
+//                            "SLACKER-0099",
+//                            "Feature not supported. Only support COPY .. FROM STDIN");
+//                    errorResponse.setErrorSeverity("ERROR");
+//
+//                    // 发送并刷新返回消息
+//                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+//
+//                    // 发送ReadyForQuery
+//                    ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+//                    readyForQuery.process(ctx, request, out);
+//
+//                    // 发送并刷新返回消息
+//                    PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+//
+//                    return;
+//                }
+//                Map<String, Integer> targetColumnMap = new HashMap<>();
+//                String copyTableName = parseObject.getString("table");
+//                List<String> copyTableColumns = new ArrayList<>();
+//                JSONArray columnsJson = parseObject.getJSONArray("columns");
+//                for (Object column : columnsJson)
+//                {
+//                    copyTableColumns.add(column.toString());
+//                    for (int i = 0; i < columnsJson.size(); i++) {
+//                        targetColumnMap.put(column.toString().trim().toUpperCase(), i);
+//                    }
+//                }
+//
+//            }
+//            else
+//            {
+//                System.out.println(sql);
+//                System.out.println(parseObject.toJSONString());
+//            }
+
             String copyInClausePattern = "^(\\s+)?COPY\\s+(.*?)((\\s+)?\\((.*)\\))?\\s+FROM\\s+STDIN\\s+WITH\\s+\\((\\s+)?FORMAT\\s+(.*)\\).*";
             Pattern copyInPattern = Pattern.compile(copyInClausePattern, Pattern.CASE_INSENSITIVE);
             Matcher m = copyInPattern.matcher(sql);

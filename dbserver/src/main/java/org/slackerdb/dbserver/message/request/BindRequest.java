@@ -1,6 +1,7 @@
 package org.slackerdb.dbserver.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
+import org.slackerdb.common.utils.DBUtil;
 import org.slackerdb.dbserver.entity.ParsedStatement;
 import org.slackerdb.dbserver.entity.PostgresTypeOids;
 import org.slackerdb.dbserver.message.PostgresMessage;
@@ -13,8 +14,6 @@ import org.slackerdb.common.utils.Utils;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.math.MathContext;
-import java.math.RoundingMode;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -215,31 +214,18 @@ public class BindRequest extends PostgresRequest {
                                         case "BOOLEAN" ->
                                                 preparedStatement.setBoolean(i + 1, bindParameters[i][0] == (byte) 0);
                                         case "DECIMAL" -> {
-                                            ByteBuffer buffer = ByteBuffer.wrap(bindParameters[i]);
-                                            short nDigits = buffer.getShort();
-                                            short weight = buffer.getShort();
-                                            short sign = buffer.getShort();
-                                            short dScale = buffer.getShort();
-                                            int[] digits = new int[nDigits];
-                                            for (int j = 0; j < nDigits; j++) {
-                                                digits[j] = buffer.getShort();
-                                            }
-                                            BigDecimal result = BigDecimal.ZERO;
-                                            BigDecimal base = BigDecimal.valueOf(10000); // 每个短整数表示4位十进制数字
-                                            for (int j = 0; j < nDigits; j++) {
-                                                BigDecimal digitValue = BigDecimal.valueOf(digits[j]);
-                                                if (weight -j >= 0) {
-                                                    result = result.add(digitValue.multiply(base.pow(weight - j)));
-                                                }
-                                                else
-                                                {
-                                                    result = result.add(digitValue.multiply(base.pow(weight - j, new MathContext(j+1))));
-                                                }
-                                            }
-                                            if (sign == 1) {
-                                                result = result.negate();
-                                            }
-                                            preparedStatement.setBigDecimal(i + 1, result.setScale(dScale, RoundingMode.UNNECESSARY));
+//                                            typedef struct NumericVar
+//                                            {
+//                                                short			ndigits;		/* # of digits in digits[] - can be 0! */
+//                                                short			weight;			/* weight of first digit */
+//                                                short			sign;			/* NUMERIC_POS, _NEG, _NAN, _PINF, or _NINF */
+//                                                short			dscale;			/* display scale */
+//                                                NumericDigit *buf;			/* start of palloc'd space for digits[] */
+//                                                NumericDigit *digits;		/* base-NBASE digits */
+//                                            } NumericVar;
+//                                          numeric = sign * (digit0 * NBASE^weight + digit1 * NBASE^(weight - 1) + ... + digitn * NBASE^(weight - ndigits))
+                                            BigDecimal ret = DBUtil.convertPGByteToBigDecimal(bindParameters[i]);
+                                            preparedStatement.setBigDecimal(i + 1, ret);
                                         }
                                         case "FLOAT" ->
                                                 preparedStatement.setFloat(i + 1, ByteBuffer.wrap(bindParameters[i]).getFloat());
