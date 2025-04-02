@@ -1,11 +1,14 @@
 package org.slackerdb.common.utils;
 
+import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -166,4 +169,57 @@ public class DBUtil {
         return buffer.array();
     }
 
+    // 生成 BINARY COPY 格式的列数据
+    public static byte[] convertPGRowToByte(List<Object[]> data) throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+
+        // 写入 PostgreSQL BINARY COPY 头
+        output.write(new byte[]{0x50, 0x47, 0x43, 0x4F, 0x50, 0x59, 0x0A, (byte) 0xFF, 0x0D, 0x0A, 0x00});
+        output.write(Utils.int32ToBytes(0)); // Flags
+        output.write(Utils.int32ToBytes(0)); // Header extension area
+
+        // **写入数据**
+        for (Object[] row : data) {
+            output.write(Utils.int16ToBytes((short) row.length)); // 列数
+
+            for (Object value : row) {
+                if (value == null) {
+                    output.write(Utils.int32ToBytes(-1)); // NULL
+                } else if (value instanceof Integer) {
+                    output.write(Utils.int32ToBytes(4)); // 长度
+                    output.write(Utils.int32ToBytes((Integer) value));
+                } else if (value instanceof String) {
+                    byte[] strBytes = ((String) value).getBytes(StandardCharsets.UTF_8);
+                    output.write(Utils.int32ToBytes(strBytes.length));
+                    output.write(strBytes);
+                } else if (value instanceof Double) {
+                    output.write(Utils.int32ToBytes(8));
+                    output.write(Utils.doubleToBytes((Double) value));
+                } else if (value instanceof BigDecimal) {
+                    byte[] decimalBytes = convertPGBigDecimalToByte((BigDecimal) value);
+                    output.write(Utils.int32ToBytes(decimalBytes.length));
+                    output.write(decimalBytes);
+                } else if (value instanceof Timestamp) {
+                    output.write(Utils.int32ToBytes(8));
+                    output.write(Utils.int64ToBytes(((Timestamp) value).toInstant().toEpochMilli() * 1000));
+                } else if (value instanceof Boolean) {
+                    output.write(Utils.int32ToBytes(1));
+                    output.write((Boolean) value ? new byte[]{0x01} : new byte[]{0x00});
+                } else {
+                    throw new IllegalArgumentException("Unsupported type: " + value.getClass());
+                }
+            }
+        }
+
+        // 写入 COPY 结束标志
+        output.write(Utils.int16ToBytes((short) -1));
+
+        return output.toByteArray();
+    }
+
+    public static List<Object> convertPGByteToRow(byte[] buf)
+    {
+        // TODO
+        return null;
+    }
 }

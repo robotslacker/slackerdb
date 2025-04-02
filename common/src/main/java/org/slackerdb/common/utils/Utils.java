@@ -1,5 +1,7 @@
 package org.slackerdb.common.utils;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.text.MessageFormat;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -126,6 +128,11 @@ public class Utils {
             value = (value << 8) | (bytes[i] & 0xFF);
         }
         return value;
+    }
+
+    public static byte[] doubleToBytes(double value)
+    {
+        return ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putDouble(value).array();
     }
 
     public static byte[][] splitByteArray(byte[] input, byte delimiter) {

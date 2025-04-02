@@ -5,6 +5,7 @@ import org.duckdb.DuckDBAppender;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.ErrorResponse;
 import org.slackerdb.dbserver.message.PostgresMessage;
+import org.slackerdb.dbserver.message.response.ReadyForQuery;
 import org.slackerdb.dbserver.server.DBInstance;
 
 import java.io.ByteArrayOutputStream;
@@ -123,6 +124,13 @@ public class CopyDataRequest extends PostgresRequest {
                         // 发送并刷新返回消息
                         PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
 
+                        // 发送ReadyForQuery
+                        ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                        readyForQuery.process(ctx, request, out);
+
+                        // 发送并刷新返回消息
+                        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+
                         return;
                     }
                     duckDBAppender.beginRow();
@@ -136,7 +144,11 @@ public class CopyDataRequest extends PostgresRequest {
                     duckDBAppender.endRow();
                     nCopiedRows ++;
                 }
-            } else {
+            }
+            else if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat.equalsIgnoreCase("BINARY")) {
+                // TODO
+            }
+            else {
                 // 不认识的查询语句， 生成一个错误消息
                 ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
                 errorResponse.setErrorResponse("SLACKER-0099", "Not supported format. " +
@@ -145,6 +157,13 @@ public class CopyDataRequest extends PostgresRequest {
 
                 // 发送并刷新返回消息
                 PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+                // 发送ReadyForQuery
+                ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                readyForQuery.process(ctx, request, out);
+
+                // 发送并刷新返回消息
+                PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
             }
             this.dbInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows += nCopiedRows;
         } catch (SQLException se) {
@@ -155,6 +174,14 @@ public class CopyDataRequest extends PostgresRequest {
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+            // 发送ReadyForQuery
+            ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+            readyForQuery.process(ctx, request, out);
+
+            // 发送并刷新返回消息
+            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+
         } finally {
             out.close();
         }

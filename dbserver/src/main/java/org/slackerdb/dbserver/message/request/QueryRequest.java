@@ -12,7 +12,6 @@ import org.slackerdb.dbserver.message.response.*;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.sql.SQLReplacer;
 import org.slackerdb.dbserver.server.DBInstance;
-import org.slackerdb.dbserver.sql.antlr.CopyStatementParser;
 import org.slackerdb.dbserver.sql.antlr.CopyVisitor;
 
 import java.io.ByteArrayOutputStream;
@@ -21,8 +20,6 @@ import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class QueryRequest  extends PostgresRequest {
     private String      sql = "";
@@ -74,71 +71,35 @@ public class QueryRequest  extends PostgresRequest {
 
         tryBlock:
         try {
-//            JSONObject parseObject = CopyVisitor.parseCopyStatement(sql);
-//            if (parseObject.getInteger("errorCode") == 0)
-//            {
-//                // 这次一个Copy语句
-//                if (!parseObject.getString("copyDirection").equals("FROM") ||
-//                        !parseObject.getString("copyFilePath").equals("STDIN") ||
-//                        !parseObject.getString("copyType").equals("table")
-//                )
-//                {
-//                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
-//                    errorResponse.setErrorResponse(
-//                            "SLACKER-0099",
-//                            "Feature not supported. Only support COPY .. FROM STDIN");
-//                    errorResponse.setErrorSeverity("ERROR");
-//
-//                    // 发送并刷新返回消息
-//                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
-//
-//                    // 发送ReadyForQuery
-//                    ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
-//                    readyForQuery.process(ctx, request, out);
-//
-//                    // 发送并刷新返回消息
-//                    PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
-//
-//                    return;
-//                }
-//                Map<String, Integer> targetColumnMap = new HashMap<>();
-//                String copyTableName = parseObject.getString("table");
-//                List<String> copyTableColumns = new ArrayList<>();
-//                JSONArray columnsJson = parseObject.getJSONArray("columns");
-//                for (Object column : columnsJson)
-//                {
-//                    copyTableColumns.add(column.toString());
-//                    for (int i = 0; i < columnsJson.size(); i++) {
-//                        targetColumnMap.put(column.toString().trim().toUpperCase(), i);
-//                    }
-//                }
-//
-//            }
-//            else
-//            {
-//                System.out.println(sql);
-//                System.out.println(parseObject.toJSONString());
-//            }
+            JSONObject parseObject = CopyVisitor.parseCopyStatement(sql);
+            if (parseObject.getInteger("errorCode") == 0)
+            {
+                // 这次一个Copy语句
+                if (!parseObject.getString("copyDirection").equals("FROM") ||
+                        !parseObject.getString("copyFilePath").equals("STDIN") ||
+                        !parseObject.getString("copyType").equals("table")
+                )
+                {
+                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                    errorResponse.setErrorResponse(
+                            "SLACKER-0099",
+                            "Feature not supported. Only support COPY .. FROM STDIN");
+                    errorResponse.setErrorSeverity("ERROR");
 
-            String copyInClausePattern = "^(\\s+)?COPY\\s+(.*?)((\\s+)?\\((.*)\\))?\\s+FROM\\s+STDIN\\s+WITH\\s+\\((\\s+)?FORMAT\\s+(.*)\\).*";
-            Pattern copyInPattern = Pattern.compile(copyInClausePattern, Pattern.CASE_INSENSITIVE);
-            Matcher m = copyInPattern.matcher(sql);
-            if (m.find()) {
-                // 执行COPY IN的命令
-                String copyTableName = m.group(2);
-                // 如果没有制定COLUMNS，则表示为全部的COLUMNS
-                Map<String, Integer> targetColumnMap = new HashMap<>();
-                if (m.group(5) != null) {
-                    String[] columns;
-                    columns = m.group(5).split(",");
-                    for (int i = 0; i < columns.length; i++) {
-                        targetColumnMap.put(columns[i].trim().toUpperCase(), i);
-                    }
+                    // 发送并刷新返回消息
+                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+                    // 发送ReadyForQuery
+                    ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                    readyForQuery.process(ctx, request, out);
+
+                    // 发送并刷新返回消息
+                    PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+
+                    return;
                 }
-                String copyTableFormat = m.group(7);
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableName = copyTableName;
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat = copyTableFormat;
-
+                // 获取导入的用户表和表名
+                String copyTableName = parseObject.getString("table");
                 String targetTableName;
                 String targetSchemaName;
                 if (copyTableName.split("\\.").length > 1) {
@@ -148,7 +109,46 @@ public class QueryRequest  extends PostgresRequest {
                     targetSchemaName = "";
                     targetTableName = copyTableName;
                 }
+
+                // 获取需要导入的列名
+                Map<String, Integer> targetColumnMap = new HashMap<>();
+                JSONArray columnsJson = parseObject.getJSONArray("columns");
+                for (int i = 0; i < columnsJson.size(); i++) {
+                    targetColumnMap.put(columnsJson.get(i).toString().trim().toUpperCase(), i);
+                }
+
+                // 获取COPY的文件类型
+                JSONObject copyOptions = parseObject.getJSONObject("options");
+                String copyTableFormat = null;
+                if (copyOptions != null && copyOptions.containsKey("FORMAT"))
+                {
+                    copyTableFormat = copyOptions.getString("FORMAT").toUpperCase();
+                }
+                if (copyTableFormat == null ||
+                        (!copyTableFormat.equals("CSV") && !copyTableFormat.equals("BINARY") )
+                )
+                {
+                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                    errorResponse.setErrorResponse(
+                            "SLACKER-0099",
+                            "Feature not supported. Only support FORMAT CSV|BINARY");
+                    errorResponse.setErrorSeverity("ERROR");
+
+                    // 发送并刷新返回消息
+                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+                    // 发送ReadyForQuery
+                    ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                    readyForQuery.process(ctx, request, out);
+
+                    // 发送并刷新返回消息
+                    PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+
+                    return;
+                }
+
                 DuckDBConnection conn = (DuckDBConnection) this.dbInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat = copyTableFormat;
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = conn.createAppender(targetSchemaName, targetTableName);
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows = 0;
 
@@ -191,6 +191,7 @@ public class QueryRequest  extends PostgresRequest {
 
                 out.close();
                 break tryBlock;
+
             }
 
             // 在执行之前需要做替换
