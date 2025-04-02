@@ -45,6 +45,7 @@ public class CopyDoneRequest extends PostgresRequest {
             DuckDBAppender duckDBAppender = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
 
             String  sourceStr;
+            // 需要处理完成最后的数据
             // 和上次没有解析完全的字符串要拼接起来
             if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.length != 0)
             {
@@ -63,6 +64,7 @@ public class CopyDoneRequest extends PostgresRequest {
                     duckDBAppender.endRow();
                     nCopiedRows++;
                 }
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained = new byte[0];
             }
             duckDBAppender.close();
             this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = null;

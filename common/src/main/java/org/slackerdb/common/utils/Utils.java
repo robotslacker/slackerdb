@@ -124,10 +124,18 @@ public class Utils {
 
     public static long bytesToInt64(byte[] bytes) {
         long value = 0;
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < Math.min(bytes.length, 8); i++) {
             value = (value << 8) | (bytes[i] & 0xFF);
         }
         return value;
+    }
+
+    public static double byteToDouble(byte[] bytes)
+    {
+        // 确保只读取前8字节，避免越界
+        return ByteBuffer.wrap(bytes, 0, 8)
+                .order(ByteOrder.BIG_ENDIAN)
+                .getDouble();
     }
 
     public static byte[] doubleToBytes(double value)

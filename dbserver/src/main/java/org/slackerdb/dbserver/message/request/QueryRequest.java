@@ -113,8 +113,10 @@ public class QueryRequest  extends PostgresRequest {
                 // 获取需要导入的列名
                 Map<String, Integer> targetColumnMap = new HashMap<>();
                 JSONArray columnsJson = parseObject.getJSONArray("columns");
-                for (int i = 0; i < columnsJson.size(); i++) {
-                    targetColumnMap.put(columnsJson.get(i).toString().trim().toUpperCase(), i);
+                if (columnsJson != null) {
+                    for (int i = 0; i < columnsJson.size(); i++) {
+                        targetColumnMap.put(columnsJson.get(i).toString().trim().toUpperCase(), i);
+                    }
                 }
 
                 // 获取COPY的文件类型
@@ -154,6 +156,7 @@ public class QueryRequest  extends PostgresRequest {
 
                 // 获取表名的实际表名，DUCK并不支持部分字段的Appender操作。所以要追加列表中不存在的相关信息
                 List<Integer> copyTableDbColumnMapPos = new ArrayList<>();
+                List<String> copyTableDbColumnType = new ArrayList<>();
                 String executeSql;
                 if (targetSchemaName.isEmpty()) {
                     executeSql = "SELECT * FROM " + targetTableName + " LIMIT 0";
@@ -164,6 +167,7 @@ public class QueryRequest  extends PostgresRequest {
                 ResultSet rs = ps.executeQuery();
                 rs.next();
                 if (!targetColumnMap.isEmpty()) {
+                    // 指定了字段类型，则其余字段填空
                     for (int i = 0; i < rs.getMetaData().getColumnCount(); i++) {
                         copyTableDbColumnMapPos.add(targetColumnMap.getOrDefault(
                                 rs.getMetaData().getColumnName(i + 1).toUpperCase(), -1));
@@ -176,10 +180,17 @@ public class QueryRequest  extends PostgresRequest {
                         copyTableDbColumnMapPos.add(i);
                     }
                 }
+                // 记住列的字段类型，作为Binary插入的需要
+                for (int i = 0; i < rs.getMetaData().getColumnCount(); i++) {
+                    copyTableDbColumnType.add(rs.getMetaData().getColumnTypeName(i+1));
+                }
+
                 rs.close();
                 ps.close();
 
+                // 将解析信息记录到Session会话中
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos = copyTableDbColumnMapPos;
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnType = copyTableDbColumnType;
 
                 // 发送CopyInResponse
                 CopyInResponse copyInResponse = new CopyInResponse(this.dbInstance);

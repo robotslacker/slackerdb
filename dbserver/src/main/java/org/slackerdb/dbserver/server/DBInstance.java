@@ -462,7 +462,7 @@ public class DBInstance {
                                     ErrorMsg       TEXT
                                 );""");
                 sqlHistoryStmt.close();
-                logger.info("[SERVER][STARTUP    ] Backend sql history database opened (bundle mode).");
+                logger.info("[SERVER][STARTUP    ] Backend sql history database opened.");
 
                 // 获取之前最大的SqlHistory的ID
                 String sql = "Select Max(ID) From sysaux.SQL_HISTORY";

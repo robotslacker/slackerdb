@@ -3,6 +3,7 @@ package org.slackerdb.dbserver.message.request;
 import io.netty.channel.ChannelHandlerContext;
 import org.duckdb.DuckDBAppender;
 import org.slackerdb.common.utils.DBUtil;
+import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.ErrorResponse;
 import org.slackerdb.dbserver.message.PostgresMessage;
@@ -12,8 +13,11 @@ import org.slackerdb.dbserver.server.DBInstance;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.StringReader;
+import java.math.BigDecimal;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.List;
 
@@ -119,7 +123,9 @@ public class CopyDataRequest extends PostgresRequest {
                         // CSV字节数量不对等
                         ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
                         errorResponse.setErrorResponse("SLACKER-0099",
-                                "CSV Format error (column size not match). [" + csvRecord +"].");
+                                "CSV Format error (column size not match." +
+                                        " [" + csvRecord.size() + "] vs [" + copyTableDbColumnMapPos.size() + "])." +
+                                        " [" + csvRecord +"].");
                         errorResponse.process(ctx, request, out);
 
                         // 发送并刷新返回消息
@@ -150,14 +156,57 @@ public class CopyDataRequest extends PostgresRequest {
                 // 导入二进制数据
                 List<Object[]> data = DBUtil.convertPGByteToRow(copyData);
                 DuckDBAppender duckDBAppender = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
-                List<Integer> copyTableDbColumnMapPos = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
                 for (Object[] row : data) {
                     duckDBAppender.beginRow();
-                    for (Integer nPos : copyTableDbColumnMapPos) {
-                        if (nPos == -1) {
-                            duckDBAppender.append((String) null);
-                        } else {
-                            duckDBAppender.append((byte[]) row[nPos]);
+                    for (int i=0; i<row.length; i++)
+                    {
+                        // 数据内容
+                        Object cell = row[i];
+                        // 数据类型
+                        String columnType = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnType.get(i);
+
+                        if (columnType.equals("BIGINT")) {
+                            duckDBAppender.appendBigDecimal(BigDecimal.valueOf(Utils.bytesToInt64((byte[]) cell)));
+                        }
+                        else if (columnType.equals("VARCHAR"))
+                        {
+                            duckDBAppender.append(new String((byte[])cell));
+                        }
+                        else if (columnType.equals("DOUBLE"))
+                        {
+                            duckDBAppender.append(Utils.byteToDouble((byte [])cell));
+                        }
+                        else if (columnType.startsWith("DECIMAL"))
+                        {
+                            duckDBAppender.appendBigDecimal(DBUtil.convertPGByteToBigDecimal((byte [])cell));
+                        }
+                        else if (columnType.equals("TIMESTAMP"))
+                        {
+                            long epochMilli = Utils.bytesToInt64((byte[]) cell) / 1000;
+                            duckDBAppender.appendLocalDateTime(Instant.ofEpochMilli(epochMilli).atZone(ZoneId.of("UTC")).toLocalDateTime());
+                        }
+                        else if (columnType.equals("BOOLEAN"))
+                        {
+                            duckDBAppender.append(((byte[]) cell)[0] == 0x01);
+                        }
+                        else
+                        {
+                            ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                            errorResponse.setErrorResponse("SLACKER-0099",
+                                    "Binary Format error (column type not support) . " + columnType);
+                            errorResponse.process(ctx, request, out);
+
+                            // 发送并刷新返回消息
+                            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+                            // 发送ReadyForQuery
+                            ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                            readyForQuery.process(ctx, request, out);
+
+                            // 发送并刷新返回消息
+                            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+
+                            return;
                         }
                     }
                     duckDBAppender.endRow();

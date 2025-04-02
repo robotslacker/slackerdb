@@ -7,6 +7,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
+import org.slackerdb.common.utils.DBUtil;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.dbserver.server.DBInstance;
@@ -14,12 +15,17 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.StringReader;
 import java.math.BigDecimal;
 import java.sql.*;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Calendar;
+import java.util.List;
 import java.util.TimeZone;
 
 public class Sanity01Test {
@@ -706,33 +712,107 @@ public class Sanity01Test {
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
 
-        pgConn1.createStatement().execute("create table testCopy(id int, first_name varchar(20), last_name varchar(20))");
+        {
+            pgConn1.createStatement().execute("create or replace table testCopy(id int, first_name varchar(20), last_name varchar(20))");
+            String csvData = "1,John,Doe\n2,Jane,Smith"; // 示例数据
+
+            // 使用BaseConnection以便于进行COPY操作
+            CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
+
+            // 执行COPY FROM STDIN操作(包含表名)
+            String copySql = "COPY testCopy (id, last_name, first_name) FROM STDIN WITH (FORMAT csv)";
+            copyManager.copyIn(copySql, new StringReader(csvData));
+            pgConn1.commit();
+
+            // 检查数据
+            PreparedStatement pstmt = pgConn1.prepareStatement("select * FROM testCopy order by id");
+            ResultSet rs = pstmt.executeQuery();
+            int expectedResult = 2;
+            int nRows = 0;
+            while (rs.next()) {
+                nRows = nRows + 1;
+                if (rs.getInt("id") == 1) {
+                    assert rs.getString("first_name").equals("Doe");
+                    assert rs.getString("last_name").equals("John");
+                }
+                if (rs.getInt("id") == 2) {
+                    assert rs.getString("first_name").equals("Smith");
+                    assert rs.getString("last_name").equals("Jane");
+                }
+            }
+            pstmt.close();
+
+            assert nRows == expectedResult;
+        }
+        {
+            pgConn1.createStatement().execute("create or replace table testCopy2(id int, first_name varchar(20), last_name varchar(20))");
+            String csvData = "1,John,Doe\n2,Jane,Smith"; // 示例数据
+
+            // 使用BaseConnection以便于进行COPY操作
+            CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
+
+            // 执行COPY FROM STDIN操作(不包含表名)
+            String copySql = "COPY testCopy2 FROM STDIN WITH (FORMAT csv)";
+            copyManager.copyIn(copySql, new StringReader(csvData));
+            pgConn1.commit();
+
+            PreparedStatement pstmt = pgConn1.prepareStatement("select * FROM testCopy2 order by id");
+            ResultSet rs = pstmt.executeQuery();
+            int nRows = 0;
+            int expectedResult = 2;
+            while (rs.next()) {
+                nRows = nRows + 1;
+                if (rs.getInt("id") == 1)
+                {
+                    assert rs.getString("first_name").equals("John");
+                    assert rs.getString("last_name").equals("Doe");
+                }
+                if (rs.getInt("id") == 2)
+                {
+                    assert rs.getString("first_name").equals("Jane");
+                    assert rs.getString("last_name").equals("Smith");
+                }
+            }
+            pstmt.close();
+            pgConn1.close();
+
+            assert nRows == expectedResult;
+        }
+    }
+
+    @Test
+    void testCopy2() throws SQLException, IOException {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.createStatement().execute("create or replace table testCopy2(id int, first_name varchar(20), last_name varchar(20))");
         String csvData = "1,John,Doe\n2,Jane,Smith"; // 示例数据
 
         // 使用BaseConnection以便于进行COPY操作
         CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
 
-        // 执行COPY FROM STDIN操作
-        String copySql = "COPY testCopy (id, last_name, first_name) FROM STDIN WITH (FORMAT csv)";
+        // 执行COPY FROM STDIN操作(不包含表名)
+        String copySql = "COPY testCopy2 FROM STDIN WITH (FORMAT csv)";
         copyManager.copyIn(copySql, new StringReader(csvData));
         pgConn1.commit();
 
-        // 检查数据
-        PreparedStatement pstmt = pgConn1.prepareStatement("select * FROM testCopy order by id");
+        PreparedStatement pstmt = pgConn1.prepareStatement("select * FROM testCopy2 order by id");
         ResultSet rs = pstmt.executeQuery();
-        int expectedResult = 2;
         int nRows = 0;
+        int expectedResult = 2;
         while (rs.next()) {
             nRows = nRows + 1;
             if (rs.getInt("id") == 1)
             {
-                assert rs.getString("first_name").equals("Doe");
-                assert rs.getString("last_name").equals("John");
+                assert rs.getString("first_name").equals("John");
+                assert rs.getString("last_name").equals("Doe");
             }
             if (rs.getInt("id") == 2)
             {
-                assert rs.getString("first_name").equals("Smith");
-                assert rs.getString("last_name").equals("Jane");
+                assert rs.getString("first_name").equals("Jane");
+                assert rs.getString("last_name").equals("Smith");
             }
         }
         pstmt.close();
@@ -943,6 +1023,75 @@ public class Sanity01Test {
         }
         rs.close();
         preparedStatement.close();
+        pgConn1.close();
+    }
+
+    @Test
+    void testBinaryCopy() throws Exception
+    {
+        String timeStr1 = "2020-01-05 23:50:50";
+        String timeStr2 = "2025-03-05 06:33:28";
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+        List<Object[]> data = List.of(
+                new Object[]
+                        {
+                                1, "Alice", 25.5, new BigDecimal("12345.6789"),
+                                Timestamp.from(LocalDateTime.parse(timeStr1, formatter).atZone(ZoneId.of("UTC")).toInstant()),
+                                true
+                        },
+                new Object[]
+                        {
+                                2, "Bob", 30.8, new BigDecimal("98765.4321"),
+                                Timestamp.from(LocalDateTime.parse(timeStr2, formatter).atZone(ZoneId.of("UTC")).toInstant()),
+                                true
+                        }
+        );
+        byte[] binaryCopyData = DBUtil.convertPGRowToByte(data);
+
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = """
+            CREATE OR REPLACE TABLE test_binary_copy (
+                id BIGINT PRIMARY KEY,
+                name VARCHAR(50),
+                age DOUBLE PRECISION,
+                salary NUMERIC(10,4),
+                created_at TIMESTAMP,
+                is_active BOOLEAN
+            )
+            """;
+        pgConn1.createStatement().execute(sql);
+
+        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
+        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
+            copyManager.copyIn("COPY test_binary_copy FROM STDIN WITH (FORMAT BINARY)", binaryStream);
+        }
+
+        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT * FROM test_binary_copy order by id")) {
+            rs.next();
+            assert String.format("ID: %d, Name: %s, Age: %.2f, Salary: %s, CreatedAt: %s, Active: %b%n",
+                        rs.getInt("id"),
+                        rs.getString("name"),
+                        rs.getDouble("age"),
+                        rs.getBigDecimal("salary"),
+                        rs.getTimestamp("created_at"),
+                        rs.getBoolean("is_active")).trim().equals("ID: 1, Name: Alice, Age: 25.50, Salary: 12345.6789, CreatedAt: 2020-01-05 23:50:50.0, Active: true");
+            rs.next();
+            assert String.format("ID: %d, Name: %s, Age: %.2f, Salary: %s, CreatedAt: %s, Active: %b%n",
+                    rs.getInt("id"),
+                    rs.getString("name"),
+                    rs.getDouble("age"),
+                    rs.getBigDecimal("salary"),
+                    rs.getTimestamp("created_at"),
+                    rs.getBoolean("is_active")).trim().equals("ID: 2, Name: Bob, Age: 30.80, Salary: 98765.4321, CreatedAt: 2025-03-05 06:33:28.0, Active: true");
+            boolean hasMoreRows = rs.next();
+            assert !hasMoreRows;
+        }
+
         pgConn1.close();
     }
 }

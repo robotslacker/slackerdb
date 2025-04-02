@@ -7,6 +7,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,8 +34,7 @@ public class DBSession {
     public final Map<String, ParsedStatement> parsedStatements = new HashMap<>();
     // 标记客户端是否请求了描述信息（如果请求需要返回RowDescription, 反之不返回)
     public boolean hasDescribeRequest = false;
-    // 记录当前COPY操作的表名
-    public String copyTableName = "";
+
     // 记录当前COPY的文件格式
     public String copyTableFormat = "";
     // 记录当前COPY的Appender
@@ -44,6 +44,8 @@ public class DBSession {
     // 上次由于不完整而没有复制的Copy剩余命令
     public byte[] copyLastRemained = new byte[0];
     public long copyAffectedRows = 0;
+    // Binary模式进行Copy的时候需要知道目标表结构
+    public List<String> copyTableDbColumnType = new ArrayList<>();
 
     // 当前执行任务的语句
     public String executingSQL = "";
