@@ -1027,7 +1027,7 @@ public class Sanity01Test {
     }
 
     @Test
-    void testBinaryCopy() throws Exception
+    void testBinaryCopy1() throws Exception
     {
         String timeStr1 = "2020-01-05 23:50:50";
         String timeStr2 = "2025-03-05 06:33:28";
@@ -1055,7 +1055,7 @@ public class Sanity01Test {
         pgConn1.setAutoCommit(false);
 
         String sql = """
-            CREATE OR REPLACE TABLE test_binary_copy (
+            CREATE OR REPLACE TABLE test_binary_copy1 (
                 id BIGINT PRIMARY KEY,
                 name VARCHAR(50),
                 age DOUBLE PRECISION,
@@ -1068,10 +1068,10 @@ public class Sanity01Test {
 
         CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
         try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
-            copyManager.copyIn("COPY test_binary_copy FROM STDIN WITH (FORMAT BINARY)", binaryStream);
+            copyManager.copyIn("COPY test_binary_copy1 FROM STDIN WITH (FORMAT BINARY)", binaryStream);
         }
 
-        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT * FROM test_binary_copy order by id")) {
+        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT * FROM test_binary_copy1 order by id")) {
             rs.next();
             assert String.format("ID: %d, Name: %s, Age: %.2f, Salary: %s, CreatedAt: %s, Active: %b%n",
                         rs.getInt("id"),
@@ -1088,6 +1088,75 @@ public class Sanity01Test {
                     rs.getBigDecimal("salary"),
                     rs.getTimestamp("created_at"),
                     rs.getBoolean("is_active")).trim().equals("ID: 2, Name: Bob, Age: 30.80, Salary: 98765.4321, CreatedAt: 2025-03-05 06:33:28.0, Active: true");
+            boolean hasMoreRows = rs.next();
+            assert !hasMoreRows;
+        }
+
+        pgConn1.close();
+    }
+
+    @Test
+    void testBinaryCopy2() throws Exception
+    {
+        String timeStr1 = "2020-01-05 23:50:50";
+        String timeStr2 = "2025-03-05 06:33:28";
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+        List<Object[]> data = List.of(
+                new Object[]
+                        {
+                                1, "Alice", 25.5, new BigDecimal("12345.6789"),
+                                Timestamp.from(LocalDateTime.parse(timeStr1, formatter).atZone(ZoneId.of("UTC")).toInstant()),
+                                true
+                        },
+                new Object[]
+                        {
+                                2, "Bob", 30.8, new BigDecimal("98765.4321"),
+                                Timestamp.from(LocalDateTime.parse(timeStr2, formatter).atZone(ZoneId.of("UTC")).toInstant()),
+                                true
+                        }
+        );
+        byte[] binaryCopyData = DBUtil.convertPGRowToByte(data);
+
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = """
+            CREATE OR REPLACE TABLE test_binary_copy2 (
+                id BIGINT PRIMARY KEY,
+                name VARCHAR(50),
+                age DOUBLE PRECISION,
+                salary NUMERIC(10,4),
+                created_at TIMESTAMP,
+                is_active BOOLEAN
+            )
+            """;
+        pgConn1.createStatement().execute(sql);
+
+        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
+        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
+            copyManager.copyIn("COPY test_binary_copy2 (id, name, age) FROM STDIN WITH (FORMAT BINARY)", binaryStream);
+        }
+
+        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT * FROM test_binary_copy2 order by id")) {
+            rs.next();
+            assert String.format("ID: %d, Name: %s, Age: %.2f, Salary: %s, CreatedAt: %s, Active: %b%n",
+                    rs.getInt("id"),
+                    rs.getString("name"),
+                    rs.getDouble("age"),
+                    rs.getBigDecimal("salary"),
+                    rs.getTimestamp("created_at"),
+                    rs.getBoolean("is_active")).trim().equals("ID: 1, Name: Alice, Age: 25.50, Salary: null, CreatedAt: null, Active: false");
+            rs.next();
+            assert String.format("ID: %d, Name: %s, Age: %.2f, Salary: %s, CreatedAt: %s, Active: %b%n",
+                    rs.getInt("id"),
+                    rs.getString("name"),
+                    rs.getDouble("age"),
+                    rs.getBigDecimal("salary"),
+                    rs.getTimestamp("created_at"),
+                    rs.getBoolean("is_active")).trim().equals("ID: 2, Name: Bob, Age: 30.80, Salary: null, CreatedAt: null, Active: false");
             boolean hasMoreRows = rs.next();
             assert !hasMoreRows;
         }

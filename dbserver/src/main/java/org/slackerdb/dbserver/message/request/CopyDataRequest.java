@@ -156,57 +156,62 @@ public class CopyDataRequest extends PostgresRequest {
                 // 导入二进制数据
                 List<Object[]> data = DBUtil.convertPGByteToRow(copyData);
                 DuckDBAppender duckDBAppender = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
+                List<Integer> copyTableDbColumnMapPos = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
                 for (Object[] row : data) {
                     duckDBAppender.beginRow();
-                    for (int i=0; i<row.length; i++)
-                    {
-                        // 数据内容
-                        Object cell = row[i];
-                        // 数据类型
-                        String columnType = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnType.get(i);
+                    for (Integer nPos : copyTableDbColumnMapPos) {
+                        if (nPos == -1) {
+                            duckDBAppender.append((String) null);
+                        } else
+                        {
+                            // 数据内容
+                            Object cell = row[nPos];
+                            // 数据类型
+                            String columnType = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnType.get(nPos);
 
-                        if (columnType.equals("BIGINT")) {
-                            duckDBAppender.appendBigDecimal(BigDecimal.valueOf(Utils.bytesToInt64((byte[]) cell)));
-                        }
-                        else if (columnType.equals("VARCHAR"))
-                        {
-                            duckDBAppender.append(new String((byte[])cell));
-                        }
-                        else if (columnType.equals("DOUBLE"))
-                        {
-                            duckDBAppender.append(Utils.byteToDouble((byte [])cell));
-                        }
-                        else if (columnType.startsWith("DECIMAL"))
-                        {
-                            duckDBAppender.appendBigDecimal(DBUtil.convertPGByteToBigDecimal((byte [])cell));
-                        }
-                        else if (columnType.equals("TIMESTAMP"))
-                        {
-                            long epochMilli = Utils.bytesToInt64((byte[]) cell) / 1000;
-                            duckDBAppender.appendLocalDateTime(Instant.ofEpochMilli(epochMilli).atZone(ZoneId.of("UTC")).toLocalDateTime());
-                        }
-                        else if (columnType.equals("BOOLEAN"))
-                        {
-                            duckDBAppender.append(((byte[]) cell)[0] == 0x01);
-                        }
-                        else
-                        {
-                            ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
-                            errorResponse.setErrorResponse("SLACKER-0099",
-                                    "Binary Format error (column type not support) . " + columnType);
-                            errorResponse.process(ctx, request, out);
+                            if (columnType.equals("BIGINT")) {
+                                duckDBAppender.appendBigDecimal(BigDecimal.valueOf(Utils.bytesToInt64((byte[]) cell)));
+                            }
+                            else if (columnType.equals("VARCHAR"))
+                            {
+                                duckDBAppender.append(new String((byte[])cell));
+                            }
+                            else if (columnType.equals("DOUBLE"))
+                            {
+                                duckDBAppender.append(Utils.byteToDouble((byte [])cell));
+                            }
+                            else if (columnType.startsWith("DECIMAL"))
+                            {
+                                duckDBAppender.appendBigDecimal(DBUtil.convertPGByteToBigDecimal((byte [])cell));
+                            }
+                            else if (columnType.equals("TIMESTAMP"))
+                            {
+                                long epochMilli = Utils.bytesToInt64((byte[]) cell) / 1000;
+                                duckDBAppender.appendLocalDateTime(Instant.ofEpochMilli(epochMilli).atZone(ZoneId.of("UTC")).toLocalDateTime());
+                            }
+                            else if (columnType.equals("BOOLEAN"))
+                            {
+                                duckDBAppender.append(((byte[]) cell)[0] == 0x01);
+                            }
+                            else
+                            {
+                                ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                                errorResponse.setErrorResponse("SLACKER-0099",
+                                        "Binary Format error (column type not support) . " + columnType);
+                                errorResponse.process(ctx, request, out);
 
-                            // 发送并刷新返回消息
-                            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+                                // 发送并刷新返回消息
+                                PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
 
-                            // 发送ReadyForQuery
-                            ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
-                            readyForQuery.process(ctx, request, out);
+                                // 发送ReadyForQuery
+                                ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                                readyForQuery.process(ctx, request, out);
 
-                            // 发送并刷新返回消息
-                            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+                                // 发送并刷新返回消息
+                                PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
 
-                            return;
+                                return;
+                            }
                         }
                     }
                     duckDBAppender.endRow();
