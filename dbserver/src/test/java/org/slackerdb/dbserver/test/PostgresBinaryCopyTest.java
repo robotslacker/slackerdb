@@ -4,6 +4,7 @@ package org.slackerdb.dbserver.test;
 import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
 import org.slackerdb.common.utils.DBUtil;
+import org.slackerdb.common.utils.Utils;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -27,18 +28,28 @@ public class PostgresBinaryCopyTest {
     private static final String PASSWORD = "postgres";
 
     public static void main(String[] args) throws Exception {
-        try (Connection conn = getConnection()) {
-            createTestTable(conn); // 创建测试表
-            List<Object[]> data = List.of(
-                    new Object[]{1, "Alice", 25.5, new BigDecimal("12345.6789"), Timestamp.from(Instant.now()), true},
-                    new Object[]{2, "Bob", 30.8, new BigDecimal("98765.4321"), Timestamp.from(Instant.now()), false}
-            );
+        List<Object[]> data = List.of(
+                new Object[]{1, "Alice", 25.5, new BigDecimal("12345.6789"), Timestamp.from(Instant.now()), true},
+                new Object[]{2, "Bob", 30.8, new BigDecimal("98765.4321"), Timestamp.from(Instant.now()), false}
+        );
+        byte[] xxx = DBUtil.convertPGRowToByte(data);
+        System.out.println(Utils.bytesToHex(xxx));
 
-            byte[] binaryCopyData = generateBinaryCopyData(data);
-            copyBinaryToPostgres(conn, binaryCopyData);
-
-            queryAndPrintResults(conn); // 查询测试
-        }
+        List<Object[]> data2 = DBUtil.convertPGByteToRow(xxx);
+        byte[] yyy = DBUtil.convertPGRowToByte(data2);
+        System.out.println(Utils.bytesToHex(yyy));
+//        try (Connection conn = getConnection()) {
+//            createTestTable(conn); // 创建测试表
+//            List<Object[]> data = List.of(
+//                    new Object[]{1, "Alice", 25.5, new BigDecimal("12345.6789"), Timestamp.from(Instant.now()), true},
+//                    new Object[]{2, "Bob", 30.8, new BigDecimal("98765.4321"), Timestamp.from(Instant.now()), false}
+//            );
+//
+//            byte[] binaryCopyData = generateBinaryCopyData(data);
+//            copyBinaryToPostgres(conn, binaryCopyData);
+//
+//            queryAndPrintResults(conn); // 查询测试
+//        }
     }
 
     // **1️⃣ 连接 PostgreSQL**

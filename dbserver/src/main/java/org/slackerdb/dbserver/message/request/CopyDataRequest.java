@@ -2,6 +2,7 @@ package org.slackerdb.dbserver.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.duckdb.DuckDBAppender;
+import org.slackerdb.common.utils.DBUtil;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.ErrorResponse;
 import org.slackerdb.dbserver.message.PostgresMessage;
@@ -111,9 +112,9 @@ public class CopyDataRequest extends PostgresRequest {
 
                 // 解析CSV内容
                 Iterable<CSVRecord> parsedRecords = CSVFormat.DEFAULT.parse(new StringReader(sourceStr));
+                DuckDBAppender duckDBAppender = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
+                List<Integer> copyTableDbColumnMapPos = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
                 for (CSVRecord csvRecord : parsedRecords) {
-                    DuckDBAppender duckDBAppender = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
-                    List<Integer> copyTableDbColumnMapPos = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
                     if (csvRecord.size() != copyTableDbColumnMapPos.size()) {
                         // CSV字节数量不对等
                         ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
@@ -146,7 +147,22 @@ public class CopyDataRequest extends PostgresRequest {
                 }
             }
             else if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat.equalsIgnoreCase("BINARY")) {
-                // TODO
+                // 导入二进制数据
+                List<Object[]> data = DBUtil.convertPGByteToRow(copyData);
+                DuckDBAppender duckDBAppender = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
+                List<Integer> copyTableDbColumnMapPos = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
+                for (Object[] row : data) {
+                    duckDBAppender.beginRow();
+                    for (Integer nPos : copyTableDbColumnMapPos) {
+                        if (nPos == -1) {
+                            duckDBAppender.append((String) null);
+                        } else {
+                            duckDBAppender.append((byte[]) row[nPos]);
+                        }
+                    }
+                    duckDBAppender.endRow();
+                    nCopiedRows++;
+                }
             }
             else {
                 // 不认识的查询语句， 生成一个错误消息

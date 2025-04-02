@@ -3,6 +3,7 @@ package org.slackerdb.common.utils;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.math.MathContext;
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -173,7 +174,7 @@ public class DBUtil {
     public static byte[] convertPGRowToByte(List<Object[]> data) throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
 
-        // 写入 PostgreSQL BINARY COPY 头
+        // 写入 PostgresSQL BINARY COPY 头
         output.write(new byte[]{0x50, 0x47, 0x43, 0x4F, 0x50, 0x59, 0x0A, (byte) 0xFF, 0x0D, 0x0A, 0x00});
         output.write(Utils.int32ToBytes(0)); // Flags
         output.write(Utils.int32ToBytes(0)); // Header extension area
@@ -205,8 +206,11 @@ public class DBUtil {
                 } else if (value instanceof Boolean) {
                     output.write(Utils.int32ToBytes(1));
                     output.write((Boolean) value ? new byte[]{0x01} : new byte[]{0x00});
-                } else {
-                    throw new IllegalArgumentException("Unsupported type: " + value.getClass());
+                } else if (value instanceof byte[]) {
+                    output.write(Utils.int32ToBytes(((byte[]) value).length));
+                    output.write((byte[])value);
+                }else {
+                    throw new IllegalArgumentException("Unsupported type: " + value.getClass().getSimpleName());
                 }
             }
         }
@@ -217,9 +221,44 @@ public class DBUtil {
         return output.toByteArray();
     }
 
-    public static List<Object> convertPGByteToRow(byte[] buf)
+    public static List<Object[]> convertPGByteToRow(byte[] buf) throws BufferUnderflowException
     {
-        // TODO
-        return null;
+        // 返回的结果中并不可能知道数据类型，需要根据目标表的数据结构进行隐式插入
+        List<Object[]> ret = new ArrayList<>();
+        ByteBuffer buffer = ByteBuffer.wrap(buf);
+
+        if (buffer.remaining() >= 19) {
+            buffer.position(buffer.position() + 19);
+        } else {
+            // 处理剩余字节不足的情况
+            throw new BufferUnderflowException();
+        }
+        while (true)
+        {
+            short colCount = buffer.getShort();
+            if (colCount == -1)
+            {
+                // 读取到COPY的末尾，退出
+                break;
+            }
+            Object[] rows = new Object[colCount];
+            for (int i=0; i<colCount; i++)
+            {
+                // 每个列都是一个长度和内容构建
+                int colLength = buffer.getInt();
+                if (colLength == -1)
+                {
+                    rows[i] = null;
+                }
+                else
+                {
+                    byte[] cellValue = new byte[colLength];
+                    buffer.get(cellValue);
+                    rows[i] = cellValue;
+                }
+            }
+            ret.add(rows);
+        }
+        return ret;
     }
 }
