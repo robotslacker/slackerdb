@@ -50,7 +50,7 @@ public class Sanity02Test {
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
 
-        pgConn1.createStatement().execute("create table testSQLHistory(id int)");
+        pgConn1.createStatement().execute("create or replace table testSQLHistory(id int)");
         for (int i=0; i<200;i++)
         {
             pgConn1.createStatement().execute("Insert into testSQLHistory values(" + i + ")");
@@ -70,6 +70,56 @@ public class Sanity02Test {
         }
         rs.close();
         pgConn1.close();
+    }
+
+    @Test
+    void testReadOnlyConnection() throws SQLException
+    {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem?readOnly=true";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        try {
+            pgConn1.createStatement().execute("create or replace table testReadOnlyConnection(id int)");
+            assert false;
+        }
+        catch (SQLException sqlException)
+        {
+            assert sqlException.getMessage().contains("read-only");
+        }
+
+        pgConn1.close();
+    }
+
+    @Test
+    void testConnectionMetadata() throws SQLException
+    {
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.createStatement().execute("Create or replace Table testConnectionMetadata(num int)");
+        ResultSet rs = pgConn1.getMetaData().getCatalogs();
+        while (rs.next())
+        {
+            for (int i=0; i<rs.getMetaData().getColumnCount();i++) {
+                System.out.println(rs.getMetaData().getColumnName(i+1) + ": " + rs.getString(i+1));
+            }
+        }
+        rs.close();
+
+        rs = pgConn1.getMetaData().getSchemas();
+        while (rs.next())
+        {
+            for (int i=0; i<rs.getMetaData().getColumnCount();i++) {
+                System.out.println(rs.getMetaData().getColumnName(i+1) + ": " + rs.getString(i+1));
+            }
+        }
+        rs.close();
+
+
     }
 }
 

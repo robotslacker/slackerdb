@@ -39,7 +39,7 @@ public class SlackerCatalog {
                 as
                 select oid, schema_name as nspname, 0 as nspowner, null as nspacl, null as description
                 FROM   duckdb_schemas
-                where  database_name = getvariable('current_database')
+                where  database_name = current_catalog()
                 and    schema_name not in ('duck_catalog', 'SCHEMA_NAME_UPPER_FOR_EXT', 'pg_catalog')""");
         fakeCatalogDDLList.add("""
                 CREATE or replace MACRO duck_catalog.pg_total_relation_size(a) AS
