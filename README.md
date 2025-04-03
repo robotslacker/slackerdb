@@ -6,20 +6,15 @@
 This program implements the JDBC V3 protocol of PG.  
 The SQL engine and storage engine behind it are both DuckDB.
 
-Slackerdb is currently has three parts:  
-* A proxy program, used to forward PG protocol to remote.  
-1.  PG protocol proxy, so that you can connect to multi db services distributed on same or different machines through a unified service port.
-2.  If necessary, you can also use this proxy to forward ordinary PG requests, which is no different.
-3.  Remote user/password/serviceName can different with proxy if you think this is what your want.
-* A plsql parser(experimental version), you can write plsql code.
-1.  Support Begin .... Exception ... End;
-2.  Support Loop, For;
-3.  Support Declare cursor, fetch;
-4.  Support variable. let or select ... into ...;
-5.  If necessary, you can also use this parser to execute plsql against other database.
-* A service program, used to implement PG communication protocol based on DuckDB.  
-1.  make we can view and update duckdb data from the process outside.
-2.  make we can view and update duckdb data from the network.
+What we can do:
+
+With this program, you can access DuckDB services using multi-process (not just multi-threaded) concurrency, similar to interacting with a non-embedded database application.  
+With this program, you can access DuckDB services over a network, just like accessing a database deployed on a remote server.  
+You can use standard PostgreSQL clients (including JDBC, ODBC, Python, etc.) to execute nearly all DuckDB syntax, operating it in the same way as you would a PostgreSQL database.  
+
+You can use COPY-compatible syntax to rapidly ingest data over the network.  
+
+We provide a proxy service that allows launching multiple database instances on the same network port, functioning similarly to containerized databases.  
 
 ## Usage
 ### Build from source:
@@ -33,19 +28,11 @@ Slackerdb is currently has three parts:
 ```
 ### Start db server
 ``` 
-    java -jar dbserver/target/slackerdb-dbserver-0.1.1-standalone.jar start
-```
-### Start db proxy
-``` 
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.1-standalone.jar start
+    java -jar dbserver/target/slackerdb-dbserver-0.1.3-standalone.jar start
 ```
 ### Stop db server
 ``` 
-    java -jar dbserver/target/slackerdb-dbserver-0.1.1-standalone.jar stop
-```
-### Stop db proxy
-``` 
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.1-standalone.jar stop
+    java -jar dbserver/target/slackerdb-dbserver-0.1.3-standalone.jar stop
 ```
 
 ### Server configuration file template
@@ -61,8 +48,6 @@ data_dir=:memory:
 # Disk mode:   If not set, it defaults to the same as data_dir.
 # Memory mode: If not set, it defaults to system temporary setting.
 # It is strongly recommended to use a high-performance disk as a temporary directory.
-# If memory resources are sufficient, you can also configure memory_limit to -1.
-# -1 means all temporary files will exist only in the memory (only valid for memory mode)
 temp_dir=
 
 # Location of system extension plugin files.
@@ -77,7 +62,7 @@ pid=
 
 # The location where the log file is saved
 # CONSOLE means output to the console, and others mean output to a file
-# Multiple logs can be output at the same time, separated by commas, for example, console, logs/xx.log
+# Multiple logs can be output at the same time, separated by commas, for example, “console, logs/xx.log”
 log=CONSOLE,logs/slackerdb.log
 
 # Log level
@@ -111,22 +96,30 @@ max_workers=
 # Best Practice: Aim for 5-10 GB memory per thread
 threads=
 
-# Maximum memory size used
+# Maximum memory size used. Format:  ....(K|M|G)
 # Default is 60% of available memory
+# If memory resources are sufficient, you can also configure memory_limit to -1.
+# -1 means all temporary files will exist only in the memory (only valid for memory mode)
 memory_limit=
 
 # Initialization script. Maybe file or directory.
 # If it is a file, the file will be used.
 # If it is a directory, all files with the .sql suffix in the directory will be used.
-# The script(s in the directory) will be executed only when the in-memory database or file database is opened for the first time.
-init_schema=
+# The script(s in the directory) will be executed only when the in-memory database or file database is opened first time.
+init_script=
+
+# Startup script. Maybe file or directory.
+# If it is a file, the file will be used.
+# If it is a directory, all files with the .sql suffix in the directory will be used.
+# The script(s in the directory) will be executed every time when database is opened.
+startup_script=
 
 # locale. The default language set of the program. If not set, it will be marked as the system default
 locale=
 
 # sql_history.  used to enable or disable the SQL history feature.
 # Possible values:
-# - ON: Enables SQL history tracking.
+# - ON:  Enables SQL history tracking.
 # - OFF: Disables SQL history tracking (default).
 # When set to OFF (default), SQL execution history will not be recorded.
 sql_history=OFF
@@ -150,8 +143,8 @@ connection_pool_maximum_lifecycle_time=900000
 # If left empty, the validation process will not start.
 # Default Value: Empty ('')
 connection_pool_validation_sql=
-
 ```
+
 Note: All parameters are optional.   
 You can keep only the parameters you need to modify.   
 For parameters that are not configured, means default values  will be used.

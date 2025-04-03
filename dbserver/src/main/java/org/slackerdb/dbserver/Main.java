@@ -1,6 +1,4 @@
 package org.slackerdb.dbserver;
-
-
 /*
     Main
 
@@ -48,6 +46,7 @@ public class Main {
         System.out.println("Parameters:");
         System.out.println("  --conf              Configuration file.");
         System.out.println("  --pid               process pid file, default is none.");
+        System.out.println("  --access_mode       database mode, READ_ONLY|READ_WRITE, default is READ_WRITE.");
         System.out.println("  --locale            default language of the program.");
         System.out.println("  --log_level         log level, default is INFO.");
         System.out.println("  --log               log file, default is CONSOLE.");

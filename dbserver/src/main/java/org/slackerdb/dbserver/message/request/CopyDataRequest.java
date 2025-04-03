@@ -169,7 +169,11 @@ public class CopyDataRequest extends PostgresRequest {
                             // 数据类型
                             String columnType = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnType.get(nPos);
 
-                            if (columnType.equals("BIGINT")) {
+                            if (cell == null)
+                            {
+                                duckDBAppender.append((String)null);
+                            }
+                            else if (columnType.equals("BIGINT")) {
                                 duckDBAppender.appendBigDecimal(BigDecimal.valueOf(Utils.bytesToInt64((byte[]) cell)));
                             }
                             else if (columnType.equals("VARCHAR"))
