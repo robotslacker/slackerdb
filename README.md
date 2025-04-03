@@ -6,7 +6,7 @@
 This program implements the JDBC V3 protocol of PG.  
 The SQL engine and storage engine behind it are both DuckDB.
 
-What we can do:
+### What we can do:
 
 With this program, you can access DuckDB services using multi-process (not just multi-threaded) concurrency, similar to interacting with a non-embedded database application.  
 With this program, you can access DuckDB services over a network, just like accessing a database deployed on a remote server.  
