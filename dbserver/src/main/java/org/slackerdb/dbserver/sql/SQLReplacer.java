@@ -149,6 +149,11 @@ public class SQLReplacer {
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
+                        "::regproc", "", false,true
+                )
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
                         "SHOW search_path",
                         "SELECT current_setting('search_path') as search_path", false,
                         true
@@ -187,7 +192,7 @@ public class SQLReplacer {
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
-                        "(.*)pg_catalog.pg_get_expr\\(ad\\.adbin, ad\\.adrelid, true\\)(.*)","$1null$2",true,false
+                        "(.*)pg_catalog.pg_get_expr\\(.*?\\)(.*)","$1null$2",true,false
                 )
         );
         SQLReplaceItems.add(

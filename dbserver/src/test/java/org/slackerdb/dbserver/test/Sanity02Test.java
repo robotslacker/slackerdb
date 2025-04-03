@@ -3,10 +3,14 @@ package org.slackerdb.dbserver.test;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.dbserver.server.DBInstance;
 import java.sql.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.TimeZone;
 
 public class Sanity02Test {
@@ -100,24 +104,83 @@ public class Sanity02Test {
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
 
-        pgConn1.createStatement().execute("Create or replace Table testConnectionMetadata(num int)");
+        pgConn1.createStatement().execute("ATTACH ':memory:' AS newdb1");
+        pgConn1.createStatement().execute("ATTACH ':memory:' AS newdb2");
+        pgConn1.commit();
+        pgConn1.createStatement().execute("USE newdb1; CREATE SCHEMA schema1;");pgConn1.commit();
+        pgConn1.createStatement().execute("USE newdb1; CREATE SCHEMA schema2;");pgConn1.commit();
+        pgConn1.createStatement().execute("USE newdb2; CREATE SCHEMA schema3;");pgConn1.commit();
+        pgConn1.createStatement().execute("USE newdb2; CREATE SCHEMA schema4;");pgConn1.commit();
+        pgConn1.createStatement().execute("USE memory; CREATE SCHEMA schema5;");pgConn1.commit();
+        pgConn1.createStatement().execute("USE memory; CREATE SCHEMA schema6;");pgConn1.commit();
+
+        // getCatalogs
+        pgConn1.createStatement().execute("USE memory.schema5; Create or replace Table tab1(num int)");
+        pgConn1.commit();
+
         ResultSet rs = pgConn1.getMetaData().getCatalogs();
+        List<String> catalogsInfo = new ArrayList<>();
         while (rs.next())
         {
             for (int i=0; i<rs.getMetaData().getColumnCount();i++) {
-                System.out.println(rs.getMetaData().getColumnName(i+1) + ": " + rs.getString(i+1));
+                catalogsInfo.add(rs.getMetaData().getColumnName(i+1) + ": " + rs.getString(i+1));
             }
         }
         rs.close();
+        Collections.sort(catalogsInfo);
+        assert catalogsInfo.toString().equals("[TABLE_CAT: mem, TABLE_CAT: newdb1, TABLE_CAT: newdb2]");
 
+        // getSchemas
+        List<String> schemasInfo = new ArrayList<>();
+        pgConn1.createStatement().execute("USE newdb1");
         rs = pgConn1.getMetaData().getSchemas();
         while (rs.next())
         {
             for (int i=0; i<rs.getMetaData().getColumnCount();i++) {
-                System.out.println(rs.getMetaData().getColumnName(i+1) + ": " + rs.getString(i+1));
+                schemasInfo.add(rs.getMetaData().getColumnName(i+1) + ": " + rs.getString(i+1));
             }
         }
         rs.close();
+        Collections.sort(schemasInfo);
+        assert schemasInfo.toString().equals("[TABLE_CATALOG: null, TABLE_CATALOG: null, TABLE_SCHEM: schema1, TABLE_SCHEM: schema2]");
+
+        // getTables
+        List<String> tablesInfo = new ArrayList<>();
+        pgConn1.createStatement().execute("USE memory.schema5");
+        rs = pgConn1.getMetaData().getTables("memory", "schema5", "%", new String[]{"TABLE"});
+        while (rs.next())
+        {
+            for (int i=0; i<rs.getMetaData().getColumnCount();i++) {
+                tablesInfo.add(rs.getMetaData().getColumnName(i+1) + ": " + rs.getString(i+1));
+            }
+        }
+        rs.close();
+        Collections.sort(tablesInfo);
+        assert tablesInfo.toString().equals("[REF_GENERATION: , REMARKS: null, SELF_REFERENCING_COL_NAME: , TABLE_CAT: null, TABLE_NAME: tab1, TABLE_SCHEM: schema5, TABLE_TYPE: TABLE, TYPE_CAT: , TYPE_NAME: , TYPE_SCHEM: ]");
+
+        // getColumns
+        List<String> columnsInfo = new ArrayList<>();
+        pgConn1.createStatement().execute("USE memory.schema5");
+        rs = pgConn1.getMetaData().getColumns("memory", "schema5", "%", "%");
+        while (rs.next())
+        {
+            for (int i=0; i<rs.getMetaData().getColumnCount();i++) {
+                columnsInfo.add(rs.getMetaData().getColumnName(i+1) + ": " + rs.getString(i+1));
+            }
+        }
+        rs.close();
+        Collections.sort(columnsInfo);
+//        System.out.println(columnsInfo.toString());
+////        assert tablesInfo.toString().equals("[REF_GENERATION: , REMARKS: null, SELF_REFERENCING_COL_NAME: , TABLE_CAT: null, TABLE_NAME: tab1, TABLE_SCHEM: schema5, TABLE_TYPE: TABLE, TYPE_CAT: , TYPE_NAME: , TYPE_SCHEM: ]");
+//
+//        try {
+//            Thread.sleep(1000 * 1000);
+//        }
+//        catch (InterruptedException ignored) {}
+//
+        // getIndexInfo
+        // getColumns
+        // getPrimaryKeys
 
 
     }

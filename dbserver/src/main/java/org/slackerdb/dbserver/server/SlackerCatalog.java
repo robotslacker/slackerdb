@@ -35,13 +35,6 @@ public class SlackerCatalog {
                     description text
                 )""");
         fakeCatalogDDLList.add("""
-                create or replace view duck_catalog.pg_namespace
-                as
-                select oid, schema_name as nspname, 0 as nspowner, null as nspacl, null as description
-                FROM   duckdb_schemas
-                where  database_name = current_catalog()
-                and    schema_name not in ('duck_catalog', 'SCHEMA_NAME_UPPER_FOR_EXT', 'pg_catalog')""");
-        fakeCatalogDDLList.add("""
                 CREATE or replace MACRO duck_catalog.pg_total_relation_size(a) AS
                 (
                 	select 	estimated_size
@@ -59,16 +52,24 @@ public class SlackerCatalog {
                 	and 	database_name = getvariable('current_database')
                 )
                 """);
-        fakeCatalogDDLList.add("create or replace view duck_catalog.pg_database \n" +
-                " as\n" +
+        fakeCatalogDDLList.add("create or replace view duck_catalog.pg_database " +
+                " as" +
                 " select oid, oid as datlastsysoid, " +
                 "        case when datname='memory' then '" + pDbInstance.serverConfiguration.getData().toLowerCase() + "' else datname end as datname," +
                 "        0 as dattablespace, " +
                 "   null as datacl, false as datistemplate, true as datallowconn," +
                 "   'en_US.utf8' as datcollate,'en_US.utf8' as datctype, -1 as datconnlimit," +
-                "  6 as encoding,   \n" +
-                " FROM \tpg_catalog.pg_database\n" +
+                "  6 as encoding,   " +
+                " FROM  pg_catalog.pg_database" +
                 " where datname not in ('system', 'temp')");
+        fakeCatalogDDLList.add("""
+                create or replace view duck_catalog.pg_namespace
+                as
+                select oid, schema_name as nspname, 0 as nspowner, null as nspacl, null as description
+                FROM   duckdb_schemas
+                where  database_name = current_catalog()
+                and    schema_name not in ('duck_catalog', 'SCHEMA_NAME_UPPER_FOR_EXT', 'pg_catalog')
+                """);
         fakeCatalogDDLList.add("""
                 create or replace table duck_catalog.pg_proc
                 (
@@ -125,10 +126,9 @@ public class SlackerCatalog {
                 	inhseqno    int
                 )
                 """);
-        fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_get_userbyid(a) AS (select 'system')");
-        fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_encoding_to_char(a) AS (select 'UTF8')");
-        fakeCatalogDDLList.add("CREATE or replace MACRO duck_catalog.pg_tablespace_location(a) AS (select '')");
-
+        fakeCatalogDDLList.add("CREATE OR REPLACE MACRO duck_catalog.pg_get_userbyid(a) AS (select 'system')");
+        fakeCatalogDDLList.add("CREATE OR REPLACE MACRO duck_catalog.pg_encoding_to_char(a) AS (select 'UTF8')");
+        fakeCatalogDDLList.add("CREATE OR REPLACE MACRO duck_catalog.pg_tablespace_location(a) AS (select '')");
         Statement stmt = conn.createStatement();
         for (String sql : fakeCatalogDDLList)
         {
