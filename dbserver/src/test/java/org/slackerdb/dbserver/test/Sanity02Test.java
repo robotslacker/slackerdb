@@ -115,7 +115,7 @@ public class Sanity02Test {
         pgConn1.createStatement().execute("USE memory; CREATE SCHEMA schema6;");pgConn1.commit();
 
         // getCatalogs
-        pgConn1.createStatement().execute("USE memory.schema5; Create or replace Table tab1(num int)");
+        pgConn1.createStatement().execute("USE memory.schema5; Create or replace Table tab1(col1 int,col2 bigint, col3 double, col4 varchar)");
         pgConn1.commit();
 
         ResultSet rs = pgConn1.getMetaData().getCatalogs();
@@ -164,25 +164,21 @@ public class Sanity02Test {
         rs = pgConn1.getMetaData().getColumns("memory", "schema5", "%", "%");
         while (rs.next())
         {
+            String columnInfo = "";
             for (int i=0; i<rs.getMetaData().getColumnCount();i++) {
-                columnsInfo.add(rs.getMetaData().getColumnName(i+1) + ": " + rs.getString(i+1));
+                columnInfo = columnInfo +  rs.getMetaData().getColumnName(i+1) + ": " + rs.getString(i+1) + ",";
             }
+            columnsInfo.add(columnInfo);
         }
         rs.close();
         Collections.sort(columnsInfo);
-//        System.out.println(columnsInfo.toString());
-////        assert tablesInfo.toString().equals("[REF_GENERATION: , REMARKS: null, SELF_REFERENCING_COL_NAME: , TABLE_CAT: null, TABLE_NAME: tab1, TABLE_SCHEM: schema5, TABLE_TYPE: TABLE, TYPE_CAT: , TYPE_NAME: , TYPE_SCHEM: ]");
-//
-//        try {
-//            Thread.sleep(1000 * 1000);
-//        }
-//        catch (InterruptedException ignored) {}
-//
+        assert columnsInfo.get(0).equals("TABLE_CAT: null,TABLE_SCHEM: schema5,TABLE_NAME: tab1,COLUMN_NAME: col1,DATA_TYPE: 1111,TYPE_NAME: null,COLUMN_SIZE: 2147483647,BUFFER_LENGTH: null,DECIMAL_DIGITS: 0,NUM_PREC_RADIX: 10,NULLABLE: 1,REMARKS: null,COLUMN_DEF: null,SQL_DATA_TYPE: null,SQL_DATETIME_SUB: null,CHAR_OCTET_LENGTH: 2147483647,ORDINAL_POSITION: 1,IS_NULLABLE: YES,SCOPE_CATALOG: null,SCOPE_SCHEMA: null,SCOPE_TABLE: null,SOURCE_DATA_TYPE: null,IS_AUTOINCREMENT: NO,IS_GENERATEDCOLUMN: NO,");
+        assert columnsInfo.get(1).equals("TABLE_CAT: null,TABLE_SCHEM: schema5,TABLE_NAME: tab1,COLUMN_NAME: col2,DATA_TYPE: 1111,TYPE_NAME: null,COLUMN_SIZE: 2147483647,BUFFER_LENGTH: null,DECIMAL_DIGITS: 0,NUM_PREC_RADIX: 10,NULLABLE: 1,REMARKS: null,COLUMN_DEF: null,SQL_DATA_TYPE: null,SQL_DATETIME_SUB: null,CHAR_OCTET_LENGTH: 2147483647,ORDINAL_POSITION: 2,IS_NULLABLE: YES,SCOPE_CATALOG: null,SCOPE_SCHEMA: null,SCOPE_TABLE: null,SOURCE_DATA_TYPE: null,IS_AUTOINCREMENT: NO,IS_GENERATEDCOLUMN: NO,");
+        assert columnsInfo.get(2).equals("TABLE_CAT: null,TABLE_SCHEM: schema5,TABLE_NAME: tab1,COLUMN_NAME: col3,DATA_TYPE: 4,TYPE_NAME: int4,COLUMN_SIZE: 10,BUFFER_LENGTH: null,DECIMAL_DIGITS: 0,NUM_PREC_RADIX: 10,NULLABLE: 1,REMARKS: null,COLUMN_DEF: null,SQL_DATA_TYPE: null,SQL_DATETIME_SUB: null,CHAR_OCTET_LENGTH: 10,ORDINAL_POSITION: 3,IS_NULLABLE: YES,SCOPE_CATALOG: null,SCOPE_SCHEMA: null,SCOPE_TABLE: null,SOURCE_DATA_TYPE: null,IS_AUTOINCREMENT: NO,IS_GENERATEDCOLUMN: NO,");
+        assert columnsInfo.get(3).equals("TABLE_CAT: null,TABLE_SCHEM: schema5,TABLE_NAME: tab1,COLUMN_NAME: col4,DATA_TYPE: 12,TYPE_NAME: text,COLUMN_SIZE: 2147483647,BUFFER_LENGTH: null,DECIMAL_DIGITS: 0,NUM_PREC_RADIX: 10,NULLABLE: 1,REMARKS: null,COLUMN_DEF: null,SQL_DATA_TYPE: null,SQL_DATETIME_SUB: null,CHAR_OCTET_LENGTH: 2147483647,ORDINAL_POSITION: 4,IS_NULLABLE: YES,SCOPE_CATALOG: null,SCOPE_SCHEMA: null,SCOPE_TABLE: null,SOURCE_DATA_TYPE: null,IS_AUTOINCREMENT: NO,IS_GENERATEDCOLUMN: NO,");
+
         // getIndexInfo
-        // getColumns
         // getPrimaryKeys
-
-
     }
 }
 

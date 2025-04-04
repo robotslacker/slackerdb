@@ -55,6 +55,21 @@ public class SQLReplacer {
         );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
+                        "pg_catalog.pg_type", catalogName + ".duck_catalog.pg_type",
+                        false, true)
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "array_upper", "array_length",
+                        false, true)
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "typinput='pg_catalog.array_in'", "false",
+                        false, true)
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
                         "pg_catalog.pg_database", catalogName + ".duck_catalog.pg_database",
                         true, true)
         );

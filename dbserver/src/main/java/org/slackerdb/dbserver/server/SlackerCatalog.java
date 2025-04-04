@@ -129,6 +129,14 @@ public class SlackerCatalog {
         fakeCatalogDDLList.add("CREATE OR REPLACE MACRO duck_catalog.pg_get_userbyid(a) AS (select 'system')");
         fakeCatalogDDLList.add("CREATE OR REPLACE MACRO duck_catalog.pg_encoding_to_char(a) AS (select 'UTF8')");
         fakeCatalogDDLList.add("CREATE OR REPLACE MACRO duck_catalog.pg_tablespace_location(a) AS (select '')");
+
+        fakeCatalogDDLList.add("CREATE OR REPLACE TABLE duck_catalog.pg_type AS (SELECT * FROM pg_catalog.pg_type)");
+        fakeCatalogDDLList.add("INSERT INTO duck_catalog.pg_type BY NAME SELECT 13 AS oid , 'int' AS typname, 548 AS typnamespace,4 AS typlen");
+        fakeCatalogDDLList.add("INSERT INTO duck_catalog.pg_type BY NAME SELECT 14 AS oid , 'bigint' AS typname, 548 AS typnamespace,8 AS typlen");
+        fakeCatalogDDLList.add("DELETE FROM duck_catalog.pg_type WHERE oid = 19");
+        fakeCatalogDDLList.add("INSERT INTO duck_catalog.pg_type BY NAME SELECT 19 AS oid , 'timestamp' AS typname, 548 AS typnamespace,8 AS typlen");
+        fakeCatalogDDLList.add("INSERT INTO duck_catalog.pg_type BY NAME SELECT 25 AS oid , 'text' AS typname, 548 AS typnamespace,65535 AS typlen");
+
         Statement stmt = conn.createStatement();
         for (String sql : fakeCatalogDDLList)
         {
