@@ -72,18 +72,19 @@ public class DBSession {
     {
         // 关闭所有连接，并释放所有资源
         // 默认close的时候要执行Commit操作
-//        for (ParsedStatement parsedStatement : parsedStatements.values())
-//        {
-//            if (parsedStatement != null) {
-//                if (parsedStatement.preparedStatement != null && !parsedStatement.preparedStatement.isClosed()) {
-//                    parsedStatement.preparedStatement.close();
-//                }
-//                if (parsedStatement.resultSet != null && !parsedStatement.resultSet.isClosed()) {
-//                    parsedStatement.resultSet.close();
-//                }
-//                parsedStatement = null;
-//            }
-//        }
+        for (ParsedStatement parsedStatement : parsedStatements.values())
+        {
+            if (parsedStatement != null) {
+                if (parsedStatement.preparedStatement != null && !parsedStatement.preparedStatement.isClosed()) {
+                    parsedStatement.preparedStatement.close();
+                }
+                if (parsedStatement.resultSet != null && !parsedStatement.resultSet.isClosed()) {
+                    parsedStatement.resultSet.close();
+                }
+            }
+        }
+        parsedStatements.clear();
+
         if (copyTableAppender != null)
         {
             copyTableAppender.close();
