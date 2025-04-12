@@ -3,6 +3,7 @@ package org.slackerdb.dbserver.server;
 import org.duckdb.DuckDBAppender;
 import org.slackerdb.dbserver.entity.ParsedStatement;
 
+import java.io.ByteArrayOutputStream;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -42,8 +43,8 @@ public class DBSession {
     // 记录这个目标表在数据库的实际列名
     public List<Integer> copyTableDbColumnMapPos;
     // 上次由于不完整而没有复制的Copy剩余命令
-    public byte[] copyLastRemained = new byte[0];
-    public long copyAffectedRows = 0;
+    public ByteArrayOutputStream copyLastRemained = new ByteArrayOutputStream();
+
     // Binary模式进行Copy的时候需要知道目标表结构
     public List<String> copyTableDbColumnType = new ArrayList<>();
 
@@ -71,17 +72,18 @@ public class DBSession {
     {
         // 关闭所有连接，并释放所有资源
         // 默认close的时候要执行Commit操作
-        for (ParsedStatement parsedStatement : parsedStatements.values())
-        {
-            if (parsedStatement != null) {
-                if (parsedStatement.preparedStatement != null && !parsedStatement.preparedStatement.isClosed()) {
-                    parsedStatement.preparedStatement.close();
-                }
-                if (parsedStatement.resultSet != null && !parsedStatement.resultSet.isClosed()) {
-                    parsedStatement.resultSet.close();
-                }
-            }
-        }
+//        for (ParsedStatement parsedStatement : parsedStatements.values())
+//        {
+//            if (parsedStatement != null) {
+//                if (parsedStatement.preparedStatement != null && !parsedStatement.preparedStatement.isClosed()) {
+//                    parsedStatement.preparedStatement.close();
+//                }
+//                if (parsedStatement.resultSet != null && !parsedStatement.resultSet.isClosed()) {
+//                    parsedStatement.resultSet.close();
+//                }
+//                parsedStatement = null;
+//            }
+//        }
         if (copyTableAppender != null)
         {
             copyTableAppender.close();

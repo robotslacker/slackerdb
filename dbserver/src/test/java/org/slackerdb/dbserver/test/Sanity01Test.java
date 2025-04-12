@@ -24,6 +24,7 @@ import java.sql.*;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
 import java.util.TimeZone;
@@ -714,7 +715,7 @@ public class Sanity01Test {
 
         {
             pgConn1.createStatement().execute("create or replace table testCopy(id int, first_name varchar(20), last_name varchar(20))");
-            String csvData = "1,John,Doe\n2,Jane,Smith"; // 示例数据
+            String csvData = "1,John,Doe\n2,Jane,Smith\n"; // 示例数据
 
             // 使用BaseConnection以便于进行COPY操作
             CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
@@ -746,7 +747,7 @@ public class Sanity01Test {
         }
         {
             pgConn1.createStatement().execute("create or replace table testCopy2(id int, first_name varchar(20), last_name varchar(20))");
-            String csvData = "1,John,Doe\n2,Jane,Smith"; // 示例数据
+            String csvData = "1,John,Doe\n2,Jane,Smith\n"; // 示例数据
 
             // 使用BaseConnection以便于进行COPY操作
             CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
@@ -788,7 +789,7 @@ public class Sanity01Test {
         pgConn1.setAutoCommit(false);
 
         pgConn1.createStatement().execute("create or replace table testCopy2(id int, first_name varchar(20), last_name varchar(20))");
-        String csvData = "1,John,Doe\n2,Jane,Smith"; // 示例数据
+        String csvData = "1,John,Doe\n2,Jane,Smith\n"; // 示例数据
 
         // 使用BaseConnection以便于进行COPY操作
         CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
@@ -1163,5 +1164,103 @@ public class Sanity01Test {
 
         pgConn1.close();
     }
+
+    @Test
+    void testBinaryCopy3() throws Exception
+    {
+        String timeStr1 = "2020-01-05 23:50:50";
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+        List<Object[]> data = new ArrayList<>();
+        for (int i=0; i<10000;i++)
+        {
+            // 传输内容要超过65K
+            Object[] row =
+                    new Object[]
+                    {
+                            i, "Alice", 25.5, new BigDecimal("12345.6789"),
+                            Timestamp.from(LocalDateTime.parse(timeStr1, formatter).atZone(ZoneId.of("UTC")).toInstant()),
+                            true
+                    };
+            data.add(row);
+        }
+        byte[] binaryCopyData = DBUtil.convertPGRowToByte(data);
+
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = """
+            CREATE OR REPLACE TABLE test_binary_copy3 (
+                id BIGINT PRIMARY KEY,
+                name VARCHAR(50),
+                age DOUBLE PRECISION,
+                salary NUMERIC(10,4),
+                created_at TIMESTAMP,
+                is_active BOOLEAN
+            )
+            """;
+        pgConn1.createStatement().execute(sql);
+
+        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
+        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
+            copyManager.copyIn("COPY test_binary_copy3 (id, name, age) FROM STDIN WITH (FORMAT BINARY)", binaryStream);
+        }
+
+        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT Count(*),Sum(id),Sum(age)*1000 FROM test_binary_copy3")) {
+            rs.next();
+            assert rs.getInt(1 ) == 10000;
+            assert rs.getInt(2 ) == 49995000;
+            assert rs.getInt(3 ) == 255000000;
+        }
+        pgConn1.close();
+    }
+
+    @Test
+    void testBinaryCopy4() throws Exception
+    {
+        List<Object[]> data = new ArrayList<>();
+        for (int i=0; i<10000;i++)
+        {
+            // 传输内容要超过65K
+            Object[] row =
+                    new Object[]
+                            {
+                                    i, "Alice", -1, "HELLO",
+                            };
+            data.add(row);
+        }
+        byte[] binaryCopyData = DBUtil.convertPGRowToByte(data);
+
+        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = """
+            CREATE OR REPLACE TABLE test_binary_copy4 (
+                id BIGINT PRIMARY KEY,
+                name VARCHAR(50),
+                age   SMALLINT,
+                title VARCHAR
+            )
+            """;
+        pgConn1.createStatement().execute(sql);
+
+        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
+        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
+            copyManager.copyIn("COPY test_binary_copy4  FROM STDIN WITH (FORMAT BINARY)", binaryStream);
+        }
+
+        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT Count(*),Sum(id),Sum(age)*1000 FROM test_binary_copy4")) {
+            rs.next();
+            assert rs.getInt(1 ) == 10000;
+            assert rs.getInt(2 ) == 49995000;
+            assert rs.getInt(3 ) == -10000000;
+        }
+        pgConn1.close();
+    }
+
 }
 

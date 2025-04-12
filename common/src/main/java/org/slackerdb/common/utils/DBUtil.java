@@ -209,7 +209,10 @@ public class DBUtil {
                 } else if (value instanceof byte[]) {
                     output.write(Utils.int32ToBytes(((byte[]) value).length));
                     output.write((byte[])value);
-                }else {
+                } else if (value instanceof Long) {
+                    output.write(Utils.int32ToBytes(8));
+                    output.write(Utils.int64ToBytes((Long) value));
+                } else {
                     throw new IllegalArgumentException("Unsupported type: " + value.getClass().getSimpleName());
                 }
             }
@@ -227,31 +230,27 @@ public class DBUtil {
         List<Object[]> ret = new ArrayList<>();
         ByteBuffer buffer = ByteBuffer.wrap(buf);
 
+        // 记录最后一次成功读取的记录位置
         if (buffer.remaining() >= 19) {
+            // 前19个字节为PG的固定格式信息，包括文件头和标志位
             buffer.position(buffer.position() + 19);
         } else {
-            // 处理剩余字节不足的情况
+            // 处理字节不足的情况
             throw new BufferUnderflowException();
         }
-        while (true)
-        {
+        while (true) {
             short colCount = buffer.getShort();
-            if (colCount == -1)
-            {
+            if (colCount == -1) {
                 // 读取到COPY的末尾，退出
                 break;
             }
             Object[] rows = new Object[colCount];
-            for (int i=0; i<colCount; i++)
-            {
+            for (int i = 0; i < colCount; i++) {
                 // 每个列都是一个长度和内容构建
                 int colLength = buffer.getInt();
-                if (colLength == -1)
-                {
+                if (colLength == -1) {
                     rows[i] = null;
-                }
-                else
-                {
+                } else {
                     byte[] cellValue = new byte[colLength];
                     buffer.get(cellValue);
                     rows[i] = cellValue;

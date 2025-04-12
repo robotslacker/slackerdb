@@ -3,7 +3,6 @@ package org.slackerdb.dbserver.test;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.dbserver.server.DBInstance;
@@ -164,11 +163,11 @@ public class Sanity02Test {
         rs = pgConn1.getMetaData().getColumns("memory", "schema5", "%", "%");
         while (rs.next())
         {
-            String columnInfo = "";
+            StringBuilder columnInfo = new StringBuilder();
             for (int i=0; i<rs.getMetaData().getColumnCount();i++) {
-                columnInfo = columnInfo +  rs.getMetaData().getColumnName(i+1) + ": " + rs.getString(i+1) + ",";
+                columnInfo.append(rs.getMetaData().getColumnName(i + 1)).append(": ").append(rs.getString(i + 1)).append(",");
             }
-            columnsInfo.add(columnInfo);
+            columnsInfo.add(columnInfo.toString());
         }
         rs.close();
         Collections.sort(columnsInfo);

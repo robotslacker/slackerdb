@@ -4,6 +4,8 @@ import io.netty.channel.ChannelHandlerContext;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVRecord;
 import org.duckdb.DuckDBAppender;
+import org.slackerdb.common.utils.DBUtil;
+import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.response.CommandComplete;
@@ -14,8 +16,11 @@ import org.slackerdb.dbserver.server.DBInstance;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.StringReader;
+import java.math.BigDecimal;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 public class CopyDoneRequest extends PostgresRequest {
@@ -40,63 +45,168 @@ public class CopyDoneRequest extends PostgresRequest {
         this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
+
         long nCopiedRows = 0;
-        try {
-            DuckDBAppender duckDBAppender = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
+        if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.size() != 0) {
+            try {
+                if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat.equalsIgnoreCase("CSV")) {
+                    String sourceStr = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.toString();
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.reset();
+                    // 解析CSV内容
+                    Iterable<CSVRecord> parsedRecords = CSVFormat.DEFAULT.parse(new StringReader(sourceStr));
+                    DuckDBAppender duckDBAppender = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
+                    List<Integer> copyTableDbColumnMapPos = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
+                    for (CSVRecord csvRecord : parsedRecords) {
+                        if (csvRecord.size() != copyTableDbColumnMapPos.size()) {
+                            // CSV字节数量不对等
+                            ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                            errorResponse.setErrorResponse("SLACKER-0099",
+                                    "CSV Format error (column size not match." +
+                                            " [" + csvRecord.size() + "] vs [" + copyTableDbColumnMapPos.size() + "])." +
+                                            " [" + csvRecord + "].");
+                            errorResponse.process(ctx, request, out);
 
-            String  sourceStr;
-            // 需要处理完成最后的数据
-            // 和上次没有解析完全的字符串要拼接起来
-            if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.length != 0)
-            {
-                sourceStr = new String(this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained);
-                List<Integer> copyTableDbColumnMapPos = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
-                Iterable<CSVRecord> parsedRecords = CSVFormat.DEFAULT.parse(new StringReader(sourceStr));
-                for (CSVRecord record : parsedRecords) {
-                    duckDBAppender.beginRow();
-                    for (Integer copyTableDbColumnMapPo : copyTableDbColumnMapPos) {
-                        if (copyTableDbColumnMapPo == -1) {
-                            duckDBAppender.append((String)null);
-                        } else {
-                            duckDBAppender.append(record.get(copyTableDbColumnMapPo));
+                            // 发送并刷新返回消息
+                            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+                            // 发送ReadyForQuery
+                            ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                            readyForQuery.process(ctx, request, out);
+
+                            // 发送并刷新返回消息
+                            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+
+                            return;
                         }
+                        duckDBAppender.beginRow();
+                        for (Integer nPos : copyTableDbColumnMapPos) {
+                            if (nPos == -1) {
+                                duckDBAppender.append((String) null);
+                            } else {
+                                duckDBAppender.append(csvRecord.get(nPos));
+                            }
+                        }
+                        duckDBAppender.endRow();
+                        nCopiedRows++;
                     }
-                    duckDBAppender.endRow();
-                    nCopiedRows++;
+                } // CSV
+                else if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat.equalsIgnoreCase("BINARY")) {
+                    List<Object[]> data = DBUtil.convertPGByteToRow(this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.toByteArray());
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.reset();
+                    DuckDBAppender duckDBAppender = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
+                    List<Integer> copyTableDbColumnMapPos = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
+                    for (Object[] row : data) {
+                        duckDBAppender.beginRow();
+                        for (Integer nPos : copyTableDbColumnMapPos) {
+                            if (nPos == -1) {
+                                duckDBAppender.append((String) null);
+                            } else
+                            {
+                                // 数据内容
+                                Object cell = row[nPos];
+
+                                // 数据类型
+                                String columnType = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnType.get(nPos);
+
+                                if (cell == null)
+                                {
+                                    duckDBAppender.append((String)null);
+                                }
+                                else if (columnType.equals("SMALLINT")) {
+                                    duckDBAppender.append(Utils.bytesToInt16((byte[]) cell));
+                                }
+                                else if (columnType.equals("INTEGER")) {
+                                    duckDBAppender.append(Utils.bytesToInt32((byte[]) cell));
+                                }
+                                else if (columnType.equals("BIGINT")) {
+                                    duckDBAppender.appendBigDecimal(BigDecimal.valueOf(Utils.bytesToInt64((byte[]) cell)));
+                                }
+                                else if (columnType.equals("VARCHAR"))
+                                {
+                                    duckDBAppender.append(new String((byte[])cell));
+                                }
+                                else if (columnType.equals("FLOAT"))
+                                {
+                                    duckDBAppender.append(Utils.byteToFloat((byte [])cell));
+                                }
+                                else if (columnType.equals("DOUBLE"))
+                                {
+                                    duckDBAppender.append(Utils.byteToDouble((byte [])cell));
+                                }
+                                else if (columnType.startsWith("DECIMAL"))
+                                {
+                                    duckDBAppender.appendBigDecimal(DBUtil.convertPGByteToBigDecimal((byte[]) cell));
+                                }
+                                else if (columnType.equals("TIMESTAMP"))
+                                {
+                                    long epochMilli = Utils.bytesToInt64((byte[]) cell) / 1000;
+                                    duckDBAppender.appendLocalDateTime(Instant.ofEpochMilli(epochMilli).atZone(ZoneId.of("UTC")).toLocalDateTime());
+                                }
+                                else if (columnType.equals("BOOLEAN"))
+                                {
+                                    duckDBAppender.append(((byte[]) cell)[0] == 0x01);
+                                }
+                                else
+                                {
+                                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                                    errorResponse.setErrorResponse("SLACKER-0099",
+                                            "Binary Format error (column type not support) . " + columnType);
+                                    errorResponse.process(ctx, request, out);
+
+                                    // 发送并刷新返回消息
+                                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+                                    // 发送ReadyForQuery
+                                    ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                                    readyForQuery.process(ctx, request, out);
+
+                                    // 发送并刷新返回消息
+                                    PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+
+                                    return;
+                                }
+                            }
+                        }
+                        duckDBAppender.endRow();
+                        nCopiedRows++;
+                    }
+                } // BINARY
+
+                // 提交消息
+                if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender != null) {
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender.close();
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = null;
                 }
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained = new byte[0];
+
+                // 发送CommandComplete
+                CommandComplete commandComplete = new CommandComplete(this.dbInstance);
+                commandComplete.setCommandResult("COPY " + nCopiedRows);
+                commandComplete.process(ctx, request, out);
+                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
             }
-            duckDBAppender.close();
-            this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = null;
-            nCopiedRows = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows + nCopiedRows;
-            this.dbInstance.getSession(getCurrentSessionId(ctx)).copyAffectedRows = 0;
+            catch (SQLException se)
+            {
+                // 生成一个错误消息
+                ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                errorResponse.setErrorResponse(String.valueOf(se.getErrorCode()), se.getMessage());
+                errorResponse.process(ctx, request, out);
 
-            // 发送CommandComplete
-            CommandComplete commandComplete = new CommandComplete(this.dbInstance);
-            commandComplete.setCommandResult("COPY " + nCopiedRows);
-            commandComplete.process(ctx, request, out);
-            PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
+                // 发送并刷新返回消息
+                PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+            }
+        }
 
-            // 发送ReadyForQuery
-            ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
-            readyForQuery.process(ctx, request, out);
-            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
-        }
-        catch (SQLException se) {
-            // 生成一个错误消息
-            ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
-            errorResponse.setErrorResponse(String.valueOf(se.getErrorCode()), se.getMessage());
-            errorResponse.process(ctx, request, out);
+        // 发送ReadyForQuery
+        ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+        readyForQuery.process(ctx, request, out);
+        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
 
-            // 发送并刷新返回消息
-            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
-        }
-        finally {
-            out.close();
-        }
+        // 发送并刷新返回消息
+        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
 
         // 取消会话的开始时间，以及业务类型
         this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
         this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
+        out.close();
     }
 }

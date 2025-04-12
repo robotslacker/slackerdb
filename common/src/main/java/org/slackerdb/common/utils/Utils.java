@@ -143,6 +143,19 @@ public class Utils {
         return ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putDouble(value).array();
     }
 
+    public static float byteToFloat(byte[] bytes)
+    {
+        // 确保只读取前8字节，避免越界
+        return ByteBuffer.wrap(bytes, 0, 4)
+                .order(ByteOrder.BIG_ENDIAN)
+                .getFloat();
+    }
+
+    public static byte[] floatToBytes(float value)
+    {
+        return ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putFloat(value).array();
+    }
+
     public static byte[][] splitByteArray(byte[] input, byte delimiter) {
         List<byte[]> parts = new ArrayList<>();
         int start = 0;
