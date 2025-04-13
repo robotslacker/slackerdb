@@ -22,7 +22,10 @@ public class TerminateRequest extends PostgresRequest {
         try {
             this.dbInstance.closeSession(getCurrentSessionId(ctx));
         } catch (SQLException e) {
-            this.dbInstance.logger.error("[SERVER] Error closing session", e);
+            this.dbInstance.logger.trace("[SERVER] Error closing session 1", e);
+        } catch (Exception e)
+        {
+            this.dbInstance.logger.trace("[SERVER] Error closing session 2", e);
         }
     }
 }

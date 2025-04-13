@@ -1261,6 +1261,5 @@ public class Sanity01Test {
         }
         pgConn1.close();
     }
-
 }
 
