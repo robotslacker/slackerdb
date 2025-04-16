@@ -173,7 +173,7 @@ public class DBInstance {
                     logger.debug("  Executing sql: {} ...", sql);
                     stmt.execute(sql);
                 } catch (SQLException e) {
-                    logger.error("  SQL Error: {}", sql);
+                    logger.error("  SQL Error: {}", sql, e);
                     throw e;
                 }
             }
