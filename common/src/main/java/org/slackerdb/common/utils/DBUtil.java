@@ -215,6 +215,9 @@ public class DBUtil {
                 } else if (value instanceof java.sql.Date) {
                     output.write(Utils.int32ToBytes(8));
                     output.write(Utils.int64ToBytes(((java.sql.Date) value).getTime() * 1000));
+                } else if (value instanceof java.util.Date) {
+                    output.write(Utils.int32ToBytes(8));
+                    output.write(Utils.int64ToBytes(((java.util.Date) value).getTime() * 1000));
                 } else {
                     throw new IllegalArgumentException("Unsupported type: " + value.getClass().getSimpleName());
                 }

@@ -152,6 +152,7 @@ public class QueryRequest  extends PostgresRequest {
                 DuckDBConnection conn = (DuckDBConnection) this.dbInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat = copyTableFormat;
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = conn.createAppender(targetSchemaName, targetTableName);
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.reset();
 
                 // 获取表名的实际表名，DUCK并不支持部分字段的Appender操作。所以要追加列表中不存在的相关信息
                 List<Integer> copyTableDbColumnMapPos = new ArrayList<>();

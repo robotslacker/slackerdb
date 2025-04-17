@@ -170,7 +170,7 @@ public class DBInstance {
             String sql = SQLReplacer.removeSQLComments(sqlItem);
             if (!sql.isEmpty()) {
                 try {
-                    logger.debug("  Executing sql: {} ...", sql);
+                    logger.debug("  Executing sql: {} ;", sql);
                     stmt.execute(sql);
                 } catch (SQLException e) {
                     logger.error("  SQL Error: {}", sql, e);
