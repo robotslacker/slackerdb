@@ -75,7 +75,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>org.postgresql.Driver</mainClass>
+                            <mainClass>org.slackerdb.jdbc.Driver</mainClass>
                         </manifest>
                     </archive>
                     <descriptorRefs>
