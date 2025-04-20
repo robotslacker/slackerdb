@@ -21,6 +21,7 @@
         <module>plsql</module>
         <module>connector-mysql</module>
         <module>connector-postgres</module>
+        <module>dbdriver</module>
     </modules>
 
     <dependencies>
