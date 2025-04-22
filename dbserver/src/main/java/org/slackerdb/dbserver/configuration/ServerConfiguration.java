@@ -57,6 +57,8 @@ public class ServerConfiguration extends Throwable {
     private final String default_pid = "";
     // 系统支持的最大同时客户端连接
     private final int    default_max_connections = 256;
+    // 系统的启动模板文件
+    private final String default_template = "";
 
     // 设置数据库连接池的各项参数
     private final int default_connection_pool_minimum_idle = 3;
@@ -85,7 +87,7 @@ public class ServerConfiguration extends Throwable {
     private Locale   locale;
     private String   pid;
     private int      max_connections;
-
+    private String   template;
     private int connection_pool_minimum_idle;
     private int connection_pool_maximum_idle;
     private int connection_pool_maximum_lifecycle_time;
@@ -118,6 +120,7 @@ public class ServerConfiguration extends Throwable {
         connection_pool_maximum_idle = default_connection_pool_maximum_idle;
         connection_pool_maximum_lifecycle_time = default_connection_pool_maximum_lifecycle_time;
         connection_pool_validation_sql = default_connection_pool_validation_sql;
+        template = default_template;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -270,6 +273,13 @@ public class ServerConfiguration extends Throwable {
                         startup_script = this.default_startup_script;
                     } else {
                         setStartup_script(entry.getValue().toString());
+                    }
+                }
+                case "TEMPLATE" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        template = this.default_template;
+                    } else {
+                        setTemplate(entry.getValue().toString());
                     }
                 }
                 case "SQL_HISTORY" -> {
@@ -430,6 +440,10 @@ public class ServerConfiguration extends Throwable {
     public String getStartup_script()
     {
         return startup_script;
+    }
+    public String getTemplate()
+    {
+        return template;
     }
 
     public String getSqlHistory()
@@ -621,6 +635,11 @@ public class ServerConfiguration extends Throwable {
     public void setStartup_script(String pStartup_script)
     {
         startup_script = pStartup_script;
+    }
+
+    public void setTemplate(String pTemplate)
+    {
+        this.template = pTemplate;
     }
 
     public void setSqlHistory(String pSQLHistory)

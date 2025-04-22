@@ -158,7 +158,7 @@ public class DBInstance {
 
     // 执行指定的脚本
     private void executeScript(String scriptFileName) throws IOException, SQLException {
-        logger.debug("Executing script {} ...", scriptFileName);
+        logger.info("[SERVER][STARTUP    ] Executing script {} ...", scriptFileName);
 
         // 从文件中读取所有内容到字符串
         String sqlFileContents = new String(Files.readAllBytes(Path.of(scriptFileName)));
@@ -170,7 +170,7 @@ public class DBInstance {
             String sql = SQLReplacer.removeSQLComments(sqlItem);
             if (!sql.isEmpty()) {
                 try {
-                    logger.debug("  Executing sql: {} ;", sql);
+                    logger.debug("[SERVER][STARTUP    ]   Executing sql: {} ;", sql);
                     stmt.execute(sql);
                 } catch (SQLException e) {
                     logger.error("  SQL Error: {}", sql, e);
@@ -288,6 +288,16 @@ public class DBInstance {
 
         // 初始化一个DB连接，以保证即使所有客户端都断开连接，服务端会话仍然会继续存在
         try {
+            // 检查模板文件是否存在，如果有问题，直接退出
+            if (databaseFirstOpened && !serverConfiguration.getTemplate().trim().isEmpty()) {
+                String templateFileName = serverConfiguration.getTemplate().trim();
+                File templateFile = new File(templateFileName);
+                if (!templateFile.exists() || !templateFile.canRead())
+                {
+                    throw new ServerException("Template file [" + templateFile.getAbsolutePath() + "] does not exist or no permission!");
+                }
+            }
+
             Properties connectProperties = new Properties();
             if (serverConfiguration.getAccess_mode().equals("READ_ONLY")) {
                 connectProperties.setProperty("duckdb.read_only", "true");
@@ -312,6 +322,26 @@ public class DBInstance {
                         Path.of(serverConfiguration.getData_Dir(), serverConfiguration.getData()).toAbsolutePath(),
                         serverConfiguration.getAccess_mode());
             }
+
+            // 检查模板文件是否存在
+            if (databaseFirstOpened && !serverConfiguration.getTemplate().trim().isEmpty()) {
+                String templateFileName = serverConfiguration.getTemplate().trim();
+                File templateFile = new File(templateFileName);
+                if (!templateFile.exists() || !templateFile.canRead())
+                {
+                    throw new ServerException("Template file [" + templateFile.getAbsolutePath() + "] does not exist or no permission!");
+                }
+                logger.info("[SERVER][STARTUP    ] Copy template database [{}] in ...", templateFile.getAbsolutePath());
+                Statement stmt = backendSysConnection.createStatement();
+                stmt.execute("ATTACH '" + templateFile.getAbsolutePath() + "' AS _imp_db");
+                ResultSet rs = stmt.executeQuery("SELECT current_catalog()");
+                rs.next();
+                stmt.execute("COPY FROM DATABASE _imp_db TO " + rs.getString(1));
+                stmt.execute("DETACH DATABASE _imp_db");
+                stmt.close();
+                logger.info("[SERVER][STARTUP    ] Copy template database completed.");
+            }
+
             Statement stmt = backendSysConnection.createStatement();
             if (!serverConfiguration.getTemp_dir().isEmpty()) {
                 logger.debug("[SERVER][STARTUP    ] SET temp_directory = '{}'", serverConfiguration.getTemp_dir());

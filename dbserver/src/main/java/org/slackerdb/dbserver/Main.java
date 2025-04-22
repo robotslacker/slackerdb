@@ -57,6 +57,7 @@ public class Main {
         System.out.println("  --data_dir          database file directory. default is :memory:");
         System.out.println("  --temp_dir          database temporary file directory. default is os dependent.");
         System.out.println("  --extension_dir     extension file directory. default is $HOME/.duckdb/extensions.");
+        System.out.println("  --template          template datafile file for first open. default is none.");
         System.out.println("  --init_script       system init script or script directory. default is none.");
         System.out.println("  --startup_script    system startup script or script directory. default is none.");
         System.out.println("  --sql_history       enable or disable sql history feature(ON|OFF). default is off.");
@@ -221,6 +222,10 @@ public class Main {
             if (appOptions.containsKey("pid"))
             {
                 serverConfiguration.setPid(appOptions.get("pid"));
+            }
+            if (appOptions.containsKey("template"))
+            {
+                serverConfiguration.setTemplate(appOptions.get("template"));
             }
             // 初始化日志服务
             logger = AppLogger.createLogger(
