@@ -333,7 +333,7 @@ public class DBInstance {
                 }
                 logger.info("[SERVER][STARTUP    ] Copy template database [{}] in ...", templateFile.getAbsolutePath());
                 Statement stmt = backendSysConnection.createStatement();
-                stmt.execute("ATTACH '" + templateFile.getAbsolutePath() + "' AS _imp_db");
+                stmt.execute("ATTACH '" + templateFile.getAbsolutePath() + "' AS _imp_db (READ_ONLY)");
                 ResultSet rs = stmt.executeQuery("SELECT current_catalog()");
                 rs.next();
                 stmt.execute("COPY FROM DATABASE _imp_db TO " + rs.getString(1));
