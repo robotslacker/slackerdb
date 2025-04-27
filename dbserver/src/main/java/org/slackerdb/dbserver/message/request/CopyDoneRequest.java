@@ -176,6 +176,7 @@ public class CopyDoneRequest extends PostgresRequest {
                 if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender != null) {
                     this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender.close();
                     this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = null;
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.reset();
                 }
 
                 // 发送CommandComplete

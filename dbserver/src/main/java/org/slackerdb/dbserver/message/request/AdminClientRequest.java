@@ -157,6 +157,7 @@ public class AdminClientRequest  extends PostgresRequest {
             feedBackMsg.append(String.format("%-20s", "  Data_Dir:")).append(this.dbInstance.serverConfiguration.getData_Dir()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Temp_Dir:")).append(this.dbInstance.serverConfiguration.getTemp_dir()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  SQLHistory:")).append(this.dbInstance.serverConfiguration.getSqlHistory()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Template:")).append(this.dbInstance.serverConfiguration.getTemplate()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Init_Script:")).append(this.dbInstance.serverConfiguration.getInit_script()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Startup_Script:")).append(this.dbInstance.serverConfiguration.getStartup_script()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Extension_Dir:")).append(this.dbInstance.serverConfiguration.getExtension_dir()).append("\n");
