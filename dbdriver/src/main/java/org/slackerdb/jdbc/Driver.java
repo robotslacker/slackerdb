@@ -250,9 +250,6 @@ public class Driver implements java.sql.Driver {
     // get defaults
     Properties defaults;
 
-    if (!url.startsWith("jdbc:postgresql:")) {
-      return null;
-    }
     try {
       defaults = getDefaultProperties();
     } catch (IOException ioe) {
@@ -550,11 +547,11 @@ public class Driver implements java.sql.Driver {
       urlArgs = url.substring(qPos + 1);
     }
 
-    if (!urlServer.startsWith("jdbc:postgresql:")) {
-      LOGGER.log(Level.FINE, "JDBC URL must start with \"jdbc:postgresql:\" but was: {0}", url);
+    if (!urlServer.startsWith("jdbc:slackerdb:")) {
+      LOGGER.log(Level.FINE, "JDBC URL must start with \"jdbc:slackerdb:\" but was: {0}", url);
       return null;
     }
-    urlServer = urlServer.substring("jdbc:postgresql:".length());
+    urlServer = urlServer.substring("jdbc:slackerdb:".length());
 
     if ("//".equals(urlServer) || "///".equals(urlServer)) {
       urlServer = "";

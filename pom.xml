@@ -16,11 +16,10 @@
 
     <modules>
         <module>common</module>
+        <module>dbdriver</module>
         <module>dbserver</module>
         <module>dbproxy</module>
         <module>plsql</module>
-        <module>connector-mysql</module>
-        <module>connector-postgres</module>
     </modules>
 
     <dependencies>
