@@ -55,7 +55,7 @@ public class ClientTest {
 
     @Test
     void testSlackerDriverConnection() throws SQLException {
-        String  connectURL = "jdbc:slackerdb://127.0.0.1:" + dbPort + "/mem";
+        String connectURL = "jdbc:slackerdb://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -63,12 +63,18 @@ public class ClientTest {
         pgConn1.createStatement().execute("ATTACH ':memory:' AS newdb1");
         pgConn1.createStatement().execute("ATTACH ':memory:' AS newdb2");
         pgConn1.commit();
-        pgConn1.createStatement().execute("USE newdb1; CREATE SCHEMA schema1;");pgConn1.commit();
-        pgConn1.createStatement().execute("USE newdb1; CREATE SCHEMA schema2;");pgConn1.commit();
-        pgConn1.createStatement().execute("USE newdb2; CREATE SCHEMA schema3;");pgConn1.commit();
-        pgConn1.createStatement().execute("USE newdb2; CREATE SCHEMA schema4;");pgConn1.commit();
-        pgConn1.createStatement().execute("USE memory; CREATE SCHEMA schema5;");pgConn1.commit();
-        pgConn1.createStatement().execute("USE memory; CREATE SCHEMA schema6;");pgConn1.commit();
+        pgConn1.createStatement().execute("USE newdb1; CREATE SCHEMA schema1;");
+        pgConn1.commit();
+        pgConn1.createStatement().execute("USE newdb1; CREATE SCHEMA schema2;");
+        pgConn1.commit();
+        pgConn1.createStatement().execute("USE newdb2; CREATE SCHEMA schema3;");
+        pgConn1.commit();
+        pgConn1.createStatement().execute("USE newdb2; CREATE SCHEMA schema4;");
+        pgConn1.commit();
+        pgConn1.createStatement().execute("USE memory; CREATE SCHEMA schema5;");
+        pgConn1.commit();
+        pgConn1.createStatement().execute("USE memory; CREATE SCHEMA schema6;");
+        pgConn1.commit();
 
         pgConn1.createStatement().execute("USE memory.schema5; Create or replace Table tab1(col1 int,col2 bigint, col3 double, col4 varchar)");
         pgConn1.commit();
@@ -76,10 +82,9 @@ public class ClientTest {
         // getCatalogs
         ResultSet rs = pgConn1.getMetaData().getCatalogs();
         List<String> catalogsInfo = new ArrayList<>();
-        while (rs.next())
-        {
-            for (int i=0; i<rs.getMetaData().getColumnCount();i++) {
-                catalogsInfo.add(rs.getMetaData().getColumnName(i+1) + ": " + rs.getString(i+1));
+        while (rs.next()) {
+            for (int i = 0; i < rs.getMetaData().getColumnCount(); i++) {
+                catalogsInfo.add(rs.getMetaData().getColumnName(i + 1) + ": " + rs.getString(i + 1));
             }
         }
         rs.close();
@@ -90,10 +95,9 @@ public class ClientTest {
         List<String> schemasInfo = new ArrayList<>();
         pgConn1.createStatement().execute("USE newdb1");
         rs = pgConn1.getMetaData().getSchemas();
-        while (rs.next())
-        {
-            for (int i=0; i<rs.getMetaData().getColumnCount();i++) {
-                schemasInfo.add(rs.getMetaData().getColumnName(i+1) + ": " + rs.getString(i+1));
+        while (rs.next()) {
+            for (int i = 0; i < rs.getMetaData().getColumnCount(); i++) {
+                schemasInfo.add(rs.getMetaData().getColumnName(i + 1) + ": " + rs.getString(i + 1));
             }
         }
         rs.close();
@@ -105,15 +109,13 @@ public class ClientTest {
         pgConn1.createStatement().execute("USE memory.schema5");
         rs = pgConn1.getMetaData().getTables("memory", "%", "%", new String[]{"BASE TABLE"});
         JSONArray tableDefines = new JSONArray();
-        while (rs.next())
-        {
-            if (rs.getString("TABLE_SCHEM").equalsIgnoreCase("duck_catalog"))
-            {
+        while (rs.next()) {
+            if (rs.getString("TABLE_SCHEM").equalsIgnoreCase("duck_catalog")) {
                 continue;
             }
             JSONObject tableDefine = new JSONObject();
-            for (int i=0; i<rs.getMetaData().getColumnCount();i++) {
-                tableDefine.put(rs.getMetaData().getColumnName(i+1), rs.getString(i+1));
+            for (int i = 0; i < rs.getMetaData().getColumnCount(); i++) {
+                tableDefine.put(rs.getMetaData().getColumnName(i + 1), rs.getString(i + 1));
             }
             tableDefines.add(tableDefine);
         }
@@ -122,8 +124,25 @@ public class ClientTest {
                 [{"TABLE_CAT":"memory","TABLE_SCHEM":"schema5","TABLE_NAME":"tab1","TABLE_TYPE":"BASE TABLE"},{"TABLE_CAT":"memory","TABLE_SCHEM":"sysaux","TABLE_NAME":"SQL_HISTORY","TABLE_TYPE":"BASE TABLE"}]
                 """.trim());
 
+        // getColumns
+        JSONArray columnDefines = new JSONArray();
+        pgConn1.createStatement().execute("USE memory.schema5");
+        rs = pgConn1.getMetaData().getColumns("memory", "schema5", "%", "%");
+        while (rs.next())
+        {
+            if (rs.getString("TABLE_SCHEM").equalsIgnoreCase("duck_catalog")) {
+                continue;
+            }
+            JSONObject columnDefine = new JSONObject();
+            for (int i=0; i<rs.getMetaData().getColumnCount();i++) {
+                columnDefine.put(rs.getMetaData().getColumnName(i + 1), rs.getString(i + 1));
+            }
+            columnDefines.add(columnDefine);
+        }
+        rs.close();
+        assert columnDefines.toJSONString(JSONWriter.Feature.MapSortField).equals("[{\"TABLE_CAT\":\"memory\",\"TABLE_SCHEM\":\"schema5\",\"TABLE_NAME\":\"tab1\",\"COLUMN_NAME\":\"col1\",\"DATA_TYPE\":\"4\",\"TYPE_NAME\":\"INTEGER\",\"COLUMN_SIZE\":\"32\",\"DECIMAL_DIGITS\":\"0\",\"NUM_PREC_RADIX\":\"10\",\"NULLABLE\":\"1\",\"ORDINAL_POSITION\":\"1\",\"IS_NULLABLE\":\"YES\",\"IS_AUTOINCREMENT\":\"\",\"IS_GENERATEDCOLUMN\":\"\"},{\"TABLE_CAT\":\"memory\",\"TABLE_SCHEM\":\"schema5\",\"TABLE_NAME\":\"tab1\",\"COLUMN_NAME\":\"col2\",\"DATA_TYPE\":\"-5\",\"TYPE_NAME\":\"BIGINT\",\"COLUMN_SIZE\":\"64\",\"DECIMAL_DIGITS\":\"0\",\"NUM_PREC_RADIX\":\"10\",\"NULLABLE\":\"1\",\"ORDINAL_POSITION\":\"2\",\"IS_NULLABLE\":\"YES\",\"IS_AUTOINCREMENT\":\"\",\"IS_GENERATEDCOLUMN\":\"\"},{\"TABLE_CAT\":\"memory\",\"TABLE_SCHEM\":\"schema5\",\"TABLE_NAME\":\"tab1\",\"COLUMN_NAME\":\"col3\",\"DATA_TYPE\":\"8\",\"TYPE_NAME\":\"DOUBLE\",\"COLUMN_SIZE\":\"53\",\"DECIMAL_DIGITS\":\"0\",\"NUM_PREC_RADIX\":\"10\",\"NULLABLE\":\"1\",\"ORDINAL_POSITION\":\"3\",\"IS_NULLABLE\":\"YES\",\"IS_AUTOINCREMENT\":\"\",\"IS_GENERATEDCOLUMN\":\"\"},{\"TABLE_CAT\":\"memory\",\"TABLE_SCHEM\":\"schema5\",\"TABLE_NAME\":\"tab1\",\"COLUMN_NAME\":\"col4\",\"DATA_TYPE\":\"12\",\"TYPE_NAME\":\"VARCHAR\",\"NUM_PREC_RADIX\":\"10\",\"NULLABLE\":\"1\",\"ORDINAL_POSITION\":\"4\",\"IS_NULLABLE\":\"YES\",\"IS_AUTOINCREMENT\":\"\",\"IS_GENERATEDCOLUMN\":\"\"}]");
+
         // getIndexInfo
         // getPrimaryKeys
     }
 }
-
