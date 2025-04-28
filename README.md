@@ -28,11 +28,11 @@ We provide a proxy service that allows launching multiple database instances on 
 ```
 ### Start db server
 ``` 
-    java -jar dbserver/target/slackerdb-dbserver-0.1.3-standalone.jar start
+    java -jar dbserver/target/slackerdb-dbserver-0.1.4-standalone.jar start
 ```
 ### Stop db server
 ``` 
-    java -jar dbserver/target/slackerdb-dbserver-0.1.3-standalone.jar stop
+    java -jar dbserver/target/slackerdb-dbserver-0.1.4-standalone.jar stop
 ```
 
 ### Server configuration file template
