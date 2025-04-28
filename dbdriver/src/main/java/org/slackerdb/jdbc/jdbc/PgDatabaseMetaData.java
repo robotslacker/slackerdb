@@ -6,37 +6,14 @@
 package org.slackerdb.jdbc.jdbc;
 
 import static java.lang.System.lineSeparator;
-import static org.slackerdb.jdbc.util.internal.Nullness.castNonNull;
 
 import org.slackerdb.jdbc.Driver;
-import org.slackerdb.jdbc.core.BaseStatement;
-import org.slackerdb.jdbc.core.Field;
-import org.slackerdb.jdbc.core.Oid;
-import org.slackerdb.jdbc.core.ServerVersion;
-import org.slackerdb.jdbc.core.Tuple;
-import org.slackerdb.jdbc.core.TypeInfo;
-import org.slackerdb.jdbc.util.ByteConverter;
 import org.slackerdb.jdbc.util.DriverInfo;
-import org.slackerdb.jdbc.util.GT;
-import org.slackerdb.jdbc.util.JdbcBlackHole;
-import org.slackerdb.jdbc.util.PSQLException;
-import org.slackerdb.jdbc.util.PSQLState;
-
-import org.checkerframework.checker.nullness.qual.KeyFor;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.math.BigInteger;
 import java.sql.*;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.StringTokenizer;
 import java.util.stream.Collectors;
 
 enum DuckDBColumnType {
@@ -195,57 +172,6 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
   private @Nullable String keywords;
 
   protected final PgConnection connection; // The connection association
-
-  private int nameDataLength; // length for name datatype
-  private int indexMaxKeys; // maximum number of keys in an index.
-
-  protected int getMaxIndexKeys() throws SQLException {
-    if (indexMaxKeys == 0) {
-      String sql;
-      sql = "SELECT setting FROM pg_catalog.pg_settings WHERE name='max_index_keys'";
-
-      Statement stmt = connection.createStatement();
-      ResultSet rs = null;
-      try {
-        rs = stmt.executeQuery(sql);
-        if (!rs.next()) {
-          stmt.close();
-          throw new PSQLException(
-              GT.tr(
-                  "Unable to determine a value for MaxIndexKeys due to missing system catalog data."),
-              PSQLState.UNEXPECTED_ERROR);
-        }
-        indexMaxKeys = rs.getInt(1);
-      } finally {
-        JdbcBlackHole.close(rs);
-        JdbcBlackHole.close(stmt);
-      }
-    }
-    return indexMaxKeys;
-  }
-
-  protected int getMaxNameLength() throws SQLException {
-    if (nameDataLength == 0) {
-      String sql;
-      sql = "SELECT t.typlen FROM pg_catalog.pg_type t, pg_catalog.pg_namespace n "
-            + "WHERE t.typnamespace=n.oid AND t.typname='name' AND n.nspname='pg_catalog'";
-
-      Statement stmt = connection.createStatement();
-      ResultSet rs = null;
-      try {
-        rs = stmt.executeQuery(sql);
-        if (!rs.next()) {
-          throw new PSQLException(GT.tr("Unable to find name datatype in the system catalogs."),
-              PSQLState.UNEXPECTED_ERROR);
-        }
-        nameDataLength = rs.getInt("typlen");
-      } finally {
-        JdbcBlackHole.close(rs);
-        JdbcBlackHole.close(stmt);
-      }
-    }
-    return nameDataLength - 1;
-  }
 
   @Override
   public boolean allProceduresAreCallable() throws SQLException {
@@ -1011,7 +937,7 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
 
   @Override
   public int getMaxColumnNameLength() throws SQLException {
-    return getMaxNameLength();
+    return 0;
   }
 
   @Override
@@ -1021,7 +947,7 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
 
   @Override
   public int getMaxColumnsInIndex() throws SQLException {
-    return getMaxIndexKeys();
+    return 0;
   }
 
   @Override
@@ -1047,7 +973,7 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
    */
   @Override
   public int getMaxColumnsInTable() throws SQLException {
-    return 1600;
+    return 0;
   }
 
   /**
@@ -1062,12 +988,12 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
    */
   @Override
   public int getMaxConnections() throws SQLException {
-    return 8192;
+    return 0;
   }
 
   @Override
   public int getMaxCursorNameLength() throws SQLException {
-    return getMaxNameLength();
+    return 0;
   }
 
   @Override
@@ -1077,22 +1003,22 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
 
   @Override
   public int getMaxSchemaNameLength() throws SQLException {
-    return getMaxNameLength();
+    return 0;
   }
 
   @Override
   public int getMaxProcedureNameLength() throws SQLException {
-    return getMaxNameLength();
+    return 0;
   }
 
   @Override
   public int getMaxCatalogNameLength() throws SQLException {
-    return getMaxNameLength();
+    return 0;
   }
 
   @Override
   public int getMaxRowSize() throws SQLException {
-    return 1073741824; // 1 GB
+    return 0; // 1 GB
   }
 
   @Override
@@ -1112,7 +1038,7 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
 
   @Override
   public int getMaxTableNameLength() throws SQLException {
-    return getMaxNameLength();
+    return 0;
   }
 
   @Override
@@ -1122,41 +1048,12 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
 
   @Override
   public int getMaxUserNameLength() throws SQLException {
-    return getMaxNameLength();
+    return 0;
   }
 
   @Override
   public int getDefaultTransactionIsolation() throws SQLException {
-    String sql =
-        "SELECT setting FROM pg_catalog.pg_settings WHERE name='default_transaction_isolation'";
-
-    try (Statement stmt = connection.createStatement();
-         ResultSet rs = stmt.executeQuery(sql)) {
-      String level = null;
-      if (rs.next()) {
-        level = rs.getString(1);
-      }
-      if (level == null) {
-        throw new PSQLException(
-            GT.tr(
-                "Unable to determine a value for DefaultTransactionIsolation due to missing "
-                    + " entry in pg_catalog.pg_settings WHERE name='default_transaction_isolation'."),
-            PSQLState.UNEXPECTED_ERROR);
-      }
-      // PostgreSQL returns the value in lower case, so using "toLowerCase" here would be
-      // slightly more efficient.
-      switch (level.toLowerCase(Locale.ROOT)) {
-        case "read uncommitted":
-          return Connection.TRANSACTION_READ_UNCOMMITTED;
-        case "repeatable read":
-          return Connection.TRANSACTION_REPEATABLE_READ;
-        case "serializable":
-          return Connection.TRANSACTION_SERIALIZABLE;
-        case "read committed":
-        default: // Best guess.
-          return Connection.TRANSACTION_READ_COMMITTED;
-      }
-    }
+      return Connection.TRANSACTION_REPEATABLE_READ;
   }
 
   @Override
@@ -1172,15 +1069,7 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
    */
   @Override
   public boolean supportsTransactionIsolationLevel(int level) throws SQLException {
-    switch (level) {
-      case Connection.TRANSACTION_READ_UNCOMMITTED:
-      case Connection.TRANSACTION_READ_COMMITTED:
-      case Connection.TRANSACTION_REPEATABLE_READ:
-      case Connection.TRANSACTION_SERIALIZABLE:
-        return true;
-      default:
-        return false;
-    }
+      return level < Connection.TRANSACTION_SERIALIZABLE;
   }
 
   @Override
@@ -1319,92 +1208,6 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
         ps.closeOnCompletion();
         return ps.executeQuery();
     }
-
-  private static final Map<String, Map<String, String>> tableTypeClauses;
-
-  static {
-    tableTypeClauses = new HashMap<>();
-    Map<String, String> ht = new HashMap<>();
-    tableTypeClauses.put("TABLE", ht);
-    ht.put("SCHEMAS", "c.relkind = 'r' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'");
-    ht.put("NOSCHEMAS", "c.relkind = 'r' AND c.relname !~ '^pg_'");
-    ht = new HashMap<>();
-    tableTypeClauses.put("PARTITIONED TABLE", ht);
-    ht.put("SCHEMAS", "c.relkind = 'p' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'");
-    ht.put("NOSCHEMAS", "c.relkind = 'p' AND c.relname !~ '^pg_'");
-    ht = new HashMap<>();
-    tableTypeClauses.put("VIEW", ht);
-    ht.put("SCHEMAS",
-        "c.relkind = 'v' AND n.nspname <> 'pg_catalog' AND n.nspname <> 'information_schema'");
-    ht.put("NOSCHEMAS", "c.relkind = 'v' AND c.relname !~ '^pg_'");
-    ht = new HashMap<>();
-    tableTypeClauses.put("INDEX", ht);
-    ht.put("SCHEMAS",
-        "c.relkind = 'i' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'");
-    ht.put("NOSCHEMAS", "c.relkind = 'i' AND c.relname !~ '^pg_'");
-    ht = new HashMap<>();
-    tableTypeClauses.put("PARTITIONED INDEX", ht);
-    ht.put("SCHEMAS", "c.relkind = 'I' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'");
-    ht.put("NOSCHEMAS", "c.relkind = 'I' AND c.relname !~ '^pg_'");
-    ht = new HashMap<>();
-    tableTypeClauses.put("SEQUENCE", ht);
-    ht.put("SCHEMAS", "c.relkind = 'S'");
-    ht.put("NOSCHEMAS", "c.relkind = 'S'");
-    ht = new HashMap<>();
-    tableTypeClauses.put("TYPE", ht);
-    ht.put("SCHEMAS",
-        "c.relkind = 'c' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'");
-    ht.put("NOSCHEMAS", "c.relkind = 'c' AND c.relname !~ '^pg_'");
-    ht = new HashMap<>();
-    tableTypeClauses.put("SYSTEM TABLE", ht);
-    ht.put("SCHEMAS",
-        "c.relkind = 'r' AND (n.nspname = 'pg_catalog' OR n.nspname = 'information_schema')");
-    ht.put("NOSCHEMAS",
-        "c.relkind = 'r' AND c.relname ~ '^pg_' AND c.relname !~ '^pg_toast_' AND c.relname !~ '^pg_temp_'");
-    ht = new HashMap<>();
-    tableTypeClauses.put("SYSTEM TOAST TABLE", ht);
-    ht.put("SCHEMAS", "c.relkind = 'r' AND n.nspname = 'pg_toast'");
-    ht.put("NOSCHEMAS", "c.relkind = 'r' AND c.relname ~ '^pg_toast_'");
-    ht = new HashMap<>();
-    tableTypeClauses.put("SYSTEM TOAST INDEX", ht);
-    ht.put("SCHEMAS", "c.relkind = 'i' AND n.nspname = 'pg_toast'");
-    ht.put("NOSCHEMAS", "c.relkind = 'i' AND c.relname ~ '^pg_toast_'");
-    ht = new HashMap<>();
-    tableTypeClauses.put("SYSTEM VIEW", ht);
-    ht.put("SCHEMAS",
-        "c.relkind = 'v' AND (n.nspname = 'pg_catalog' OR n.nspname = 'information_schema') ");
-    ht.put("NOSCHEMAS", "c.relkind = 'v' AND c.relname ~ '^pg_'");
-    ht = new HashMap<>();
-    tableTypeClauses.put("SYSTEM INDEX", ht);
-    ht.put("SCHEMAS",
-        "c.relkind = 'i' AND (n.nspname = 'pg_catalog' OR n.nspname = 'information_schema') ");
-    ht.put("NOSCHEMAS",
-        "c.relkind = 'v' AND c.relname ~ '^pg_' AND c.relname !~ '^pg_toast_' AND c.relname !~ '^pg_temp_'");
-    ht = new HashMap<>();
-    tableTypeClauses.put("TEMPORARY TABLE", ht);
-    ht.put("SCHEMAS", "c.relkind IN ('r','p') AND n.nspname ~ '^pg_temp_' ");
-    ht.put("NOSCHEMAS", "c.relkind IN ('r','p') AND c.relname ~ '^pg_temp_' ");
-    ht = new HashMap<>();
-    tableTypeClauses.put("TEMPORARY INDEX", ht);
-    ht.put("SCHEMAS", "c.relkind = 'i' AND n.nspname ~ '^pg_temp_' ");
-    ht.put("NOSCHEMAS", "c.relkind = 'i' AND c.relname ~ '^pg_temp_' ");
-    ht = new HashMap<>();
-    tableTypeClauses.put("TEMPORARY VIEW", ht);
-    ht.put("SCHEMAS", "c.relkind = 'v' AND n.nspname ~ '^pg_temp_' ");
-    ht.put("NOSCHEMAS", "c.relkind = 'v' AND c.relname ~ '^pg_temp_' ");
-    ht = new HashMap<>();
-    tableTypeClauses.put("TEMPORARY SEQUENCE", ht);
-    ht.put("SCHEMAS", "c.relkind = 'S' AND n.nspname ~ '^pg_temp_' ");
-    ht.put("NOSCHEMAS", "c.relkind = 'S' AND c.relname ~ '^pg_temp_' ");
-    ht = new HashMap<>();
-    tableTypeClauses.put("FOREIGN TABLE", ht);
-    ht.put("SCHEMAS", "c.relkind = 'f'");
-    ht.put("NOSCHEMAS", "c.relkind = 'f'");
-    ht = new HashMap<>();
-    tableTypeClauses.put("MATERIALIZED VIEW", ht);
-    ht.put("SCHEMAS", "c.relkind = 'm'");
-    ht.put("NOSCHEMAS", "c.relkind = 'm'");
-  }
 
     @Override
     public ResultSet getSchemas() throws SQLException {
@@ -1611,58 +1414,6 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
       ps.setString(paramIdx++, table);
       ps.closeOnCompletion();
       return ps.executeQuery();
-  }
-
-  /*
-  This is for internal use only to see if a resultset is updateable.
-  Unique keys can also be used so we add them to the query.
-   */
-  protected ResultSet getPrimaryUniqueKeys(@Nullable String catalog, @Nullable String schema, String table)
-      throws SQLException {
-    String sql;
-    sql = "SELECT NULL AS TABLE_CAT, n.nspname AS TABLE_SCHEM, "
-        + "  ct.relname AS TABLE_NAME, a.attname AS COLUMN_NAME, "
-        + "  (information_schema._pg_expandarray(i.indkey)).n AS KEY_SEQ, ci.relname AS PK_NAME, "
-        + "  information_schema._pg_expandarray(i.indkey) AS KEYS, a.attnum AS A_ATTNUM, "
-        + "  a.attnotnull AS IS_NOT_NULL "
-        + "FROM pg_catalog.pg_class ct "
-        + "  JOIN pg_catalog.pg_attribute a ON (ct.oid = a.attrelid) "
-        + "  JOIN pg_catalog.pg_namespace n ON (ct.relnamespace = n.oid) "
-        + "  JOIN pg_catalog.pg_index i ON ( a.attrelid = i.indrelid) "
-        + "  JOIN pg_catalog.pg_class ci ON (ci.oid = i.indexrelid) "
-        // primary as well as unique keys can be used to uniquely identify a row to update
-        + "WHERE (i.indisprimary OR ( "
-        + "    i.indisunique "
-        + "    AND i.indisvalid "
-        // partial indexes are not allowed - indpred will not be null if this is a partial index
-        + "    AND i.indpred IS NULL "
-        // indexes with expressions are not allowed
-        + "    AND i.indexprs IS NULL "
-        + "  )) ";
-
-    if (schema != null && !schema.isEmpty()) {
-      sql += " AND n.nspname = " + escapeQuotes(schema);
-    }
-
-    if (table != null && !table.isEmpty()) {
-      sql += " AND ct.relname = " + escapeQuotes(table);
-    }
-
-    sql = "SELECT "
-        + "       result.TABLE_CAT AS \"TABLE_CAT\", "
-        + "       result.TABLE_SCHEM AS \"TABLE_SCHEM\", "
-        + "       result.TABLE_NAME AS \"TABLE_NAME\", "
-        + "       result.COLUMN_NAME AS \"COLUMN_NAME\", "
-        + "       result.KEY_SEQ AS \"KEY_SEQ\", "
-        + "       result.PK_NAME AS \"PK_NAME\", "
-        + "       result.IS_NOT_NULL AS \"IS_NOT_NULL\""
-        + "FROM "
-        + "     (" + sql + " ) result"
-        + " where "
-        + " result.A_ATTNUM = (result.KEYS).x ";
-    sql += " ORDER BY result.table_name, result.pk_name, result.key_seq";
-
-    return createMetaDataStatement().executeQuery(sql);
   }
 
     @Override

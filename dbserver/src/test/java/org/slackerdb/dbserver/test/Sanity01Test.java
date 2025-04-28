@@ -32,7 +32,8 @@ import java.util.TimeZone;
 public class Sanity01Test {
     static int dbPort=4309;
     static DBInstance dbInstance ;
-
+    static String     protocol = "postgresql";
+    
     @BeforeAll
     static void initAll() throws ServerException {
         // 强制使用UTC时区，以避免时区问题在PG和后端数据库中不一致的行为
@@ -65,7 +66,7 @@ public class Sanity01Test {
 
     @Test
     void connectDB() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
@@ -73,7 +74,7 @@ public class Sanity01Test {
 
     @Test
     void simpleQuery() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
@@ -87,7 +88,7 @@ public class Sanity01Test {
 
     @Test
     void simpleDDL() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
@@ -104,7 +105,7 @@ public class Sanity01Test {
 
     @Test
     void multiConnectionWithOneInstance() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -126,7 +127,7 @@ public class Sanity01Test {
 
     @Test
     void commitAndRollback() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -165,7 +166,7 @@ public class Sanity01Test {
 
     @Test
     void duplicateCommitAndRollback() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -215,7 +216,7 @@ public class Sanity01Test {
 
     @Test
     void lotsOfConnection() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         int  MAX_THREADS = 20;
 
         // 创建一个包含100个线程的数组
@@ -275,7 +276,7 @@ public class Sanity01Test {
 
     @Test
     void testFailedHybridSQL() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -310,7 +311,7 @@ public class Sanity01Test {
 
     @Test
     void variousDataTypeSelect() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -352,7 +353,7 @@ public class Sanity01Test {
 
     @Test
     void testMultiPreparedStmt() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -383,7 +384,7 @@ public class Sanity01Test {
 
     @Test
     void testBindInsert() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -439,7 +440,7 @@ public class Sanity01Test {
 
     @Test
     void testBindInsertWithExecuteUpdate() throws Exception {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -503,7 +504,7 @@ public class Sanity01Test {
 
     @Test
     void BatchInsert() throws SQLException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -556,7 +557,7 @@ public class Sanity01Test {
     @Test
     void testConnectionAutoCommitOnClose() throws SQLException
     {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -585,7 +586,7 @@ public class Sanity01Test {
     @Test
     void testMultiString() throws SQLException
     {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -612,7 +613,7 @@ public class Sanity01Test {
     @Test
     void testFetchSize() throws SQLException
     {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -676,7 +677,7 @@ public class Sanity01Test {
 
         // 创建HikariConfig实例并配置数据库连接信息
         HikariConfig config = new HikariConfig();
-        config.setJdbcUrl("jdbc:postgresql://127.0.0.1:" + dbPort + "/mem");
+        config.setJdbcUrl("jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem");
         config.setUsername("");
         config.setPassword("");
 
@@ -708,7 +709,7 @@ public class Sanity01Test {
 
     @Test
     void testCopy() throws SQLException, IOException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -783,7 +784,7 @@ public class Sanity01Test {
 
     @Test
     void testCopy2() throws SQLException, IOException {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -825,7 +826,7 @@ public class Sanity01Test {
     @Test
     void testSetTimeStamp() throws SQLException
     {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -844,7 +845,7 @@ public class Sanity01Test {
     @Test
     void testMultiStatement() throws SQLException
     {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -874,7 +875,7 @@ public class Sanity01Test {
     @Test
     void testMultiStatement2() throws SQLException
     {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -897,7 +898,7 @@ public class Sanity01Test {
     @Test
     void testMultiStatement3() throws SQLException
     {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -912,7 +913,7 @@ public class Sanity01Test {
     @Test
     void testParseStatementReuse() throws SQLException
     {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -998,7 +999,7 @@ public class Sanity01Test {
     @Test
     void testBindDecimal() throws SQLException
     {
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -1050,7 +1051,7 @@ public class Sanity01Test {
         );
         byte[] binaryCopyData = DBUtil.convertPGRowToByte(data);
 
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -1119,7 +1120,7 @@ public class Sanity01Test {
         );
         byte[] binaryCopyData = DBUtil.convertPGRowToByte(data);
 
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -1186,7 +1187,7 @@ public class Sanity01Test {
         }
         byte[] binaryCopyData = DBUtil.convertPGRowToByte(data);
 
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -1233,7 +1234,7 @@ public class Sanity01Test {
         }
         byte[] binaryCopyData = DBUtil.convertPGRowToByte(data);
 
-        String  connectURL = "jdbc:postgresql://127.0.0.1:" + dbPort + "/mem";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);

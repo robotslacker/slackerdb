@@ -55,24 +55,7 @@ import java.net.InetAddress;
 import java.net.URL;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
-import java.sql.Array;
-import java.sql.Blob;
-import java.sql.Clob;
-import java.sql.Date;
-import java.sql.NClob;
-import java.sql.PreparedStatement;
-import java.sql.Ref;
-import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
-import java.sql.RowId;
-import java.sql.SQLException;
-import java.sql.SQLType;
-import java.sql.SQLWarning;
-import java.sql.SQLXML;
-import java.sql.Statement;
-import java.sql.Time;
-import java.sql.Timestamp;
-import java.sql.Types;
+import java.sql.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -1073,223 +1056,42 @@ public class PgResultSet implements ResultSet, PGRefCursorResultSet {
 
   @Override
   public void cancelRowUpdates() throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      checkClosed();
-      if (onInsertRow) {
-        throw new PSQLException(GT.tr("Cannot call cancelRowUpdates() when on the insert row."),
-            PSQLState.INVALID_CURSOR_STATE);
-      }
-
-      if (doingUpdates) {
-        doingUpdates = false;
-
-        clearRowBuffer(true);
-      }
-    }
+    throw new SQLFeatureNotSupportedException("cancelRowUpdates");
   }
 
   @Override
   public void deleteRow() throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      checkUpdateable();
-
-      if (onInsertRow) {
-        throw new PSQLException(GT.tr("Cannot call deleteRow() when on the insert row."),
-            PSQLState.INVALID_CURSOR_STATE);
-      }
-
-      if (isBeforeFirst()) {
-        throw new PSQLException(
-            GT.tr(
-                "Currently positioned before the start of the ResultSet.  You cannot call deleteRow() here."),
-            PSQLState.INVALID_CURSOR_STATE);
-      }
-      if (isAfterLast()) {
-        throw new PSQLException(
-            GT.tr(
-                "Currently positioned after the end of the ResultSet.  You cannot call deleteRow() here."),
-            PSQLState.INVALID_CURSOR_STATE);
-      }
-      List<Tuple> rows = castNonNull(this.rows, "rows");
-      if (rows.isEmpty()) {
-        throw new PSQLException(GT.tr("There are no rows in this ResultSet."),
-            PSQLState.INVALID_CURSOR_STATE);
-      }
-
-      List<PrimaryKey> primaryKeys = castNonNull(this.primaryKeys, "primaryKeys");
-      int numKeys = primaryKeys.size();
-      PreparedStatement deleteStatement = this.deleteStatement;
-      if (deleteStatement == null) {
-        StringBuilder deleteSQL =
-            new StringBuilder("DELETE FROM ").append(onlyTable).append(tableName).append(" where ");
-
-        for (int i = 0; i < numKeys; i++) {
-          Utils.escapeIdentifier(deleteSQL, primaryKeys.get(i).name);
-          deleteSQL.append(" = ?");
-          if (i < numKeys - 1) {
-            deleteSQL.append(" and ");
-          }
-        }
-
-        this.deleteStatement = deleteStatement = connection.prepareStatement(deleteSQL.toString());
-      }
-      deleteStatement.clearParameters();
-
-      for (int i = 0; i < numKeys; i++) {
-        deleteStatement.setObject(i + 1, primaryKeys.get(i).getValue());
-      }
-
-      deleteStatement.executeUpdate();
-
-      rows.remove(currentRow);
-      currentRow--;
-      moveToCurrentRow();
-    }
+    throw new SQLFeatureNotSupportedException("deleteRow");
   }
 
   @Override
   public void insertRow() throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      checkUpdateable();
-      castNonNull(rows, "rows");
-      if (!onInsertRow) {
-        throw new PSQLException(GT.tr("Not on the insert row."), PSQLState.INVALID_CURSOR_STATE);
-      }
-      HashMap<String, Object> updateValues = this.updateValues;
-      if (updateValues == null || updateValues.isEmpty()) {
-        throw new PSQLException(GT.tr("You must specify at least one column value to insert a row."),
-            PSQLState.INVALID_PARAMETER_VALUE);
-      }
-
-      // loop through the keys in the insertTable and create the sql statement
-      // we have to create the sql every time since the user could insert different
-      // columns each time
-
-      StringBuilder insertSQL = new StringBuilder("INSERT INTO ").append(tableName).append(" (");
-      StringBuilder paramSQL = new StringBuilder(") values (");
-
-      Iterator<String> columnNames = updateValues.keySet().iterator();
-      int numColumns = updateValues.size();
-
-      for (int i = 0; columnNames.hasNext(); i++) {
-        String columnName = columnNames.next();
-
-        Utils.escapeIdentifier(insertSQL, columnName);
-        if (i < numColumns - 1) {
-          insertSQL.append(", ");
-          paramSQL.append("?,");
-        } else {
-          paramSQL.append("?)");
-        }
-
-      }
-
-      insertSQL.append(paramSQL.toString());
-      PreparedStatement insertStatement = null;
-
-      Tuple rowBuffer = castNonNull(this.rowBuffer);
-      try {
-        insertStatement = connection.prepareStatement(insertSQL.toString(), Statement.RETURN_GENERATED_KEYS);
-
-        Iterator<Object> values = updateValues.values().iterator();
-
-        for (int i = 1; values.hasNext(); i++) {
-          insertStatement.setObject(i, values.next());
-        }
-
-        insertStatement.executeUpdate();
-
-        if (usingOID) {
-          // we have to get the last inserted OID and put it in the resultset
-
-          long insertedOID = ((PgStatement) insertStatement).getLastOID();
-
-          updateValues.put("oid", insertedOID);
-
-        }
-
-        // update the underlying row to the new inserted data
-        updateRowBuffer(insertStatement, rowBuffer, castNonNull(updateValues));
-      } finally {
-        JdbcBlackHole.close(insertStatement);
-      }
-
-      castNonNull(rows).add(rowBuffer);
-
-      // we should now reflect the current data in thisRow
-      // that way getXXX will get the newly inserted data
-      thisRow = rowBuffer;
-
-      // need to clear this in case of another insert
-      clearRowBuffer(false);
-    }
+    throw new SQLFeatureNotSupportedException("insertRow");
   }
 
   @Override
   public void moveToCurrentRow() throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      checkUpdateable();
-      castNonNull(rows, "rows");
-
-      if (currentRow < 0 || currentRow >= rows.size()) {
-        thisRow = null;
-        rowBuffer = null;
-      } else {
-        initRowBuffer();
-      }
-
-      onInsertRow = false;
-      doingUpdates = false;
-    }
+    throw new SQLFeatureNotSupportedException("moveToCurrentRow");
   }
 
   @Override
   public void moveToInsertRow() throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      checkUpdateable();
-
-      // make sure the underlying data is null
-      clearRowBuffer(false);
-
-      onInsertRow = true;
-      doingUpdates = false;
-    }
-  }
-
-  // rowBuffer is the temporary storage for the row
-  private void clearRowBuffer(boolean copyCurrentRow) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      // inserts want an empty array while updates want a copy of the current row
-      if (copyCurrentRow) {
-        rowBuffer = castNonNull(thisRow, "thisRow").updateableCopy();
-      } else {
-        rowBuffer = new Tuple(fields.length);
-      }
-
-      // clear the updateValues hash map for the next set of updates
-      HashMap<String, Object> updateValues = this.updateValues;
-      if (updateValues != null) {
-        updateValues.clear();
-      }
-    }
+    throw new SQLFeatureNotSupportedException("moveToInsertRow");
   }
 
   @Override
   public boolean rowDeleted() throws SQLException {
-    checkClosed();
-    return false;
+    throw new SQLFeatureNotSupportedException("rowDeleted");
   }
 
   @Override
   public boolean rowInserted() throws SQLException {
-    checkClosed();
-    return false;
+    throw new SQLFeatureNotSupportedException("rowDeleted");
   }
 
   @Override
   public boolean rowUpdated() throws SQLException {
-    checkClosed();
-    return false;
+    throw new SQLFeatureNotSupportedException("rowDeleted");
   }
 
   @Override
@@ -1328,357 +1130,110 @@ public class PgResultSet implements ResultSet, PGRefCursorResultSet {
   @Override
   public void updateBigDecimal(@Positive int columnIndex, @Nullable BigDecimal x)
       throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateBigDecimal");
   }
 
   @Override
   public void updateBinaryStream(@Positive int columnIndex,
       @Nullable InputStream x, int length)
       throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      if (x == null) {
-        updateNull(columnIndex);
-        return;
-      }
-
-      byte[] data = new byte[length];
-      int numRead = 0;
-      try {
-        while (true) {
-          int n = x.read(data, numRead, length - numRead);
-          if (n == -1) {
-            break;
-          }
-
-          numRead += n;
-
-          if (numRead == length) {
-            break;
-          }
-        }
-      } catch (IOException ie) {
-        throw new PSQLException(GT.tr("Provided InputStream failed."), null, ie);
-      }
-
-      if (numRead == length) {
-        updateBytes(columnIndex, data);
-      } else {
-        // the stream contained less data than they said
-        // perhaps this is an error?
-        byte[] data2 = new byte[numRead];
-        System.arraycopy(data, 0, data2, 0, numRead);
-        updateBytes(columnIndex, data2);
-      }
-    }
+    throw new SQLFeatureNotSupportedException("updateBinaryStream");
   }
 
   @Override
   public void updateBoolean(@Positive int columnIndex, boolean x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateBoolean");
   }
 
   @Override
   public void updateByte(@Positive int columnIndex, byte x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, String.valueOf(x));
-    }
+    throw new SQLFeatureNotSupportedException("updateByte");
   }
 
   @Override
   public void updateBytes(@Positive int columnIndex, byte @Nullable [] x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateBytes");
   }
 
   @Override
   public void updateCharacterStream(@Positive int columnIndex,
       @Nullable Reader x, int length)
       throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      if (x == null) {
-        updateNull(columnIndex);
-        return;
-      }
-
-      try {
-        char[] data = new char[length];
-        int numRead = 0;
-        while (true) {
-          int n = x.read(data, numRead, length - numRead);
-          if (n == -1) {
-            break;
-          }
-
-          numRead += n;
-
-          if (numRead == length) {
-            break;
-          }
-        }
-        updateString(columnIndex, new String(data, 0, numRead));
-      } catch (IOException ie) {
-        throw new PSQLException(GT.tr("Provided Reader failed."), null, ie);
-      }
-    }
+    throw new SQLFeatureNotSupportedException("updateCharacterStream");
   }
 
   @Override
   public void updateDate(@Positive int columnIndex,
       @Nullable Date x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateDate");
   }
 
   @Override
   public void updateDouble(@Positive int columnIndex, double x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateDouble");
   }
 
   @Override
   public void updateFloat(@Positive int columnIndex, float x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateFloat");
   }
 
   @Override
   public void updateInt(@Positive int columnIndex, int x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateInt");
   }
 
   @Override
   public void updateLong(@Positive int columnIndex, long x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateLong");
   }
 
   @Override
   public void updateNull(@Positive int columnIndex) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      checkColumnIndex(columnIndex);
-      String columnTypeName = getPGType(columnIndex);
-      updateValue(columnIndex, new NullObject(columnTypeName));
-    }
+    throw new SQLFeatureNotSupportedException("updateNull");
   }
 
   @Override
   public void updateObject(
       int columnIndex, @Nullable Object x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateObject");
   }
 
   @Override
   public void updateObject(
       int columnIndex, @Nullable Object x, int scale) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      this.updateObject(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateObject");
   }
 
   @Override
   public void refreshRow() throws SQLException {
-    checkUpdateable();
-    if (onInsertRow) {
-      throw new PSQLException(GT.tr("Can''t refresh the insert row."),
-          PSQLState.INVALID_CURSOR_STATE);
-    }
-
-    if (isBeforeFirst() || isAfterLast() || castNonNull(rows, "rows").isEmpty()) {
-      return;
-    }
-
-    StringBuilder selectSQL = new StringBuilder("select ");
-
-    ResultSetMetaData rsmd = getMetaData();
-    PGResultSetMetaData pgmd = (PGResultSetMetaData) rsmd;
-    for (int i = 1; i <= rsmd.getColumnCount(); i++) {
-      if (i > 1) {
-        selectSQL.append(", ");
-      }
-      Utils.escapeIdentifier(selectSQL, pgmd.getBaseColumnName(i));
-    }
-    selectSQL.append(" from ").append(onlyTable).append(tableName).append(" where ");
-
-    List<PrimaryKey> primaryKeys = castNonNull(this.primaryKeys, "primaryKeys");
-    int numKeys = primaryKeys.size();
-
-    for (int i = 0; i < numKeys; i++) {
-
-      PrimaryKey primaryKey = primaryKeys.get(i);
-      Utils.escapeIdentifier(selectSQL, primaryKey.name);
-      selectSQL.append(" = ?");
-
-      if (i < numKeys - 1) {
-        selectSQL.append(" and ");
-      }
-    }
-    String sqlText = selectSQL.toString();
-    if (connection.getLogger().isLoggable(Level.FINE)) {
-      connection.getLogger().log(Level.FINE, "selecting {0}", sqlText);
-    }
-    // because updateable result sets do not yet support binary transfers we must request refresh
-    // with updateable result set to get field data in correct format
-    PreparedStatement selectStatement = null;
-    try {
-      selectStatement = connection.prepareStatement(sqlText,
-          ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_UPDATABLE);
-
-      for (int i = 0; i < numKeys; i++) {
-        selectStatement.setObject(i + 1, primaryKeys.get(i).getValue());
-      }
-
-      PgResultSet rs = (PgResultSet) selectStatement.executeQuery();
-
-      if (rs.next()) {
-        // we know that the row is updatable as it was tested above.
-        if ( rs.thisRow == null ) {
-          rowBuffer = null;
-        } else {
-          rowBuffer = castNonNull(rs.thisRow).updateableCopy();
-        }
-      }
-
-      castNonNull(rows).set(currentRow, castNonNull(rowBuffer));
-      thisRow = rowBuffer;
-
-      connection.getLogger().log(Level.FINE, "done updates");
-
-      rs.close();
-    } finally {
-      JdbcBlackHole.close(selectStatement);
-    }
+    throw new SQLFeatureNotSupportedException("refreshRow");
   }
 
   @Override
   public void updateRow() throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      checkUpdateable();
-
-      if (onInsertRow) {
-        throw new PSQLException(GT.tr("Cannot call updateRow() when on the insert row."),
-            PSQLState.INVALID_CURSOR_STATE);
-      }
-
-      List<Tuple> rows = castNonNull(this.rows, "rows");
-      if (isBeforeFirst() || isAfterLast() || rows.isEmpty()) {
-        throw new PSQLException(
-            GT.tr(
-                "Cannot update the ResultSet because it is either before the start or after the end of the results."),
-            PSQLState.INVALID_CURSOR_STATE);
-      }
-
-      if (!doingUpdates) {
-        return; // No work pending.
-      }
-
-      StringBuilder updateSQL = new StringBuilder("UPDATE " + onlyTable + tableName + " SET  ");
-
-      HashMap<String, Object> updateValues = castNonNull(this.updateValues);
-      int numColumns = updateValues.size();
-      Iterator<String> columns = updateValues.keySet().iterator();
-
-      for (int i = 0; columns.hasNext(); i++) {
-        String column = columns.next();
-        Utils.escapeIdentifier(updateSQL, column);
-        updateSQL.append(" = ?");
-
-        if (i < numColumns - 1) {
-          updateSQL.append(", ");
-        }
-      }
-
-      updateSQL.append(" WHERE ");
-
-      List<PrimaryKey> primaryKeys = castNonNull(this.primaryKeys, "primaryKeys");
-      int numKeys = primaryKeys.size();
-
-      for (int i = 0; i < numKeys; i++) {
-        PrimaryKey primaryKey = primaryKeys.get(i);
-        Utils.escapeIdentifier(updateSQL, primaryKey.name);
-        updateSQL.append(" = ?");
-
-        if (i < numKeys - 1) {
-          updateSQL.append(" and ");
-        }
-      }
-
-      String sqlText = updateSQL.toString();
-      if (connection.getLogger().isLoggable(Level.FINE)) {
-        connection.getLogger().log(Level.FINE, "updating {0}", sqlText);
-      }
-      PreparedStatement updateStatement = null;
-      try {
-        updateStatement = connection.prepareStatement(sqlText);
-
-        int i = 0;
-        Iterator<Object> iterator = updateValues.values().iterator();
-        for (; iterator.hasNext(); i++) {
-          Object o = iterator.next();
-          updateStatement.setObject(i + 1, o);
-        }
-
-        for (int j = 0; j < numKeys; j++, i++) {
-          updateStatement.setObject(i + 1, primaryKeys.get(j).getValue());
-        }
-
-        updateStatement.executeUpdate();
-      } finally {
-        JdbcBlackHole.close(updateStatement);
-      }
-
-      Tuple rowBuffer = castNonNull(this.rowBuffer, "rowBuffer");
-      updateRowBuffer(null, rowBuffer, updateValues);
-
-      connection.getLogger().log(Level.FINE, "copying data");
-      thisRow = rowBuffer.readOnlyCopy();
-      rows.set(currentRow, rowBuffer);
-
-      connection.getLogger().log(Level.FINE, "done updates");
-      updateValues.clear();
-      doingUpdates = false;
-    }
+    throw new SQLFeatureNotSupportedException("updateRow");
   }
 
   @Override
   public void updateShort(@Positive int columnIndex, short x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateShort");
   }
 
   @Override
   public void updateString(@Positive int columnIndex, @Nullable String x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateString");
   }
 
   @Override
   public void updateTime(@Positive int columnIndex, @Nullable Time x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateTime");
   }
 
   @Override
   public void updateTimestamp(
       int columnIndex, @Nullable Timestamp x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateValue(columnIndex, x);
-    }
+    throw new SQLFeatureNotSupportedException("updateTimestamp");
   }
 
   @Override
@@ -1790,164 +1345,34 @@ public class PgResultSet implements ResultSet, PGRefCursorResultSet {
   public void updateAsciiStream(
       String columnName, @Nullable InputStream x, int length)
       throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateAsciiStream(findColumn(columnName), x, length);
-    }
+    throw new SQLFeatureNotSupportedException("updateAsciiStream");
   }
 
   @Override
   public void updateBinaryStream(
       String columnName, @Nullable InputStream x, int length)
       throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateBinaryStream(findColumn(columnName), x, length);
-    }
+    throw new SQLFeatureNotSupportedException("updateBinaryStream");
   }
 
   @Override
   public void updateCharacterStream(
       String columnName, @Nullable Reader reader,
       int length) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateCharacterStream(findColumn(columnName), reader, length);
-    }
+    throw new SQLFeatureNotSupportedException("updateCharacterStream");
   }
 
   @Override
   public void updateObject(
       String columnName, @Nullable Object x, int scale)
       throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateObject(findColumn(columnName), x);
-    }
+    throw new SQLFeatureNotSupportedException("updateObject");
   }
 
   @Override
   public void updateObject(
       String columnName, @Nullable Object x) throws SQLException {
-    try (ResourceLock ignore = lock.obtain()) {
-      updateObject(findColumn(columnName), x);
-    }
-  }
-
-  /**
-   * Is this ResultSet updateable?
-   */
-
-  boolean isUpdateable() throws SQLException {
-    checkClosed();
-
-    if (resultsetconcurrency == ResultSet.CONCUR_READ_ONLY) {
-      throw new PSQLException(
-          GT.tr("ResultSets with concurrency CONCUR_READ_ONLY cannot be updated."),
-          PSQLState.INVALID_CURSOR_STATE);
-    }
-
-    if (updateable) {
-      return true;
-    }
-
-    connection.getLogger().log(Level.FINE, "checking if rs is updateable");
-
-    parseQuery();
-
-    if (tableName == null) {
-      connection.getLogger().log(Level.FINE, "tableName is not found");
-      return false;
-    }
-
-    if (!singleTable) {
-      connection.getLogger().log(Level.FINE, "not a single table");
-      return false;
-    }
-
-    usingOID = false;
-
-    connection.getLogger().log(Level.FINE, "getting primary keys");
-
-    //
-    // Contains the primary key?
-    //
-
-    List<PrimaryKey> primaryKeys = new ArrayList<>();
-    this.primaryKeys = primaryKeys;
-
-    int i = 0;
-    int numPKcolumns = 0;
-
-    // otherwise go and get the primary keys and create a list of keys
-    @Nullable String[] s = quotelessTableName(castNonNull(tableName));
-    String quotelessTableName = castNonNull(s[0]);
-    @Nullable String quotelessSchemaName = s[1];
-    ResultSet rs = ((PgDatabaseMetaData) connection.getMetaData()).getPrimaryUniqueKeys("",
-        quotelessSchemaName, quotelessTableName);
-
-    String lastConstraintName = null;
-
-    while (rs.next()) {
-      String constraintName = castNonNull(rs.getString(6)); // get the constraintName
-      if (lastConstraintName == null || !lastConstraintName.equals(constraintName)) {
-        if (lastConstraintName != null) {
-          if (i == numPKcolumns && numPKcolumns > 0) {
-            break;
-          }
-          connection.getLogger().log(Level.FINE, "no of keys={0} from constraint {1}", new Object[]{i, lastConstraintName});
-        }
-        i = 0;
-        numPKcolumns = 0;
-
-        primaryKeys.clear();
-        lastConstraintName = constraintName;
-      }
-      numPKcolumns++;
-
-      boolean isNotNull = rs.getBoolean("IS_NOT_NULL");
-
-      /* make sure that only unique keys with all non-null attributes are handled */
-      if (isNotNull) {
-        String columnName = castNonNull(rs.getString(4)); // get the columnName
-        int index = findColumnIndex(columnName);
-
-        /* make sure that the user has included the primary key in the resultset */
-        if (index > 0) {
-          i++;
-          primaryKeys.add(new PrimaryKey(index, columnName)); // get the primary key information
-        }
-      }
-    }
-
-    rs.close();
-    connection.getLogger().log(Level.FINE, "no of keys={0} from constraint {1}", new Object[]{i, lastConstraintName});
-
-    /*
-    it is only updatable if the primary keys are available in the resultset
-     */
-    updateable = (i == numPKcolumns) && (numPKcolumns > 0);
-
-    connection.getLogger().log(Level.FINE, "checking primary key {0}", updateable);
-
-    /*
-      if we haven't found a primary key we can check to see if the query includes the oid
-      This is now a questionable check as oid's have been deprecated. Might still be useful for
-      catalog tables, but again the query would have to include the oid.
-     */
-    if (!updateable) {
-      int oidIndex = findColumnIndex("oid"); // 0 if not present
-
-      // oidIndex will be >0 if the oid was in the select list
-      if (oidIndex > 0) {
-        primaryKeys.add(new PrimaryKey(oidIndex, "oid"));
-        usingOID = true;
-        updateable = true;
-      }
-    }
-
-    if (!updateable) {
-      throw new PSQLException(GT.tr("No eligible primary or unique key found for table {0}.", tableName),
-          PSQLState.INVALID_CURSOR_STATE);
-    }
-
-    return updateable;
+    throw new SQLFeatureNotSupportedException("updateObject");
   }
 
   /**
@@ -3227,25 +2652,6 @@ public class PgResultSet implements ResultSet, PGRefCursorResultSet {
     field.setPGType(pgType);
   }
 
-  @EnsuresNonNull({"updateValues", "rows"})
-  private void checkUpdateable() throws SQLException {
-    checkClosed();
-
-    if (!isUpdateable()) {
-      throw new PSQLException(
-          GT.tr(
-              "ResultSet is not updateable.  The query that generated this result set must select only one table, and must select all primary keys from that table. See the JDBC 2.1 API Specification, section 5.6 for more details."),
-          PSQLState.INVALID_CURSOR_STATE);
-    }
-
-    if (updateValues == null) {
-      // allow every column to be updated without a rehash.
-      updateValues = new HashMap<>((int) (fields.length / 0.75), 0.75f);
-    }
-    castNonNull(updateValues, "updateValues");
-    castNonNull(rows, "rows");
-  }
-
   @Pure
   @EnsuresNonNull("rows")
   protected void checkClosed() throws SQLException {
@@ -3616,28 +3022,6 @@ public class PgResultSet implements ResultSet, PGRefCursorResultSet {
           PSQLState.NUMERIC_VALUE_OUT_OF_RANGE);
     }
     return val;
-  }
-
-  protected void updateValue(@Positive int columnIndex, @Nullable Object value) throws SQLException {
-    checkUpdateable();
-
-    if (!onInsertRow && (isBeforeFirst() || isAfterLast() || castNonNull(rows, "rows").isEmpty())) {
-      throw new PSQLException(
-          GT.tr(
-              "Cannot update the ResultSet because it is either before the start or after the end of the results."),
-          PSQLState.INVALID_CURSOR_STATE);
-    }
-
-    checkColumnIndex(columnIndex);
-
-    doingUpdates = !onInsertRow;
-    if (value == null) {
-      updateNull(columnIndex);
-    } else {
-      PGResultSetMetaData md = (PGResultSetMetaData) getMetaData();
-      castNonNull(updateValues, "updateValues")
-          .put(md.getBaseColumnName(columnIndex), value);
-    }
   }
 
   @Pure
@@ -4138,12 +3522,12 @@ public class PgResultSet implements ResultSet, PGRefCursorResultSet {
 
   @Override
   public void updateSQLXML(@Positive int columnIndex, @Nullable SQLXML xmlObject) throws SQLException {
-    updateValue(columnIndex, xmlObject);
+    throw new SQLFeatureNotSupportedException("updateSQLXML");
   }
 
   @Override
   public void updateSQLXML(String columnName, @Nullable SQLXML xmlObject) throws SQLException {
-    updateSQLXML(findColumn(columnName), xmlObject);
+    throw new SQLFeatureNotSupportedException("updateSQLXML");
   }
 
   @Override
