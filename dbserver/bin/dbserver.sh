@@ -6,7 +6,9 @@
 # app Name
 APP_NAME="SLACKERDB-SERVER"
 # JAR file path
-JAR_PATH="jlib/slackerdb-dbserver-0.0.9-standalone.jar"
+# shellcheck disable=SC2154
+JAR_NAME=slackerdb-dbserver-${project.version}-standalone.jar
+JAR_PATH="jlib/${JAR_NAME}"
 # Java options
 JAVA_OPTS=""
 # PID file path

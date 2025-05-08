@@ -1,0 +1,57 @@
+
+<assembly>
+    <id>deployment</id>
+    <formats>
+        <format>zip</format>
+    </formats>
+    <includeBaseDirectory>false</includeBaseDirectory>
+    <baseDirectory>/</baseDirectory>
+
+    <fileSets>
+        <fileSet>
+            <directory>${project.basedir}/dbserver/target</directory>
+            <outputDirectory>jlib</outputDirectory>
+            <includes>
+                <include>slackerdb-dbserver-*-standalone.jar</include> <!-- 使用通配符匹配版本号 -->
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/dbserver/conf</directory>
+            <outputDirectory>conf</outputDirectory>
+            <includes>
+                <include>dbserver.conf</include> <!-- 使用通配符匹配版本号 -->
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/dbserver/bin</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>dbserver.sh</include> <!-- 使用通配符匹配版本号 -->
+            </includes>
+            <filtered>true</filtered>
+            <fileMode>0755</fileMode>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/dbproxy/target</directory>
+            <outputDirectory>jlib</outputDirectory>
+            <includes>
+                <include>slackerdb-dbproxy-*-standalone.jar</include> <!-- 使用通配符匹配版本号 -->
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/dbproxy/conf</directory>
+            <outputDirectory>conf</outputDirectory>
+            <includes>
+                <include>dbproxy.conf</include> <!-- 使用通配符匹配版本号 -->
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/dbdriver/target</directory>
+            <outputDirectory>jlib</outputDirectory>
+            <includes>
+                <include>slackerdb-dbdriver-*.jar</include> <!-- 使用通配符匹配版本号 -->
+            </includes>
+        </fileSet>
+    </fileSets>
+
+</assembly>
