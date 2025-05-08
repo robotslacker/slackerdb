@@ -185,6 +185,48 @@ public class AdminClientRequest extends PostgresRequest {
                 }
             }
         }
+        else if (clientRequestCommand.trim().toUpperCase().startsWith("UNREGISTER"))
+        {
+            Map<String, String> appOptions = new HashMap<>();
+            String paramName = null;
+            String paramValue;
+            clientRequestCommand = clientRequestCommand.trim();
+            clientRequestCommand = clientRequestCommand.substring("UNREGISTER".length() + 1);
+            clientRequestCommand = clientRequestCommand.trim();
+
+            boolean parameterParseOK = true;
+            for (String arg : clientRequestCommand.split(" ")) {
+                if (arg.startsWith("--")) {
+                    paramName = arg.substring(2).toLowerCase();
+                }
+                else
+                {
+                    if (paramName == null)
+                    {
+                        parameterParseOK = false;
+                        feedBackMsg.append("[ADMIN CMD] Unexpected command parameter [").append(clientRequestCommand).append("].");
+                        break;
+                    }
+                    paramValue = arg;
+                    appOptions.put(paramName, paramValue);
+                    paramName = null;
+                }
+            }
+            if (parameterParseOK && (!appOptions.containsKey("database")))
+            {
+                feedBackMsg.append("[ADMIN CMD] Unregister need local alias name [ --database <database name> ].");
+            }
+            else {
+                // 服务端开始代理
+                try {
+                    proxyInstance.removeAlias(appOptions.get("database"));
+                    feedBackMsg.append("[ADMIN CMD] Unregister proxy successful!\n");
+                } catch (ServerException se) {
+                    feedBackMsg.append("[ADMIN CMD] Unregister proxy failed!\n");
+                    feedBackMsg.append("[ADMIN CMD] ").append(se.getMessage());
+                }
+            }
+        }
         else
         {
             feedBackMsg.append("[ADMIN CMD] Unknown command [").append(clientRequestCommand).append("].");

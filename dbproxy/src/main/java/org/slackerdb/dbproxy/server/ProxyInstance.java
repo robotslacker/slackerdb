@@ -214,6 +214,17 @@ public class ProxyInstance {
         proxyTarget.put(aliasName, new ArrayList<>());
     }
 
+    public synchronized void removeAlias(String aliasName) throws ServerException
+    {
+        if (!proxyAlias.containsKey(aliasName))
+        {
+            throw new ServerException(
+                    "SLACKERDB-00019",
+                    Utils.getMessage("SLACKERDB-00019", aliasName));
+        }
+        proxyAlias.remove(aliasName);
+    }
+
     public synchronized void addAliasTarget(String aliasName, String remoteTarget, int weight) throws ServerException
     {
         if (!proxyAlias.containsKey(aliasName))

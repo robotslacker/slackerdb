@@ -37,12 +37,13 @@ public class Main {
         }
         System.out.println("Usage: java -jar " + codeLocation + " [COMMAND] [--parameter <parameter value>]");
         System.out.println("Commands:");
-        System.out.println("  start     Start proxy server.");
-        System.out.println("  stop      Stop proxy server.");
-        System.out.println("  status    print server status.");
-        System.out.println("  register  register a proxy target in.");
-        System.out.println("  help      print this message.");
-        System.out.println("  version   print server version.");
+        System.out.println("  start       Start proxy server.");
+        System.out.println("  stop        Stop proxy server.");
+        System.out.println("  status      print server status.");
+        System.out.println("  register    register a proxy target in.");
+        System.out.println("  unregister  unregister a proxy target.");
+        System.out.println("  help        print this message.");
+        System.out.println("  version     print server version.");
         System.out.println("Parameters:");
         System.out.println("  --conf         Configuration file.");
         System.out.println("  --pid          process pid file, default is none.");
