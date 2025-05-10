@@ -18,6 +18,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.TimeZone;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class ClientTest {
     static int dbPort = 4309;
@@ -55,11 +57,11 @@ public class ClientTest {
 
     @Test
     void testSlackerDriverConnection() throws SQLException {
+        Logger.getLogger("org.postgresql.Driver").setLevel(Level.FINE);
         String connectURL = "jdbc:slackerdb://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
-
         pgConn1.createStatement().execute("ATTACH ':memory:' AS newdb1");
         pgConn1.createStatement().execute("ATTACH ':memory:' AS newdb2");
         pgConn1.commit();
