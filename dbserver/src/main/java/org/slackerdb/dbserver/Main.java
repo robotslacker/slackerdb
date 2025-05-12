@@ -133,6 +133,9 @@ public class Main {
             {
                 localBuildDate = buildTimestamp;
             }
+            if (inputStream != null) {
+                inputStream.close();
+            }
         }
         catch (IOException ioe)
         {

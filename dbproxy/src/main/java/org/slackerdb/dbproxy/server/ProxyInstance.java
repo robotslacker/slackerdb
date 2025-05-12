@@ -47,7 +47,7 @@ public class ProxyInstance {
     // 记录会话列表
     public final Map<Integer, ProxySession> proxySessions = new ConcurrentHashMap<>();
 
-    private final Map<String, Boolean> proxyAlias = new ConcurrentHashMap<>();
+    protected final Map<String, Boolean> proxyAlias = new ConcurrentHashMap<>();
 
     private final Map<String, List<PostgresProxyTarget>> proxyTarget = new ConcurrentHashMap<>();
 
@@ -170,13 +170,15 @@ public class ProxyInstance {
                 File pidFile = new File(this.serverConfiguration.getPid());
                 if (pidFile.exists()) {
                     if (!pidFile.delete()) {
-                        logger.warn("[SERVER] {}", Utils.getMessage("SLACKERDB-00014"));
+                        logger.warn("[SERVER] Remove pid file [{}] failed, reason unknown!",
+                                this.serverConfiguration.getPid());
                     }
                 }
                 pidRandomAccessFile = null;
             }
-            catch (IOException ignored) {
-                logger.warn("[SERVER] {}", Utils.getMessage("SLACKERDB-00014"));
+            catch (IOException ioe) {
+                logger.warn("[SERVER] Remove pid file [{}] failed, reason unknown!",
+                        this.serverConfiguration.getPid(), ioe);
             }
         }
 
@@ -238,7 +240,6 @@ public class ProxyInstance {
         proxyTarget.put(aliasName, proxyTargetList);
     }
 
-
     public PostgresProxyTarget getAvailableTarget(String aliasName) throws ServerException
     {
         if (!proxyAlias.containsKey(aliasName))
@@ -277,5 +278,10 @@ public class ProxyInstance {
             }
         }
         throw new ServerException("SLACKERDB-00017", Utils.getMessage("SLACKERDB-00017", aliasName));
+    }
+
+    public void createNewInstance(String aliasName)
+    {
+        System.out.println("hhhh");
     }
 }

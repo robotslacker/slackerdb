@@ -31,6 +31,12 @@ public class ServerConfiguration extends Throwable {
     // 系统的PID文件
     private final String default_pid = "";
 
+    private final boolean default_autoCreate = false;
+    private final boolean default_autoOpen = false;
+    private final boolean default_autoClose = false;
+    private final int default_autoCloseTimeout = 900;
+    private final String default_instance_template = "";
+
     private String   log;
     private Level    log_level;
     private int      port;
@@ -39,6 +45,12 @@ public class ServerConfiguration extends Throwable {
     private int      client_timeout;
     private Locale   locale;
     private String   pid;
+
+    private boolean autoCreate;
+    private boolean autoOpen;
+    private boolean autoClose;
+    private int autoCloseTimeout;
+    private String instance_template;
 
     public ServerConfiguration() throws ServerException
     {
@@ -51,6 +63,11 @@ public class ServerConfiguration extends Throwable {
         client_timeout = default_client_timeout;
         locale = default_locale;
         pid = default_pid;
+        autoCreate = default_autoCreate;
+        autoOpen = default_autoOpen;
+        autoClose = default_autoClose;
+        autoCloseTimeout = default_autoCloseTimeout;
+        instance_template = default_instance_template;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -93,7 +110,7 @@ public class ServerConfiguration extends Throwable {
                 case "LOG":
                     if (entry.getValue().toString().isEmpty())
                     {
-                        log= this.default_log;
+                        log = this.default_log;
                     }
                     else {
                         setLog(entry.getValue().toString());
@@ -102,7 +119,7 @@ public class ServerConfiguration extends Throwable {
                 case "LOG_LEVEL":
                     if (entry.getValue().toString().isEmpty())
                     {
-                        log_level= this.default_log_level;
+                        log_level = this.default_log_level;
                     }
                     else {
                         setLog_level(entry.getValue().toString());
@@ -111,7 +128,7 @@ public class ServerConfiguration extends Throwable {
                 case "PORT":
                     if (entry.getValue().toString().isEmpty())
                     {
-                        port= this.default_port;
+                        port = this.default_port;
                     }
                     else {
                         setPort(entry.getValue().toString());
@@ -120,7 +137,7 @@ public class ServerConfiguration extends Throwable {
                 case "BIND":
                     if (entry.getValue().toString().isEmpty())
                     {
-                        bind= this.default_bind;
+                        bind = this.default_bind;
                     }
                     else {
                         setBindHost(entry.getValue().toString());
@@ -151,6 +168,51 @@ public class ServerConfiguration extends Throwable {
                     }
                     else {
                         setPid(entry.getValue().toString());
+                    }
+                    break;
+                case "AUTOCREATE":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        autoCreate = this.default_autoCreate;
+                    }
+                    else {
+                        setAutoCreate(entry.getValue().toString());
+                    }
+                    break;
+                case "AUTOOPEN":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        autoOpen = this.default_autoOpen;
+                    }
+                    else {
+                        setAutoOpen(entry.getValue().toString());
+                    }
+                    break;
+                case "AUTOCLOSE":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        autoClose = this.default_autoClose;
+                    }
+                    else {
+                        setAutoClose(entry.getValue().toString());
+                    }
+                    break;
+                case "AUTOCLOSETIMEOUT":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        autoCloseTimeout = this.default_autoCloseTimeout;
+                    }
+                    else {
+                        setAutoCloseTimeout(entry.getValue().toString());
+                    }
+                    break;
+                case "INSTANCE_TEMPLATE":
+                    if (entry.getValue().toString().isEmpty())
+                    {
+                        instance_template = this.default_instance_template;
+                    }
+                    else {
+                        setInstance_Template(entry.getValue().toString());
                     }
                     break;
                 default:
@@ -329,4 +391,53 @@ public class ServerConfiguration extends Throwable {
         pid = pPid;
     }
 
+    public void setAutoCreate(String pAutoCreate) throws ServerException
+    {
+        autoCreate = Boolean.parseBoolean(pAutoCreate.toUpperCase());
+    }
+
+    public void setAutoClose(String pAutoClose) throws ServerException
+    {
+        autoClose = Boolean.parseBoolean(pAutoClose.toUpperCase());
+    }
+
+    public void setAutoOpen(String pAutoOpen) throws ServerException
+    {
+        autoOpen = Boolean.parseBoolean(pAutoOpen.toUpperCase());
+    }
+
+    public void setAutoCloseTimeout(String pAutoCloseTimeout) throws ServerException
+    {
+        autoCloseTimeout = Integer.parseInt(pAutoCloseTimeout);
+    }
+
+    public void setInstance_Template(String pInstance_Template)
+    {
+        instance_template = pInstance_Template;
+    }
+
+    public boolean getAutoCreate()
+    {
+        return autoCreate;
+    }
+
+    public boolean getAutoClose()
+    {
+        return autoClose;
+    }
+
+    public boolean getAutoOpen()
+    {
+        return autoOpen;
+    }
+
+    public int getAutoCloseTimeout()
+    {
+        return autoCloseTimeout;
+    }
+
+    public String getInstance_Template()
+    {
+        return instance_template;
+    }
 }

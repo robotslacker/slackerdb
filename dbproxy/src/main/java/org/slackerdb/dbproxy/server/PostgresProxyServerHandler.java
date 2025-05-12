@@ -32,6 +32,11 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
     private Channel outboundChannel;
     private final ProxyInstance proxyInstance;
 
+    public boolean containsInstance(String aliasName)
+    {
+        return this.proxyInstance.proxyAlias.containsKey(aliasName);
+    }
+
     public PostgresProxyServerHandler(ProxyInstance proxyInstance, Logger pLogger)
     {
         super();
@@ -86,6 +91,11 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
             // 根据连接字符串里头的数据库名称决定转发地址
             String aliasName = connectParameters.get("database");
             try {
+                if (!containsInstance(aliasName) && this.proxyInstance.serverConfiguration.getAutoCreate())
+                {
+                    // 自动创建一个新实例
+                    this.proxyInstance.createNewInstance(aliasName);
+                }
                 // 查找合适的目的地
                 PostgresProxyTarget postgresProxyTarget = this.proxyInstance.getAvailableTarget(aliasName);
 

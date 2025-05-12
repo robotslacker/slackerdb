@@ -45,17 +45,23 @@ public class Main {
         System.out.println("  help        print this message.");
         System.out.println("  version     print server version.");
         System.out.println("Parameters:");
-        System.out.println("  --conf         Configuration file.");
-        System.out.println("  --pid          process pid file, default is none.");
-        System.out.println("  --locale       default language of the program.");
-        System.out.println("  --log_level    log level, default is INFO.");
-        System.out.println("  --log          log file, default is CONSOLE.");
-        System.out.println("  --bind         server bind ip address, default is 0.0.0.0");
-        System.out.println("  --host         remote server address,  default is 127.0.0.1");
-        System.out.println("  --port         server listener port. default is random");
-        System.out.println("  --database     proxy database name.");
-        System.out.println("  --target       proxy target url. Example: 127.0.0.1:5432/db1");
-        System.out.println("  --workers      INT. maximum worker threads for forward. default is CPU cores.");
+        System.out.println("  start :");
+        System.out.println("    --conf         Configuration file.");
+        System.out.println("    --locale            default language of the program.");
+        System.out.println("    --log_level         log level, default is INFO.");
+        System.out.println("    --log               log file, default is CONSOLE.");
+        System.out.println("    --bind              server bind ip address, default is 0.0.0.0");
+        System.out.println("    --port              server listener port. default is random");
+        System.out.println("  stop | status:");
+        System.out.println("    --conf         Configuration file.");
+        System.out.println("    --host              remote server address,  default is 127.0.0.1");
+        System.out.println("    --port              server listener port. default is random");
+        System.out.println("  register:");
+        System.out.println("    --conf         Configuration file.");
+        System.out.println("    --alias        proxy database name.");
+        System.out.println("    --rHost        remote server address,  default is 127.0.0.1");
+        System.out.println("    --rPort        remote server port. no default.");
+        System.out.println("    --rData        remote server name. no default.");
     }
 
     // 主程序
@@ -127,6 +133,9 @@ public class Main {
             {
                 localBuildDate = buildTimestamp;
             }
+            if (inputStream != null) {
+                inputStream.close();
+            }
         }
         catch (IOException ioe)
         {
@@ -171,20 +180,12 @@ public class Main {
             if (appOptions.containsKey("port")) {
                 serverConfiguration.setPort(appOptions.get("port"));
             }
-            if (appOptions.containsKey("pid")) {
-                serverConfiguration.setPid(appOptions.get("pid"));
-            }
-            if (appOptions.containsKey("workers"))
-            {
-                serverConfiguration.setMax_workers(appOptions.get("workers"));
-            }
 
             // 初始化日志服务
             Logger logger = AppLogger.createLogger(
                     "PROXY",
                     serverConfiguration.getLog_level().levelStr,
                     serverConfiguration.getLog());
-
             if (subCommand.toString().equalsIgnoreCase("START"))
             {
                 // 如果要求启动，则启动应用程序
