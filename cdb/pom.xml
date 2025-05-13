@@ -2,7 +2,7 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0">
     <modelVersion>4.0.0</modelVersion>
 
-    <artifactId>slackerdb-dbserver</artifactId>
+    <artifactId>slackerdb-cdb</artifactId>
     <packaging>jar</packaging>
 
     <parent>
@@ -12,10 +12,6 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <properties>
-        <commons.cli.version>1.6.0</commons.cli.version>
-    </properties>
-
     <dependencies>
         <dependency>
             <groupId>org.robotslacker</groupId>
@@ -24,49 +20,24 @@
         </dependency>
         <dependency>
             <groupId>org.robotslacker</groupId>
-            <artifactId>slackerdb-plsql</artifactId>
+            <artifactId>slackerdb-dbserver</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!-- DuckDB 数据库驱动 -->
-        <dependency>
-            <groupId>org.duckdb</groupId>
-            <artifactId>duckdb_jdbc</artifactId>
-            <version>1.2.2.0</version>
-        </dependency>
-        <!-- NETTY 驱动 -->
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
             <version>4.1.116.Final</version>
         </dependency>
-        <!-- CSV解析 -->
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-csv</artifactId>
-            <version>1.11.0</version>
-        </dependency>
-        <!-- 数据库连接池 -->
-        <dependency>
-            <groupId>com.zaxxer</groupId>
-            <artifactId>HikariCP</artifactId>
-            <version>6.2.1</version>
-        </dependency>
-        <!-- SQL语法解析 -->
-        <dependency>
-            <groupId>org.antlr</groupId>
-            <artifactId>antlr4-runtime</artifactId>
-            <version>4.13.2</version>
-        </dependency>
-        <!-- 客户端连接测试 -->
-        <dependency>
-            <groupId>org.robotslacker</groupId>
-            <artifactId>slackerdb-dbdriver</artifactId>
-            <version>${project.version}</version>
-            <scope>test</scope>
-        </dependency>
     </dependencies>
+
     <build>
         <resources>
+            <resource>
+                <directory>src/main/java</directory>
+                <includes>
+                    <include>**/*</include>
+                </includes>
+            </resource>
             <resource>
                 <directory>src/main/resources</directory>
                 <includes>
@@ -79,6 +50,19 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-deploy-plugin</artifactId>
                 <version>3.1.2</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.2.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -108,36 +92,6 @@
                 </executions>
             </plugin>
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.2.5</version>
-                <configuration>
-                    <argLine>--add-opens java.base/java.lang=ALL-UNNAMED</argLine>
-                    <includes>
-                        <include>**/Sanity01Test.java</include>
-                        <include>**/Sanity02Test.java</include>
-                        <include>**/MultiDBInstanceTest.java</include>
-                        <include>**/DatabaseStabilityTest.java</include>
-                    </includes>
-                    <parallel>none</parallel> <!-- Disable parallel execution -->
-                    <forkCount>1</forkCount>  <!-- Execute tests in a single process -->
-                    <reuseForks>false</reuseForks>
-                </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-source-plugin</artifactId>
-                <version>3.2.1</version>
-                <executions>
-                    <execution>
-                        <id>attach-sources</id>
-                        <goals>
-                            <goal>jar</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <version>3.3.7</version>
@@ -150,11 +104,24 @@
                         <configuration>
                             <classifier>standalone</classifier>
                             <mainClass>
-                                org.slackerdb.dbserver.Main
+                                org.slackerdb.dbproxy.Main
                             </mainClass>
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <includes>
+                        <include>**/ProxyTest.java</include>
+                    </includes>
+                    <parallel>none</parallel> <!-- Disable parallel execution -->
+                    <forkCount>1</forkCount>  <!-- Execute tests in a single process -->
+                    <reuseForks>false</reuseForks>
+                </configuration>
             </plugin>
         </plugins>
     </build>

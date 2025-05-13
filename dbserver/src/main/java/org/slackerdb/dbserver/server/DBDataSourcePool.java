@@ -6,7 +6,6 @@ import org.slackerdb.common.utils.Sleeper;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
@@ -97,17 +96,7 @@ public class DBDataSourcePool {
     {
         try
         {
-            if ((conn == null ) || (conn.isClosed()))
-            {
-                return false;
-            }
-            if (this.dbDataSourcePoolConfig.getValidationSQL() != null && !this.dbDataSourcePoolConfig.getValidationSQL().isEmpty())
-            {
-                PreparedStatement preparedStatement = conn.prepareStatement(this.dbDataSourcePoolConfig.getValidationSQL());
-                preparedStatement.execute();
-                preparedStatement.close();
-            }
-            return true;
+            return (conn != null) && (!conn.isClosed());
         }
         catch (SQLException ignored)
         {
@@ -286,14 +275,6 @@ public class DBDataSourcePool {
         if (this.dbDataSourcePoolConfig.getConnectProperties() != null)
         {
             connectProperties.putAll(this.dbDataSourcePoolConfig.getConnectProperties());
-        }
-        if (this.dbDataSourcePoolConfig.getUserName() != null)
-        {
-            connectProperties.put("username", this.dbDataSourcePoolConfig.getUserName());
-        }
-        if (this.dbDataSourcePoolConfig.getPassword() != null)
-        {
-            connectProperties.put("password", this.dbDataSourcePoolConfig.getPassword());
         }
 
         // 获取数据库连接

@@ -1,18 +1,17 @@
-package org.slackerdb.dbserver;
+package org.slackerdb.dbproxy;
 /*
     Main
 
-    主程序. 根据命令行参数来完成数据库的启动、停止、状态查看
+    主程序. 根据命令行参数来完成代理的启动、停止、状态查看
 
  */
 
 import ch.qos.logback.classic.Logger;
 import org.slackerdb.common.exceptions.ServerException;
-import org.slackerdb.common.utils.Sleeper;
-import org.slackerdb.dbserver.client.AdminClient;
-import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.logger.AppLogger;
-import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.dbproxy.client.AdminClient;
+import org.slackerdb.dbproxy.configuration.ServerConfiguration;
+import org.slackerdb.dbproxy.server.CDBInstance;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -38,8 +37,8 @@ public class Main {
         }
         System.out.println("Usage: java -jar " + codeLocation + " [COMMAND] [--parameter <parameter value>]");
         System.out.println("Commands:");
-        System.out.println("  start     Start slackerdb server.");
-        System.out.println("  stop      Stop slackerdb server.");
+        System.out.println("  start     Start slackerdb cdb server.");
+        System.out.println("  stop      Stop slackerdb cdb server.");
         System.out.println("  status    print server status.");
         System.out.println("  help      print this message.");
         System.out.println("  version   print server version.");
@@ -61,18 +60,21 @@ public class Main {
         System.out.println("  --init_script       system init script or script directory. default is none.");
         System.out.println("  --startup_script    system startup script or script directory. default is none.");
         System.out.println("  --sql_history       enable or disable sql history feature(ON|OFF). default is off.");
+        System.out.println("  --autoclose         automatically close idle instance after timeout. default is true.");
+        System.out.println("  --autoclose_timeout time to wait before database is automatically closed, Default is 90 seconds.");
     }
 
+    // 主程序
     public static void main(String[] args){
         // 处理应用程序参数
         Map<String, String> appOptions = new HashMap<>();
+        // 参数-子命令
         StringBuilder subCommand = null;
-        Logger logger = null;
-
         String paramName = null;
         String paramValue;
         for (String arg : args) {
             if (arg.startsWith("--")) {
+                // --开头的内容被认为是参数名称
                 paramName = arg.substring(2);
             }
             else
@@ -140,7 +142,6 @@ public class Main {
             version = "{project.version}";
             localBuildDate = "${build.timestamp}";
         }
-
         if (subCommand.toString().equalsIgnoreCase("HELP"))
         {
             // 打印帮助信息
@@ -150,13 +151,13 @@ public class Main {
         else if (subCommand.toString().equalsIgnoreCase("VERSION"))
         {
             // 打印版本信息
-            System.out.println("[SERVER] VERSION：" + version);
-            System.out.println("[SERVER] Build Time: " + localBuildDate );
+            System.out.println("[CDB-SERVER] VERSION：" + version);
+            System.out.println("[CDB-SERVER] Build Time: " + localBuildDate );
             System.exit(0);
         }
 
-        try
-        {
+        // 处理应用程序参数
+        try {
             ServerConfiguration serverConfiguration = new ServerConfiguration();
             // 如果有配置文件，用配置文件中数据进行更新
             if (appOptions.containsKey("conf"))
@@ -228,28 +229,39 @@ public class Main {
             {
                 serverConfiguration.setTemplate(appOptions.get("template"));
             }
+            if (appOptions.containsKey("autoclose"))
+            {
+                serverConfiguration.setAutoClose(appOptions.get("autoclose"));
+            }
+            if (appOptions.containsKey("autoclose_timeout"))
+            {
+                serverConfiguration.setAutoCloseTimeout(appOptions.get("autoclose_timeout"));
+            }
+
             // 初始化日志服务
-            logger = AppLogger.createLogger(
-                    "SLACKERDB",
+            Logger logger = AppLogger.createLogger(
+                    "SLACKER-CDB",
                     serverConfiguration.getLog_level().levelStr,
                     serverConfiguration.getLog());
+            if (subCommand.toString().equalsIgnoreCase("START"))
+            {
+                // 如果要求启动，则启动应用程序
+                logger.info("[SLACKER-CDB] SlackerDB CDB starting (PID:{})...", ProcessHandle.current().pid());
+                logger.info("[SLACKER-CDB] VERSION：{}", version);
+                logger.info("[SLACKER-CDB] Build Time: {}", localBuildDate);
 
-            // 启动应用程序
-            if (subCommand.toString().toUpperCase().startsWith("START")) {
-                // 启动服务器
-                logger.info("[SERVER] SlackerDB server starting (PID:{})...", ProcessHandle.current().pid());
-                logger.info("[SERVER] VERSION：{}", version);
-                logger.info("[SERVER] Build Time: {}", localBuildDate);
+                // 初始化程序参数
+                CDBInstance cdbInstance = new CDBInstance(serverConfiguration);
+                // 设置为独占模式，当端口停止，程序也将停止
+                cdbInstance.setExclusiveMode(true);
+                // 启动代理转发服务
+                cdbInstance.start();
 
-                // 初始化后端的DuckDB数据库
-                DBInstance dbInstance = new DBInstance(serverConfiguration);
-                // 设置为独占模式，当数据库端口停止，数据库也将停止
-                dbInstance.setExclusiveMode(true);
-                // 启动数据库
-                dbInstance.start();
-
-                // 这里永远等待，不退出
-                Sleeper.sleep(Long.MAX_VALUE);
+                // 循环等待，避免主进程退出
+                try {Thread.sleep(Long.MAX_VALUE);} catch (InterruptedException ignored) {
+                    logger.info("[SLACKER-CDB] Caught user interrupt. Quit.");
+                    System.exit(255);
+                }
             }
             else
             {
@@ -265,25 +277,10 @@ public class Main {
             // 退出应用程序
             System.exit(0);
         }
-        catch (ServerException serverException)
+        catch (ServerException se)
         {
-            if (logger != null)
-            {
-                logger.error(serverException.getErrorMessage());
-                System.exit(255);
-            }
-        }
-        catch (Exception se)
-        {
-            if (logger != null)
-            {
-                logger.error("Internal error: {}", se.getMessage());
-                logger.trace("Internal error: ", se);
-            }
-            else
-            {
-                se.printStackTrace(System.err);
-            }
+            System.err.println("Error: unexpected internal error.");
+            se.printStackTrace(System.err);
             System.exit(255);
         }
     }

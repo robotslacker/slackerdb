@@ -29,16 +29,16 @@ We provide a proxy service that allows launching multiple database instances on 
 ```
 ### Start db server
 ``` 
-    java -jar dbserver/target/slackerdb-dbserver-0.1.4-standalone.jar start
+    java -jar dbserver/target/slackerdb-dbserver-0.1.5-standalone.jar start
 ```
 ### Stop db server
 ``` 
-    java -jar dbserver/target/slackerdb-dbserver-0.1.4-standalone.jar stop
+    java -jar dbserver/target/slackerdb-dbserver-0.1.5-standalone.jar stop
 ```
 
 ### Check db status
 ``` 
-    java -jar dbserver/target/slackerdb-dbserver-0.1.4-standalone.jar status
+    java -jar dbserver/target/slackerdb-dbserver-0.1.5-standalone.jar status
 ```
 
 ### Server configuration file template
@@ -186,17 +186,17 @@ For parameters that are not configured, means default values will be used.
 ``` 
     ServerConfiguration proxyConfiguration = new ServerConfiguration();
     proxyConfiguration.setPort(dbPort);
-    proxyInstance = new ProxyInstance(proxyConfiguration);
-    proxyInstance.start();
+    CDBInstance = new ProxyInstance(proxyConfiguration);
+    CDBInstance.start();
 
     // Waiting for server ready
-    while (!proxyInstance.instanceState.equalsIgnoreCase("RUNNING")) {
+    while (!CDBInstance.instanceState.equalsIgnoreCase("RUNNING")) {
         Sleeper.sleep(1000);
     }
 
     // add proxy rule
-    proxyInstance.createAlias("mem1", false);
-    proxyInstance.addAliasTarget("mem1",
+    CDBInstance.createAlias("mem1", false);
+    CDBInstance.addAliasTarget("mem1",
             "127.0.0.1:" +
             dbInstance.serverConfiguration.getPort() + "/" +
             dbInstance.serverConfiguration.getData(), 200);

@@ -64,6 +64,9 @@ public class DBInstance {
     // 系统活动的会话数，指保持在DB侧正在执行语句的会话数
     public final  AtomicInteger  activeSessions = new AtomicInteger(0);
 
+    // 系统最后活跃时间
+    public long lastActiveTime = System.currentTimeMillis();
+
     // 从资源文件中获取消息，为未来的多语言做准备
     private String getMessage(String code, Object... contents) {
         StringBuilder content;
@@ -133,6 +136,9 @@ public class DBInstance {
     // 终止会话
     // 默认回滚所有会话
     public void abortSession(int sessionId) throws SQLException {
+        // 标记最后活跃时间
+        this.lastActiveTime = System.currentTimeMillis();
+
         // 销毁会话保持的数据库信息
         DBSession dbSession = dbSessions.get(sessionId);
         if (dbSession != null) {
@@ -146,6 +152,9 @@ public class DBInstance {
     // 关闭会话
     // closeSession默认提交所有未提交内容
     public void closeSession(int sessionId) throws SQLException {
+        // 标记最后活跃时间
+        this.lastActiveTime = System.currentTimeMillis();
+
         // 销毁会话保持的数据库信息
         DBSession dbSession = dbSessions.get(sessionId);
         if (dbSession != null) {
@@ -434,7 +443,6 @@ public class DBInstance {
             dbDataSourcePoolConfig.setMaximumIdle(serverConfiguration.getConnection_pool_maximum_idle());
             dbDataSourcePoolConfig.setMaximumLifeCycleTime(serverConfiguration.getConnection_pool_maximum_lifecycle_time());
             dbDataSourcePoolConfig.setMaximumPoolSize(serverConfiguration.getMax_connections());
-            dbDataSourcePoolConfig.setValidationSQL(serverConfiguration.getConnection_pool_validation_sql());
             dbDataSourcePoolConfig.setJdbcURL(backendConnectString);
             dbDataSourcePoolConfig.setConnectProperties(connectProperties);
             try {
@@ -458,7 +466,6 @@ public class DBInstance {
                 sqlHistoryDataSourcePoolConfig.setMaximumIdle(serverConfiguration.getMax_Workers());
                 sqlHistoryDataSourcePoolConfig.setMaximumLifeCycleTime(0);
                 sqlHistoryDataSourcePoolConfig.setMaximumPoolSize(serverConfiguration.getMax_Workers());
-                sqlHistoryDataSourcePoolConfig.setValidationSQL(null);
                 sqlHistoryDataSourcePoolConfig.setJdbcURL(backendConnectString);
                 sqlHistoryDataSourcePoolConfig.setConnectProperties(connectProperties);
                 try {
@@ -625,6 +632,9 @@ public class DBInstance {
     // 初始化一个新的数据库会话
     public int newSession(DBSession dbSession)
     {
+        // 标记最后活跃时间
+        this.lastActiveTime = System.currentTimeMillis();
+
         int currentSessionId = maxSessionId.incrementAndGet();
         dbSessions.put(currentSessionId, dbSession);
         return currentSessionId;

@@ -1,19 +1,19 @@
-package org.slackerdb.dbserver.configuration;
+package org.slackerdb.dbproxy.configuration;
 
+import ch.qos.logback.classic.Level;
+import com.sun.management.OperatingSystemMXBean;
 import org.slackerdb.common.exceptions.ServerException;
+import org.slackerdb.common.utils.Utils;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import com.sun.management.OperatingSystemMXBean;
 import java.lang.management.ManagementFactory;
 import java.net.ServerSocket;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
-
-import ch.qos.logback.classic.Level;
-import org.slackerdb.common.utils.Utils;
 
 public class ServerConfiguration extends Throwable {
     // 设置默认参数
@@ -65,6 +65,9 @@ public class ServerConfiguration extends Throwable {
     private final int default_connection_pool_maximum_idle = 10;
     private final int default_connection_pool_maximum_lifecycle_time = 15*60*1000;
 
+    private final boolean default_autoClose = true;
+    private final int default_autoCloseTimeout = 90;
+
     private String   data;
 
     private String   data_dir;
@@ -90,6 +93,8 @@ public class ServerConfiguration extends Throwable {
     private int connection_pool_minimum_idle;
     private int connection_pool_maximum_idle;
     private int connection_pool_maximum_lifecycle_time;
+    private boolean autoClose;
+    private int autoCloseTimeout;
 
     public ServerConfiguration() throws ServerException
     {
@@ -119,6 +124,9 @@ public class ServerConfiguration extends Throwable {
         connection_pool_maximum_lifecycle_time = default_connection_pool_maximum_lifecycle_time;
         template = default_template;
 
+        autoClose = default_autoClose;
+        autoCloseTimeout = default_autoCloseTimeout;
+
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
             port = socket.getLocalPort();
@@ -127,7 +135,7 @@ public class ServerConfiguration extends Throwable {
         }
 
         // 系统默认内存为系统可用内存的60%
-        OperatingSystemMXBean operatingSystemMXBean = (OperatingSystemMXBean)ManagementFactory.getOperatingSystemMXBean();
+        OperatingSystemMXBean operatingSystemMXBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
         default_memory_limit =
                 (int) ((operatingSystemMXBean.getTotalMemorySize() * 0.6 )/ 1024 / 1024 /1024) + "G";
         memory_limit = default_memory_limit;
@@ -314,6 +322,20 @@ public class ServerConfiguration extends Throwable {
                         setConnection_pool_maximum_lifecycle_time(Integer.parseInt(entry.getValue().toString()));
                     }
                 }
+                case "AUTOCLOSE" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        autoClose = this.default_autoClose;
+                    } else {
+                        setAutoClose(entry.getValue().toString());
+                    }
+                }
+                case "AUTOCLOSETIMEOUT" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        autoCloseTimeout = this.default_autoCloseTimeout;
+                    } else {
+                        setAutoCloseTimeout(entry.getValue().toString());
+                    }
+                }
                 default ->
                         throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));
             }
@@ -450,10 +472,6 @@ public class ServerConfiguration extends Throwable {
             );
         }
     }
-    public void setLog_level(Level pLog_level) throws ServerException {
-        log_level = pLog_level;
-    }
-
 
     public void setLog(String pLog) { log = pLog.trim();}
     public void setBindHost(String pHost)
@@ -567,17 +585,6 @@ public class ServerConfiguration extends Throwable {
         }
     }
 
-    public void setMax_connections(int pMax_connections) throws ServerException
-    {
-        if (pMax_connections <= 0)
-        {
-            throw new ServerException(
-                    Utils.getMessage("SLACKERDB-00005", "max_connections", pMax_connections)
-            );
-        }
-        max_connections = pMax_connections;
-    }
-
     public void setMax_workers(int pMax_workers) throws ServerException
     {
         max_workers = pMax_workers;
@@ -646,7 +653,7 @@ public class ServerConfiguration extends Throwable {
         }
         else
         {
-            throw new ServerException("[SERVER] Invalid config of sql history. ON or OFF only.");
+            throw new ServerException("[SERVER_CDB] Invalid config of sql history. ON or OFF only.");
         }
     }
 
@@ -689,16 +696,6 @@ public class ServerConfiguration extends Throwable {
         }
     }
 
-    public void setClient_timeout(int pClient_Timeout) throws ServerException {
-        client_timeout = pClient_Timeout;
-        if (client_timeout <= 0)
-        {
-            throw new ServerException(
-                    Utils.getMessage("SLACKERDB-00005", "client_timeout", pClient_Timeout)
-            );
-        }
-    }
-
     public void setAccess_mode(String pAccessMode) throws ServerException
     {
         if (!pAccessMode.equalsIgnoreCase("READ_WRITE") && !pAccessMode.equalsIgnoreCase("READ_ONLY"))
@@ -714,4 +711,26 @@ public class ServerConfiguration extends Throwable {
     {
         pid = pPid;
     }
+
+    public void setAutoClose(String pAutoClose) throws ServerException
+    {
+        autoClose = Boolean.parseBoolean(pAutoClose.toUpperCase());
+    }
+
+    public void setAutoCloseTimeout(String pAutoCloseTimeout) throws ServerException
+    {
+        autoCloseTimeout = Integer.parseInt(pAutoCloseTimeout);
+    }
+
+    public boolean getAutoClose()
+    {
+        return autoClose;
+    }
+
+    public int getAutoCloseTimeout()
+    {
+        return autoCloseTimeout;
+    }
+
 }
+
