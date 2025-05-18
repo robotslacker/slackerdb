@@ -26,30 +26,30 @@
             <directory>${project.basedir}/../dbserver/bin</directory>
             <outputDirectory>bin</outputDirectory>
             <includes>
-                <include>dbserver.sh</include> <!-- 使用通配符匹配版本号 -->
+                <include>dbserver.sh</include>
             </includes>
             <filtered>true</filtered>
             <fileMode>0755</fileMode>
         </fileSet>
         <fileSet>
-            <directory>${project.basedir}/../dbproxy/target</directory>
+            <directory>${project.basedir}/../cdb/target</directory>
             <outputDirectory>jlib</outputDirectory>
             <includes>
-                <include>slackerdb-dbproxy-*-standalone.jar</include> <!-- 使用通配符匹配版本号 -->
+                <include>slackerdb-cdb-*-standalone.jar</include>
             </includes>
         </fileSet>
         <fileSet>
-            <directory>${project.basedir}/../dbproxy/conf</directory>
+            <directory>${project.basedir}/../cdb/conf</directory>
             <outputDirectory>conf</outputDirectory>
             <includes>
-                <include>dbproxy.conf</include> <!-- 使用通配符匹配版本号 -->
+                <include>dbcdb.conf</include>
             </includes>
         </fileSet>
         <fileSet>
             <directory>${project.basedir}/../dbdriver/target</directory>
             <outputDirectory>jlib</outputDirectory>
             <includes>
-                <include>slackerdb-dbdriver-*.jar</include> <!-- 使用通配符匹配版本号 -->
+                <include>slackerdb-dbdriver-*.jar</include>
             </includes>
         </fileSet>
     </fileSets>

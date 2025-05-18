@@ -15,7 +15,7 @@ You can also use the client we provided, which provides more functional support 
 
 You can use COPY-compatible syntax to rapidly insert data over the network.  
 
-We provide a proxy service that allows launching multiple database instances on the same network port, functioning similarly to containerized databases.  
+We provide a container database service that allows launching multiple database instances on the same network port.  
 
 ## Usage
 ### Build from source:
