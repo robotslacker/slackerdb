@@ -70,9 +70,11 @@ class CDBMonitor extends Thread
                 }
             }
             try {
-                Sleeper.sleep(30 * 1000);
+                Sleeper.sleep(3 * 1000);
             }
-            catch (InterruptedException ignored) {}
+            catch (InterruptedException ignored) {
+                return;
+            }
         }
     }
 }
@@ -221,6 +223,7 @@ public class CDBInstance {
                 dbInstance);
 
         // 启动服务监护进程
+        cdbMonitor.setCDBInstance(this);
         cdbMonitor.start();
 
         // 启动PG的协议处理程序

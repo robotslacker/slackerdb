@@ -73,5 +73,4 @@ public class ProxyTest {
         stmt.close();
         pgConn.close();
     }
-
 }

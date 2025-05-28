@@ -60,6 +60,8 @@ public class ServerConfiguration extends Throwable {
     // 系统的启动模板文件
     private final String default_template = "";
 
+    // 是否用后台方式启动
+    private final boolean defaultDaemonMode = false;
     // 设置数据库连接池的各项参数
     private final int default_connection_pool_minimum_idle = 3;
     private final int default_connection_pool_maximum_idle = 10;
@@ -87,6 +89,7 @@ public class ServerConfiguration extends Throwable {
     private String   pid;
     private int      max_connections;
     private String   template;
+    private boolean  daemonMode;
     private int connection_pool_minimum_idle;
     private int connection_pool_maximum_idle;
     private int connection_pool_maximum_lifecycle_time;
@@ -118,6 +121,7 @@ public class ServerConfiguration extends Throwable {
         connection_pool_maximum_idle = default_connection_pool_maximum_idle;
         connection_pool_maximum_lifecycle_time = default_connection_pool_maximum_lifecycle_time;
         template = default_template;
+        daemonMode = defaultDaemonMode;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -153,6 +157,13 @@ public class ServerConfiguration extends Throwable {
         // 加载配置信息，根据参数配置信息修改默认配置
         for (Map.Entry<Object, Object> entry : appProperties.entrySet()) {
             switch (entry.getKey().toString().toUpperCase()) {
+                case "DAEMON" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        daemonMode = this.defaultDaemonMode;
+                    } else {
+                        setDaemon(entry.getValue().toString());
+                    }
+                }
                 case "LOCALE" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         locale = this.default_locale;
@@ -439,6 +450,11 @@ public class ServerConfiguration extends Throwable {
     }
     public String getPid() {return pid;}
 
+    public boolean getDaemonMode()
+    {
+        return this.daemonMode;
+    }
+
     public void setLog_level(String pLog_level) throws ServerException {
         log_level = Level.valueOf(pLog_level);
 
@@ -668,6 +684,19 @@ public class ServerConfiguration extends Throwable {
                         Utils.getMessage("SLACKERDB-00005", "locale", pLocale)
                 );
             }
+        }
+    }
+
+    public void setDaemon(String pDaemonMode) throws ServerException {
+        if (pDaemonMode.trim().equalsIgnoreCase("true"))
+        {
+            daemonMode = true;
+        } else if (pDaemonMode.trim().equalsIgnoreCase("false"))
+        {
+            daemonMode = false;
+        }
+        else {
+            throw new ServerException("Invalid daemon mode parameter. true/false only.");
         }
     }
 

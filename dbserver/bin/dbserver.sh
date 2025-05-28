@@ -13,8 +13,6 @@ JAR_PATH="jlib/${JAR_NAME}"
 JAVA_OPTS=""
 # PID file path
 PID_FILE="pid/dbserver.pid"
-# log directory
-LOG_FILE="logs/console-dbserver.log"
 # conf file
 CONF_FILE="conf/dbserver.conf"
 
@@ -45,7 +43,7 @@ start() {
         echo "$APP_NAME is already running (PID: $(cat "$PID_FILE"))"
     else
         echo "Starting $APP_NAME..."
-        nohup "$JAVA_CMD" "$JAVA_OPTS" -jar "$JAR_PATH" --conf "$CONF_FILE" --pid "$PID_FILE" start >> "$LOG_FILE" 2>&1 &
+        "$JAVA_CMD" "$JAVA_OPTS" -jar "$JAR_PATH" --conf "$CONF_FILE" --daemon true --pid "$PID_FILE" start
         echo "$APP_NAME started (PID: $(cat "$PID_FILE"))"
     fi
 }
