@@ -1,4 +1,4 @@
-package org.slackerdb.dbproxy.server;
+package org.slackerdb.cdb.server;
 
 import ch.qos.logback.classic.Logger;
 import io.netty.bootstrap.Bootstrap;
@@ -10,14 +10,14 @@ import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.util.AttributeKey;
 import org.slackerdb.common.exceptions.ServerException;
-import org.slackerdb.dbproxy.message.PostgresMessage;
-import org.slackerdb.dbproxy.message.request.AdminClientRequest;
-import org.slackerdb.dbproxy.message.request.ProxyRequest;
-import org.slackerdb.dbproxy.message.request.SSLRequest;
-import org.slackerdb.dbproxy.message.request.StartupRequest;
-import org.slackerdb.dbproxy.message.response.ErrorResponse;
-import org.slackerdb.dbproxy.message.response.NoticeMessage;
-import org.slackerdb.dbproxy.message.response.ProxyResponse;
+import org.slackerdb.cdb.message.PostgresMessage;
+import org.slackerdb.cdb.message.request.AdminClientRequest;
+import org.slackerdb.cdb.message.request.ProxyRequest;
+import org.slackerdb.cdb.message.request.SSLRequest;
+import org.slackerdb.cdb.message.request.StartupRequest;
+import org.slackerdb.cdb.message.response.ErrorResponse;
+import org.slackerdb.cdb.message.response.NoticeMessage;
+import org.slackerdb.cdb.message.response.ProxyResponse;
 import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.server.DBInstance;
 

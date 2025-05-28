@@ -1,4 +1,4 @@
-package org.slackerdb.dbproxy.message.response;
+package org.slackerdb.cdb.message.response;
 
 public class ProxyResponse {
     public static String getMessageClass(byte messageType) {

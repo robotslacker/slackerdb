@@ -104,7 +104,7 @@
                         <configuration>
                             <classifier>standalone</classifier>
                             <mainClass>
-                                org.slackerdb.dbproxy.Main
+                                org.slackerdb.cdb.Main
                             </mainClass>
                         </configuration>
                     </execution>

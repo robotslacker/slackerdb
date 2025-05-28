@@ -1,8 +1,8 @@
-package org.slackerdb.dbproxy.message;
+package org.slackerdb.cdb.message;
 
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.AttributeKey;
-import org.slackerdb.dbproxy.server.CDBInstance;
+import org.slackerdb.cdb.server.CDBInstance;
 
 import java.io.IOException;
 import java.text.MessageFormat;

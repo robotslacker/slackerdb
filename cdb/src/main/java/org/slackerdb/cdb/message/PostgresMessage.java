@@ -1,10 +1,10 @@
-package org.slackerdb.dbproxy.message;
+package org.slackerdb.cdb.message;
 
 import ch.qos.logback.classic.Logger;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.AttributeKey;
 import org.slackerdb.common.utils.Utils;
-import org.slackerdb.dbproxy.server.CDBInstance;
+import org.slackerdb.cdb.server.CDBInstance;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

@@ -1,4 +1,4 @@
-package org.slackerdb.dbproxy.server;
+package org.slackerdb.cdb.server;
 
 import java.time.LocalDateTime;
 import java.util.Map;

@@ -1,4 +1,4 @@
-package org.slackerdb.dbproxy.configuration;
+package org.slackerdb.cdb.configuration;
 
 import ch.qos.logback.classic.Level;
 import com.sun.management.OperatingSystemMXBean;

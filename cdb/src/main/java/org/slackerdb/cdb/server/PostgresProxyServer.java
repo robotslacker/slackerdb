@@ -1,4 +1,4 @@
-package org.slackerdb.dbproxy.server;
+package org.slackerdb.cdb.server;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -14,12 +14,12 @@ import io.netty.handler.codec.MessageToByteEncoder;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.AttributeKey;
 import org.slackerdb.common.exceptions.ServerException;
-import org.slackerdb.dbproxy.message.PostgresRequest;
+import org.slackerdb.cdb.message.PostgresRequest;
 import org.slackerdb.common.utils.Utils;
-import org.slackerdb.dbproxy.message.request.AdminClientRequest;
-import org.slackerdb.dbproxy.message.request.ProxyRequest;
-import org.slackerdb.dbproxy.message.request.SSLRequest;
-import org.slackerdb.dbproxy.message.request.StartupRequest;
+import org.slackerdb.cdb.message.request.AdminClientRequest;
+import org.slackerdb.cdb.message.request.ProxyRequest;
+import org.slackerdb.cdb.message.request.SSLRequest;
+import org.slackerdb.cdb.message.request.StartupRequest;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;

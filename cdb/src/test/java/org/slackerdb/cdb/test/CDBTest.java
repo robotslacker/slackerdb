@@ -1,9 +1,9 @@
-package org.slackerdb.dbproxy.test;
+package org.slackerdb.cdb.test;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.slackerdb.dbproxy.server.CDBInstance;
+import org.slackerdb.cdb.server.CDBInstance;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.common.utils.Sleeper;
@@ -11,7 +11,7 @@ import org.slackerdb.common.utils.Sleeper;
 import java.sql.*;
 import java.util.TimeZone;
 
-public class ProxyTest {
+public class CDBTest {
     private static DBInstance dbInstance;
     private static CDBInstance CDBInstance;
     private static int dbPort = 0;
@@ -29,8 +29,8 @@ public class ProxyTest {
         dbInstance = new DBInstance(serverConfiguration);
         dbInstance.start();
 
-        org.slackerdb.dbproxy.configuration.ServerConfiguration proxyConfiguration =
-                new org.slackerdb.dbproxy.configuration.ServerConfiguration();
+        org.slackerdb.cdb.configuration.ServerConfiguration proxyConfiguration =
+                new org.slackerdb.cdb.configuration.ServerConfiguration();
         proxyConfiguration.setPort(0);
         CDBInstance = new CDBInstance(proxyConfiguration);
         CDBInstance.start();

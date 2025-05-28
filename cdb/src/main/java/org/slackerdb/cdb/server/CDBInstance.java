@@ -1,11 +1,11 @@
-package org.slackerdb.dbproxy.server;
+package org.slackerdb.cdb.server;
 
 import ch.qos.logback.classic.Logger;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.logger.AppLogger;
 import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.common.utils.Utils;
-import org.slackerdb.dbproxy.configuration.ServerConfiguration;
+import org.slackerdb.cdb.configuration.ServerConfiguration;
 import org.slackerdb.dbserver.server.DBInstance;
 
 import java.io.File;

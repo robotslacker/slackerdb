@@ -1,8 +1,8 @@
-package org.slackerdb.dbproxy.message.request;
+package org.slackerdb.cdb.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
-import org.slackerdb.dbproxy.message.PostgresRequest;
-import org.slackerdb.dbproxy.server.CDBInstance;
+import org.slackerdb.cdb.message.PostgresRequest;
+import org.slackerdb.cdb.server.CDBInstance;
 
 import java.io.IOException;
 

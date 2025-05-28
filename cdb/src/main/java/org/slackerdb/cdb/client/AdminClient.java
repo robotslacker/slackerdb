@@ -1,4 +1,4 @@
-package org.slackerdb.dbproxy.client;
+package org.slackerdb.cdb.client;
 
 /*
     AdminClient
@@ -20,8 +20,8 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
 import org.slackerdb.common.logger.AppLogger;
-import org.slackerdb.dbproxy.configuration.ServerConfiguration;
-import org.slackerdb.dbproxy.message.request.AdminClientRequest;
+import org.slackerdb.cdb.configuration.ServerConfiguration;
+import org.slackerdb.cdb.message.request.AdminClientRequest;
 import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;

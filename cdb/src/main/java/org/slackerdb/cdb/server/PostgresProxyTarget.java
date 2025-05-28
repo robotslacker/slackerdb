@@ -1,4 +1,4 @@
-package org.slackerdb.dbproxy.server;
+package org.slackerdb.cdb.server;
 
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.dbserver.server.DBInstance;
@@ -14,7 +14,7 @@ public class PostgresProxyTarget {
     // 远程数据库的数据库名称
     private final String  database;
 
-    private DBInstance dbInstance;
+    private final DBInstance dbInstance;
 
     public PostgresProxyTarget(String targetURL, DBInstance dbInstance) throws ServerException
     {

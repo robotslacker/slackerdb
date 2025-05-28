@@ -1,4 +1,4 @@
-package org.slackerdb.dbproxy;
+package org.slackerdb.cdb;
 /*
     Main
 
@@ -9,9 +9,9 @@ package org.slackerdb.dbproxy;
 import ch.qos.logback.classic.Logger;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.logger.AppLogger;
-import org.slackerdb.dbproxy.client.AdminClient;
-import org.slackerdb.dbproxy.configuration.ServerConfiguration;
-import org.slackerdb.dbproxy.server.CDBInstance;
+import org.slackerdb.cdb.client.AdminClient;
+import org.slackerdb.cdb.configuration.ServerConfiguration;
+import org.slackerdb.cdb.server.CDBInstance;
 
 import java.io.IOException;
 import java.io.InputStream;
