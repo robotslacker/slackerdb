@@ -58,6 +58,7 @@ public class Main {
         System.out.println("  --log               log file, default is CONSOLE.");
         System.out.println("  --bind              server bind ip address, default is 0.0.0.0");
         System.out.println("  --host              remote server address,  default is 127.0.0.1");
+        System.out.println("  --remote_listener   external remote listener address, default is none.");
         System.out.println("  --port              server listener port. default is random");
         System.out.println("  --data              database name. default is slackerdb");
         System.out.println("  --data_dir          database file directory. default is :memory:");
@@ -272,6 +273,10 @@ public class Main {
             {
                 serverConfiguration.setBindHost(appOptions.get("host"));
             }
+            if (appOptions.containsKey("remote_listener"))
+            {
+                serverConfiguration.setRemoteListener(appOptions.get("remote_listener"));
+            }
             if (appOptions.containsKey("port"))
             {
                 serverConfiguration.setPort(appOptions.get("port"));
@@ -355,8 +360,12 @@ public class Main {
             if (logger != null)
             {
                 logger.error(serverException.getErrorMessage());
-                System.exit(255);
             }
+            else
+            {
+                System.err.println(serverException.getErrorMessage());
+            }
+            System.exit(255);
         }
         catch (Exception se)
         {

@@ -153,6 +153,7 @@ public class AdminClientRequest  extends PostgresRequest {
             feedBackMsg.append("SERVER PARAMETER: \n");
             feedBackMsg.append(String.format("%-20s", "  Bind_Host:")).append(this.dbInstance.serverConfiguration.getBindHost()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Port:")).append(this.dbInstance.serverConfiguration.getPort()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Remote_Listener:")).append(this.dbInstance.serverConfiguration.getRemoteListener()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Data:")).append(this.dbInstance.serverConfiguration.getData()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Data_Dir:")).append(this.dbInstance.serverConfiguration.getData_Dir()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Temp_Dir:")).append(this.dbInstance.serverConfiguration.getTemp_dir()).append("\n");

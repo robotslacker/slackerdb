@@ -36,6 +36,8 @@ public class ServerConfiguration extends Throwable {
     private final int default_port = 0;
     // 默认绑定的主机地址
     private final String default_bind = "0.0.0.0";
+    // 外部监听地址，用来多个数据库服务在统一的外部服务下进行消息转发
+    private final String default_remote_listener = "";
     // 默认不限制内存使用情况
     private final String default_memory_limit;
     // 默认使用一半的CPU作为计算线程
@@ -77,6 +79,7 @@ public class ServerConfiguration extends Throwable {
     private Level    log_level;
     private int      port;
     private String   bind;
+    private String   remote_listener;
     private String   memory_limit;
     private int      threads;
     private String   access_mode;
@@ -107,6 +110,7 @@ public class ServerConfiguration extends Throwable {
         log_level = default_log_level;
         port = default_port;
         bind = default_bind;
+        remote_listener = default_remote_listener;
         threads = default_threads;
         access_mode = default_access_mode;
         max_workers = default_max_workers;
@@ -225,6 +229,13 @@ public class ServerConfiguration extends Throwable {
                         bind = this.default_bind;
                     } else {
                         setBindHost(entry.getValue().toString());
+                    }
+                }
+                case "REMOTE_LISTENER" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        remote_listener = this.default_remote_listener;
+                    } else {
+                        setRemoteListener(entry.getValue().toString());
                     }
                 }
                 case "CLIENT_TIMEOUT" -> {
@@ -369,6 +380,10 @@ public class ServerConfiguration extends Throwable {
     {
         return bind;
     }
+    public String getRemoteListener()
+    {
+        return remote_listener;
+    }
     public int getClient_timeout()
     {
         return client_timeout;
@@ -475,6 +490,25 @@ public class ServerConfiguration extends Throwable {
     public void setBindHost(String pHost)
     {
         bind = pHost;
+    }
+
+    public void setRemoteListener(String pRemote_Listener)
+    {
+        if (pRemote_Listener.contains(":")) {
+            var ignoredVar1 = pRemote_Listener.substring(0, pRemote_Listener.lastIndexOf(':'));
+            try {
+                Integer.parseInt(pRemote_Listener.substring(pRemote_Listener.indexOf(':') + 1));
+            }
+            catch (NumberFormatException ignored)
+            {
+                throw new ServerException("Invalid remote listener parameter [" + pRemote_Listener + "]. Example: '1.1.1.1:1000' .");
+            }
+        }
+        else
+        {
+            throw new ServerException("Invalid remote listener parameter [" + pRemote_Listener + "]. Example: '1.1.1.1:1000' .");
+        }
+        remote_listener = pRemote_Listener;
     }
 
     public void setPort(String pPort) throws ServerException

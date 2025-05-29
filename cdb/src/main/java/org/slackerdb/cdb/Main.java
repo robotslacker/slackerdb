@@ -45,23 +45,11 @@ public class Main {
         System.out.println("Parameters:");
         System.out.println("  --conf              Configuration file.");
         System.out.println("  --pid               process pid file, default is none.");
-        System.out.println("  --access_mode       database mode, READ_ONLY|READ_WRITE, default is READ_WRITE.");
         System.out.println("  --locale            default language of the program.");
         System.out.println("  --log_level         log level, default is INFO.");
         System.out.println("  --log               log file, default is CONSOLE.");
         System.out.println("  --bind              server bind ip address, default is 0.0.0.0");
-        System.out.println("  --host              remote server address,  default is 127.0.0.1");
         System.out.println("  --port              server listener port. default is random");
-        System.out.println("  --data              database name. default is slackerdb");
-        System.out.println("  --data_dir          database file directory. default is :memory:");
-        System.out.println("  --temp_dir          database temporary file directory. default is os dependent.");
-        System.out.println("  --extension_dir     extension file directory. default is $HOME/.duckdb/extensions.");
-        System.out.println("  --template          template datafile file for first open. default is none.");
-        System.out.println("  --init_script       system init script or script directory. default is none.");
-        System.out.println("  --startup_script    system startup script or script directory. default is none.");
-        System.out.println("  --sql_history       enable or disable sql history feature(ON|OFF). default is off.");
-        System.out.println("  --autoclose         automatically close idle instance after timeout. default is true.");
-        System.out.println("  --autoclose_timeout time to wait before database is automatically closed, Default is 90 seconds.");
     }
 
     // 主程序
@@ -164,11 +152,6 @@ public class Main {
             {
                 serverConfiguration.loadConfigurationFile(appOptions.get("conf"));
             }
-            // 如果有其他的指定，以指定的内容为准
-            if (appOptions.containsKey("access_mode"))
-            {
-                serverConfiguration.setAccess_mode(appOptions.get("access_mode"));
-            }
             if (appOptions.containsKey("locale"))
             {
                 serverConfiguration.setLocale(appOptions.get("locale"));
@@ -193,49 +176,9 @@ public class Main {
             {
                 serverConfiguration.setPort(appOptions.get("port"));
             }
-            if (appOptions.containsKey("data"))
-            {
-                serverConfiguration.setData(appOptions.get("data"));
-            }
-            if (appOptions.containsKey("data_dir"))
-            {
-                serverConfiguration.setData_dir(appOptions.get("data_dir"));
-            }
-            if (appOptions.containsKey("temp_dir"))
-            {
-                serverConfiguration.setTemp_dir(appOptions.get("temp_dir"));
-            }
-            if (appOptions.containsKey("extension_dir"))
-            {
-                serverConfiguration.setExtension_dir(appOptions.get("extension_dir"));
-            }
-            if (appOptions.containsKey("init_script"))
-            {
-                serverConfiguration.setInit_script(appOptions.get("init_script"));
-            }
-            if (appOptions.containsKey("startup_script"))
-            {
-                serverConfiguration.setStartup_script(appOptions.get("startup_script"));
-            }
-            if (appOptions.containsKey("sql_history"))
-            {
-                serverConfiguration.setSqlHistory(appOptions.get("sql_history"));
-            }
             if (appOptions.containsKey("pid"))
             {
                 serverConfiguration.setPid(appOptions.get("pid"));
-            }
-            if (appOptions.containsKey("template"))
-            {
-                serverConfiguration.setTemplate(appOptions.get("template"));
-            }
-            if (appOptions.containsKey("autoclose"))
-            {
-                serverConfiguration.setAutoClose(appOptions.get("autoclose"));
-            }
-            if (appOptions.containsKey("autoclose_timeout"))
-            {
-                serverConfiguration.setAutoCloseTimeout(appOptions.get("autoclose_timeout"));
             }
 
             // 初始化日志服务

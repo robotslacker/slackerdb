@@ -17,68 +17,6 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
-class CDBMonitor extends Thread
-{
-    public ConcurrentHashMap<String, Long> instanceLastActiveTime = new ConcurrentHashMap<>();
-    private CDBInstance cdbInstance;
-    public void setCDBInstance(CDBInstance pCDBInstance)
-    {
-        this.cdbInstance = pCDBInstance;
-    }
-
-    @Override
-    public void run()
-    {
-        // 检查是否有已经超过闲置时间的数据库，如果有，就关闭
-        while (true)
-        {
-            if (isInterrupted())
-            {
-                return;
-            }
-            if (!(this.cdbInstance.serverConfiguration.getAutoClose() && this.cdbInstance.serverConfiguration.getAutoCloseTimeout() > 0))
-            {
-                // 如果没有开启自动关闭，则直接退出
-                return;
-            }
-            for (Map.Entry<String, PostgresProxyTarget> proxyTargetEntry: this.cdbInstance.proxyTarget.entrySet())
-            {
-                if (!instanceLastActiveTime.containsKey(proxyTargetEntry.getKey()))
-                {
-                    instanceLastActiveTime.put(proxyTargetEntry.getKey(), System.currentTimeMillis());
-                }
-                else
-                {
-                    if (proxyTargetEntry.getValue().getDatabase().equals(this.cdbInstance.serverConfiguration.getData()))
-                    {
-                        // 不能停止最基础的数据库信息
-                        continue;
-                    }
-                    if (proxyTargetEntry.getValue().getDbInstance() != null)
-                    {
-                        DBInstance dbInstance = proxyTargetEntry.getValue().getDbInstance();
-                        if (
-                                (dbInstance.dbSessions.isEmpty()) &&
-                                        (System.currentTimeMillis() - dbInstance.lastActiveTime > this.cdbInstance.serverConfiguration.getAutoCloseTimeout())
-                        )
-                        {
-                            // 数据库已经闲置太久，将被关闭
-                            this.cdbInstance.removeAlias(proxyTargetEntry.getKey());
-                            dbInstance.stop();
-                        }
-                    }
-                }
-            }
-            try {
-                Sleeper.sleep(3 * 1000);
-            }
-            catch (InterruptedException ignored) {
-                return;
-            }
-        }
-    }
-}
-
 public class CDBInstance {
     // 服务器启动模式
     // 是否为独占模式，默认否
@@ -96,7 +34,6 @@ public class CDBInstance {
 
     // 服务器对应的PG协议转发器
     private PostgresProxyServer protocolServer;
-    private final CDBMonitor cdbMonitor = new CDBMonitor();
 
     // 实例对应的日志句柄
     public Logger logger;
@@ -188,44 +125,6 @@ public class CDBInstance {
             }
         }
 
-        // 启动一个初始化的DB，并放入到Proxy中
-        // 启动一个数据库, 启动在随机端口上
-        org.slackerdb.dbserver.configuration.ServerConfiguration instanceConfiguration =
-                new org.slackerdb.dbserver.configuration.ServerConfiguration();
-        instanceConfiguration.setAccess_mode(serverConfiguration.getAccess_mode());
-        instanceConfiguration.setStartup_script(serverConfiguration.getStartup_script());
-        instanceConfiguration.setInit_script(serverConfiguration.getInit_script());
-        instanceConfiguration.setSqlHistory(serverConfiguration.getSqlHistory());
-        instanceConfiguration.setMax_workers(serverConfiguration.getMax_Workers());
-        instanceConfiguration.setThreads(serverConfiguration.getThreads());
-        instanceConfiguration.setConnection_pool_maximum_lifecycle_time(serverConfiguration.getConnection_pool_maximum_lifecycle_time());
-        instanceConfiguration.setConnection_pool_minimum_idle(serverConfiguration.getConnection_pool_minimum_idle());
-        instanceConfiguration.setConnection_pool_maximum_idle(serverConfiguration.getConnection_pool_maximum_idle());
-        instanceConfiguration.setLog_level(serverConfiguration.getLog_level());
-        instanceConfiguration.setLog(serverConfiguration.getLog());
-        instanceConfiguration.setExtension_dir(serverConfiguration.getExtension_dir());
-        instanceConfiguration.setMemory_limit(serverConfiguration.getMemory_limit());
-        instanceConfiguration.setClient_timeout(serverConfiguration.getClient_timeout());
-        instanceConfiguration.setTemp_dir(serverConfiguration.getTemp_dir());
-        instanceConfiguration.setMax_connections(serverConfiguration.getMax_connections());
-        instanceConfiguration.setTemplate(serverConfiguration.getTemplate());
-        instanceConfiguration.setBindHost("127.0.0.1");
-        instanceConfiguration.setPort(0);
-        instanceConfiguration.setData(serverConfiguration.getData());
-        DBInstance dbInstance = new DBInstance(instanceConfiguration);
-        dbInstance.start();
-
-        // 注册首个数据库进入
-        addAlias(dbInstance.instanceName,
-                "127.0.0.1:" +
-                        dbInstance.serverConfiguration.getPort() + "/" +
-                        dbInstance.serverConfiguration.getData(),
-                dbInstance);
-
-        // 启动服务监护进程
-        cdbMonitor.setCDBInstance(this);
-        cdbMonitor.start();
-
         // 启动PG的协议处理程序
         protocolServer = new PostgresProxyServer();
         protocolServer.setLogger(logger);
@@ -257,16 +156,6 @@ public class CDBInstance {
         }
 
         this.instanceState = "SHUTTING DOWN";
-
-        // 停止监护进程
-        cdbMonitor.interrupt();
-        while (cdbMonitor.isAlive())
-        {
-            try {
-                Sleeper.sleep(3 * 1000);
-            } catch (InterruptedException ignored) {}
-        }
-        cdbMonitor.instanceLastActiveTime.clear();
 
         // 停止对外网络服务
         protocolServer.stop();
@@ -314,17 +203,6 @@ public class CDBInstance {
     public void setExclusiveMode(boolean exclusiveMode)
     {
         this.exclusiveMode = exclusiveMode;
-    }
-
-    public synchronized void removeAlias(String aliasName) throws ServerException
-    {
-        if (!proxyAlias.containsKey(aliasName))
-        {
-            throw new ServerException(
-                    "SLACKERDB-00019",
-                    Utils.getMessage("SLACKERDB-00019", aliasName));
-        }
-        proxyAlias.remove(aliasName);
     }
 
     public synchronized void addAlias(String aliasName, String remoteTarget, DBInstance dbInstance) throws ServerException

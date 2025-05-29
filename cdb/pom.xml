@@ -22,6 +22,7 @@
             <groupId>org.robotslacker</groupId>
             <artifactId>slackerdb-dbserver</artifactId>
             <version>${project.version}</version>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>io.netty</groupId>
