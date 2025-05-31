@@ -1,12 +1,8 @@
 package org.slackerdb.dbproxy.server;
 
 import ch.qos.logback.classic.Logger;
-import org.slackerdb.common.exceptions.ServerException;
-import org.slackerdb.common.logger.AppLogger;
-import org.slackerdb.common.utils.Sleeper;
-import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbproxy.configuration.ServerConfiguration;
-import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.common.exceptions.ServerException;
 
 import java.io.File;
 import java.io.IOException;
@@ -14,10 +10,15 @@ import java.io.RandomAccessFile;
 import java.nio.channels.FileLock;
 import java.text.MessageFormat;
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.MissingResourceException;
+import java.util.ResourceBundle;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class CDBInstance {
+import org.slackerdb.common.logger.AppLogger;
+import org.slackerdb.common.utils.Sleeper;
+import org.slackerdb.common.utils.Utils;
+
+public class ProxyInstance {
     // 服务器启动模式
     // 是否为独占模式，默认否
     // 当程序为独占模式的时候，退出端口，意味着程序也将退出
@@ -45,20 +46,18 @@ public class CDBInstance {
     private RandomAccessFile pidRandomAccessFile;
     private FileLock pidFileLockHandler;
 
-    // 记录会话列表
-    public final Map<Integer, ProxySession> proxySessions = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<String,PostgresProxyTarget> proxyTarget = new ConcurrentHashMap<>();
 
-    protected final Map<String, Boolean> proxyAlias = new ConcurrentHashMap<>();
-
-    public final Map<String,PostgresProxyTarget> proxyTarget = new ConcurrentHashMap<>();
-
-    public CDBInstance(ServerConfiguration pServerConfiguration) throws ServerException
+    // 构造函数
+    public ProxyInstance(ServerConfiguration pServerConfiguration) throws ServerException
     {
         // 加载数据库的配置信息
         serverConfiguration = pServerConfiguration;
 
         // 设置消息语言集
         resourceBundle = ResourceBundle.getBundle("message", serverConfiguration.getLocale());
+
+        // 检查是否包含路径分隔符
     }
 
     private String getMessage(String code, Object... contents) {
@@ -81,15 +80,26 @@ public class CDBInstance {
         }
         return content.toString();
     }
+    // 返回程序为独占模式
+    public boolean isExclusiveMode()
+    {
+        return this.exclusiveMode;
+    }
+
+    // 设置程序运行的模式，是否为独占模式
+    public void setExclusiveMode(boolean exclusiveMode)
+    {
+        this.exclusiveMode = exclusiveMode;
+    }
 
     // 根据参数配置文件启动代理实例
     public synchronized void start() throws ServerException {
         // 设置线程名称好保持日志格式
-        Thread.currentThread().setName("SERVER_CDB");
+        Thread.currentThread().setName("PROXY");
 
         // 初始化日志服务
         logger = AppLogger.createLogger(
-                "SERVER_CDB",
+                "PROXY",
                 serverConfiguration.getLog_level().levelStr,
                 serverConfiguration.getLog());
         // 只有在停止的状态下才能启动
@@ -99,7 +109,7 @@ public class CDBInstance {
         }
 
         // 服务器开始启动
-        logger.info("[SERVER_CDB] Starting ...");
+        logger.info("[PROXY] Starting ...");
         this.instanceState = "STARTING";
         this.bootTime = LocalDateTime.now();
 
@@ -131,7 +141,7 @@ public class CDBInstance {
         protocolServer.setBindHostAndPort(serverConfiguration.getBindHost(), serverConfiguration.getPort());
         protocolServer.setServerTimeout(serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout());
         protocolServer.setNioEventThreads(serverConfiguration.getMax_Workers());
-        protocolServer.setCdbInstance(this);
+        protocolServer.setProxyInstance(this);
         protocolServer.start();
         while (!protocolServer.isPortReady()) {
             // 等待Netty进程就绪
@@ -143,7 +153,7 @@ public class CDBInstance {
 
         // 标记服务已经启动完成
         this.instanceState = "RUNNING";
-        logger.info("[SERVER_CDB] Server is running.");
+        logger.info("[PROXY] Server is running.");
     }
 
     // 停止代理服务实例
@@ -171,14 +181,14 @@ public class CDBInstance {
                 File pidFile = new File(this.serverConfiguration.getPid());
                 if (pidFile.exists()) {
                     if (!pidFile.delete()) {
-                        logger.warn("[SERVER_CDB] Remove pid file [{}] failed, reason unknown!",
+                        logger.warn("[PROXY] Remove pid file [{}] failed, reason unknown!",
                                 this.serverConfiguration.getPid());
                     }
                 }
                 pidRandomAccessFile = null;
             }
             catch (IOException ioe) {
-                logger.warn("[SERVER_CDB] Remove pid file [{}] failed, reason unknown!",
+                logger.warn("[PROXY] Remove pid file [{}] failed, reason unknown!",
                         this.serverConfiguration.getPid(), ioe);
             }
         }
@@ -187,31 +197,9 @@ public class CDBInstance {
         this.instanceState = "IDLE";
     }
 
-    // 根据SessionID获取对应的Session信息
-    public ProxySession getSession(int sessionId)
+    public synchronized void addAlias(String aliasName, String remoteTarget) throws ServerException
     {
-        return proxySessions.get(sessionId);
-    }
-
-    // 返回程序为独占模式
-    public boolean isExclusiveMode()
-    {
-        return this.exclusiveMode;
-    }
-
-    // 设置程序运行的模式，是否为独占模式
-    public void setExclusiveMode(boolean exclusiveMode)
-    {
-        this.exclusiveMode = exclusiveMode;
-    }
-
-    public synchronized void addAlias(String aliasName, String remoteTarget, DBInstance dbInstance) throws ServerException
-    {
-        if (proxyAlias.containsKey(aliasName))
-        {
-            throw new ServerException("[SERVER_CDB] alias {} already exist!", aliasName);
-        }
-        PostgresProxyTarget proxyTargetList = new PostgresProxyTarget(remoteTarget, dbInstance);
+        PostgresProxyTarget proxyTargetList = new PostgresProxyTarget(remoteTarget);
         proxyTarget.put(aliasName, proxyTargetList);
     }
 }

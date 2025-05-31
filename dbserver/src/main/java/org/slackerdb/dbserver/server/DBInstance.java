@@ -9,7 +9,6 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
-import org.slackerdb.dbserver.client.AdminClient;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.logger.AppLogger;
@@ -136,11 +135,12 @@ public class DBInstance {
                 // 如果配置了外部监听地址，则定期发送本服务器信息到监听地址上
                 if (!serverConfiguration.getRemoteListener().isEmpty())
                 {
+                    logger.trace("[SERVER] Will register current service to [{}] ...", serverConfiguration.getRemoteListener());
                     String remoteListener = serverConfiguration.getRemoteListener();
                     String remoteListenerHost = remoteListener.substring(0, remoteListener.lastIndexOf(':'));
                     int remoteListenerPort = Integer.parseInt(remoteListener.substring(remoteListener.indexOf(':') + 1));
                     try {
-                        registerRemoteListener(remoteListenerHost, remoteListenerPort);
+                        talkWithRemoteListener("REGISTER", remoteListenerHost, remoteListenerPort);
                     }
                     catch (ServerException serverException)
                     {
@@ -162,7 +162,8 @@ public class DBInstance {
     }
     private DBInstanceMonitorThread dbInstanceMonitorThread = null;
 
-    private void registerRemoteListener(String remoteListenerHost, int remoteListenerPort) throws ServerException
+    // 注册/取消注册当前的服务端口到指定的监听进程上
+    private void talkWithRemoteListener(String method, String remoteListenerHost, int remoteListenerPort) throws ServerException
     {
         // Encoder to convert byte[] to ByteBuf
         class ByteArrayEncoder extends MessageToByteEncoder<byte[]> {
@@ -198,7 +199,7 @@ public class DBInstance {
                     in.readBytes(data);
 
                     // 处理消息，并回显
-                    System.out.println(new String(data, StandardCharsets.UTF_8));
+                    logger.trace("[SERVER] {}", new String(data, StandardCharsets.UTF_8));
 
                     // 关闭连接，每次只处理一个请求
                     ctx.close();
@@ -225,7 +226,7 @@ public class DBInstance {
 
             // 连接服务器
             ChannelFuture future =
-                    client.connect(serverConfiguration.getBindHost(), serverConfiguration.getPort()).sync();
+                    client.connect(remoteListenerHost, remoteListenerPort).sync();
 
             // 发送消息头，并等待回应标志
             ByteBuf buffer = Unpooled.wrappedBuffer(AdminClientRequest.AdminClientRequestHeader);
@@ -233,8 +234,16 @@ public class DBInstance {
 
             // 拼接消息正文
             InetSocketAddress localAddress = (InetSocketAddress) future.channel().localAddress();
-            String message = "REGISTER " +
-                    localAddress.getHostName() + ":" + serverConfiguration.getPort() + "/" + serverConfiguration.getData();
+            String message = "";
+            if (method.equals("REGISTER")) {
+                message = "REGISTER " +
+                        localAddress.getHostName() + ":" + serverConfiguration.getPort() + "/" + serverConfiguration.getData() + " AS " +
+                        serverConfiguration.getData();
+            }
+            else if (method.equals("UNREGISTER")) {
+                message = "UNREGISTER " +
+                        localAddress.getHostName() + ":" + serverConfiguration.getPort() + "/" + serverConfiguration.getData() ;
+            }
 
             // 发送消息正文
             byte[] msg = message.getBytes(StandardCharsets.UTF_8);
@@ -248,7 +257,8 @@ public class DBInstance {
             future.channel().closeFuture().sync();
         }
         catch (Exception e) {
-            logger.error("Error connecting to server", e);
+            logger.warn("[SERVER] Register current service to remote server failed. Will try again later ...");
+            logger.trace("Error connecting to remote server", e);
         }
         finally {
             group.shutdownGracefully();
@@ -698,6 +708,19 @@ public class DBInstance {
 
         // 停止对外网络服务
         protocolServer.stop();
+
+        // 取消之前注册的远程监听
+        String remoteListener = serverConfiguration.getRemoteListener();
+        if (!remoteListener.isEmpty()) {
+            String remoteListenerHost = remoteListener.substring(0, remoteListener.lastIndexOf(':'));
+            int remoteListenerPort = Integer.parseInt(remoteListener.substring(remoteListener.indexOf(':') + 1));
+            try {
+                talkWithRemoteListener("UNREGISTER", remoteListenerHost, remoteListenerPort);
+            } catch (ServerException serverException) {
+                logger.warn("[SERVER] Try unregister current service to [{}] failed. {}",
+                        serverConfiguration.getRemoteListener(), serverException.getErrorMessage());
+            }
+        }
 
         // 数据库强制进行检查点操作
         forceCheckPoint();
