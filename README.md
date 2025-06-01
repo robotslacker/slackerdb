@@ -3,19 +3,24 @@
 # SlackerDB (DuckDB Postgres proxy)
 
 ## Quick Note
-This is an extension tool for duckdb.  
-It implements the JDBC protocol of PG and provides a complete, Java-based, network-based DUCK server.
+This is an agile DuckDB extension that provides Java-based connectivity with network access and multi-process support capabilities.
 
 ### What we can do:
+Based on the description, this tool achieves the following capabilities:
 
-With this program, you can access DuckDB services using multi-process (not just multi-threaded) concurrency, similar to interacting with a non-embedded database application.  
-With this program, you can access DuckDB services over a network, just like accessing a database deployed on a remote server.  
-You can use standard PostgreSQL clients (including JDBC, ODBC, Python, etc.) to execute nearly all DuckDB syntax, operating it in the same way as you would a PostgreSQL database.
-You can also use the client we provided, which provides more functional support and ensures complete data dictionary information.
+* Enables remote access to DuckDB via TCP/IP from multiple locations, instead of local-only limitations. 
+* Supports multi-process access to DuckDB instead of single-process restrictions. 
+* Provides PostgreSQL wire protocol compatibility (JDBC, ODBC, etc.), allowing DuckDB to function like a PostgreSQL database.
+* Offers a dedicated access client within the tool that delivers:
+  1. Advanced features
+  2. Comprehensive data dictionary access support
+* You can use COPY syntax to quickly import data, compatible with PG's CopyManager.
 
-You can use COPY-compatible syntax to rapidly insert data over the network.  
-
-We provide a container database service that allows launching multiple database instances on the same network port.  
+You have multiple ways to connect to our database:
+*  Directly connect to the server
+*  Connect through a proxy. Based on the proxy, you can connect to multiple servers through one proxy.
+*  Connect through the WEB Service (to be implemented)
+*  Embed the compiled jar package into your own application, so you don't need a separate database service program.
 
 ## Usage
 ### Build from source:
@@ -26,7 +31,12 @@ We provide a container database service that allows launching multiple database 
     # compile it
     cd slackerdb
     mvn clean compile package
+    
+    # All compiled results will be placed in the dist directory.
+    #    compiled Jar packages, 
+    #    default configuration files.
 ```
+
 ### Start db server
 ``` 
     java -jar dbserver/target/slackerdb-dbserver-0.1.5-standalone.jar start
@@ -35,10 +45,21 @@ We provide a container database service that allows launching multiple database 
 ``` 
     java -jar dbserver/target/slackerdb-dbserver-0.1.5-standalone.jar stop
 ```
-
 ### Check db status
 ``` 
     java -jar dbserver/target/slackerdb-dbserver-0.1.5-standalone.jar status
+```
+### Start db proxy
+``` 
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.5-standalone.jar start
+```
+### Stop db proxy
+``` 
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.5-standalone.jar stop
+```
+### Check proxy status
+``` 
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.5-standalone.jar status
 ```
 
 ### Server configuration file template
@@ -59,6 +80,9 @@ temp_dir=
 # Location of system extension plugin files.
 # If not set, it defaults to $HOME/.duckdb/extensions
 extension_dir=
+
+# Whether the program is started in the background. If true, it will run in the background
+daemonMode=
 
 # PID file. Used to describe the process id of running server process.
 # When server is running, the file will be exclusively locked.
@@ -85,6 +109,11 @@ bind=0.0.0.0
 
 # Client idle timeout (in seconds)
 client_timeout=600
+
+# This service will be automatically registered to the specified external listener.
+# Used to  forward user requests after a unified external listener.
+# Example:  192.168.1.100:2000
+remote_listener=
 
 # Database opening mode
 access_mode=READ_WRITE
@@ -150,10 +179,42 @@ connection_pool_maximum_idle=10
 # Default Value: 900000 (15 minutes)
 connection_pool_maximum_lifecycle_time=900000
 
-# SQL statement used to validate the health of a connection before it is handed over to the application.
-# If left empty, the validation process will not start.
-# Default Value: Empty ('')
-connection_pool_validation_sql=
+```
+### Proxy configuration file template
+``` 
+# PID file. Used to describe the process id of running server process.
+# When server is running, the file will be exclusively locked.
+# If this file is locked by other process, server will abort and not continue start.
+# If not configured, this file will not be generated and the lock will not be checked.
+pid=
+
+# The location where the log file is saved
+# CONSOLE means output to the console, and others mean output to a file
+# Multiple logs can be output at the same time, separated by commas, for example, “console, logs/xx.log”
+log=CONSOLE,logs/slackerdb-proxy.log
+
+# Log level
+log_level=INFO
+
+# Service port
+# 0 means the system will randomly assign a port
+# -1 means no port will be opened
+# default is 0, means random port.
+port=0
+
+# Service binding host
+bind=0.0.0.0
+
+# Client idle timeout (in seconds)
+client_timeout=600
+
+# The maximum number of threads that the service layer can process at the same time
+# The default is the number of CPU cores
+max_workers=
+
+# locale. The default language set of the program.
+# If not set, it will be marked as the system default
+locale=
 
 ```
 
@@ -186,21 +247,13 @@ For parameters that are not configured, means default values will be used.
 ``` 
     ServerConfiguration proxyConfiguration = new ServerConfiguration();
     proxyConfiguration.setPort(dbPort);
-    CDBInstance = new ProxyInstance(proxyConfiguration);
-    CDBInstance.start();
+    ProxyInstance proxyInstance = new ProxyInstance(proxyConfiguration);
+    proxyInstance.start();
 
     // Waiting for server ready
-    while (!CDBInstance.instanceState.equalsIgnoreCase("RUNNING")) {
+    while (!proxyInstance.instanceState.equalsIgnoreCase("RUNNING")) {
         Sleeper.sleep(1000);
     }
-
-    // add proxy rule
-    CDBInstance.createAlias("mem1", false);
-    CDBInstance.addAliasTarget("mem1",
-            "127.0.0.1:" +
-            dbInstance.serverConfiguration.getPort() + "/" +
-            dbInstance.serverConfiguration.getData(), 200);
-
 
 ```
 
@@ -243,12 +296,15 @@ Instead, we suggest use the dedicated client provided in this project.
 We do not support user password authentication, just for compatibility, keep these two options.  
 you can fill in the password part as you like, it doesn't make sense.  
 The user part will be used by the default schema of the user connection.
+
 ### 2. Limited support for duckdb datatype
 Only some duckdb data types are supported, mainly simple types, such as int, number, double, varchar, ...
 For complex types, some are still under development, and some are not supported by the PG protocol, such as blob, list, map...
 You can refer to sanity01.java to see what we currently support.
+
 ### 3. postgresql-fdw
 fdw will use "Declare CURSOR" to fetch remote data, while duck doesn't support this.
 
-## Next plan
+## Roadmap
+
 ...

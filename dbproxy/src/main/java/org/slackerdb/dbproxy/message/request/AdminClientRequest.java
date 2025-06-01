@@ -125,13 +125,20 @@ public class AdminClientRequest extends PostgresRequest {
             // 显示当前的数据库会话情况
             feedBackMsg.append("PROXY SESSIONS: \n");
             feedBackMsg.append("  Total ").append(this.proxyInstance.proxyTarget.size()).append(" forwarders working.\n");
-
+            feedBackMsg.append("    ")
+                    .append(String.format("%-20s", "AliasName"))
+                    .append(String.format("%-20s", "Created Time"))
+                    .append(String.format("%-20s", "Activated Time"))
+                    .append("Target URL")
+                    .append("\n");
             for (String aliasName : this.proxyInstance.proxyTarget.keySet()) {
                 PostgresProxyTarget postgresProxyTarget = this.proxyInstance.proxyTarget.get(aliasName);
                 feedBackMsg.append("    ")
                         .append(String.format("%-20s", aliasName))
-                        .append(postgresProxyTarget.getHost()).append(":").append(postgresProxyTarget.getPort())
-                        .append("/").append(postgresProxyTarget.getDatabase())
+                        .append(String.format("%-20s", postgresProxyTarget.createdDateTime))
+                        .append(String.format("%-20s", postgresProxyTarget.lastActivatedTIme))
+                        .append(postgresProxyTarget.host).append(":").append(postgresProxyTarget.port)
+                        .append("/").append(postgresProxyTarget.database)
                         .append("\n");
             }
             feedBackMsg.append("\n");
@@ -145,16 +152,32 @@ public class AdminClientRequest extends PostgresRequest {
 
             if (matcher.find()) {
                 String host = matcher.group(1);
-                String port = matcher.group(2);
+                int port = Integer.parseInt(matcher.group(2));
                 String service = matcher.group(3);
                 String alias = matcher.group(4);
-                this.proxyInstance.addAlias(
-                        alias,
-                        host + ":" + port + "/" + service
-                );
-                feedBackMsg.append("Register " +
-                                "[").append(host).append(":").append(port).append("/").append(service).append("] " +
-                                "as [").append(alias).append("] successful. ");
+                if (!this.proxyInstance.proxyTarget.containsKey(alias))
+                {
+                    PostgresProxyTarget postgresProxyTarget = new PostgresProxyTarget();
+                    postgresProxyTarget.createdDateTime = LocalDateTime.now();
+                    postgresProxyTarget.lastActivatedTIme = LocalDateTime.now();
+                    postgresProxyTarget.host = host;
+                    postgresProxyTarget.port = port;
+                    postgresProxyTarget.database = service;
+                    this.proxyInstance.proxyTarget.put(alias, postgresProxyTarget);
+                    feedBackMsg.append("Register " +
+                            "[").append(host).append(":").append(port).append("/").append(service).append("] " +
+                            "as [").append(alias).append("] successful. ");
+                }
+                else
+                {
+                    PostgresProxyTarget postgresProxyTarget = this.proxyInstance.proxyTarget.get(alias);
+                    postgresProxyTarget.createdDateTime = LocalDateTime.now();
+                    postgresProxyTarget.lastActivatedTIme = LocalDateTime.now();
+                    postgresProxyTarget.host = host;
+                    postgresProxyTarget.port = port;
+                    postgresProxyTarget.database = service;
+                    this.proxyInstance.proxyTarget.put(alias, postgresProxyTarget);
+                }
             } else {
                 feedBackMsg.append("WRONG REGISTER COMMAND FORMAT. ").append(clientRequestCommand);
             }

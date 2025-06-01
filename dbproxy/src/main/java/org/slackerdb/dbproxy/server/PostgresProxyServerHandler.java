@@ -118,7 +118,7 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
                                 ch.pipeline().addLast(new OutboundHandler(inboundChannel, logger));
                             }
                         });
-                ChannelFuture future = bootstrap.connect(postgresProxyTarget.getHost(), postgresProxyTarget.getPort());
+                ChannelFuture future = bootstrap.connect(postgresProxyTarget.host, postgresProxyTarget.port);
 
                 // 确保连接成功后，继续处理
                 future.addListener((ChannelFutureListener) f -> {
@@ -131,7 +131,7 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
 
                         // Startup消息要重新拼接内容, database用新的来覆盖
                         Map<String, String> oldStartupOptions = startupRequest.getStartupOptions();
-                        oldStartupOptions.put("database", postgresProxyTarget.getDatabase());
+                        oldStartupOptions.put("database", postgresProxyTarget.database);
                         byte[] newStartupOption = startupRequest.rebuildData();
 
                         // 转发Startup消息

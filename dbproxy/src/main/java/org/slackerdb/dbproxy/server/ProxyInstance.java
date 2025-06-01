@@ -197,9 +197,4 @@ public class ProxyInstance {
         this.instanceState = "IDLE";
     }
 
-    public synchronized void addAlias(String aliasName, String remoteTarget) throws ServerException
-    {
-        PostgresProxyTarget proxyTargetList = new PostgresProxyTarget(remoteTarget);
-        proxyTarget.put(aliasName, proxyTargetList);
-    }
 }

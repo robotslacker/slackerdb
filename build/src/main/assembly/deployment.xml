@@ -9,17 +9,24 @@
 
     <fileSets>
         <fileSet>
+            <directory>${project.basedir}/../</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>README.md</include>
+            </includes>
+        </fileSet>
+        <fileSet>
             <directory>${project.basedir}/../dbserver/target</directory>
             <outputDirectory>jlib</outputDirectory>
             <includes>
-                <include>slackerdb-dbserver-*-standalone.jar</include> <!-- 使用通配符匹配版本号 -->
+                <include>slackerdb-dbserver-*-standalone.jar</include>
             </includes>
         </fileSet>
         <fileSet>
             <directory>${project.basedir}/../dbserver/conf</directory>
             <outputDirectory>conf</outputDirectory>
             <includes>
-                <include>dbserver.conf</include> <!-- 使用通配符匹配版本号 -->
+                <include>dbserver.conf</include>
             </includes>
         </fileSet>
         <fileSet>
@@ -32,17 +39,17 @@
             <fileMode>0755</fileMode>
         </fileSet>
         <fileSet>
-            <directory>${project.basedir}/../cdb/target</directory>
+            <directory>${project.basedir}/../dbproxy/target</directory>
             <outputDirectory>jlib</outputDirectory>
             <includes>
-                <include>slackerdb-cdb-*-standalone.jar</include>
+                <include>slackerdb-dbproxy-*-standalone.jar</include>
             </includes>
         </fileSet>
         <fileSet>
-            <directory>${project.basedir}/../cdb/conf</directory>
+            <directory>${project.basedir}/../dbproxy/conf</directory>
             <outputDirectory>conf</outputDirectory>
             <includes>
-                <include>dbcdb.conf</include>
+                <include>dbproxy.conf</include>
             </includes>
         </fileSet>
         <fileSet>
