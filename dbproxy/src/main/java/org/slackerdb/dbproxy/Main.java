@@ -7,6 +7,7 @@ package org.slackerdb.dbproxy;
  */
 
 import ch.qos.logback.classic.Logger;
+import org.slackerdb.common.utils.OSUtil;
 import org.slackerdb.dbproxy.server.ProxyInstance;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.logger.AppLogger;
@@ -15,6 +16,10 @@ import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -44,6 +49,7 @@ public class Main {
         System.out.println("  version   print server version.");
         System.out.println("Parameters:");
         System.out.println("  --conf              Configuration file.");
+        System.out.println("  --daemon            Run server in background. default is false.");
         System.out.println("  --pid               process pid file, default is none.");
         System.out.println("  --locale            default language of the program.");
         System.out.println("  --log_level         log level, default is INFO.");
@@ -54,10 +60,29 @@ public class Main {
 
     // 主程序
     public static void main(String[] args){
+        // 获得当前程序启动的JAVA_HOME
+        String javaHome = System.getProperty("java.home");
+
+        // 获取当前JAR包所在的目录
+        URL url = Main.class
+                .getProtectionDomain()
+                .getCodeSource()
+                .getLocation();
+        String jarPath;
+        jarPath = URLDecoder.decode(url.getPath(), StandardCharsets.UTF_8);
+        if (jarPath.contains("/!")) {
+            jarPath = jarPath.substring(0, jarPath.indexOf("/!"));
+        }
+        jarPath = jarPath.replace("nested:/", "");
+        if (!jarPath.endsWith(".jar"))
+        {
+            jarPath = null;
+        }
+
         // 处理应用程序参数
         Map<String, String> appOptions = new HashMap<>();
         // 参数-子命令
-        StringBuilder subCommand = null;
+        String subCommand = null;
         String paramName = null;
         String paramValue;
         for (String arg : args) {
@@ -70,7 +95,7 @@ public class Main {
                 if (paramName == null)
                 {
                     if (subCommand == null) {
-                        subCommand = new StringBuilder(arg);
+                        subCommand = arg;
                         continue;
                     }
                     else
@@ -98,6 +123,66 @@ public class Main {
             System.err.println("Error: At least one subcommand is required. ");
             showUsage();
             System.exit(255);
+        }
+
+        // 检查是否用后台方式启动
+        boolean daemonMode = appOptions.containsKey("daemon") && appOptions.get("daemon").equalsIgnoreCase("true");
+        // 如果有配置文件，用配置文件中数据进行更新
+        if (appOptions.containsKey("conf"))
+        {
+            ServerConfiguration serverConfiguration = new ServerConfiguration();
+            serverConfiguration.loadConfigurationFile(appOptions.get("conf"));
+            if (serverConfiguration.getDaemonMode())
+            {
+                daemonMode = true;
+            }
+        }
+        if (daemonMode)
+        {
+            if (jarPath != null) {
+                String javaCommand;
+                if (System.getProperty("os.name").toLowerCase().contains("win")) {
+                    javaCommand = Path.of(javaHome, "bin", "java.exe").toString();
+                } else {
+                    javaCommand = Path.of(javaHome, "bin", "java").toString();
+                }
+                List<String> daemonCommand = new ArrayList<>();
+                // JAVA_BIN
+                daemonCommand.add(javaCommand);
+                // JAR包
+                daemonCommand.add("-jar");
+                daemonCommand.add(jarPath);
+                // 复制其他参数
+                for (String paramKey : appOptions.keySet()) {
+                    if (paramKey.equalsIgnoreCase("daemon")) {
+                        continue;
+                    }
+                    daemonCommand.add("--" + paramKey);
+                    if (appOptions.get(paramKey) != null) {
+                        daemonCommand.add(appOptions.get(paramKey));
+                    }
+                }
+                // 子进程不能带有daemon参数，避免循环
+                daemonCommand.add("--daemon");
+                daemonCommand.add("false");
+
+                // 复制命令
+                daemonCommand.add(subCommand);
+
+                // 非阻塞执行
+                try {
+                    long pid = OSUtil.launchDaemon(daemonCommand.toArray(new String[0]));
+                    System.out.println("Daemon pid [" + pid + "] has successful started in background.");
+                    System.exit(0);
+                } catch (Exception se) {
+                    se.printStackTrace(System.err);
+                    System.exit(255);
+                }
+            }
+            else
+            {
+                System.err.println("Error: Daemon is not supported in dev mode. Ignored.");
+            }
         }
 
         // 从资源信息中读取系统的版本号
@@ -130,13 +215,13 @@ public class Main {
             version = "{project.version}";
             localBuildDate = "${build.timestamp}";
         }
-        if (subCommand.toString().equalsIgnoreCase("HELP"))
+        if (subCommand.equalsIgnoreCase("HELP"))
         {
             // 打印帮助信息
             showUsage();
             System.exit(0);
         }
-        else if (subCommand.toString().equalsIgnoreCase("VERSION"))
+        else if (subCommand.equalsIgnoreCase("VERSION"))
         {
             // 打印版本信息
             System.out.println("[CDB-SERVER] VERSION：" + version);
@@ -186,7 +271,7 @@ public class Main {
                     "SLACKER-PROXY",
                     serverConfiguration.getLog_level().levelStr,
                     serverConfiguration.getLog());
-            if (subCommand.toString().equalsIgnoreCase("START"))
+            if (subCommand.equalsIgnoreCase("START"))
             {
                 // 如果要求启动，则启动应用程序
                 logger.info("[SLACKER-PROXY] SlackerDB CDB starting (PID:{})...", ProcessHandle.current().pid());
@@ -214,7 +299,7 @@ public class Main {
                     serverConfiguration.setBindHost("127.0.0.1");
                 }
                 // 执行其他请求
-                AdminClient.doCommand(serverConfiguration, subCommand.toString(), appOptions);
+                AdminClient.doCommand(serverConfiguration, subCommand, appOptions);
             }
 
             // 退出应用程序

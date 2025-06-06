@@ -340,6 +340,9 @@ public class ServerConfiguration extends Throwable {
                         throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));
             }
         }
+
+        // 替换log中可能包含的data信息
+        this.log = this.log.replace("${data}", this.data);
     }
 
     public void setConnection_pool_maximum_idle(int connection_pool_maximum_idle) {

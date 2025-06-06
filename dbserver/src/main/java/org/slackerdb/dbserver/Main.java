@@ -60,6 +60,9 @@ public class Main {
         System.out.println("  --host              remote server address,  default is 127.0.0.1");
         System.out.println("  --remote_listener   external remote listener address, default is none.");
         System.out.println("  --port              server listener port. default is random");
+        System.out.println("  --memory_limit      maximum memory size used. Format:  ....(K|M|G)");
+        System.out.println("  --max_workers       maximum concurrent quantity.");
+        System.out.println("  --threads           maximum number of threads used on the server compute layer.");
         System.out.println("  --data              database name. default is slackerdb");
         System.out.println("  --data_dir          database file directory. default is :memory:");
         System.out.println("  --temp_dir          database temporary file directory. default is os dependent.");
@@ -73,6 +76,7 @@ public class Main {
     public static void main(String[] args){
         // 获得当前程序启动的JAVA_HOME
         String javaHome = System.getProperty("java.home");
+
         // 获取当前JAR包所在的目录
         URL url = Main.class
                 .getProtectionDomain()
@@ -316,6 +320,18 @@ public class Main {
             if (appOptions.containsKey("template"))
             {
                 serverConfiguration.setTemplate(appOptions.get("template"));
+            }
+            if (appOptions.containsKey("threads"))
+            {
+                serverConfiguration.setThreads(appOptions.get("threads"));
+            }
+            if (appOptions.containsKey("memory_limit"))
+            {
+                serverConfiguration.setMemory_limit(appOptions.get("memory_limit"));
+            }
+            if (appOptions.containsKey("max_workers"))
+            {
+                serverConfiguration.setMax_workers(appOptions.get("max_workers"));
             }
 
             // 初始化日志服务

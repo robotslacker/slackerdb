@@ -31,6 +31,8 @@ public class ServerConfiguration extends Throwable {
     private final Locale default_locale = Locale.getDefault();
     // 系统的PID文件
     private final String default_pid = "";
+    // 是否用后台方式启动
+    private final boolean defaultDaemonMode = false;
 
     private String   log;
     private Level    log_level;
@@ -40,6 +42,7 @@ public class ServerConfiguration extends Throwable {
     private int      client_timeout;
     private Locale   locale;
     private String   pid;
+    private boolean  daemonMode;
 
     public ServerConfiguration() throws ServerException
     {
@@ -51,6 +54,7 @@ public class ServerConfiguration extends Throwable {
         client_timeout = default_client_timeout;
         locale = default_locale;
         pid = default_pid;
+        daemonMode = defaultDaemonMode;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -80,6 +84,13 @@ public class ServerConfiguration extends Throwable {
         // 加载配置信息，根据参数配置信息修改默认配置
         for (Map.Entry<Object, Object> entry : appProperties.entrySet()) {
             switch (entry.getKey().toString().toUpperCase()) {
+                case "DAEMON" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        daemonMode = this.defaultDaemonMode;
+                    } else {
+                        setDaemon(entry.getValue().toString());
+                    }
+                }
                 case "LOCALE" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         locale = this.default_locale;
@@ -170,6 +181,10 @@ public class ServerConfiguration extends Throwable {
         return locale;
     }
     public String getPid() {return pid;}
+    public boolean getDaemonMode()
+    {
+        return this.daemonMode;
+    }
 
     public void setLog_level(String pLog_level) throws ServerException {
         log_level = Level.valueOf(pLog_level);
@@ -255,6 +270,20 @@ public class ServerConfiguration extends Throwable {
             );
         }
     }
+
+    public void setDaemon(String pDaemonMode) throws ServerException {
+        if (pDaemonMode.trim().equalsIgnoreCase("true"))
+        {
+            daemonMode = true;
+        } else if (pDaemonMode.trim().equalsIgnoreCase("false"))
+        {
+            daemonMode = false;
+        }
+        else {
+            throw new ServerException("Invalid daemon mode parameter. true/false only.");
+        }
+    }
+
 
     public void setMax_workers(int pMax_workers) throws ServerException
     {
