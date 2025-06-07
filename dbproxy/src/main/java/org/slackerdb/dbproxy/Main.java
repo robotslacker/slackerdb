@@ -55,7 +55,8 @@ public class Main {
         System.out.println("  --log_level         log level, default is INFO.");
         System.out.println("  --log               log file, default is CONSOLE.");
         System.out.println("  --bind              server bind ip address, default is 0.0.0.0");
-        System.out.println("  --port              server listener port. default is random");
+        System.out.println("  --port              data service listener port. default is random");
+        System.out.println("  --port_x            management service listener port. default is random");
     }
 
     // 主程序
@@ -260,6 +261,10 @@ public class Main {
             if (appOptions.containsKey("port"))
             {
                 serverConfiguration.setPort(appOptions.get("port"));
+            }
+            if (appOptions.containsKey("port_x"))
+            {
+                serverConfiguration.setPortX(appOptions.get("port_x"));
             }
             if (appOptions.containsKey("pid"))
             {

@@ -32,8 +32,11 @@ public class ServerConfiguration extends Throwable {
     private final String default_log = "console";
     // 默认系统的日志级别为INFO
     private final Level default_log_level = Level.INFO;
-    // 默认启动的端口
+    // 默认数据库访问服务的端口
     private final int default_port = 0;
+    // 默认数据库的管理端口
+    private final int default_portX = 0;
+
     // 默认绑定的主机地址
     private final String default_bind = "0.0.0.0";
     // 外部监听地址，用来多个数据库服务在统一的外部服务下进行消息转发
@@ -78,6 +81,7 @@ public class ServerConfiguration extends Throwable {
     private String   log;
     private Level    log_level;
     private int      port;
+    private int      portX;
     private String   bind;
     private String   remote_listener;
     private String   memory_limit;
@@ -109,6 +113,7 @@ public class ServerConfiguration extends Throwable {
         log = default_log;
         log_level = default_log_level;
         port = default_port;
+        portX = default_portX;
         bind = default_bind;
         remote_listener = default_remote_listener;
         threads = default_threads;
@@ -130,6 +135,11 @@ public class ServerConfiguration extends Throwable {
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
             port = socket.getLocalPort();
+        } catch (IOException e) {
+            throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
+        }
+        try (ServerSocket socket = new ServerSocket(0)) {
+            portX = socket.getLocalPort();
         } catch (IOException e) {
             throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
         }
@@ -222,6 +232,13 @@ public class ServerConfiguration extends Throwable {
                         port = this.default_port;
                     } else {
                         setPort(entry.getValue().toString());
+                    }
+                }
+                case "PORT_X" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        portX = this.default_portX;
+                    } else {
+                        setPortX(entry.getValue().toString());
                     }
                 }
                 case "BIND" -> {
@@ -379,6 +396,11 @@ public class ServerConfiguration extends Throwable {
     {
         return port;
     }
+    public int getPortX()
+    {
+        return portX;
+    }
+
     public String getBindHost()
     {
         return bind;
@@ -483,6 +505,7 @@ public class ServerConfiguration extends Throwable {
                     Utils.getMessage("SLACKERDB-00005", "log_level", pLog_level)
             );
         }
+        this.setLog_level(log_level);
     }
     public void setLog_level(Level pLog_level) throws ServerException {
         log_level = pLog_level;
@@ -540,7 +563,36 @@ public class ServerConfiguration extends Throwable {
                     Utils.getMessage("SLACKERDB-00005", "port", pPort)
             );
         }
-        port = tempPort;
+        this.setPort(tempPort);
+    }
+
+    public void setPortX(String pPort) throws ServerException
+    {
+        int tempPort;
+        try {
+            tempPort = Integer.parseInt(pPort);
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "port", pPort)
+            );
+        }
+        if (tempPort == 0) {
+            try (ServerSocket socket = new ServerSocket(0)) {
+                tempPort = socket.getLocalPort();
+            } catch (IOException e) {
+                throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
+            }
+        }
+
+        if (tempPort < -1)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "port", pPort)
+            );
+        }
+        this.setPortX(tempPort);
     }
 
     public void setPort(int pPort) throws ServerException
@@ -560,6 +612,25 @@ public class ServerConfiguration extends Throwable {
             );
         }
         port = tempPort;
+    }
+
+    public void setPortX(int pPort) throws ServerException
+    {
+        int tempPort = pPort;
+        if (tempPort == 0) {
+            try (ServerSocket socket = new ServerSocket(0)) {
+                tempPort = socket.getLocalPort();
+            } catch (IOException e) {
+                throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
+            }
+        }
+        if (tempPort < -1)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "port", pPort)
+            );
+        }
+        portX = tempPort;
     }
 
     public void setTemp_dir(String pTemp_dir)
@@ -603,8 +674,9 @@ public class ServerConfiguration extends Throwable {
 
     public void setMax_connections(String pMax_connections) throws ServerException
     {
+        int tempMax_connections;
         try {
-            max_connections = Integer.parseInt(pMax_connections);
+            tempMax_connections = Integer.parseInt(pMax_connections);
         }
         catch (NumberFormatException ignored)
         {
@@ -612,12 +684,13 @@ public class ServerConfiguration extends Throwable {
                     Utils.getMessage("SLACKERDB-00005", "max_connections", pMax_connections)
             );
         }
-        if (max_connections <= 0)
+        if (tempMax_connections <= 0)
         {
             throw new ServerException(
                     Utils.getMessage("SLACKERDB-00005", "max_connections", pMax_connections)
             );
         }
+        this.setMax_connections(tempMax_connections);
     }
 
     public void setMax_connections(int pMax_connections) throws ServerException
@@ -738,8 +811,9 @@ public class ServerConfiguration extends Throwable {
     }
 
     public void setClient_timeout(String pClient_Timeout) throws ServerException {
+        int  temp_client_timeout;
         try {
-            client_timeout = Integer.parseInt(pClient_Timeout);
+            temp_client_timeout = Integer.parseInt(pClient_Timeout);
         }
         catch (NumberFormatException ignored)
         {
@@ -747,22 +821,23 @@ public class ServerConfiguration extends Throwable {
                     Utils.getMessage("SLACKERDB-00005", "client_timeout", pClient_Timeout)
             );
         }
-        if (client_timeout <= 0)
+        if (temp_client_timeout <= 0)
         {
             throw new ServerException(
                     Utils.getMessage("SLACKERDB-00005", "client_timeout", pClient_Timeout)
             );
         }
+        this.setClient_timeout(temp_client_timeout);
     }
 
     public void setClient_timeout(int pClient_Timeout) throws ServerException {
-        client_timeout = pClient_Timeout;
-        if (client_timeout <= 0)
+        if (pClient_Timeout <= 0)
         {
             throw new ServerException(
                     Utils.getMessage("SLACKERDB-00005", "client_timeout", pClient_Timeout)
             );
         }
+        client_timeout = pClient_Timeout;
     }
 
     public void setAccess_mode(String pAccessMode) throws ServerException

@@ -1,6 +1,8 @@
 package org.slackerdb.dbserver.server;
 
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import io.javalin.Javalin;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -16,6 +18,7 @@ import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.message.request.AdminClientRequest;
 import org.slackerdb.dbserver.sql.SQLReplacer;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -78,6 +81,9 @@ public class DBInstance {
 
     // 系统最后活跃时间
     public long lastActiveTime = System.currentTimeMillis();
+
+    // 管理端口服务
+    public Javalin managementApp = null;
 
     // 从资源文件中获取消息，为未来的多语言做准备
     private String getMessage(String code, Object... contents) {
@@ -691,6 +697,27 @@ public class DBInstance {
         {
             logger.info("[SERVER][STARTUP    ] Listener has been disabled.");
         }
+
+        // 如果需要，启动管理端口
+        if (serverConfiguration.getPortX() != -1) {
+            // 关闭Javalin, 如果不是在trace下
+            Logger javalinLogger = (Logger) LoggerFactory.getLogger("io.javalin.Javalin");
+            Logger jettyLogger = (Logger) LoggerFactory.getLogger("org.eclipse.jetty");
+            if (!this.logger.getLevel().equals(Level.TRACE)) {
+                javalinLogger.setLevel(Level.OFF);
+                jettyLogger.setLevel(Level.OFF);
+            }
+            this.managementApp = Javalin.create().start(
+                    serverConfiguration.getBindHost(),
+                    serverConfiguration.getPortX());
+            logger.info("[SERVER][STARTUP    ] Management server listening on {}:{}.",
+                    serverConfiguration.getBindHost(), serverConfiguration.getPortX());
+        }
+        else
+        {
+            logger.info("[SERVER][STARTUP    ] Management server listener has been disabled.");
+        }
+
         // 标记服务已经启动完成
         this.instanceState = "RUNNING";
     }
@@ -705,6 +732,13 @@ public class DBInstance {
         }
 
         this.instanceState = "SHUTTING DOWN";
+
+        // 停止管理服务
+        if (this.managementApp != null)
+        {
+            this.managementApp.stop();
+            this.managementApp = null;
+        }
 
         // 停止对外网络服务
         protocolServer.stop();

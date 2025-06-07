@@ -108,6 +108,7 @@ public class AdminClientRequest extends PostgresRequest {
             feedBackMsg.append("SERVER PARAMETER: \n");
             feedBackMsg.append(String.format("%-20s", "  Bind_Host:")).append(this.proxyInstance.serverConfiguration.getBindHost()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Port:")).append(this.proxyInstance.serverConfiguration.getPort()).append("\n");
+            feedBackMsg.append(String.format("%-20s", "  Port_X:")).append(this.proxyInstance.serverConfiguration.getPortX()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Max_Workers:")).append(this.proxyInstance.serverConfiguration.getMax_Workers()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Log:")).append(this.proxyInstance.serverConfiguration.getLog()).append("\n");
             feedBackMsg.append(String.format("%-20s", "  Log_Level:")).append(this.proxyInstance.serverConfiguration.getLog_level().levelStr).append("\n");

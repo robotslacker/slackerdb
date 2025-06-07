@@ -1,6 +1,8 @@
 package org.slackerdb.dbproxy.server;
 
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import io.javalin.Javalin;
 import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
 
@@ -17,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slackerdb.common.logger.AppLogger;
 import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.common.utils.Utils;
+import org.slf4j.LoggerFactory;
 
 public class ProxyInstance {
     // 服务器启动模式
@@ -35,6 +38,9 @@ public class ProxyInstance {
 
     // 服务器对应的PG协议转发器
     private PostgresProxyServer protocolServer;
+
+    // 管理端口服务
+    public Javalin managementApp = null;
 
     // 实例对应的日志句柄
     public Logger logger;
@@ -136,19 +142,45 @@ public class ProxyInstance {
         }
 
         // 启动PG的协议处理程序
-        protocolServer = new PostgresProxyServer();
-        protocolServer.setLogger(logger);
-        protocolServer.setBindHostAndPort(serverConfiguration.getBindHost(), serverConfiguration.getPort());
-        protocolServer.setServerTimeout(serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout());
-        protocolServer.setNioEventThreads(serverConfiguration.getMax_Workers());
-        protocolServer.setProxyInstance(this);
-        protocolServer.start();
-        while (!protocolServer.isPortReady()) {
-            // 等待Netty进程就绪
-            try {
-                Sleeper.sleep(1000);
+        if (serverConfiguration.getPort() != -1) {
+            protocolServer = new PostgresProxyServer();
+            protocolServer.setLogger(logger);
+            protocolServer.setBindHostAndPort(serverConfiguration.getBindHost(), serverConfiguration.getPort());
+            protocolServer.setServerTimeout(serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout());
+            protocolServer.setNioEventThreads(serverConfiguration.getMax_Workers());
+            protocolServer.setProxyInstance(this);
+            protocolServer.start();
+            while (!protocolServer.isPortReady()) {
+                // 等待Netty进程就绪
+                try {
+                    Sleeper.sleep(1000);
+                } catch (InterruptedException ignored) {
+                }
             }
-            catch (InterruptedException ignored) {}
+        }
+        else
+        {
+            logger.info("[PROXY][STARTUP    ] Listener has been disabled.");
+        }
+
+        // 如果需要，启动管理端口
+        if (serverConfiguration.getPortX() != -1) {
+            // 关闭Javalin, 如果不是在trace下
+            Logger javalinLogger = (Logger) LoggerFactory.getLogger("io.javalin.Javalin");
+            Logger jettyLogger = (Logger) LoggerFactory.getLogger("org.eclipse.jetty");
+            if (!this.logger.getLevel().equals(Level.TRACE)) {
+                javalinLogger.setLevel(Level.OFF);
+                jettyLogger.setLevel(Level.OFF);
+            }
+            this.managementApp = Javalin.create().start(
+                    serverConfiguration.getBindHost(),
+                    serverConfiguration.getPortX());
+            logger.info("[PROXY][STARTUP    ] Management server listening on {}:{}.",
+                    serverConfiguration.getBindHost(), serverConfiguration.getPortX());
+        }
+        else
+        {
+            logger.info("[PROXY][STARTUP    ] Management server listener has been disabled.");
         }
 
         // 标记服务已经启动完成

@@ -21,6 +21,9 @@ public class ServerConfiguration extends Throwable {
     private final Level default_log_level = Level.INFO;
     // 默认启动的端口
     private final int default_port = 0;
+    // 默认数据库的管理端口
+    private final int default_portX = 0;
+
     // 默认绑定的主机地址
     private final String default_bind = "0.0.0.0";
     // 默认使用全部的CPU作为Netty的后台线程数
@@ -37,6 +40,7 @@ public class ServerConfiguration extends Throwable {
     private String   log;
     private Level    log_level;
     private int      port;
+    private int      portX;
     private String   bind;
     private int      max_workers;
     private int      client_timeout;
@@ -49,6 +53,7 @@ public class ServerConfiguration extends Throwable {
         log = default_log;
         log_level = default_log_level;
         port = default_port;
+        portX = default_portX;
         bind = default_bind;
         max_workers = default_max_workers;
         client_timeout = default_client_timeout;
@@ -59,6 +64,11 @@ public class ServerConfiguration extends Throwable {
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
             port = socket.getLocalPort();
+        } catch (IOException e) {
+            throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
+        }
+        try (ServerSocket socket = new ServerSocket(0)) {
+            portX = socket.getLocalPort();
         } catch (IOException e) {
             throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
         }
@@ -119,6 +129,13 @@ public class ServerConfiguration extends Throwable {
                         setPort(entry.getValue().toString());
                     }
                 }
+                case "PORT_X" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        portX = this.default_portX;
+                    } else {
+                        setPortX(entry.getValue().toString());
+                    }
+                }
                 case "BIND" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         bind = this.default_bind;
@@ -162,6 +179,10 @@ public class ServerConfiguration extends Throwable {
     public int getPort()
     {
         return port;
+    }
+    public int getPortX()
+    {
+        return portX;
     }
     public String getBindHost()
     {
@@ -252,10 +273,60 @@ public class ServerConfiguration extends Throwable {
         port = tempPort;
     }
 
+    public void setPortX(String pPort) throws ServerException
+    {
+        int tempPort;
+        try {
+            tempPort = Integer.parseInt(pPort);
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "port", pPort)
+            );
+        }
+        if (tempPort == 0) {
+            try (ServerSocket socket = new ServerSocket(0)) {
+                tempPort = socket.getLocalPort();
+            } catch (IOException e) {
+                throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
+            }
+        }
+
+        if (tempPort < -1)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "port", pPort)
+            );
+        }
+        this.setPortX(tempPort);
+    }
+
+    public void setPortX(int pPort) throws ServerException
+    {
+        int tempPort = pPort;
+        if (tempPort == 0) {
+            try (ServerSocket socket = new ServerSocket(0)) {
+                tempPort = socket.getLocalPort();
+            } catch (IOException e) {
+                throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
+            }
+        }
+        if (tempPort < -1)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "port", pPort)
+            );
+        }
+        portX = tempPort;
+    }
+
+
     public void setMax_workers(String pMax_workers) throws ServerException
     {
+        int tempMax_workers;
         try {
-            max_workers = Integer.parseInt(pMax_workers);
+            tempMax_workers = Integer.parseInt(pMax_workers);
         }
         catch (NumberFormatException ignored)
         {
@@ -263,12 +334,13 @@ public class ServerConfiguration extends Throwable {
                     Utils.getMessage("SLACKERDB-00005", "max_workers", pMax_workers)
             );
         }
-        if (max_workers <= 0)
+        if (tempMax_workers <= 0)
         {
             throw new ServerException(
                     Utils.getMessage("SLACKERDB-00005", "max_workers", pMax_workers)
             );
         }
+        this.setMax_workers(tempMax_workers);
     }
 
     public void setDaemon(String pDaemonMode) throws ServerException {

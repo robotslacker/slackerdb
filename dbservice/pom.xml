@@ -10,7 +10,7 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>slackerdb-dbservicer</artifactId>
+    <artifactId>slackerdb-dbservice</artifactId>
     <packaging>jar</packaging>
 
     <properties>
