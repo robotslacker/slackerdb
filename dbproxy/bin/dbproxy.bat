@@ -15,11 +15,11 @@ if not "%SLACKERDB_JAVA_HOME%"=="" (
 )
 
 REM # Settings
-set APP_NAME=SLACKERDB-SERVER
-set JAR_FILE=jlib\slackerdb-dbserver-0.1.5-standalone.jar
-set PID_FILE=pid\slackerdb-dbserver.pid
+set APP_NAME=SLACKERDB-proxy
+set JAR_FILE=jlib\slackerdb-dbproxy-0.1.5-standalone.jar
+set PID_FILE=pid\slackerdb-dbproxy.pid
 set JAVA_OPTS=
-set CONF_FILE=conf\dbserver.conf
+set CONF_FILE=conf\dbproxy.conf
 
 :: === read parameter ===
 if "%1"=="" (

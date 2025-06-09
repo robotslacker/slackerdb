@@ -39,6 +39,15 @@
             <fileMode>0755</fileMode>
         </fileSet>
         <fileSet>
+            <directory>${project.basedir}/../dbserver/bin</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>dbserver.bat</include>
+            </includes>
+            <filtered>true</filtered>
+            <fileMode>0755</fileMode>
+        </fileSet>
+        <fileSet>
             <directory>${project.basedir}/../dbproxy/target</directory>
             <outputDirectory>jlib</outputDirectory>
             <includes>
@@ -51,6 +60,24 @@
             <includes>
                 <include>dbproxy.conf</include>
             </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../dbproxy/bin</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>dbproxy.sh</include>
+            </includes>
+            <filtered>true</filtered>
+            <fileMode>0755</fileMode>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../dbproxy/bin</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>dbproxy.bat</include>
+            </includes>
+            <filtered>true</filtered>
+            <fileMode>0755</fileMode>
         </fileSet>
         <fileSet>
             <directory>${project.basedir}/../dbdriver/target</directory>

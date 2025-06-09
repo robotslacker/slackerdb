@@ -9,13 +9,13 @@ else
     _SLACKERDB_JAVA="java"
 fi
 
-APP_NAME=jlib/slackerdb-dbserver-0.1.5-standalone.jar
-PID_FILE=pid/slackerdb-dbserver.pid
+APP_NAME=jlib/slackerdb-dbproxy-0.1.5-standalone.jar
+PID_FILE=pid/slackerdb-dbproxy.pid
 
 usage(){
   echo ""
   echo "*********************************************************"
-  echo "please use command: sh dbserver.sh [start|stop|status]"
+  echo "please use command: sh dbproxy.sh [start|stop|status]"
   echo "*********************************************************"
   echo ""
   exit 1
@@ -58,7 +58,7 @@ start(){
         mkdir -p logs
         ${_SLACKERDB_JAVA} -jar $APP_NAME \
             --daemon true \
-            --conf conf/dbserver.conf \
+            --conf conf/dbproxy.conf \
             --pid  ${PID_FILE} \
             start > /dev/null
         # 等待3秒的进程启动时间
@@ -85,7 +85,7 @@ stop(){
     if [ ${pid} -ne 0 ]; then
         timeout 30 \
             ${_SLACKERDB_JAVA} -jar $APP_NAME \
-                 --conf conf/dbserver.conf \
+                 --conf conf/dbproxy.conf \
                  stop > /dev/null
     fi
     pid=$(getPid)
@@ -110,7 +110,7 @@ status(){
     pid=$(getPid)
     if [ ${pid} -ne 0 ]; then
         ${_SLACKERDB_JAVA} -jar $APP_NAME \
-            --conf conf/dbserver.conf \
+            --conf conf/dbproxy.conf \
             status
         echo ""
         echo "*********************************************"
@@ -127,7 +127,7 @@ status(){
 }
 
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)"
-cd ${SCRIPT_PATH}/.. || exit 255
+cd ${SCRIPT_PATH}/..
 case "$1" in
     "start")
      start

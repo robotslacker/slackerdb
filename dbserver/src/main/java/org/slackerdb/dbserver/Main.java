@@ -15,6 +15,7 @@ import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.logger.AppLogger;
 import org.slackerdb.dbserver.server.DBInstance;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
@@ -88,10 +89,18 @@ public class Main {
         if (jarPath.contains("/!")) {
             jarPath = jarPath.substring(0, jarPath.indexOf("/!"));
         }
-        jarPath = jarPath.replace("nested:/", "");
+        jarPath = jarPath.replace("nested:", "");
         if (!jarPath.endsWith(".jar"))
         {
             jarPath = null;
+        }
+        else
+        {
+            // jarPath需要进行转换, 转为操作系统下的路径方式
+            try {
+                jarPath = new File(jarPath).getCanonicalPath();
+            }
+            catch (IOException ignored) {}
         }
 
         // 处理应用程序参数
@@ -142,6 +151,7 @@ public class Main {
 
         // 检查是否用后台方式启动
         boolean daemonMode = appOptions.containsKey("daemon") && appOptions.get("daemon").equalsIgnoreCase("true");
+
         // 如果有配置文件，用配置文件中数据进行更新
         if (appOptions.containsKey("conf"))
         {
@@ -152,6 +162,14 @@ public class Main {
                 daemonMode = true;
             }
         }
+
+        // 只有start命令才支持daemon模式，其他情况下不支持
+        if (daemonMode && !subCommand.equalsIgnoreCase("start"))
+        {
+            System.out.println("Warn: [" + subCommand + "] does not support daemon mode, ignore it.");
+            daemonMode = false;
+        }
+
         if (daemonMode)
         {
             if (jarPath != null) {

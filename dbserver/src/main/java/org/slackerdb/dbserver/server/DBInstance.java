@@ -11,6 +11,7 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
+import org.slackerdb.common.utils.OSUtil;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.logger.AppLogger;
@@ -376,16 +377,24 @@ public class DBInstance {
         // 检查PID文件
         if (!this.serverConfiguration.getPid().isEmpty())
         {
+            File pidParentFile = new File(this.serverConfiguration.getPid()).getParentFile();
+            // 如果PID文件目录不存在，则建立这个目录
+            if (!pidParentFile.exists())
+            {
+                var ignored = pidParentFile.mkdirs();
+            }
             File pidFile = new File(this.serverConfiguration.getPid());
             // 尝试锁定文件
             try {
                 pidRandomAccessFile = new RandomAccessFile(pidFile, "rw");
-                pidFileLockHandler = pidRandomAccessFile.getChannel().tryLock();
-                if (pidFileLockHandler == null)
-                {
-                    throw new ServerException(
-                            "SLACKERDB-00013",
-                            Utils.getMessage("SLACKERDB-00013", this.serverConfiguration.getPid()));
+                if (!OSUtil.isWindows()) {
+                    // Windows上锁定后，会导致其他进程无法查看PID文件
+                    pidFileLockHandler = pidRandomAccessFile.getChannel().tryLock();
+                    if (pidFileLockHandler == null) {
+                        throw new ServerException(
+                                "SLACKERDB-00013",
+                                Utils.getMessage("SLACKERDB-00013", this.serverConfiguration.getPid()));
+                    }
                 }
                 pidRandomAccessFile.writeBytes(String.valueOf(ProcessHandle.current().pid()));
             } catch (IOException e) {
@@ -776,9 +785,10 @@ public class DBInstance {
         if (pidRandomAccessFile != null )
         {
             try {
-                pidFileLockHandler.release();
-                pidFileLockHandler = null;
-
+                if (pidFileLockHandler != null) {
+                    pidFileLockHandler.release();
+                    pidFileLockHandler = null;
+                }
                 pidRandomAccessFile.close();
                 File pidFile = new File(this.serverConfiguration.getPid());
                 if (pidFile.exists()) {

@@ -74,7 +74,7 @@ public class Main {
         if (jarPath.contains("/!")) {
             jarPath = jarPath.substring(0, jarPath.indexOf("/!"));
         }
-        jarPath = jarPath.replace("nested:/", "");
+        jarPath = jarPath.replace("nested:", "");
         if (!jarPath.endsWith(".jar"))
         {
             jarPath = null;
@@ -128,6 +128,7 @@ public class Main {
 
         // 检查是否用后台方式启动
         boolean daemonMode = appOptions.containsKey("daemon") && appOptions.get("daemon").equalsIgnoreCase("true");
+
         // 如果有配置文件，用配置文件中数据进行更新
         if (appOptions.containsKey("conf"))
         {
@@ -138,6 +139,14 @@ public class Main {
                 daemonMode = true;
             }
         }
+
+        // 只有start命令才支持daemon模式，其他情况下不支持
+        if (daemonMode && !subCommand.equalsIgnoreCase("start"))
+        {
+            System.out.println("Warn: [" + subCommand + "] does not support daemon mode, ignore it.");
+            daemonMode = false;
+        }
+
         if (daemonMode)
         {
             if (jarPath != null) {
