@@ -206,7 +206,7 @@ public class DBInstance {
                     in.readBytes(data);
 
                     // 处理消息，并回显
-                    logger.trace("[SERVER] {}", new String(data, StandardCharsets.UTF_8));
+                    logger.info("[SERVER] {}", new String(data, StandardCharsets.UTF_8));
 
                     // 关闭连接，每次只处理一个请求
                     ctx.close();
@@ -248,8 +248,7 @@ public class DBInstance {
                         serverConfiguration.getData();
             }
             else if (method.equals("UNREGISTER")) {
-                message = "UNREGISTER " +
-                        localAddress.getHostName() + ":" + serverConfiguration.getPort() + "/" + serverConfiguration.getData() ;
+                message = "UNREGISTER " + serverConfiguration.getData() ;
             }
 
             // 发送消息正文

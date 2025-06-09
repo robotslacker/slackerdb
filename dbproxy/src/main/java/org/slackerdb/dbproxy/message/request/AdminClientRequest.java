@@ -134,17 +134,17 @@ public class AdminClientRequest extends PostgresRequest {
             feedBackMsg.append("PROXY SESSIONS: \n");
             feedBackMsg.append("  Total ").append(this.proxyInstance.proxyTarget.size()).append(" forwarders working.\n");
             feedBackMsg.append("    ")
-                    .append(String.format("%-20s", "AliasName"))
-                    .append(String.format("%-20s", "Created Time"))
-                    .append(String.format("%-20s", "Activated Time"))
+                    .append(String.format("%-10s", "AliasName"))
+                    .append(String.format("%-25s", "Created Time"))
+                    .append(String.format("%-25s", "Activated Time"))
                     .append("Target URL")
                     .append("\n");
             for (String aliasName : this.proxyInstance.proxyTarget.keySet()) {
                 PostgresProxyTarget postgresProxyTarget = this.proxyInstance.proxyTarget.get(aliasName);
                 feedBackMsg.append("    ")
-                        .append(String.format("%-20s", aliasName))
-                        .append(String.format("%-20s", postgresProxyTarget.createdDateTime))
-                        .append(String.format("%-20s", postgresProxyTarget.lastActivatedTIme))
+                        .append(String.format("%-10s", aliasName))
+                        .append(String.format("%-25s", postgresProxyTarget.createdDateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))))
+                        .append(String.format("%-25s", postgresProxyTarget.lastActivatedTIme.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))))
                         .append(postgresProxyTarget.host).append(":").append(postgresProxyTarget.port)
                         .append("/").append(postgresProxyTarget.database)
                         .append("\n");
