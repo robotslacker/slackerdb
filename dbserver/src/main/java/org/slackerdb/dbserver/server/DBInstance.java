@@ -396,6 +396,7 @@ public class DBInstance {
                                 Utils.getMessage("SLACKERDB-00013", this.serverConfiguration.getPid()));
                     }
                 }
+                pidRandomAccessFile.setLength(0);
                 pidRandomAccessFile.writeBytes(String.valueOf(ProcessHandle.current().pid()));
             } catch (IOException e) {
                 throw new ServerException(

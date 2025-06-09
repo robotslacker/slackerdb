@@ -27,6 +27,7 @@ getPid(){
     # 检查 PID 文件是否存在
     if [ ! -f "$pid_file" ]; then
         echo 0
+        return
     fi
 
     # 读取 PID 并验证是否为数字
@@ -34,14 +35,17 @@ getPid(){
     pid=$(tr -d ' ' < "$pid_file" 2>/dev/null) # 去除空格
     if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
         echo 0
+        return
     fi
 
     if kill -0 "$pid" >/dev/null 2>&1; then
         # 进程存在
         echo ${pid}
+        return
     else
         # 进程不存在
         echo 0
+        return
     fi
 }
 
@@ -127,7 +131,7 @@ status(){
 }
 
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)"
-cd ${SCRIPT_PATH}/..
+cd ${SCRIPT_PATH}/.. || exit 255
 case "$1" in
     "start")
      start

@@ -2,6 +2,7 @@ package org.slackerdb.dbproxy.message.request;
 
 import com.sun.management.OperatingSystemMXBean;
 import io.netty.channel.ChannelHandlerContext;
+import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbproxy.message.PostgresMessage;
 import org.slackerdb.dbproxy.message.response.AdminClientResp;
@@ -46,6 +47,12 @@ public class AdminClientRequest extends PostgresRequest {
         StringBuilder feedBackMsg = new StringBuilder();
         if (clientRequestCommand.trim().toUpperCase().startsWith("STOP"))
         {
+            // 关闭数据库
+            try {
+                this.proxyInstance.stop();
+            } catch (ServerException e) {
+                this.proxyInstance.logger.error("Error closing backend connection", e);
+            }
             feedBackMsg.append("Server stop successful.");
         }
         else if (clientRequestCommand.trim().toUpperCase().startsWith("STATUS"))
