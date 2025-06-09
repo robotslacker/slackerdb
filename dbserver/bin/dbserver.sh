@@ -54,7 +54,7 @@ start(){
     if [ ${pid} -ne 0 ]; then
         echo ""
         echo "*********************************************"
-        echo "${_SLACKERDB_JAVA} is already running, Pid is ${pid} ."
+        echo "${APP_NAME} is already running, Pid is ${pid} ."
         echo "*********************************************"
         echo ""
     else
