@@ -78,7 +78,7 @@ public class AdminClient {
         Logger logger = AppLogger.createLogger(
                 "SLACKERDB",
                 serverConfiguration.getLog_level().levelStr,
-                serverConfiguration.getLog());
+                "CONSOLE");
 
         // 关闭Netty的日志, 如果不是在trace下
         Logger nettyLogger = (Logger) LoggerFactory.getLogger("io.netty");

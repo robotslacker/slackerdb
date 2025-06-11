@@ -77,7 +77,7 @@ public class AdminClient {
         Logger logger = AppLogger.createLogger(
                 "PROXY",
                 serverConfiguration.getLog_level().levelStr,
-                serverConfiguration.getLog());
+                "CONSOLE");
 
         // 关闭Netty的日志, 如果不是在trace下
         Logger nettyLogger = (Logger) LoggerFactory.getLogger("io.netty");
@@ -128,7 +128,6 @@ public class AdminClient {
             future.channel().closeFuture().sync();
         }
         catch (Exception e) {
-            e.printStackTrace(System.err);
             logger.error("Error connecting to server", e);
         }
         finally {

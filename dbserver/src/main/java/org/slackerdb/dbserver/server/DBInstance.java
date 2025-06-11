@@ -2,7 +2,6 @@ package org.slackerdb.dbserver.server;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
-import io.javalin.Javalin;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -84,7 +83,7 @@ public class DBInstance {
     public long lastActiveTime = System.currentTimeMillis();
 
     // 管理端口服务
-    public Javalin managementApp = null;
+    public DBInstanceX dbInstanceX = null;
 
     // 从资源文件中获取消息，为未来的多语言做准备
     private String getMessage(String code, Object... contents) {
@@ -716,11 +715,8 @@ public class DBInstance {
                 javalinLogger.setLevel(Level.OFF);
                 jettyLogger.setLevel(Level.OFF);
             }
-            this.managementApp = Javalin.create().start(
-                    serverConfiguration.getBindHost(),
-                    serverConfiguration.getPortX());
-            logger.info("[SERVER][STARTUP    ] Management server listening on {}:{}.",
-                    serverConfiguration.getBindHost(), serverConfiguration.getPortX());
+            this.dbInstanceX = new DBInstanceX(this.logger);
+            this.dbInstanceX.start(serverConfiguration);
         }
         else
         {
@@ -743,10 +739,10 @@ public class DBInstance {
         this.instanceState = "SHUTTING DOWN";
 
         // 停止管理服务
-        if (this.managementApp != null)
+        if (this.dbInstanceX != null)
         {
-            this.managementApp.stop();
-            this.managementApp = null;
+            this.dbInstanceX.stop();
+            this.dbInstanceX = null;
         }
 
         // 关闭监控线程

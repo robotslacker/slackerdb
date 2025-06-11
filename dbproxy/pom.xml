@@ -32,7 +32,7 @@
         <!-- javalin 用来实现portX请求-->
         <dependency>
             <groupId>io.javalin</groupId>
-            <artifactId>javalin</artifactId>
+            <artifactId>javalin-bundle</artifactId>
             <version>6.6.0</version>
         </dependency>
     </dependencies>

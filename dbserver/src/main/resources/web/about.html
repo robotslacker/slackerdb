@@ -1,0 +1,29 @@
+
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="UTF-8">
+    <title>SlackerDB Server</title>
+    <script src="js/marked.min.js"></script>
+    <style>
+        body { font-family: Arial; margin: 20px }
+        #content { border: 1px solid #eee; padding: 15px }
+    </style>
+</head>
+<body>
+<div id="content">Loading...</div>
+
+<script>
+    // 自动读取当前目录下的README.md文件
+    fetch('README.md')
+        .then(response => response.text())
+        .then(text => {
+            document.getElementById('content').innerHTML = marked.parse(text);
+        })
+        .catch(err => {
+            document.getElementById('content').innerHTML =
+                `Load failed: ${err.message}<br>README.md does not exist!`;
+        });
+</script>
+</body>
+</html>
