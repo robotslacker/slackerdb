@@ -749,7 +749,28 @@ public class DBInstance {
             this.managementApp = null;
         }
 
-        // 停止对外网络服务
+        // 关闭监控线程
+        if (dbInstanceMonitorThread != null) {
+            if (dbInstanceMonitorThread.isAlive()) {
+                dbInstanceMonitorThread.interrupt();
+            }
+            dbInstanceMonitorThread = null;
+        }
+
+        try {
+            // 关闭数据库连接池
+            if (this.dbDataSourcePool != null) {
+                this.dbDataSourcePool.shutdown();
+            }
+
+            // 关闭BackendSysConnection
+            backendSysConnection.close();
+        }
+        catch (SQLException e) {
+            logger.error("[SERVER][STARTUP    ] Close backend connection error. ", e);
+        }
+
+        // 停止数据库对外网络服务
         protocolServer.stop();
 
         // 取消之前注册的远程监听
@@ -767,19 +788,6 @@ public class DBInstance {
 
         // 数据库强制进行检查点操作
         forceCheckPoint();
-
-        try {
-            // 关闭数据库连接池
-            if (this.dbDataSourcePool != null) {
-                this.dbDataSourcePool.shutdown();
-            }
-
-            // 关闭BackendSysConnection
-            backendSysConnection.close();
-        }
-        catch (SQLException e) {
-            logger.error("[SERVER][STARTUP    ] Close backend connection error. ", e);
-        }
 
         // 删除PID文件
         if (pidRandomAccessFile != null )
@@ -799,14 +807,6 @@ public class DBInstance {
             catch (IOException ioException) {
                 logger.warn("[SERVER][STARTUP    ] Remove pid file failed, reason unknown!", ioException);
             }
-        }
-
-        // 关闭监控线程
-        if (dbInstanceMonitorThread != null) {
-            if (dbInstanceMonitorThread.isAlive()) {
-                dbInstanceMonitorThread.interrupt();
-            }
-            dbInstanceMonitorThread = null;
         }
 
         // 数据库标记为空闲

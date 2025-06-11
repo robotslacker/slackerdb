@@ -128,6 +128,7 @@ public class AdminClient {
             future.channel().closeFuture().sync();
         }
         catch (Exception e) {
+            e.printStackTrace(System.err);
             logger.error("Error connecting to server", e);
         }
         finally {

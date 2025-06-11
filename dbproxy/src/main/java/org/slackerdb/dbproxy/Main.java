@@ -234,8 +234,8 @@ public class Main {
         else if (subCommand.equalsIgnoreCase("VERSION"))
         {
             // 打印版本信息
-            System.out.println("[CDB-SERVER] VERSION：" + version);
-            System.out.println("[CDB-SERVER] Build Time: " + localBuildDate );
+            System.out.println("[PROXY] VERSION: " + version);
+            System.out.println("[PROXY] Build Time: " + localBuildDate );
             System.exit(0);
         }
 

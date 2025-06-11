@@ -7,7 +7,6 @@ package org.slackerdb.dbserver;
  */
 
 import ch.qos.logback.classic.Logger;
-import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.utils.OSUtil;
 import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.dbserver.client.AdminClient;
@@ -258,7 +257,7 @@ public class Main {
         else if (subCommand.equalsIgnoreCase("VERSION"))
         {
             // 打印版本信息
-            System.out.println("[SERVER] VERSION：" + version);
+            System.out.println("[SERVER] VERSION: " + version);
             System.out.println("[SERVER] Build Time: " + localBuildDate );
             System.exit(0);
         }
@@ -395,24 +394,11 @@ public class Main {
             // 退出应用程序
             System.exit(0);
         }
-        catch (ServerException serverException)
-        {
-            if (logger != null)
-            {
-                logger.error(serverException.getErrorMessage());
-            }
-            else
-            {
-                System.err.println(serverException.getErrorMessage());
-            }
-            System.exit(255);
-        }
         catch (Exception se)
         {
             if (logger != null)
             {
-                logger.error("Internal error: {}", se.getMessage());
-                logger.trace("Internal error: ", se);
+                logger.error("[SERVER] ServerException:", se);
             }
             else
             {
