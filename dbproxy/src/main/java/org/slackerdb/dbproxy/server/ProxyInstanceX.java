@@ -14,7 +14,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpClient.Version;
 import java.time.Duration;
-import java.util.Arrays;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
@@ -24,7 +24,6 @@ public class ProxyInstanceX {
     private static final HttpClient CLIENT = HttpClient.newBuilder()
             .version(Version.HTTP_2)
             .connectTimeout(Duration.ofSeconds(10))
-            .followRedirects(HttpClient.Redirect.NEVER)
             .build();
 
     public ProxyInstanceX(Logger logger)
@@ -34,9 +33,13 @@ public class ProxyInstanceX {
 
     public ConcurrentHashMap<String, String> forwarderPathMappings = new ConcurrentHashMap<>();
 
+    private static final Set<String> RESTRICTED_HEADERS = Set.of(
+            "connection", "content-length", "expect", "host", "upgrade"
+    );
+
     private static String[] createHeadersString(Context ctx) {
         return ctx.headerMap().entrySet().stream()
-                .filter(e -> !e.getKey().equalsIgnoreCase("Content-Length"))
+                .filter(e -> !RESTRICTED_HEADERS.contains(e.getKey().toLowerCase()))
                 .flatMap(e -> Stream.of(e.getKey(), e.getValue()))
                 .toArray(String[]::new);
     }
@@ -51,20 +54,10 @@ public class ProxyInstanceX {
     }
 
     public static void forwardRequest(Context ctx, String targetBaseUrl) {
-
         try {
             // 构建目标URL
             String targetUrl = targetBaseUrl + ctx.path();
             URI originalUri = URI.create(targetUrl);
-
-            System.out.println("targetURL =" + targetUrl);
-            System.out.println("target method =" + ctx.method().toString());
-
-            // 创建请求体处理器
-            if (ctx.body().isEmpty())
-            {
-                System.out.println("body is null");
-            }
 
             HttpRequest.BodyPublisher bodyPublisher = ctx.body().isEmpty() ?
                     HttpRequest.BodyPublishers.noBody() :
@@ -78,37 +71,32 @@ public class ProxyInstanceX {
                     .timeout(Duration.ofSeconds(15))
                     .build();
 
-            System.out.println("send ......");
             // 发送请求并获取响应
             HttpResponse<byte[]> response = CLIENT.send(
                     request,
                     HttpResponse.BodyHandlers.ofByteArray()
             );
-//            System.out.println(response.statusCode());
-//            if (response.statusCode() == 302) {
-//                String location = response.headers()
-//                        .firstValue("Location")
-//                        .orElseThrow();
-//                URI newUri = resolveRedirectUrl(originalUri, location);
-//                System.out.println(newUri.toString());
-//                HttpRequest newRequest = HttpRequest.newBuilder()
-//                        .uri(newUri)
-//                        .method(ctx.method().toString(), bodyPublisher)
-//                        .headers(createHeadersString(ctx))
-//                        .timeout(Duration.ofSeconds(15))
-//                        .build();
-//                response = CLIENT.send(newRequest, HttpResponse.BodyHandlers.ofByteArray());
-//            }
+            if (response.statusCode() == 302) {
+                String location = response.headers()
+                        .firstValue("Location")
+                        .orElseThrow();
+                URI newUri = resolveRedirectUrl(originalUri, location);
+                HttpRequest newRequest = HttpRequest.newBuilder()
+                        .uri(newUri)
+                        .method(ctx.method().toString(), bodyPublisher)
+                        .headers(createHeadersString(ctx))
+                        .timeout(Duration.ofSeconds(15))
+                        .build();
+                response = CLIENT.send(newRequest, HttpResponse.BodyHandlers.ofByteArray());
+            }
 
             // 回传响应
             ctx.status(response.statusCode());
+
             response.headers().map().forEach((k, v) ->
                     ctx.header(k, String.join(",", v)));
             ctx.result(response.body());
-
         } catch (Exception e) {
-            System.out.println("errrr");
-            e.printStackTrace();
             ctx.status(500).result("Forwarding error: " + e.getMessage());
         }
     }
@@ -143,79 +131,25 @@ public class ProxyInstanceX {
                         serverConfiguration.getBindHost(),
                         serverConfiguration.getPortX()
                 );
-        // 自定义404假面
-        this.managementApp.error(404, ctx -> {
-            ctx.html(
-                    """
-                            <!DOCTYPE html>
-                            <html lang="en">
-                            <head>
-                                <meta charset="UTF-8">
-                                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                                <title>404 - Page Not Found</title>
-                                <style>
-                                    body {
-                                        font-family: Arial, sans-serif;
-                                        background-color: #f4f4f4;
-                                        display: flex;
-                                        justify-content: center;
-                                        align-items: center;
-                                        height: 100vh;
-                                        margin: 0;
-                                    }
-                                    .container {
-                                        text-align: center;
-                                        background-color: #fff;
-                                        padding: 20px;
-                                        border-radius: 8px;
-                                        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-                                    }
-                                    .error-code {
-                                        font-size: 100px;
-                                        color: #ff6347;
-                                        margin-bottom: 20px;
-                                    }
-                                    h1 {
-                                        margin: 0;
-                                        font-size: 36px;
-                                    }
-                                    p {
-                                        font-size: 18px;
-                                        color: #555;
-                                        margin: 20px 0;
-                                    }
-                                    .navigation {
-                                        margin-top: 30px;
-                                    }
-                                </style>
-                            </head>
-                            <body>
-                                <div class="container">
-                                    <div class="error-code">404</div>
-                                    <h1>Page Not Found</h1>
-                                    <p>Sorry, the page you are looking for might have been removed, had its name changed, or is temporarily unavailable.</p>
-                                </div>
-                            </body>
-                            </html>
-                            """);
-        });
-
-        // 从Proxy到Server的转发逻辑
-        this.managementApp.before(
-                ctx -> forwarderPathMappings.forEach((path, target) ->
-                {
-                    if (ctx.path().startsWith(path)) {
-                        forwardRequest(ctx, target);
-                        ctx.status(200); // 终止后续处理
-                    }
-                }
-        ));
 
         // 需要在记录器之前添加的过滤器
         this.managementApp.before(ctx -> {
             // 设置请求开始时间作为属性
             ctx.attribute("startTime", System.currentTimeMillis());
         });
+
+        // 处理请求
+        this.managementApp.get(
+                "/*",
+                ctx ->
+                {
+                    for (String alias : forwarderPathMappings.keySet()) {
+                        if (ctx.path().startsWith(alias)) {
+                            forwardRequest(ctx, forwarderPathMappings.get(alias));
+                        }
+                    }
+                }
+        );
 
         // 在请求结束后记录响应信息
         this.managementApp.after(ctx -> {
@@ -227,6 +161,67 @@ public class ProxyInstanceX {
             logger.trace("Response: {} {} from {} - Status: {} - Time: {}ms",
                     ctx.method(), ctx.path(), this.getClientIp(ctx), ctx.status(), duration);
         });
+
+        // 自定义404假面
+//        this.managementApp.error(404, ctx -> {
+//            if (ctx.attribute("javalin-handled") != null) {
+//                // 已转发，不处理404
+//                return;
+//            }
+//            ctx.html(
+//                    """
+//                            <!DOCTYPE html>
+//                            <html lang="en">
+//                            <head>
+//                                <meta charset="UTF-8">
+//                                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+//                                <title>404 - Page Not Found</title>
+//                                <style>
+//                                    body {
+//                                        font-family: Arial, sans-serif;
+//                                        background-color: #f4f4f4;
+//                                        display: flex;
+//                                        justify-content: center;
+//                                        align-items: center;
+//                                        height: 100vh;
+//                                        margin: 0;
+//                                    }
+//                                    .container {
+//                                        text-align: center;
+//                                        background-color: #fff;
+//                                        padding: 20px;
+//                                        border-radius: 8px;
+//                                        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+//                                    }
+//                                    .error-code {
+//                                        font-size: 100px;
+//                                        color: #ff6347;
+//                                        margin-bottom: 20px;
+//                                    }
+//                                    h1 {
+//                                        margin: 0;
+//                                        font-size: 36px;
+//                                    }
+//                                    p {
+//                                        font-size: 18px;
+//                                        color: #555;
+//                                        margin: 20px 0;
+//                                    }
+//                                    .navigation {
+//                                        margin-top: 30px;
+//                                    }
+//                                </style>
+//                            </head>
+//                            <body>
+//                                <div class="container">
+//                                    <div class="error-code">404</div>
+//                                    <h1>Proxy Page Not Found</h1>
+//                                    <p>Sorry, the page you are looking for might have been removed, had its name changed, or is temporarily unavailable.</p>
+//                                </div>
+//                            </body>
+//                            </html>
+//                            """);
+//        });
 
         // 异常处理
         this.managementApp.exception(Exception.class, (e, ctx) -> {

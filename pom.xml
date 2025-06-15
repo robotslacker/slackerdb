@@ -20,7 +20,6 @@
         <module>dbdriver</module>
         <module>dbserver</module>
         <module>dbproxy</module>
-        <module>dbservice</module>
         <module>build</module>
     </modules>
 

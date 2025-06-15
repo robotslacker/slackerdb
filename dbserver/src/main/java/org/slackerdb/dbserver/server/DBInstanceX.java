@@ -8,6 +8,10 @@ import io.javalin.http.staticfiles.Location;
 import io.javalin.plugin.bundled.CorsPluginConfig;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.io.ClassPathResource;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 public class DBInstanceX {
     private final Logger logger;
@@ -49,7 +53,9 @@ public class DBInstanceX {
                     serverConfiguration.getPortX()
                 );
         // 自定义404假面
-        this.managementApp.error(404, ctx -> {
+        this.managementApp.error(404, ctx ->
+        {
+            System.out.println("404444");
             ctx.html(
                     """
                             <!DOCTYPE html>
@@ -103,7 +109,8 @@ public class DBInstanceX {
                             </body>
                             </html>
                             """);
-        });
+                }
+        );
 
         // 需要在记录器之前添加的过滤器
         this.managementApp.before(ctx -> {
@@ -123,9 +130,18 @@ public class DBInstanceX {
         });
 
         // 默认页面
+        ClassPathResource indexResource = new ClassPathResource("web/index.html");
         this.managementApp.get("/" + serverConfiguration.getData() + "/",
-                ctx -> ctx.redirect("/index.html"));
-        this.managementApp.get("/", ctx -> ctx.redirect("/index.html"));
+                ctx -> {
+                    ctx.contentType("text/html");
+                    ctx.result(Files.readString(Path.of(indexResource.getURI())));
+                }
+        );
+        this.managementApp.get("/",ctx -> {
+                    ctx.contentType("text/html");
+                    ctx.result(Files.readString(Path.of(indexResource.getURI())));
+                }
+        );
 
         // 异常处理
         this.managementApp.exception(Exception.class, (e, ctx) -> {
