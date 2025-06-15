@@ -8,11 +8,15 @@ import io.javalin.http.staticfiles.Location;
 import io.javalin.plugin.bundled.CorsPluginConfig;
 import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.io.ClassPathResource;
+
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpClient.Version;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -113,6 +117,9 @@ public class ProxyInstanceX {
         // 关闭Javalin, 如果不是在trace下
         Logger javalinLogger = (Logger) LoggerFactory.getLogger("io.javalin.Javalin");
         Logger jettyLogger = (Logger) LoggerFactory.getLogger("org.eclipse.jetty");
+
+        ClassPathResource page404Resource = new ClassPathResource("web/404.html");
+
         if (!this.logger.getLevel().equals(Level.TRACE)) {
             javalinLogger.setLevel(Level.OFF);
             jettyLogger.setLevel(Level.OFF);
@@ -143,55 +150,80 @@ public class ProxyInstanceX {
                 "/*",
                 ctx ->
                 {
+                    int secondSlash = ctx.path().indexOf('/', 1);
+                    String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
                     for (String alias : forwarderPathMappings.keySet()) {
-                        if (ctx.path().startsWith(alias)) {
+                        if (ctxPathPrefix.equalsIgnoreCase(alias)) {
                             forwardRequest(ctx, forwarderPathMappings.get(alias));
+                            return;
                         }
                     }
+                    // 找不到按照404处理
+                    ctx.html(Files.readString(Path.of(page404Resource.getURI())));
                 }
         );
         this.managementApp.post(
                 "/*",
                 ctx ->
                 {
+                    int secondSlash = ctx.path().indexOf('/', 1);
+                    String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
                     for (String alias : forwarderPathMappings.keySet()) {
-                        if (ctx.path().startsWith(alias)) {
+                        if (ctxPathPrefix.equalsIgnoreCase(alias)) {
                             forwardRequest(ctx, forwarderPathMappings.get(alias));
+                            return;
                         }
                     }
+                    // 找不到按照404处理
+                    ctx.html(Files.readString(Path.of(page404Resource.getURI())));
                 }
         );
         this.managementApp.put(
                 "/*",
                 ctx ->
                 {
+                    int secondSlash = ctx.path().indexOf('/', 1);
+                    String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
                     for (String alias : forwarderPathMappings.keySet()) {
-                        if (ctx.path().startsWith(alias)) {
+                        if (ctxPathPrefix.equalsIgnoreCase(alias)) {
                             forwardRequest(ctx, forwarderPathMappings.get(alias));
+                            return;
                         }
                     }
+                    // 找不到按照404处理
+                    ctx.html(Files.readString(Path.of(page404Resource.getURI())));
                 }
         );
         this.managementApp.delete(
                 "/*",
                 ctx ->
                 {
+                    int secondSlash = ctx.path().indexOf('/', 1);
+                    String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
                     for (String alias : forwarderPathMappings.keySet()) {
-                        if (ctx.path().startsWith(alias)) {
+                        if (ctxPathPrefix.equalsIgnoreCase(alias)) {
                             forwardRequest(ctx, forwarderPathMappings.get(alias));
+                            return;
                         }
                     }
+                    // 找不到按照404处理
+                    ctx.html(Files.readString(Path.of(page404Resource.getURI())));
                 }
         );
         this.managementApp.patch(
                 "/*",
                 ctx ->
                 {
+                    int secondSlash = ctx.path().indexOf('/', 1);
+                    String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
                     for (String alias : forwarderPathMappings.keySet()) {
-                        if (ctx.path().startsWith(alias)) {
+                        if (ctxPathPrefix.equalsIgnoreCase(alias)) {
                             forwardRequest(ctx, forwarderPathMappings.get(alias));
+                            return;
                         }
                     }
+                    // 找不到按照404处理
+                    ctx.html(Files.readString(Path.of(page404Resource.getURI())));
                 }
         );
 
@@ -207,65 +239,7 @@ public class ProxyInstanceX {
         });
 
         // 自定义404假面
-        this.managementApp.error(404, ctx -> {
-            if (ctx.attribute("javalin-handled") != null) {
-                // 已转发，不处理404
-                return;
-            }
-            ctx.html(
-                    """
-                            <!DOCTYPE html>
-                            <html lang="en">
-                            <head>
-                                <meta charset="UTF-8">
-                                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                                <title>404 - Page Not Found</title>
-                                <style>
-                                    body {
-                                        font-family: Arial, sans-serif;
-                                        background-color: #f4f4f4;
-                                        display: flex;
-                                        justify-content: center;
-                                        align-items: center;
-                                        height: 100vh;
-                                        margin: 0;
-                                    }
-                                    .container {
-                                        text-align: center;
-                                        background-color: #fff;
-                                        padding: 20px;
-                                        border-radius: 8px;
-                                        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-                                    }
-                                    .error-code {
-                                        font-size: 100px;
-                                        color: #ff6347;
-                                        margin-bottom: 20px;
-                                    }
-                                    h1 {
-                                        margin: 0;
-                                        font-size: 36px;
-                                    }
-                                    p {
-                                        font-size: 18px;
-                                        color: #555;
-                                        margin: 20px 0;
-                                    }
-                                    .navigation {
-                                        margin-top: 30px;
-                                    }
-                                </style>
-                            </head>
-                            <body>
-                                <div class="container">
-                                    <div class="error-code">404</div>
-                                    <h1>Proxy Page Not Found</h1>
-                                    <p>Sorry, the page you are looking for might have been removed, had its name changed, or is temporarily unavailable.</p>
-                                </div>
-                            </body>
-                            </html>
-                            """);
-        });
+        this.managementApp.error(404, ctx -> ctx.html(Files.readString(Path.of(page404Resource.getURI()))));
 
         // 异常处理
         this.managementApp.exception(Exception.class, (e, ctx) -> {

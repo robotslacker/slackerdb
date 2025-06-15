@@ -38,6 +38,9 @@ public class DBInstanceX {
             javalinLogger.setLevel(Level.OFF);
             jettyLogger.setLevel(Level.OFF);
         }
+
+        ClassPathResource page404Resource = new ClassPathResource("web/404.html");
+
         this.managementApp = Javalin
                 .create(config->
                         {
@@ -52,65 +55,9 @@ public class DBInstanceX {
                     serverConfiguration.getBindHost(),
                     serverConfiguration.getPortX()
                 );
+
         // 自定义404假面
-        this.managementApp.error(404, ctx ->
-        {
-            System.out.println("404444");
-            ctx.html(
-                    """
-                            <!DOCTYPE html>
-                            <html lang="en">
-                            <head>
-                                <meta charset="UTF-8">
-                                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                                <title>404 - Page Not Found</title>
-                                <style>
-                                    body {
-                                        font-family: Arial, sans-serif;
-                                        background-color: #f4f4f4;
-                                        display: flex;
-                                        justify-content: center;
-                                        align-items: center;
-                                        height: 100vh;
-                                        margin: 0;
-                                    }
-                                    .container {
-                                        text-align: center;
-                                        background-color: #fff;
-                                        padding: 20px;
-                                        border-radius: 8px;
-                                        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-                                    }
-                                    .error-code {
-                                        font-size: 100px;
-                                        color: #ff6347;
-                                        margin-bottom: 20px;
-                                    }
-                                    h1 {
-                                        margin: 0;
-                                        font-size: 36px;
-                                    }
-                                    p {
-                                        font-size: 18px;
-                                        color: #555;
-                                        margin: 20px 0;
-                                    }
-                                    .navigation {
-                                        margin-top: 30px;
-                                    }
-                                </style>
-                            </head>
-                            <body>
-                                <div class="container">
-                                    <div class="error-code">404</div>
-                                    <h1>Page Not Found</h1>
-                                    <p>Sorry, the page you are looking for might have been removed, had its name changed, or is temporarily unavailable.</p>
-                                </div>
-                            </body>
-                            </html>
-                            """);
-                }
-        );
+        this.managementApp.error(404, ctx -> ctx.html(Files.readString(Path.of(page404Resource.getURI()))));
 
         // 需要在记录器之前添加的过滤器
         this.managementApp.before(ctx -> {
