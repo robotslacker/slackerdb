@@ -60,7 +60,7 @@ public class Main {
         System.out.println("  --host              remote server address,  default is 127.0.0.1");
         System.out.println("  --remote_listener   external remote listener address, default is none.");
         System.out.println("  --port              data service listener port. default is random");
-        System.out.println("  --port_x            management service listener port. default is random");
+        System.out.println("  --portX             management service listener port. default is random");
         System.out.println("  --memory_limit      maximum memory size used. Format:  ....(K|M|G)");
         System.out.println("  --max_workers       maximum concurrent quantity.");
         System.out.println("  --threads           maximum number of threads used on the server compute layer.");
@@ -304,9 +304,9 @@ public class Main {
             {
                 serverConfiguration.setPort(appOptions.get("port"));
             }
-            if (appOptions.containsKey("port_x"))
+            if (appOptions.containsKey("portx"))
             {
-                serverConfiguration.setPortX(appOptions.get("port_x"));
+                serverConfiguration.setPortX(appOptions.get("portx"));
             }
             if (appOptions.containsKey("data"))
             {

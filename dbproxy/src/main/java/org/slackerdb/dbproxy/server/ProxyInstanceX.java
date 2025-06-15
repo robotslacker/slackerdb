@@ -1,4 +1,4 @@
-package org.slackerdb.dbserver.server;
+package org.slackerdb.dbproxy.server;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -6,16 +6,111 @@ import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.staticfiles.Location;
 import io.javalin.plugin.bundled.CorsPluginConfig;
-import org.slackerdb.dbserver.configuration.ServerConfiguration;
+import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 import org.slf4j.LoggerFactory;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.http.HttpClient.Version;
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Stream;
 
-public class DBInstanceX {
+public class ProxyInstanceX {
     private final Logger logger;
     private Javalin managementApp = null;
+    private static final HttpClient CLIENT = HttpClient.newBuilder()
+            .version(Version.HTTP_2)
+            .connectTimeout(Duration.ofSeconds(10))
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build();
 
-    public DBInstanceX(Logger logger)
+    public ProxyInstanceX(Logger logger)
     {
         this.logger = logger;
+    }
+
+    public ConcurrentHashMap<String, String> forwarderPathMappings = new ConcurrentHashMap<>();
+
+    private static String[] createHeadersString(Context ctx) {
+        return ctx.headerMap().entrySet().stream()
+                .filter(e -> !e.getKey().equalsIgnoreCase("Content-Length"))
+                .flatMap(e -> Stream.of(e.getKey(), e.getValue()))
+                .toArray(String[]::new);
+    }
+
+    static URI resolveRedirectUrl(URI originalUri, String location) {
+        URI locationUri = URI.create(location);
+        if (locationUri.isAbsolute()) {
+            return locationUri;
+        }
+        // 保留原始查询参数
+        return originalUri.resolve(location).normalize();
+    }
+
+    public static void forwardRequest(Context ctx, String targetBaseUrl) {
+
+        try {
+            // 构建目标URL
+            String targetUrl = targetBaseUrl + ctx.path();
+            URI originalUri = URI.create(targetUrl);
+
+            System.out.println("targetURL =" + targetUrl);
+            System.out.println("target method =" + ctx.method().toString());
+
+            // 创建请求体处理器
+            if (ctx.body().isEmpty())
+            {
+                System.out.println("body is null");
+            }
+
+            HttpRequest.BodyPublisher bodyPublisher = ctx.body().isEmpty() ?
+                    HttpRequest.BodyPublishers.noBody() :
+                    HttpRequest.BodyPublishers.ofByteArray(ctx.bodyAsBytes());
+
+            // 构建转发请求
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(targetUrl))
+                    .method(ctx.method().toString(), bodyPublisher)
+                    .headers(createHeadersString(ctx))
+                    .timeout(Duration.ofSeconds(15))
+                    .build();
+
+            System.out.println("send ......");
+            // 发送请求并获取响应
+            HttpResponse<byte[]> response = CLIENT.send(
+                    request,
+                    HttpResponse.BodyHandlers.ofByteArray()
+            );
+//            System.out.println(response.statusCode());
+//            if (response.statusCode() == 302) {
+//                String location = response.headers()
+//                        .firstValue("Location")
+//                        .orElseThrow();
+//                URI newUri = resolveRedirectUrl(originalUri, location);
+//                System.out.println(newUri.toString());
+//                HttpRequest newRequest = HttpRequest.newBuilder()
+//                        .uri(newUri)
+//                        .method(ctx.method().toString(), bodyPublisher)
+//                        .headers(createHeadersString(ctx))
+//                        .timeout(Duration.ofSeconds(15))
+//                        .build();
+//                response = CLIENT.send(newRequest, HttpResponse.BodyHandlers.ofByteArray());
+//            }
+
+            // 回传响应
+            ctx.status(response.statusCode());
+            response.headers().map().forEach((k, v) ->
+                    ctx.header(k, String.join(",", v)));
+            ctx.result(response.body());
+
+        } catch (Exception e) {
+            System.out.println("errrr");
+            e.printStackTrace();
+            ctx.status(500).result("Forwarding error: " + e.getMessage());
+        }
     }
 
     private String getClientIp(Context ctx) {
@@ -45,8 +140,8 @@ public class DBInstanceX {
                         }
                 )
                 .start(
-                    serverConfiguration.getBindHost(),
-                    serverConfiguration.getPortX()
+                        serverConfiguration.getBindHost(),
+                        serverConfiguration.getPortX()
                 );
         // 自定义404假面
         this.managementApp.error(404, ctx -> {
@@ -105,6 +200,17 @@ public class DBInstanceX {
                             """);
         });
 
+        // 从Proxy到Server的转发逻辑
+        this.managementApp.before(
+                ctx -> forwarderPathMappings.forEach((path, target) ->
+                {
+                    if (ctx.path().startsWith(path)) {
+                        forwardRequest(ctx, target);
+                        ctx.status(200); // 终止后续处理
+                    }
+                }
+        ));
+
         // 需要在记录器之前添加的过滤器
         this.managementApp.before(ctx -> {
             // 设置请求开始时间作为属性
@@ -121,11 +227,6 @@ public class DBInstanceX {
             logger.trace("Response: {} {} from {} - Status: {} - Time: {}ms",
                     ctx.method(), ctx.path(), this.getClientIp(ctx), ctx.status(), duration);
         });
-
-        // 默认页面
-        this.managementApp.get("/" + serverConfiguration.getData() + "/",
-                ctx -> ctx.redirect("/index.html"));
-        this.managementApp.get("/", ctx -> ctx.redirect("/index.html"));
 
         // 异常处理
         this.managementApp.exception(Exception.class, (e, ctx) -> {

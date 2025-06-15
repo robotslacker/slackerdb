@@ -15,6 +15,9 @@ public class PostgresProxyTarget {
     // 远程数据库的端口
     public int     port;
 
+    // 远程数据库管理端口
+    public int     portX;
+
     // 远程数据库的数据库名称
     public String  database;
 }

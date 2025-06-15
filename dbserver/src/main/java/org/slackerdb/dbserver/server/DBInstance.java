@@ -120,6 +120,8 @@ public class DBInstance {
     // 监控线程
     class DBInstanceMonitorThread extends Thread
     {
+        private static String lastRegisterMessage = "";
+
         @Override
         public void run()
         {
@@ -204,8 +206,13 @@ public class DBInstance {
                     data = new byte[messageLen - 4];
                     in.readBytes(data);
 
-                    // 处理消息，并回显
-                    logger.info("[SERVER] {}", new String(data, StandardCharsets.UTF_8));
+                    // 处理消息，并回显. 避免噪音重复打印
+                    String registerFeedBackMessage = new String(data, StandardCharsets.UTF_8);
+                    if ((data.length != 0) && !DBInstanceMonitorThread.lastRegisterMessage.equalsIgnoreCase(registerFeedBackMessage))
+                    {
+                        logger.info("[SERVER] {}", registerFeedBackMessage);
+                        DBInstanceMonitorThread.lastRegisterMessage = registerFeedBackMessage;
+                    }
 
                     // 关闭连接，每次只处理一个请求
                     ctx.close();
@@ -241,9 +248,11 @@ public class DBInstance {
             // 拼接消息正文
             InetSocketAddress localAddress = (InetSocketAddress) future.channel().localAddress();
             String message = "";
+            // REGISTER <hostName>:<port,portX>/<dbInstanceName> AS <alias>
             if (method.equals("REGISTER")) {
                 message = "REGISTER " +
-                        localAddress.getHostName() + ":" + serverConfiguration.getPort() + "/" + serverConfiguration.getData() + " AS " +
+                        localAddress.getHostName() + ":" + serverConfiguration.getPort() + "," + serverConfiguration.getPortX() +
+                        "/" + serverConfiguration.getData() + " AS " +
                         serverConfiguration.getData();
             }
             else if (method.equals("UNREGISTER")) {

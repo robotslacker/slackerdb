@@ -154,37 +154,32 @@ public class AdminClientRequest extends PostgresRequest {
         else if (clientRequestCommand.trim().toUpperCase().startsWith("REGISTER"))
         {
             Pattern pattern = Pattern.compile(
-                    "REGISTER\\s+(\\S+):(\\d+)/(\\S+)\\s+AS\\s+(\\S+)"
+                    "REGISTER\\s+(\\S+):(\\d+),(\\d+)/(\\S+)\\s+AS\\s+(\\S+)"
             );
             Matcher matcher = pattern.matcher(clientRequestCommand);
 
             if (matcher.find()) {
                 String host = matcher.group(1);
                 int port = Integer.parseInt(matcher.group(2));
-                String service = matcher.group(3);
-                String alias = matcher.group(4);
-                if (!this.proxyInstance.proxyTarget.containsKey(alias))
-                {
-                    PostgresProxyTarget postgresProxyTarget = new PostgresProxyTarget();
-                    postgresProxyTarget.createdDateTime = LocalDateTime.now();
-                    postgresProxyTarget.lastActivatedTIme = LocalDateTime.now();
-                    postgresProxyTarget.host = host;
-                    postgresProxyTarget.port = port;
-                    postgresProxyTarget.database = service;
-                    this.proxyInstance.proxyTarget.put(alias, postgresProxyTarget);
-                    feedBackMsg.append("Register " +
-                            "[").append(host).append(":").append(port).append("/").append(service).append("] " +
-                            "as [").append(alias).append("] successful. ");
-                }
-                else
-                {
-                    PostgresProxyTarget postgresProxyTarget = this.proxyInstance.proxyTarget.get(alias);
-                    postgresProxyTarget.createdDateTime = LocalDateTime.now();
-                    postgresProxyTarget.lastActivatedTIme = LocalDateTime.now();
-                    postgresProxyTarget.host = host;
-                    postgresProxyTarget.port = port;
-                    postgresProxyTarget.database = service;
-                    this.proxyInstance.proxyTarget.put(alias, postgresProxyTarget);
+                int portX = Integer.parseInt(matcher.group(3));
+                String service = matcher.group(4);
+                String alias = matcher.group(5);
+                PostgresProxyTarget postgresProxyTarget = new PostgresProxyTarget();
+                postgresProxyTarget.createdDateTime = LocalDateTime.now();
+                postgresProxyTarget.lastActivatedTIme = LocalDateTime.now();
+                postgresProxyTarget.host = host;
+                postgresProxyTarget.port = port;
+                postgresProxyTarget.portX = portX;
+                postgresProxyTarget.database = service;
+                this.proxyInstance.proxyTarget.put(alias, postgresProxyTarget);
+                feedBackMsg.append("Register " +
+                        "[").append(host).append(":").append(port).append(",").append(portX)
+                        .append("/").append(service).append("] " +
+                        "as [").append(alias).append("] successful. ");
+                // 处理PortX的转发请求
+                if (this.proxyInstance.proxyInstanceX != null) {
+                    this.proxyInstance.proxyInstanceX.forwarderPathMappings
+                            .put("/" + alias, "http://" + postgresProxyTarget.host + ":" + postgresProxyTarget.portX);
                 }
             } else {
                 feedBackMsg.append("WRONG REGISTER COMMAND FORMAT. ").append(clientRequestCommand);
@@ -199,6 +194,11 @@ public class AdminClientRequest extends PostgresRequest {
 
             if (matcher.find()) {
                 String alias = matcher.group(1);
+                // 处理PORTX的转发请求
+                if (this.proxyInstance.proxyInstanceX != null) {
+                    this.proxyInstance.proxyInstanceX.forwarderPathMappings
+                            .remove("/" + alias);
+                }
                 this.proxyInstance.proxyTarget.remove(alias);
                 feedBackMsg.append("Unregister " + "[").append(alias).append("] successful. ");
             } else {

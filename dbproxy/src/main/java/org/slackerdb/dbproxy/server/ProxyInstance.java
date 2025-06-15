@@ -2,7 +2,6 @@ package org.slackerdb.dbproxy.server;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
-import io.javalin.Javalin;
 import org.slackerdb.common.utils.OSUtil;
 import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
@@ -41,7 +40,7 @@ public class ProxyInstance {
     private PostgresProxyServer protocolServer;
 
     // 管理端口服务
-    public Javalin managementApp = null;
+    public ProxyInstanceX proxyInstanceX = null;
 
     // 实例对应的日志句柄
     public Logger logger;
@@ -175,6 +174,8 @@ public class ProxyInstance {
         }
 
         // 如果需要，启动管理端口
+
+        // 如果需要，启动管理端口
         if (serverConfiguration.getPortX() != -1) {
             // 关闭Javalin, 如果不是在trace下
             Logger javalinLogger = (Logger) LoggerFactory.getLogger("io.javalin.Javalin");
@@ -183,17 +184,13 @@ public class ProxyInstance {
                 javalinLogger.setLevel(Level.OFF);
                 jettyLogger.setLevel(Level.OFF);
             }
-            this.managementApp = Javalin.create().start(
-                    serverConfiguration.getBindHost(),
-                    serverConfiguration.getPortX());
-            logger.info("[PROXY][STARTUP    ] Management server listening on {}:{}.",
-                    serverConfiguration.getBindHost(), serverConfiguration.getPortX());
+            this.proxyInstanceX = new ProxyInstanceX(this.logger);
+            this.proxyInstanceX.start(serverConfiguration);
         }
         else
         {
             logger.info("[PROXY][STARTUP    ] Management server listener has been disabled.");
         }
-
         // 标记服务已经启动完成
         this.instanceState = "RUNNING";
         logger.info("[PROXY] Server is running.");
@@ -209,6 +206,13 @@ public class ProxyInstance {
         }
 
         this.instanceState = "SHUTTING DOWN";
+
+        // 停止管理服务
+        if (this.proxyInstanceX != null)
+        {
+            this.proxyInstanceX.stop();
+            this.proxyInstanceX = null;
+        }
 
         // 停止对外网络服务
         protocolServer.stop();
