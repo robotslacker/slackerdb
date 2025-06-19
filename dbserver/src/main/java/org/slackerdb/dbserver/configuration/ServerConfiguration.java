@@ -72,6 +72,9 @@ public class ServerConfiguration extends Throwable {
     private final int default_connection_pool_maximum_idle = 10;
     private final int default_connection_pool_maximum_lifecycle_time = 15*60*1000;
 
+    // 数据库API查询结果缓存区大小
+    private final long default_query_result_cache_size = 1024 * 1024 * 1024;
+
     private String   data;
 
     private String   data_dir;
@@ -100,6 +103,7 @@ public class ServerConfiguration extends Throwable {
     private int connection_pool_minimum_idle;
     private int connection_pool_maximum_idle;
     private int connection_pool_maximum_lifecycle_time;
+    private long query_result_cache_size;
 
     public ServerConfiguration() throws ServerException
     {
@@ -131,6 +135,7 @@ public class ServerConfiguration extends Throwable {
         connection_pool_maximum_lifecycle_time = default_connection_pool_maximum_lifecycle_time;
         template = default_template;
         daemonMode = defaultDaemonMode;
+        query_result_cache_size = default_query_result_cache_size;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -353,6 +358,13 @@ public class ServerConfiguration extends Throwable {
                         setConnection_pool_maximum_lifecycle_time(Integer.parseInt(entry.getValue().toString()));
                     }
                 }
+                case "DEFAULT_QUERY_RESULT_CACHE_SIZE" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        query_result_cache_size = this.default_query_result_cache_size;
+                    } else {
+                        setQuery_result_cache_size(Long.parseLong(entry.getValue().toString()));
+                    }
+                }
                 default ->
                         throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));
             }
@@ -373,13 +385,34 @@ public class ServerConfiguration extends Throwable {
     public void setConnection_pool_maximum_lifecycle_time(int connection_pool_maximum_lifecycle_time) {
         this.connection_pool_maximum_lifecycle_time = connection_pool_maximum_lifecycle_time;
     }
+    public void setQuery_result_cache_size(String query_result_cache_size)
+    {
+        try {
+            this.query_result_cache_size = Long.parseLong(query_result_cache_size);
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "query_result_cache_size", query_result_cache_size)
+            );
+        }
+    }
 
+    public void setQuery_result_cache_size(long query_result_cache_size)
+    {
+        this.query_result_cache_size = query_result_cache_size;
+    }
     public int getConnection_pool_maximum_idle() {
         return connection_pool_maximum_idle;
     }
 
     public int getConnection_pool_minimum_idle() {
         return connection_pool_minimum_idle;
+    }
+
+    public long getQuery_result_cache_size()
+    {
+        return this.query_result_cache_size;
     }
 
     public int getConnection_pool_maximum_lifecycle_time() {

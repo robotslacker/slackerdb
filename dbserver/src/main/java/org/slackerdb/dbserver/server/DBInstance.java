@@ -724,7 +724,7 @@ public class DBInstance {
                 javalinLogger.setLevel(Level.OFF);
                 jettyLogger.setLevel(Level.OFF);
             }
-            this.dbInstanceX = new DBInstanceX(this.logger);
+            this.dbInstanceX = new DBInstanceX(this.backendSysConnection, this.logger);
             this.dbInstanceX.start(serverConfiguration);
         }
         else

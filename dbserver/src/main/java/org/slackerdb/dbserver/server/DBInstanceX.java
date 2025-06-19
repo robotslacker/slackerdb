@@ -2,23 +2,49 @@ package org.slackerdb.dbserver.server;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.staticfiles.Location;
 import io.javalin.plugin.bundled.CorsPluginConfig;
+import org.duckdb.DuckDBConnection;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class DBInstanceX {
     private final Logger logger;
     private Javalin managementApp = null;
+    private final Connection backendSqlConnection;
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    public DBInstanceX(Logger logger)
+    // 估计对象的大小
+    private static int estimateSize(Map<String, Object> result) {
+        try {
+            return MAPPER.writeValueAsBytes(result).length;
+        } catch (JsonProcessingException e) {
+            return 1024;
+        }
+    }
+
+    private final ConcurrentHashMap<String, Cache<String, Map<String, Object>>> queryResultCacheForAllInstances
+            = new ConcurrentHashMap<>();
+
+    public DBInstanceX(Connection sqlConn, Logger logger)
     {
+        this.backendSqlConnection = sqlConn;
         this.logger = logger;
     }
 
@@ -27,6 +53,82 @@ public class DBInstanceX {
         return (xff != null && !xff.isEmpty())
                 ? xff.split(",")[0].trim()
                 : ctx.ip();
+    }
+
+    private static void handleSqlQuery(
+            Context ctx,
+            Connection backendSqlConnection,
+            Cache<String, Map<String, Object>> caffeineQueryCache,
+            Logger logger
+    ) {
+        SQLApiRequest req = ctx.bodyAsClass(SQLApiRequest.class);
+        String key = req.sql + "|" + String.join(",", req.params == null ? List.of() : req.params);
+
+        Map<String, Object> cacheResult = caffeineQueryCache.getIfPresent(key);
+        if (cacheResult != null) {
+            ctx.json(Map.of("cached", true, "data", cacheResult));
+            return;
+        }
+
+        Connection conn = null;
+        try {
+            conn = ((DuckDBConnection)backendSqlConnection).duplicate();
+            PreparedStatement preparedStatement = conn.prepareStatement(req.sql);
+            for (int nPos=0; nPos < req.params.size(); nPos ++)
+            {
+                String param = req.params.get(nPos);
+                if (param.equalsIgnoreCase("null"))
+                {
+                    preparedStatement.setString(nPos+1, null);
+                }
+                else
+                {
+                    preparedStatement.setString(nPos+1, param);
+                }
+            }
+            boolean hasResultSet  = preparedStatement.execute();
+            if (hasResultSet) {
+                ResultSet rs = preparedStatement.getResultSet();
+                ResultSetMetaData resultSetMetaData = rs.getMetaData();
+                List<String> columnNames = new ArrayList<>();
+                List<String> columnTypes = new ArrayList<>();
+                List<List<Object>> dataset = new ArrayList<>();
+                for (int nPos=0; nPos<resultSetMetaData.getColumnCount(); nPos++)
+                {
+                    columnNames.add(resultSetMetaData.getColumnName(nPos+1));
+                    columnTypes.add(resultSetMetaData.getColumnTypeName(nPos+1));
+                }
+                while (rs.next())
+                {
+                    List<Object> row = new ArrayList<>();
+                    for (int nPos=0; nPos<resultSetMetaData.getColumnCount(); nPos++) {
+                        row.add(rs.getObject(nPos+1));
+                    }
+                    dataset.add(row);
+                }
+                rs.close();
+                Map<String, Object> result = new HashMap<>();
+                result.put("columnTypes", columnTypes);
+                result.put("columnNames", columnNames);
+                result.put("data", dataset);
+                caffeineQueryCache.put(key, result);
+                ctx.json(Map.of("cached", false, "data", result));
+            }
+            else
+            {
+                ctx.json(Map.of("cached", false));
+            }
+            preparedStatement.close();
+            conn.close();
+        } catch (Exception e) {
+            logger.trace("[SERVER-API] Query failed: ", e);
+            ctx.status(500).json(Map.of("error", e.getMessage()));
+            try {
+                if (conn != null && !conn.isClosed()) {
+                    conn.close();
+                }
+            } catch (SQLException ignored) {}
+        }
     }
 
     public void start(ServerConfiguration serverConfiguration)
@@ -89,6 +191,33 @@ public class DBInstanceX {
                     ctx.result(Files.readString(Path.of(indexResource.getURI())));
                 }
         );
+
+        // 提供WEB API的服务查询
+        this.managementApp.post("/" + serverConfiguration.getData() + "/api/sql",
+                ctx ->
+                {
+                    Cache<String, Map<String, Object>> queryResultCache;
+                    if (!this.queryResultCacheForAllInstances.containsKey(serverConfiguration.getData()))
+                    {
+                        queryResultCache =
+                            Caffeine.newBuilder()
+                                    .maximumWeight(serverConfiguration.getQuery_result_cache_size())
+                                    .weigher((String key, Map<String, Object> value) -> estimateSize(value))
+                                    .recordStats()
+                                    .build();
+                        this.queryResultCacheForAllInstances.put(serverConfiguration.getData(), queryResultCache);
+                    }
+                    else
+                    {
+                        queryResultCache = this.queryResultCacheForAllInstances.get(serverConfiguration.getData());
+                    }
+                    handleSqlQuery(
+                            ctx,
+                            this.backendSqlConnection,
+                            queryResultCache,
+                            this.logger
+                    );
+                });
 
         // 异常处理
         this.managementApp.exception(Exception.class, (e, ctx) -> {
