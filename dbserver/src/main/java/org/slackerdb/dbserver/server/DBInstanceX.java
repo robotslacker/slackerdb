@@ -62,12 +62,14 @@ public class DBInstanceX {
             Logger logger
     ) {
         SQLApiRequest req = ctx.bodyAsClass(SQLApiRequest.class);
-        String key = req.sql + "|" + String.join(",", req.params == null ? List.of() : req.params);
-
-        Map<String, Object> cacheResult = caffeineQueryCache.getIfPresent(key);
-        if (cacheResult != null) {
-            ctx.json(Map.of("cached", true, "data", cacheResult));
-            return;
+        String key = null;
+        if (caffeineQueryCache != null) {
+            key = req.sql + "|" + String.join(",", req.params == null ? List.of() : req.params);
+            Map<String, Object> cacheResult = caffeineQueryCache.getIfPresent(key);
+            if (cacheResult != null) {
+                ctx.json(Map.of("cached", true, "data", cacheResult));
+                return;
+            }
         }
 
         Connection conn = null;
@@ -111,7 +113,9 @@ public class DBInstanceX {
                 result.put("columnTypes", columnTypes);
                 result.put("columnNames", columnNames);
                 result.put("data", dataset);
-                caffeineQueryCache.put(key, result);
+                if (caffeineQueryCache != null) {
+                    caffeineQueryCache.put(key, result);
+                }
                 ctx.json(Map.of("cached", false, "data", result));
             }
             else
@@ -196,27 +200,35 @@ public class DBInstanceX {
         this.managementApp.post("/" + serverConfiguration.getData() + "/api/sql",
                 ctx ->
                 {
-                    Cache<String, Map<String, Object>> queryResultCache;
-                    if (!this.queryResultCacheForAllInstances.containsKey(serverConfiguration.getData()))
-                    {
-                        queryResultCache =
-                            Caffeine.newBuilder()
-                                    .maximumWeight(serverConfiguration.getQuery_result_cache_size())
-                                    .weigher((String key, Map<String, Object> value) -> estimateSize(value))
-                                    .recordStats()
-                                    .build();
-                        this.queryResultCacheForAllInstances.put(serverConfiguration.getData(), queryResultCache);
+                    if (serverConfiguration.getQuery_result_cache_size() > 0) {
+                        Cache<String, Map<String, Object>> queryResultCache;
+                        if (!this.queryResultCacheForAllInstances.containsKey(serverConfiguration.getData())) {
+                            queryResultCache =
+                                    Caffeine.newBuilder()
+                                            .maximumWeight(serverConfiguration.getQuery_result_cache_size())
+                                            .weigher((String key, Map<String, Object> value) -> estimateSize(value))
+                                            .recordStats()
+                                            .build();
+                            this.queryResultCacheForAllInstances.put(serverConfiguration.getData(), queryResultCache);
+                        } else {
+                            queryResultCache = this.queryResultCacheForAllInstances.get(serverConfiguration.getData());
+                        }
+                        handleSqlQuery(
+                                ctx,
+                                this.backendSqlConnection,
+                                queryResultCache,
+                                this.logger
+                        );
                     }
                     else
                     {
-                        queryResultCache = this.queryResultCacheForAllInstances.get(serverConfiguration.getData());
+                        handleSqlQuery(
+                                ctx,
+                                this.backendSqlConnection,
+                                null,
+                                this.logger
+                        );
                     }
-                    handleSqlQuery(
-                            ctx,
-                            this.backendSqlConnection,
-                            queryResultCache,
-                            this.logger
-                    );
                 });
 
         // 异常处理
