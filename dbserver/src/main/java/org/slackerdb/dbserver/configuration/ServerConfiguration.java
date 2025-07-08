@@ -358,7 +358,7 @@ public class ServerConfiguration extends Throwable {
                         setConnection_pool_maximum_lifecycle_time(Integer.parseInt(entry.getValue().toString()));
                     }
                 }
-                case "DEFAULT_QUERY_RESULT_CACHE_SIZE" -> {
+                case "QUERY_RESULT_CACHE_SIZE" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         query_result_cache_size = this.default_query_result_cache_size;
                     } else {
