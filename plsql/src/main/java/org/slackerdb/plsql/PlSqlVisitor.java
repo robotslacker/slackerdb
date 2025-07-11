@@ -6,6 +6,8 @@ import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.misc.Interval;
 import org.antlr.v4.runtime.tree.ParseTree;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.math.BigInteger;
 import java.sql.*;
 import java.text.ParseException;
@@ -86,7 +88,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                         if (variableDefaultValue != null)
                         {
                             try {
-                                declareVariables.put("__" + variableName + "__", Integer.parseInt(variableDefaultValue));
+                                declareVariables.put(variableName, Integer.parseInt(variableDefaultValue));
                             }
                             catch (NumberFormatException ignored)
                             {
@@ -94,14 +96,14 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                             }
                         }
                         else {
-                            declareVariables.put("__" + variableName + "__", 0);
+                            declareVariables.put(variableName, 0);
                         }
                         break;
                     case "BIGINT":
                         if (variableDefaultValue != null)
                         {
                             try {
-                                declareVariables.put("__" + variableName + "__", new BigInteger(variableDefaultValue));
+                                declareVariables.put(variableName, new BigInteger(variableDefaultValue));
                             }
                             catch (NumberFormatException ignored)
                             {
@@ -109,16 +111,16 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                             }
                         }
                         else {
-                            declareVariables.put("__" + variableName + "__", 0);
+                            declareVariables.put(variableName, 0);
                         }
                         break;
                     case "TEXT":
-                        declareVariables.put("__" + variableName + "__", variableDefaultValue);
+                        declareVariables.put(variableName, variableDefaultValue);
                         break;
                     case "FLOAT":
                         if (variableDefaultValue != null) {
                             try {
-                                declareVariables.put("__" + variableName + "__", Float.parseFloat(variableDefaultValue));
+                                declareVariables.put(variableName, Float.parseFloat(variableDefaultValue));
                             } catch (NumberFormatException ignored)
                             {
                                 throw new ParserError("Invalid default value for [" + variableName + "].");
@@ -126,13 +128,13 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                         }
                         else
                         {
-                            declareVariables.put("__" + variableName + "__", 0.0d);
+                            declareVariables.put(variableName, 0.0d);
                         }
                         break;
                     case "DOUBLE":
                         if (variableDefaultValue != null) {
                             try {
-                                declareVariables.put("__" + variableName + "__", Double.parseDouble(variableDefaultValue));
+                                declareVariables.put(variableName, Double.parseDouble(variableDefaultValue));
                             } catch (NumberFormatException ignored)
                             {
                                 throw new ParserError("Invalid default value for [" + variableName + "].");
@@ -140,13 +142,13 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                         }
                         else
                         {
-                            declareVariables.put("__" + variableName + "__", 0.0d);
+                            declareVariables.put(variableName, 0.0d);
                         }
                         break;
                     case "DATE":
                         if (variableDefaultValue != null) {
                             try {
-                                declareVariables.put("__" + variableName + "__", new SimpleDateFormat("yyyy-MM-dd").parse(variableDefaultValue));
+                                declareVariables.put(variableName, new SimpleDateFormat("yyyy-MM-dd").parse(variableDefaultValue));
                             } catch (ParseException ignored)
                             {
                                 throw new ParserError("Invalid default value for [" + variableName + "].");
@@ -154,13 +156,13 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                         }
                         else
                         {
-                            declareVariables.put("__" + variableName + "__", null);
+                            declareVariables.put(variableName, null);
                         }
                         break;
                     case "TIMESTAMP":
                         if (variableDefaultValue != null) {
                             try {
-                                declareVariables.put("__" + variableName + "__",
+                                declareVariables.put(variableName,
                                         LocalDateTime.parse(variableDefaultValue, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
                             } catch (DateTimeParseException ignored)
                             {
@@ -169,7 +171,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                         }
                         else
                         {
-                            declareVariables.put("__" + variableName + "__", null);
+                            declareVariables.put(variableName, null);
                         }
                         break;
                     default:
@@ -302,16 +304,16 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         String expression = this.inputStream.getText(
                 new Interval(ctx.expression().getStart().getStartIndex(), ctx.expression().getStop().getStopIndex())).trim();
         // 必须是冒号开头，则必须变量用字母开头
-        expression = expression.replaceAll(":(\\b[a-zA-Z]\\w*\\b)", "__$1__");
+        expression = expression.replaceAll(":(\\b[a-zA-Z]\\w*\\b)", "$1");
 
         // 解析并计算表达式
-        if (!declareVariables.containsKey("__" + variableName + "__"))
+        if (!declareVariables.containsKey(variableName))
         {
             throw new ParserError("Variable [" + variableName + "] has not been declared." );
         }
         Object result = evaluate(expression, declareVariables);
         // 输出结果
-        declareVariables.put("__" + variableName + "__", result);
+        declareVariables.put(variableName, result);
         return null;
     }
 
@@ -329,31 +331,29 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                 if (tokenCtx.bindIdentifier() != null) {
                     // 记录绑定的变量, 去掉前面的：
                     String variableName = tokenCtx.bindIdentifier().getText().substring(1) ;
-                    if (!declareVariables.containsKey("__" + variableName + "__"))
+                    if (!declareVariables.containsKey(variableName))
                     {
                         throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
                                 "Variable [" + variableName + "] has not been declared." );
                     }
                     else
                     {
-                        bindObjects.add(declareVariables.get("__" + variableName + "__"));
+                        bindObjects.add(declareVariables.get(variableName));
                     }
                     sql = sql.replace(tokenCtx.bindIdentifier().getText(), "?");
                 }
             }
-            // 替换__XX__标记的变量
-            // 定义匹配 __XX__ 的正则表达式
-            Pattern pattern = Pattern.compile("__(?!_)(\\w+?)__");
+            Pattern pattern = Pattern.compile(":(\\w+?)");
             while (true) {
                 Matcher matcher = pattern.matcher(sql);
                 if (matcher.find()) {
                     String variableName = matcher.group(1);
-                    if (declareVariables.containsKey("__" + variableName + "__")) {
-                        sql = sql.replace("__" + variableName + "__", String.valueOf(declareVariables.get("__" + variableName + "__")));
+                    if (declareVariables.containsKey(variableName)) {
+                        sql = sql.replace(":" + variableName, String.valueOf(declareVariables.get(variableName)));
                     }
                     else
                     {
-                        sql = sql.replace("__" + variableName + "__", "**UNKNOWN**");
+                        sql = sql.replace(":" + variableName, "**UNKNOWN**");
                     }
                 }
                 else
@@ -443,8 +443,8 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         List<String> bindVariables = new ArrayList<>();
         for (PlSqlParserParser.BindIdentifierContext bindCtx : ctx.fetch_list().bindIdentifier())
         {
-            String variableName = bindCtx.getText().trim().substring(1);
-            if (!declareVariables.containsKey("__" + variableName + "__"))
+            String variableName = bindCtx.getText().trim().substring(1).toLowerCase();
+            if (!declareVariables.containsKey(variableName))
             {
                 throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
                         "Variable " + variableName + " in FETCH statement is undefined.");
@@ -471,7 +471,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                 int nPos = 1;
                 for (String bindVariable : bindVariables)
                 {
-                    declareVariables.put("__" + bindVariable + "__", rs.getObject(nPos));
+                    declareVariables.put(bindVariable, rs.getObject(nPos));
                     nPos = nPos + 1;
                 }
             }
@@ -497,8 +497,8 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         List<String> bindVariables = new ArrayList<>();
         for (PlSqlParserParser.BindIdentifierContext bindCtx : ctx.fetch_list().bindIdentifier())
         {
-            String variableName = bindCtx.getText().trim().substring(1);
-            if (!declareVariables.containsKey("__" + variableName + "__"))
+            String variableName = bindCtx.getText().trim().substring(1).toLowerCase();
+            if (!declareVariables.containsKey(variableName))
             {
                 throw new ParserError("Parse error: " + ctx.getStart().getLine() + ":" + ctx.getStart().getCharPositionInLine() + ".\n" +
                         "Variable " + variableName + " in FETCH statement is undefined.");
@@ -518,7 +518,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                 int nPos = 1;
                 for (String bindVariable : bindVariables)
                 {
-                    declareVariables.put("__" + bindVariable + "__", cursor.rs.getObject(nPos));
+                    declareVariables.put(bindVariable, cursor.rs.getObject(nPos));
                     nPos = nPos + 1;
                 }
             }
@@ -542,7 +542,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
                         new Interval(ctx.if_().expression().getStart().getStartIndex(),
                                 ctx.if_().expression().getStop().getStopIndex())
                 ).trim();
-        ifExpression = ifExpression.replaceAll(":(\\w+)", "__$1__");
+        ifExpression = ifExpression.replaceAll(":(\\w+)", "$1");
         boolean result = (boolean)evaluate(ifExpression, declareVariables);
         if (result)
         {
@@ -628,13 +628,13 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
     public Void visitFor_block(PlSqlParserParser.For_blockContext ctx)
     {
         String bindIdentifierName = ctx.bindIdentifier().getText().trim().substring(1);
-        if (!declareVariables.containsKey("__" + bindIdentifierName + "__"))
+        if (!declareVariables.containsKey(bindIdentifierName))
         {
             throw new ParserError("Variable [" + bindIdentifierName + "] has not been declared." );
         }
         if (ctx.list() != null) {
             for (PlSqlParserParser.ExpressionContext exprCtx : ctx.list().exprList().expression()) {
-                declareVariables.put("__" + bindIdentifierName + "__", exprCtx.getText());
+                declareVariables.put(bindIdentifierName, exprCtx.getText());
                 try {
                     for (int i = 0; i < ctx.getChildCount(); i++) {
                         ParseTree child = ctx.getChild(i);
@@ -650,7 +650,7 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
             }
         } else {
             for (int i = Integer.parseInt(ctx.expression(0).getText()); i < Integer.parseInt(ctx.expression(1).getText()); i++) {
-                declareVariables.put("__" + bindIdentifierName + "__", i);
+                declareVariables.put(bindIdentifierName, i);
                 try
                 {
                     for (int j = 0; j < ctx.getChildCount(); j++) {
@@ -746,7 +746,9 @@ public class PlSqlVisitor extends PlSqlParserBaseVisitor<Void> {
         }
         catch (RuntimeException re)
         {
-            throw new ParseSQLException("Parser Error:", re);
+            StringWriter sw = new StringWriter();
+            re.printStackTrace(new PrintWriter(sw));
+            throw new ParseSQLException(sw.toString() , re);
         }
     }
 }

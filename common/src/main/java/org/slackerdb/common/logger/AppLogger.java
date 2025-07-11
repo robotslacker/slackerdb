@@ -64,9 +64,7 @@ public class AppLogger {
                 FileAppender<ILoggingEvent> fileAppender = new FileAppender<>();
                 fileAppender.setContext(context);
                 fileAppender.setName("FILE");
-                // 指定输出文件
-                fileAppender.setFile(log.trim());
-                // 日志文件总是用追加的方式写入
+                fileAppender.setFile(log.trim()); // 指定输出文件
                 fileAppender.setAppend(true);
                 PatternLayout fileLayout = new PatternLayout();
                 fileLayout.setPattern("%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n");

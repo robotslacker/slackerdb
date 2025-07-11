@@ -331,8 +331,8 @@ public class PlSqlTest {
                         Begin
                             let x = 10;
                             let y = 'Hello World';
-                            insert into main.testEnvIdentifier values(__x__, '__y__');
-                            insert into main.testEnvIdentifier values(__x__ + 1, '__y__ Me');
+                            insert into main.testEnvIdentifier values(:x, ':y');
+                            insert into main.testEnvIdentifier values(:x + 1, ':y Me');
                         End;
                         """);
         ResultSet rs = pgConn.createStatement().executeQuery(
@@ -396,9 +396,10 @@ public class PlSqlTest {
                             current int;
                         begin
                             let current = 10;
-                            select '___current__';
+                            select ':current';
                         end;
                         """);
         pgConn.close();
     }
+
 }

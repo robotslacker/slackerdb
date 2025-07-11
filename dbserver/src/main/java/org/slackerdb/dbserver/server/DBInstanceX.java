@@ -65,6 +65,7 @@ public class DBInstanceX {
         String key = null;
         if (caffeineQueryCache != null) {
             key = req.sql + "|" + String.join(",", req.params == null ? List.of() : req.params);
+
             Map<String, Object> cacheResult = caffeineQueryCache.getIfPresent(key);
             if (cacheResult != null) {
                 ctx.json(Map.of("cached", true, "data", cacheResult));
