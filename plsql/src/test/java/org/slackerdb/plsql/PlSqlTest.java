@@ -1,7 +1,6 @@
 package org.slackerdb.plsql;
 
 import org.junit.jupiter.api.Test;
-
 import java.math.BigDecimal;
 import java.sql.*;
 
@@ -401,5 +400,4 @@ public class PlSqlTest {
                         """);
         pgConn.close();
     }
-
 }

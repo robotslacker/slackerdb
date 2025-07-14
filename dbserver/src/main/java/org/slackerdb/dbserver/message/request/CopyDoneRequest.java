@@ -17,10 +17,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.StringReader;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 public class CopyDoneRequest extends PostgresRequest {
@@ -81,9 +83,66 @@ public class CopyDoneRequest extends PostgresRequest {
                         duckDBAppender.beginRow();
                         for (Integer nPos : copyTableDbColumnMapPos) {
                             if (nPos == -1) {
-                                duckDBAppender.append((String) null);
+                                duckDBAppender.appendDefault();
                             } else {
-                                duckDBAppender.append(csvRecord.get(nPos));
+                                // 数据类型
+                                String columnType = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnType.get(nPos);
+                                if (columnType.equals("SMALLINT")) {
+                                    duckDBAppender.append(Short.parseShort(csvRecord.get(nPos)));
+                                }
+                                else if (columnType.equals("INTEGER")) {
+                                    duckDBAppender.append(Integer.parseInt(csvRecord.get(nPos)));
+                                }
+                                else if (columnType.equals("BIGINT")) {
+                                    duckDBAppender.append(Long.parseLong(csvRecord.get(nPos)));
+                                }
+                                else if (columnType.equals("VARCHAR"))
+                                {
+                                    duckDBAppender.append(csvRecord.get(nPos));
+                                }
+                                else if (columnType.equals("FLOAT"))
+                                {
+                                    duckDBAppender.append(Float.parseFloat(csvRecord.get(nPos)));
+                                }
+                                else if (columnType.equals("DOUBLE"))
+                                {
+                                    duckDBAppender.append(Double.parseDouble(csvRecord.get(nPos)));
+                                }
+                                else if (columnType.startsWith("DECIMAL"))
+                                {
+                                    duckDBAppender.append(new BigDecimal(csvRecord.get(nPos)));
+                                }
+                                else if (columnType.equals("TIMESTAMP"))
+                                {
+                                    duckDBAppender.append(
+                                            LocalDateTime.parse(
+                                                    csvRecord.get(nPos),
+                                                    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                                    );
+                                }
+                                else if (columnType.equals("BOOLEAN"))
+                                {
+                                    duckDBAppender.append(Boolean.parseBoolean(csvRecord.get(nPos)));
+                                }
+                                else
+                                {
+                                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                                    errorResponse.setErrorResponse("SLACKER-0099",
+                                            "Binary Format error (column type not support) . " + columnType);
+                                    errorResponse.process(ctx, request, out);
+
+                                    // 发送并刷新返回消息
+                                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+                                    // 发送ReadyForQuery
+                                    ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                                    readyForQuery.process(ctx, request, out);
+
+                                    // 发送并刷新返回消息
+                                    PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+
+                                    return;
+                                }
                             }
                         }
                         duckDBAppender.endRow();
@@ -99,7 +158,7 @@ public class CopyDoneRequest extends PostgresRequest {
                         duckDBAppender.beginRow();
                         for (Integer nPos : copyTableDbColumnMapPos) {
                             if (nPos == -1) {
-                                duckDBAppender.append((String) null);
+                                duckDBAppender.appendDefault();
                             } else
                             {
                                 // 数据内容
@@ -110,7 +169,7 @@ public class CopyDoneRequest extends PostgresRequest {
 
                                 if (cell == null)
                                 {
-                                    duckDBAppender.append((String)null);
+                                    duckDBAppender.appendNull();
                                 }
                                 else if (columnType.equals("SMALLINT")) {
                                     duckDBAppender.append(Utils.bytesToInt16((byte[]) cell));
@@ -119,7 +178,7 @@ public class CopyDoneRequest extends PostgresRequest {
                                     duckDBAppender.append(Utils.bytesToInt32((byte[]) cell));
                                 }
                                 else if (columnType.equals("BIGINT")) {
-                                    duckDBAppender.appendBigDecimal(BigDecimal.valueOf(Utils.bytesToInt64((byte[]) cell)));
+                                    duckDBAppender.append(BigInteger.valueOf(Utils.bytesToInt64((byte[]) cell)).longValue());
                                 }
                                 else if (columnType.equals("VARCHAR"))
                                 {
@@ -135,12 +194,13 @@ public class CopyDoneRequest extends PostgresRequest {
                                 }
                                 else if (columnType.startsWith("DECIMAL"))
                                 {
-                                    duckDBAppender.appendBigDecimal(DBUtil.convertPGByteToBigDecimal((byte[]) cell));
+                                    duckDBAppender.append(
+                                            DBUtil.convertPGByteToBigDecimal((byte[]) cell));
                                 }
                                 else if (columnType.equals("TIMESTAMP"))
                                 {
                                     long epochMilli = Utils.bytesToInt64((byte[]) cell) / 1000;
-                                    duckDBAppender.appendLocalDateTime(Instant.ofEpochMilli(epochMilli).atZone(ZoneId.of("UTC")).toLocalDateTime());
+                                    duckDBAppender.append(Instant.ofEpochMilli(epochMilli).atZone(ZoneId.of("UTC")).toLocalDateTime());
                                 }
                                 else if (columnType.equals("BOOLEAN"))
                                 {
