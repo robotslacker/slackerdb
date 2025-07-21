@@ -35,6 +35,21 @@
             <artifactId>javalin-bundle</artifactId>
             <version>6.6.0</version>
         </dependency>
+        <dependency>
+            <groupId>com.aayushatharva.brotli4j</groupId>
+            <artifactId>native-linux-x86_64</artifactId>
+            <version>1.17.0</version>
+        </dependency>
+        <dependency>
+            <groupId>com.aayushatharva.brotli4j</groupId>
+            <artifactId>native-windows-x86_64</artifactId>
+            <version>1.17.0</version>
+        </dependency>
+        <dependency>
+            <groupId>com.aayushatharva.brotli4j</groupId>
+            <artifactId>native-linux-aarch64</artifactId>
+            <version>1.17.0</version>
+        </dependency>
     </dependencies>
 
     <build>

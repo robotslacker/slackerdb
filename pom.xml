@@ -84,6 +84,13 @@
             <version>1.10.3</version>
             <scope>test</scope>
         </dependency>
+
+        <!-- maven -->
+        <dependency>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-dependency-plugin</artifactId>
+            <version>3.6.1</version>
+        </dependency>
     </dependencies>
 </project>
 
