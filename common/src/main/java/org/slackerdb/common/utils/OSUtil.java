@@ -43,6 +43,16 @@ public class OSUtil {
                 shellPath,
                 "-c",
                 String.join(" ", linuxCmd)).start();
+        // 等待进程启动完毕，等待最多10秒
+        int waitForTimes = 10;
+        while (process.isAlive()) {
+            if (waitForTimes < 0) {
+                throw new RuntimeException("[OS] Daemon start fail, something panic. \n" +
+                        " Command: [" + shellPath + "-c" + String.join(" ", linuxCmd) + "]");
+            }
+            waitForTimes = waitForTimes - 1;
+            Sleeper.sleep(1000);
+        }
         if (process.exitValue() != 0)
         {
             throw new RuntimeException("[OS] Daemon start fail, exit with [" + process.exitValue() + "]. \n" +

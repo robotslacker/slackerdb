@@ -323,7 +323,7 @@ public class DBInstance {
         List<String> sqlItems = SQLReplacer.splitSQLWithSemicolon(sqlFileContents);
         for (String sqlItem : sqlItems) {
             String sql = SQLReplacer.removeSQLComments(sqlItem);
-            if (!sql.isEmpty()) {
+            if (!sql.trim().isEmpty()) {
                 try {
                     logger.debug("[SERVER][STARTUP    ]   Executing sql: {} ;", sql);
                     stmt.execute(sql);

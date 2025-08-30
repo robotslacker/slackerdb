@@ -39,27 +39,27 @@ You have multiple ways to connect to our database:
 
 ### Start db server
 ``` 
-    java -jar dbserver/target/slackerdb-dbserver-0.1.5-standalone.jar start
+    java -jar dbserver/target/slackerdb-dbserver-0.1.6-standalone.jar start
 ```
 ### Stop db server
 ``` 
-    java -jar dbserver/target/slackerdb-dbserver-0.1.5-standalone.jar stop
+    java -jar dbserver/target/slackerdb-dbserver-0.1.6-standalone.jar stop
 ```
 ### Check db status
 ``` 
-    java -jar dbserver/target/slackerdb-dbserver-0.1.5-standalone.jar status
+    java -jar dbserver/target/slackerdb-dbserver-0.1.6-standalone.jar status
 ```
 ### Start db proxy
 ``` 
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.5-standalone.jar start
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.6-standalone.jar start
 ```
 ### Stop db proxy
 ``` 
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.5-standalone.jar stop
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.6-standalone.jar stop
 ```
 ### Check proxy status
 ``` 
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.5-standalone.jar status
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.6-standalone.jar status
 ```
 
 ### Server configuration file template

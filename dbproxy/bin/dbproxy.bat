@@ -16,7 +16,7 @@ if not "%SLACKERDB_JAVA_HOME%"=="" (
 
 REM # Settings
 set APP_NAME=SLACKERDB-proxy
-set JAR_FILE=jlib\slackerdb-dbproxy-0.1.5-standalone.jar
+set JAR_FILE=jlib\slackerdb-dbproxy-0.1.6-standalone.jar
 set PID_FILE=pid\slackerdb-dbproxy.pid
 set JAVA_OPTS=
 set CONF_FILE=conf\dbproxy.conf

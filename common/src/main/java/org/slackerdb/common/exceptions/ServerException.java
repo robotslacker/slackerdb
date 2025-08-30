@@ -29,7 +29,7 @@ public class ServerException extends RuntimeException
 
     public String getErrorMessage()
     {
-        return getMessage();
+        return errorMessage;
     }
 
     public ServerException(String errorMessage, Throwable cause)
