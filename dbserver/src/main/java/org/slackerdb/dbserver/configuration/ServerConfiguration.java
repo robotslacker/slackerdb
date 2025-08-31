@@ -15,7 +15,7 @@ import java.util.Properties;
 import ch.qos.logback.classic.Level;
 import org.slackerdb.common.utils.Utils;
 
-public class ServerConfiguration extends Throwable {
+public class ServerConfiguration {
     // 设置默认参数
     // 默认的数据库名称
     private final String default_data = "slackerdb";
