@@ -186,6 +186,9 @@ public class DBUtil {
             for (Object value : row) {
                 if (value == null) {
                     output.write(Utils.int32ToBytes(-1)); // NULL
+                } else if (value instanceof Short) {
+                    output.write(Utils.int32ToBytes(4)); // 长度
+                    output.write(Utils.int32ToBytes((Short) value));
                 } else if (value instanceof Integer) {
                     output.write(Utils.int32ToBytes(4)); // 长度
                     output.write(Utils.int32ToBytes((Integer) value));

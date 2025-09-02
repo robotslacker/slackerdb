@@ -1228,7 +1228,7 @@ public class Sanity01Test {
             Object[] row =
                     new Object[]
                             {
-                                    i, "Alice", -1, "HELLO",
+                                    i, "Alice", (short)-1, "中国",
                             };
             data.add(row);
         }
@@ -1254,11 +1254,14 @@ public class Sanity01Test {
             copyManager.copyIn("COPY test_binary_copy4  FROM STDIN WITH (FORMAT BINARY)", binaryStream);
         }
 
-        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT Count(*),Sum(id),Sum(age)*1000 FROM test_binary_copy4")) {
+        try (
+                Statement stmt = pgConn1.createStatement();
+                ResultSet rs = stmt.executeQuery("SELECT Count(*),Sum(id),Sum(age)*1000,Min(title) FROM test_binary_copy4")) {
             rs.next();
             assert rs.getInt(1 ) == 10000;
             assert rs.getInt(2 ) == 49995000;
             assert rs.getInt(3 ) == -10000000;
+            assert rs.getString(4 ).equals("中国");
         }
         pgConn1.close();
     }
