@@ -73,6 +73,7 @@ public class Main {
         System.out.println("  --startup_script            system startup script or script directory. default is none.");
         System.out.println("  --sql_history               enable or disable sql history feature(ON|OFF). default is off.");
         System.out.println("  --query_result_cache_size   maximum size (bytes) of api query result cache.");
+        System.out.println("  --autoload                  enable or disable automatically attach new datafile under data_dir. (ON|OFF). default is off.");
     }
 
     public static void main(String[] args){
@@ -337,6 +338,10 @@ public class Main {
             {
                 serverConfiguration.setSqlHistory(appOptions.get("sql_history"));
             }
+            if (appOptions.containsKey("autoload"))
+            {
+                serverConfiguration.setAutoload(appOptions.get("autoload"));
+            }
             if (appOptions.containsKey("pid"))
             {
                 serverConfiguration.setPid(appOptions.get("pid"));
@@ -364,7 +369,7 @@ public class Main {
 
             // 初始化日志服务
             logger = AppLogger.createLogger(
-                    "SLACKERDB",
+                    serverConfiguration.getData(),
                     serverConfiguration.getLog_level().levelStr,
                     serverConfiguration.getLog());
 

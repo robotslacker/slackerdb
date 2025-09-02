@@ -81,79 +81,24 @@ public class StartupRequest  extends PostgresRequest {
                 return;
             }
 
-            //  检查登录选项中的数据库名称和文件名称是否匹配，如果不匹配，直接拒绝
-            if (!this.dbInstance.serverConfiguration.getData().equalsIgnoreCase(startupOptions.get("database")))
+            String userSearchPath;
+            if (this.dbInstance.serverConfiguration.getData_Dir().equalsIgnoreCase(":memory:")) {
+                userSearchPath = "memory";
+            }
+            else
             {
-                boolean existDatabase = false;
-                String querySchemaList =
-                        "select catalog_name from information_schema.schemata " +
-                                "where catalog_name = '" + startupOptions.get("database") + "' LIMIT 1";
-
-                Statement querySchemaStmt = this.dbInstance.backendSysConnection.createStatement();
-                ResultSet rs = querySchemaStmt.executeQuery(querySchemaList);
-                if (rs.next()) {
-                    existDatabase = true;
+                if (startupOptions.get("database") != null && !startupOptions.get("database").isEmpty())
+                {
+                    userSearchPath = startupOptions.get("database");
                 }
-                rs.close();
-                querySchemaStmt.close();
-
-                if (!existDatabase) {
-                    ByteArrayOutputStream out = new ByteArrayOutputStream();
-                    // 生成一个错误消息
-                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
-                    errorResponse.setErrorResponse(
-                            "SLACKERDB-00002",
-                            Utils.getMessage("SLACKERDB-00002", startupOptions.get("database")));
-                    errorResponse.process(ctx, request, out);
-
-                    // 发送并刷新返回消息
-                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
-
-                    // 关闭连接
-                    out.close();
-                    ctx.close();
-                    return;
+                else
+                {
+                    userSearchPath = this.dbInstance.instanceName;
                 }
             }
-
-            // 如果设置了连接用户，则使用用户定义的连接用户，否则使用main（默认）
-            if (!startupOptions.containsKey("user") || startupOptions.get("user").trim().isEmpty())
+            if (startupOptions.get("search_path") != null && !startupOptions.get("search_path").isEmpty())
             {
-                // 没有指定用户就默认为public
-                startupOptions.put("user", "main");
-            }
-            String connectedUser =  startupOptions.get("user").trim();
-
-            // 检查登录的用户是否存在于数据库中
-            if (!connectedUser.equalsIgnoreCase("main")) {
-                boolean existUser = false;
-                String querySchemaList =
-                        "select schema_name from information_schema.schemata " +
-                                "where schema_name = '" + connectedUser + "' LIMIT 1";
-
-                Statement querySchemaStmt = this.dbInstance.backendSysConnection.createStatement();
-                ResultSet rs = querySchemaStmt.executeQuery(querySchemaList);
-                if (rs.next()) {
-                    existUser = true;
-                }
-                rs.close();
-                querySchemaStmt.close();
-                if (!existUser) {
-                    ByteArrayOutputStream out = new ByteArrayOutputStream();
-
-                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
-                    errorResponse.setErrorResponse("SLACKER-0099",
-                            "User [" + startupOptions.get("user") + "] does not exist! Connect refused. ");
-                    errorResponse.process(ctx, request, out);
-
-                    // 发送并刷新返回消息
-                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
-
-                    // 关闭连接
-                    out.close();
-                    ctx.close();
-                    return;
-                }
+                userSearchPath = userSearchPath + "." + startupOptions.get("search_path");
             }
 
             // 把查询路径指向新的schema
@@ -162,11 +107,11 @@ public class StartupRequest  extends PostgresRequest {
             stmt.execute("set variable current_database = '" + startupOptions.get("database") + "'");
 
             if (this.dbInstance.serverConfiguration.getData_Dir().equalsIgnoreCase(":MEMORY:")) {
-                stmt.execute("set search_path = 'memory.duck_catalog," + connectedUser + "'");
+                stmt.execute("set search_path = 'memory.duck_catalog," + userSearchPath + "'");
             }
             else
             {
-                stmt.execute("set search_path = '" + this.dbInstance.serverConfiguration.getData() + ".duck_catalog," + connectedUser + "'");
+                stmt.execute("set search_path = '" + this.dbInstance.serverConfiguration.getData() + ".duck_catalog," + userSearchPath + "'");
             }
             stmt.close();
 

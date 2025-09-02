@@ -10,6 +10,7 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
+import org.duckdb.DuckDBConnection;
 import org.slackerdb.common.utils.OSUtil;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
@@ -25,10 +26,13 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.sql.*;
 import java.text.MessageFormat;
 import java.time.LocalDateTime;
@@ -84,6 +88,9 @@ public class DBInstance {
 
     // 管理端口服务
     public DBInstanceX dbInstanceX = null;
+
+    // 自动挂载的数据库清单
+    public List<String> autoloadDatabase = new ArrayList<>();
 
     // 从资源文件中获取消息，为未来的多语言做准备
     private String getMessage(String code, Object... contents) {
@@ -154,6 +161,134 @@ public class DBInstance {
                     {
                         logger.warn("[SERVER] Try register current service to [{}] failed. {}",
                                 serverConfiguration.getRemoteListener(), serverException.getErrorMessage());
+                    }
+                }
+
+                // 如果启用了自动挂载，则定期检查data_dir下的内容
+                if (
+                        serverConfiguration.getAutoload().equalsIgnoreCase("ON") &&
+                                !serverConfiguration.getData_Dir().equalsIgnoreCase(":MEMORY"))
+                {
+                    File[] files = new File(serverConfiguration.getData_Dir()).listFiles();
+                    if (files != null) {
+                        for (File file : files) {
+                            if (!file.isFile()) {
+                                // 不查看子目录
+                                continue;
+                            }
+                            if (!file.getName().endsWith(".db"))
+                            {
+                                // 不查看非db文件
+                                continue;
+                            }
+                            if (autoloadDatabase.contains(file.getName()))
+                            {
+                                // 如果之前已经挂载，则不再处理
+                                continue;
+                            }
+                            // 尝试独占锁定该文件，如果失败，则跳过
+                            try
+                            {
+                                RandomAccessFile randomAccessFile1
+                                        = new RandomAccessFile(Path.of(serverConfiguration.getData_Dir(), file.getName()).toString(), "rw");
+                                FileChannel channel1 = randomAccessFile1.getChannel();
+                                long fileLength1;
+                                long fileLength2;
+                                FileTime lastFileModifiedTime1;
+                                FileTime lastFileModifiedTime2;
+                                FileLock lock1 = channel1.tryLock();
+                                if (lock1 != null)
+                                {
+                                    // 已经锁定了该文件
+                                    fileLength1 = Path.of(serverConfiguration.getData_Dir(), file.getName()).toFile().length();
+                                    lastFileModifiedTime1 = Files.readAttributes(Path.of(serverConfiguration.getData_Dir(), file.getName()), BasicFileAttributes.class).lastModifiedTime();
+                                    lock1.release();
+                                    channel1.close();
+                                    randomAccessFile1.close();
+                                }
+                                else
+                                {
+                                    // 无法锁定文件
+                                    channel1.close();
+                                    randomAccessFile1.close();
+                                    continue;
+                                }
+                                // 10S后再次观察文件
+                                try {
+                                    Sleeper.sleep(10 * 1000);
+                                }
+                                catch (InterruptedException ignored) {}
+                                // 重新观察文件
+                                RandomAccessFile randomAccessFile2
+                                        = new RandomAccessFile(Path.of(serverConfiguration.getData_Dir(), file.getName()).toString(), "rw");
+                                FileChannel channel2 = randomAccessFile2.getChannel();
+                                FileLock lock2 = channel2.tryLock();
+                                if (lock2 != null)
+                                {
+                                    // 已经锁定了该文件
+                                    fileLength2 = Path.of(serverConfiguration.getData_Dir(), file.getName()).toFile().length();
+                                    lastFileModifiedTime2 = Files.readAttributes(Path.of(serverConfiguration.getData_Dir(), file.getName()), BasicFileAttributes.class).lastModifiedTime();
+                                    lock2.release();
+                                    channel2.close();
+                                    randomAccessFile2.close();
+                                }
+                                else
+                                {
+                                    // 无法锁定文件
+                                    channel2.close();
+                                    randomAccessFile2.close();
+                                    continue;
+                                }
+
+                                // 比对两次锁定的文件情况
+                                if (fileLength1 != fileLength2 || !lastFileModifiedTime1.equals(lastFileModifiedTime2))
+                                {
+                                    // 文件发生了变化
+                                    continue;
+                                }
+
+                                // 挂载该文件
+                                try {
+                                    Connection conn = ((DuckDBConnection) backendSysConnection).duplicate();
+                                    Statement stmt = conn.createStatement();
+                                    String sql = "ATTACH OR REPLACE '" + Path.of(serverConfiguration.getData_Dir(), file.getName()) + "' AS \"" + file.getName().replace(".db","") + "\"";
+                                    if (serverConfiguration.getAccess_mode().equalsIgnoreCase("READ_ONLY")) {
+                                        sql = sql + " (READ_ONLY)";
+                                    }
+                                    stmt.execute(sql);
+                                    conn.close();
+                                    logger.info("[SERVER] autoload database [{}] as [{}], attached successful.",
+                                            Path.of(serverConfiguration.getData_Dir(), file.getName()) ,
+                                            file.getName().replace(".db","") );
+                                    // 追加到文件记录中
+                                    autoloadDatabase.add(file.getName());
+                                }
+                                catch (SQLException sqlException)
+                                {
+                                    logger.error("[SERVER] Unable to load file [{}]. ",
+                                            Path.of(serverConfiguration.getData_Dir(), file.getName()).toAbsolutePath(), sqlException);
+                                }
+                            }
+                            catch (IOException ignored) {}
+
+                            // 如果有已经被挪走的文件，则强制detach这个数据库
+                            for (String dbName : autoloadDatabase)
+                            {
+                                if (!Path.of(serverConfiguration.getData_Dir(), dbName).toFile().exists())
+                                {
+                                    try {
+                                        Connection conn = ((DuckDBConnection) backendSysConnection).duplicate();
+                                        Statement stmt = conn.createStatement();
+                                        String sql = "DETACH IF EXISTS \"" + file.getName().replace(".db", "") + "\"";
+                                        stmt.execute(sql);
+                                        conn.close();
+                                    }
+                                    catch (SQLException ignored) {}
+                                    // 移除文件目录
+                                    autoloadDatabase.remove(dbName);
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -700,19 +835,22 @@ public class DBInstance {
                     throw new ServerException("Server terminated due to user cancelled.");
                 }
             }
-
-            // 启动监控线程
-            if (dbInstanceMonitorThread == null)
-            {
-                dbInstanceMonitorThread = new DBInstanceMonitorThread();
-                dbInstanceMonitorThread.start();
-            }
             logger.info("[SERVER][STARTUP    ] Listening on {}:{}.",
                     serverConfiguration.getBindHost(), serverConfiguration.getPort());
         }
         else
         {
             logger.info("[SERVER][STARTUP    ] Listener has been disabled.");
+        }
+
+        // 在自动挂载列表中增加一行记录，避免被重复挂载
+        autoloadDatabase.add(instanceName + ".db");
+
+        // 启动监控线程
+        if (dbInstanceMonitorThread == null)
+        {
+            dbInstanceMonitorThread = new DBInstanceMonitorThread();
+            dbInstanceMonitorThread.start();
         }
 
         // 如果需要，启动管理端口

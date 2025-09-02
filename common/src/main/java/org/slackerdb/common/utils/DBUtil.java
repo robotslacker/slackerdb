@@ -187,8 +187,8 @@ public class DBUtil {
                 if (value == null) {
                     output.write(Utils.int32ToBytes(-1)); // NULL
                 } else if (value instanceof Short) {
-                    output.write(Utils.int32ToBytes(4)); // 长度
-                    output.write(Utils.int32ToBytes((Short) value));
+                    output.write(Utils.int32ToBytes(2)); // 长度
+                    output.write(Utils.int16ToBytes((Short) value));
                 } else if (value instanceof Integer) {
                     output.write(Utils.int32ToBytes(4)); // 长度
                     output.write(Utils.int32ToBytes((Integer) value));

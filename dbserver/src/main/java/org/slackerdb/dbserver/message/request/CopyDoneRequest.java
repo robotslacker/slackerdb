@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.io.StringReader;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -182,7 +183,8 @@ public class CopyDoneRequest extends PostgresRequest {
                                 }
                                 else if (columnType.equals("VARCHAR"))
                                 {
-                                    duckDBAppender.append(new String((byte[])cell));
+                                    // UTF-8是BINARY COPY唯一支持的字符集，不支持其他的
+                                    duckDBAppender.append(new String((byte[])cell, StandardCharsets.UTF_8));
                                 }
                                 else if (columnType.equals("FLOAT"))
                                 {

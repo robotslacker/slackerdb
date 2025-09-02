@@ -1256,14 +1256,23 @@ public class Sanity01Test {
 
         try (
                 Statement stmt = pgConn1.createStatement();
-                ResultSet rs = stmt.executeQuery("SELECT Count(*),Sum(id),Sum(age)*1000,Min(title) FROM test_binary_copy4")) {
+                ResultSet rs = stmt.executeQuery("SELECT Count(*),Sum(id),Sum(age),Min(title) FROM test_binary_copy4")) {
             rs.next();
             assert rs.getInt(1 ) == 10000;
             assert rs.getInt(2 ) == 49995000;
-            assert rs.getInt(3 ) == -10000000;
-            assert rs.getString(4 ).equals("中国");
+            assert rs.getInt(3 ) == -10000;
+            assert rs.getString(4).equals("中国");
         }
         pgConn1.close();
+    }
+
+    @Test
+    void testJing() throws Exception {
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem?currentSchema=main";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
     }
 }
 

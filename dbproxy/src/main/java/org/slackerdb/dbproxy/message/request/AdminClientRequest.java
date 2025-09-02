@@ -154,7 +154,7 @@ public class AdminClientRequest extends PostgresRequest {
         else if (clientRequestCommand.trim().toUpperCase().startsWith("REGISTER"))
         {
             Pattern pattern = Pattern.compile(
-                    "REGISTER\\s+(\\S+):(\\d+),(\\d+)/(\\S+)\\s+AS\\s+(\\S+)"
+                    "REGISTER\\s+(\\S+):(\\d+),[+-]?(\\d+)/(\\S+)\\s+AS\\s+(\\S+)"
             );
             Matcher matcher = pattern.matcher(clientRequestCommand);
 
@@ -177,7 +177,7 @@ public class AdminClientRequest extends PostgresRequest {
                         .append("/").append(service).append("] " +
                         "as [").append(alias).append("] successful. ");
                 // 处理PortX的转发请求
-                if (this.proxyInstance.proxyInstanceX != null) {
+                if (this.proxyInstance.proxyInstanceX != null && postgresProxyTarget.portX != -1) {
                     this.proxyInstance.proxyInstanceX.forwarderPathMappings
                             .put("/" + alias, "http://" + postgresProxyTarget.host + ":" + postgresProxyTarget.portX);
                 }

@@ -35,7 +35,7 @@ public class ServerConfiguration {
     // 默认数据库访问服务的端口
     private final int default_port = 0;
     // 默认数据库的管理端口
-    private final int default_portX = 0;
+    private final int default_portX = -1;
 
     // 默认绑定的主机地址
     private final String default_bind = "0.0.0.0";
@@ -56,6 +56,8 @@ public class ServerConfiguration {
     private final String default_startup_script = "";
     // 默认不记录SQL执行历史信息
     private final String default_sqlHistory = "OFF";
+    // 默认不开启自动挂载
+    private final String default_autoload = "OFF";
     // 默认设置系统默认的语言集
     private final Locale default_locale = Locale.getDefault();
     // 系统的PID文件
@@ -100,6 +102,7 @@ public class ServerConfiguration {
     private int      max_connections;
     private String   template;
     private boolean  daemonMode;
+    private String   autoload;
     private int connection_pool_minimum_idle;
     private int connection_pool_maximum_idle;
     private int connection_pool_maximum_lifecycle_time;
@@ -136,15 +139,11 @@ public class ServerConfiguration {
         template = default_template;
         daemonMode = defaultDaemonMode;
         query_result_cache_size = default_query_result_cache_size;
+        autoload = default_autoload;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
             port = socket.getLocalPort();
-        } catch (IOException e) {
-            throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
-        }
-        try (ServerSocket socket = new ServerSocket(0)) {
-            portX = socket.getLocalPort();
         } catch (IOException e) {
             throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
         }
@@ -328,6 +327,13 @@ public class ServerConfiguration {
                         sqlHistory = this.default_sqlHistory;
                     } else {
                         setSqlHistory(entry.getValue().toString());
+                    }
+                }
+                case "AUTOLOAD" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        autoload = this.default_autoload;
+                    } else {
+                        setAutoload(entry.getValue().toString());
                     }
                 }
                 case "PID" -> {
@@ -805,8 +811,24 @@ public class ServerConfiguration {
         }
         else
         {
-            throw new ServerException("[SERVER] Invalid config of sql history. ON or OFF only.");
+            throw new ServerException("[SERVER] Invalid config of sqlHistory. ON or OFF only.");
         }
+    }
+
+    public void setAutoload(String val)
+    {
+        if (val.trim().equalsIgnoreCase("ON") || (val.trim().equalsIgnoreCase("OFF"))) {
+            autoload = val.trim().toUpperCase();
+        }
+        else
+        {
+            throw new ServerException("[SERVER] Invalid config of autoload. ON or OFF only.");
+        }
+    }
+
+    public String getAutoload()
+    {
+        return autoload;
     }
 
     public void setLocale(String pLocale) throws ServerException
