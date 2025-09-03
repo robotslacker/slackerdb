@@ -247,12 +247,16 @@ public class DBInstance {
                                     continue;
                                 }
 
-                                // 挂载该文件
+                                // 挂载该文件, 如果参数为只读，或者文件为只读文件，则用只读方式挂载
                                 try {
                                     Connection conn = ((DuckDBConnection) backendSysConnection).duplicate();
                                     Statement stmt = conn.createStatement();
                                     String sql = "ATTACH OR REPLACE '" + Path.of(serverConfiguration.getData_Dir(), file.getName()) + "' AS \"" + file.getName().replace(".db","") + "\"";
-                                    if (serverConfiguration.getAccess_mode().equalsIgnoreCase("READ_ONLY")) {
+                                    if (
+                                            serverConfiguration.getAccess_mode().equalsIgnoreCase("READ_ONLY") ||
+                                                    !Path.of(serverConfiguration.getData_Dir(), file.getName()).toFile().canWrite()
+                                    )
+                                    {
                                         sql = sql + " (READ_ONLY)";
                                     }
                                     stmt.execute(sql);
