@@ -134,6 +134,7 @@
                     <includes>
                         <include>**/Sanity01Test.java</include>
                         <include>**/Sanity02Test.java</include>
+                        <include>**/InstanceXTest.java</include>
                         <include>**/MultiDBInstanceTest.java</include>
                         <include>**/DatabaseStabilityTest.java</include>
                     </includes>

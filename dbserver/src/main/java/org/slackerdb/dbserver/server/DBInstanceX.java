@@ -2,6 +2,9 @@ package org.slackerdb.dbserver.server;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import com.alibaba.fastjson2.JSONArray;
+import com.alibaba.fastjson2.JSONException;
+import com.alibaba.fastjson2.JSONObject;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
@@ -18,17 +21,27 @@ import org.springframework.core.io.ClassPathResource;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.*;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class DBInstanceX {
+    static class DBServiceDefinition {
+        public String serviceName;
+        public String serviceVersion;
+        public String serviceType;
+        public String sql;
+        public String description;
+        public Long snapshotLimit = 300*1000L;
+        public Map<String, String> parameter;
+    }
+
     private final Logger logger;
     private Javalin managementApp = null;
     private final Connection backendSqlConnection;
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private final ConcurrentHashMap<String, DBServiceDefinition> registeredDBService = new ConcurrentHashMap<>();
 
     // 估计对象的大小
     private static int estimateSize(Map<String, Object> result) {
@@ -39,8 +52,7 @@ public class DBInstanceX {
         }
     }
 
-    private final ConcurrentHashMap<String, Cache<String, Map<String, Object>>> queryResultCacheForAllInstances
-            = new ConcurrentHashMap<>();
+    private Cache<String, Map<String, Object>> queryResultCache =  null;
 
     public DBInstanceX(Connection sqlConn, Logger logger)
     {
@@ -57,38 +69,72 @@ public class DBInstanceX {
 
     private static void handleSqlQuery(
             Context ctx,
+            DBServiceDefinition dbServiceDefinition,
             Connection backendSqlConnection,
             Cache<String, Map<String, Object>> caffeineQueryCache,
             Logger logger
     ) {
-        SQLApiRequest req = ctx.bodyAsClass(SQLApiRequest.class);
-        String key = null;
-        if (caffeineQueryCache != null) {
-            key = req.sql + "|" + String.join(",", req.params == null ? List.of() : req.params);
+        String sql = dbServiceDefinition.sql;
 
-            Map<String, Object> cacheResult = caffeineQueryCache.getIfPresent(key);
-            if (cacheResult != null) {
-                ctx.json(Map.of("cached", true, "data", cacheResult));
-                return;
+        Map<String, String> sqlParameters = new HashMap<>();
+        if (dbServiceDefinition.serviceType.equalsIgnoreCase("GET"))
+        {
+            for (String key : ctx.queryParamMap().keySet())
+            {
+                sqlParameters.put(key, ctx.queryParam(key));
             }
+        }
+        if (dbServiceDefinition.serviceType.equalsIgnoreCase("POST"))
+        {
+            JSONObject rawPostParameters = JSONObject.parseObject(ctx.body());
+            for (String key : rawPostParameters.keySet())
+            {
+                sqlParameters.put(key, rawPostParameters.getString(key));
+            }
+        }
+
+        // cookie
+        String cacheKey = null;
+        if (caffeineQueryCache != null && dbServiceDefinition.snapshotLimit > 0) {
+            cacheKey = sql + "|" + sqlParameters;
+
+            Map<String, Object> cacheResult = caffeineQueryCache.getIfPresent(cacheKey);
+            if (cacheResult != null) {
+                Long lastQueriedTimeStamp = (Long) cacheResult.get("timestamp");
+                if (System.currentTimeMillis() - lastQueriedTimeStamp <= dbServiceDefinition.snapshotLimit) {
+                    // 数据还没有过时，从缓存中获得
+                    ctx.json(Map.of("cached", true, "data", cacheResult));
+                    return;
+                }
+            }
+        }
+
+        // 处理传递的SQL语句
+        if (dbServiceDefinition.parameter != null && !dbServiceDefinition.parameter.isEmpty()) {
+            Map<String, String> bindParameters = new HashMap<>(dbServiceDefinition.parameter);
+            for (String name : bindParameters.keySet())
+            {
+                if (sqlParameters.containsKey(name))
+                {
+                    bindParameters.put(name, sqlParameters.get("name"));
+                }
+            }
+            Pattern pattern = Pattern.compile("\\$\\{([^}]+)}");
+            Matcher matcher = pattern.matcher(sql);
+            StringBuilder sb = new StringBuilder();
+            while (matcher.find()) {
+                String key = matcher.group(1); // 取出 ${xxx} 中的 xxx
+                String replacement = bindParameters.get(key); // 如果没找到就替换为空
+                matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+            }
+            matcher.appendTail(sb);
+            sql = sb.toString();
         }
 
         Connection conn = null;
         try {
             conn = ((DuckDBConnection)backendSqlConnection).duplicate();
-            PreparedStatement preparedStatement = conn.prepareStatement(req.sql);
-            for (int nPos=0; nPos < req.params.size(); nPos ++)
-            {
-                String param = req.params.get(nPos);
-                if (param.equalsIgnoreCase("null"))
-                {
-                    preparedStatement.setString(nPos+1, null);
-                }
-                else
-                {
-                    preparedStatement.setString(nPos+1, param);
-                }
-            }
+            PreparedStatement preparedStatement = conn.prepareStatement(sql);
             boolean hasResultSet  = preparedStatement.execute();
             if (hasResultSet) {
                 ResultSet rs = preparedStatement.getResultSet();
@@ -113,9 +159,10 @@ public class DBInstanceX {
                 Map<String, Object> result = new HashMap<>();
                 result.put("columnTypes", columnTypes);
                 result.put("columnNames", columnNames);
-                result.put("data", dataset);
-                if (caffeineQueryCache != null) {
-                    caffeineQueryCache.put(key, result);
+                result.put("timestamp", System.currentTimeMillis());
+                result.put("dataset", dataset);
+                if (cacheKey!= null) {
+                    caffeineQueryCache.put(cacheKey, result);
                 }
                 ctx.json(Map.of("cached", false, "data", result));
             }
@@ -138,6 +185,15 @@ public class DBInstanceX {
 
     public void start(ServerConfiguration serverConfiguration)
     {
+        // 初始化查询结果缓存
+        if (serverConfiguration.getQuery_result_cache_size() > 0) {
+            queryResultCache = Caffeine.newBuilder()
+                    .maximumWeight(serverConfiguration.getQuery_result_cache_size())
+                    .weigher((String key, Map<String, Object> value) -> estimateSize(value))
+                    .recordStats()
+                    .build();
+        }
+
         // 关闭Javalin, 如果不是在trace下
         Logger javalinLogger = (Logger) LoggerFactory.getLogger("io.javalin.Javalin");
         Logger jettyLogger = (Logger) LoggerFactory.getLogger("org.eclipse.jetty");
@@ -151,6 +207,8 @@ public class DBInstanceX {
         this.managementApp = Javalin
                 .create(config->
                         {
+                            // 不显示Javalin的启动提示信息
+                            config.showJavalinBanner = false;
                             // 添加静态文件
                             config.staticFiles.add("/web", Location.CLASSPATH);
                             // 支持跨域
@@ -197,44 +255,148 @@ public class DBInstanceX {
                 }
         );
 
-        // 提供WEB API的服务查询
-        this.managementApp.post("/" + serverConfiguration.getData() + "/api/sql",
-                ctx ->
+        // 注册服务
+        this.managementApp.post("/registerService", ctx -> {
+            JSONObject bodyObject;
+            try {
+                bodyObject = JSONObject.parseObject(ctx.body());
+            } catch (JSONException ignored) {
+                ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. Incomplete or format error in serviceInfo."));
+                return;
+            }
+            String serviceName = bodyObject.getString("serviceName");
+            String serviceVersion = bodyObject.getString("serviceVersion");
+            if (serviceName == null || serviceVersion == null || serviceName.trim().isEmpty() || serviceVersion.trim().isEmpty())
+            {
+                ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. serviceName or serviceVersion is missed."));
+                return;
+            }
+            String serviceType = bodyObject.getString("serviceType");
+            if (serviceType == null || !(serviceType.equalsIgnoreCase("GET") || serviceType.equalsIgnoreCase("POST")))
+            {
+                ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. serviceType missed. GET/POST is only two supported serviceType at this time."));
+                return;
+            }
+            String serviceSql = bodyObject.getString("sql");
+            if (serviceSql == null || serviceSql.trim().isEmpty())
+            {
+                ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. serviceType or sql is missed. SQL is only supported serviceType at this time."));
+                return;
+            }
+            if (registeredDBService.containsKey((serviceType + "#" + serviceName + "#" + serviceVersion).toUpperCase()))
+            {
+                // 如果已经注册，则不再容许重复注册
+                ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. [" + serviceName + "#" + serviceVersion + "] is already registered."));
+                return;
+            }
+
+            DBServiceDefinition dbService = new DBServiceDefinition();
+            dbService.serviceName = serviceName;
+            dbService.serviceVersion = serviceVersion;
+            dbService.serviceType = serviceType;
+            dbService.sql = serviceSql;
+            dbService.description = bodyObject.getString("description");
+            if (bodyObject.containsKey("snapshotLimit")) {
+                dbService.snapshotLimit = Long.parseLong(bodyObject.getString("snapshotLimit"));
+            }
+            String serviceParametersStr = bodyObject.getString("parameters");
+
+            JSONArray serviceParameters;
+            if (serviceParametersStr != null && !serviceParametersStr.trim().isEmpty())
+            {
+                serviceParameters = JSONArray.parseArray(serviceParametersStr);
+                for (Object obj : serviceParameters)
                 {
-                    if (serverConfiguration.getQuery_result_cache_size() > 0) {
-                        Cache<String, Map<String, Object>> queryResultCache;
-                        if (!this.queryResultCacheForAllInstances.containsKey(serverConfiguration.getData())) {
-                            queryResultCache =
-                                    Caffeine.newBuilder()
-                                            .maximumWeight(serverConfiguration.getQuery_result_cache_size())
-                                            .weigher((String key, Map<String, Object> value) -> estimateSize(value))
-                                            .recordStats()
-                                            .build();
-                            this.queryResultCacheForAllInstances.put(serverConfiguration.getData(), queryResultCache);
-                        } else {
-                            queryResultCache = this.queryResultCacheForAllInstances.get(serverConfiguration.getData());
-                        }
-                        handleSqlQuery(
-                                ctx,
-                                this.backendSqlConnection,
-                                queryResultCache,
-                                this.logger
-                        );
-                    }
-                    else
+                    JSONObject serviceParameter = (JSONObject)obj;
+                    if (serviceParameter.containsKey("name"))
                     {
-                        handleSqlQuery(
-                                ctx,
-                                this.backendSqlConnection,
-                                null,
-                                this.logger
-                        );
+                        dbService.parameter.put(
+                                serviceParameter.getString("name"),
+                                serviceParameter.getString("defaultValue"));
                     }
-                });
+                }
+            }
+            registeredDBService.put(serviceType.toUpperCase() + "#" + serviceName + "#" + serviceVersion, dbService);
+
+            ctx.json(Map.of("retCode", 0, "retMsg", "successful."));
+        });
+
+        // 取消服务注册
+        this.managementApp.post("/unRegisterService", ctx -> {
+            JSONObject bodyObject;
+            try {
+                bodyObject = JSONObject.parseObject(ctx.body());
+            } catch (JSONException ignored) {
+                ctx.status(502).result("Rejected. Incomplete or format error in serviceInfo.");
+                return;
+            }
+            String serviceName = bodyObject.getString("serviceName");
+            String serviceVersion = bodyObject.getString("serviceVersion");
+            if (serviceName == null || serviceVersion == null || serviceName.trim().isEmpty() || serviceVersion.trim().isEmpty())
+            {
+                ctx.status(502).result("Rejected. serviceName or serviceVersion is missed.");
+                return;
+            }
+            String serviceType = bodyObject.getString("serviceType");
+            if (serviceType == null || !(serviceType.equalsIgnoreCase("GET") || serviceType.equalsIgnoreCase("POST")))
+            {
+                ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. serviceType missed. GET/POST is only two supported serviceType at this time."));
+                return;
+            }
+            if (registeredDBService.containsKey((serviceType.toUpperCase() + "#" + serviceName + "#" + serviceVersion)))
+            {
+                // 删除之前的注册
+                registeredDBService.remove(serviceType.toUpperCase() + "#" + serviceName + "#" + serviceVersion);
+            }
+            ctx.json(Map.of("retCode", 0, "retMsg", "successful."));
+        });
+
+        // 列出当前服务列表
+        this.managementApp.get("/listRegisteredService", ctx-> ctx.json(registeredDBService));
+
+        // API的GET请求
+        this.managementApp.get("/api/{apiVersion}/{apiName}", ctx -> {
+            String apiName = ctx.pathParam("apiName");
+            String apiVersion = ctx.pathParam("apiVersion");
+            if (!registeredDBService.containsKey(("GET#" + apiName + "#" + apiVersion)))
+            {
+                ctx.json(Map.of("retCode",404, "regMsg", ctx.path() + " is not registered."));
+            }
+            else {
+                DBServiceDefinition dbServiceDefinition = registeredDBService.get(("GET#" + apiName + "#" + apiVersion));
+                handleSqlQuery(
+                        ctx,
+                        dbServiceDefinition,
+                        this.backendSqlConnection,
+                        queryResultCache,
+                        this.logger
+                );
+            }
+        });
+
+        // API的POST请求
+        this.managementApp.post("/api/{apiVersion}/{apiName}", ctx -> {
+            String apiVersion = ctx.pathParam("apiVersion");
+            String apiName = ctx.pathParam("apiName");
+            if (!registeredDBService.containsKey(("POST#" + apiName + "#" + apiVersion)))
+            {
+                ctx.json(Map.of("retCode",404, "regMsg", ctx.path() + " is not registered."));
+            }
+            else {
+                DBServiceDefinition dbServiceDefinition = registeredDBService.get(("POST#" + apiName + "#" + apiVersion));
+                handleSqlQuery(
+                        ctx,
+                        dbServiceDefinition,
+                        this.backendSqlConnection,
+                        queryResultCache,
+                        this.logger
+                );
+            }
+        });
 
         // 异常处理
         this.managementApp.exception(Exception.class, (e, ctx) -> {
-            logger.error("Error occurred while processing request: {} {} - {}", ctx.method(), ctx.path(), e.getMessage());
+            logger.error("Error occurred while processing request: {} {} - {}", ctx.method(), ctx.path(), e.getMessage(), e);
             ctx.status(500).result("Internal Server Error");
         });
 
