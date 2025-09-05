@@ -75,6 +75,12 @@
             <artifactId>caffeine</artifactId>
             <version>3.2.0</version>
         </dependency>
+        <!-- 自动过期的Map -->
+        <dependency>
+            <groupId>net.jodah</groupId>
+            <artifactId>expiringmap</artifactId>
+            <version>0.5.11</version>
+        </dependency>
         <!-- 客户端连接测试 -->
         <dependency>
             <groupId>org.robotslacker</groupId>

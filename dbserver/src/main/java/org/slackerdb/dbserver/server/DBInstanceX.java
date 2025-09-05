@@ -13,6 +13,8 @@ import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.staticfiles.Location;
 import io.javalin.plugin.bundled.CorsPluginConfig;
+import net.jodah.expiringmap.ExpirationPolicy;
+import net.jodah.expiringmap.ExpiringMap;
 import org.duckdb.DuckDBConnection;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slf4j.LoggerFactory;
@@ -23,6 +25,7 @@ import java.nio.file.Path;
 import java.sql.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -31,6 +34,7 @@ public class DBInstanceX {
         public String serviceName;
         public String serviceVersion;
         public String serviceType;
+        public String searchPath;
         public String sql;
         public String description;
         public Long snapshotLimit = 300*1000L;
@@ -52,6 +56,14 @@ public class DBInstanceX {
         }
     }
 
+    // 实现会话信息的自动过期处理,
+    private final ExpiringMap<String, HashMap<String,String>> sessionContextMap = ExpiringMap.builder()
+            .maxSize(1000)
+            .expiration(30, TimeUnit.MINUTES)
+            .expirationPolicy(ExpirationPolicy.ACCESSED)
+            .build();
+
+    // 数据结果缓存，在过期时间内的数据不会重复查询
     private Cache<String, Map<String, Object>> queryResultCache =  null;
 
     public DBInstanceX(Connection sqlConn, Logger logger)
@@ -72,11 +84,21 @@ public class DBInstanceX {
             DBServiceDefinition dbServiceDefinition,
             Connection backendSqlConnection,
             Cache<String, Map<String, Object>> caffeineQueryCache,
+            ExpiringMap<String, HashMap<String, String>> expiringMap,
             Logger logger
     ) {
         String sql = dbServiceDefinition.sql;
 
-        Map<String, String> sqlParameters = new HashMap<>();
+        // 处理SQL参数，首先复制服务里头配置的默认参数，随后用查询请求的参数来覆盖
+        Map<String, String> sqlParameters;
+        if (dbServiceDefinition.parameter != null && !dbServiceDefinition.parameter.isEmpty())
+        {
+            sqlParameters = new HashMap<>(dbServiceDefinition.parameter);
+        }
+        else
+        {
+            sqlParameters = new HashMap<>();
+        }
         if (dbServiceDefinition.serviceType.equalsIgnoreCase("GET"))
         {
             for (String key : ctx.queryParamMap().keySet())
@@ -92,16 +114,35 @@ public class DBInstanceX {
                 sqlParameters.put(key, rawPostParameters.getString(key));
             }
         }
+        long snapshotLimit;
+        if (sqlParameters.containsKey("snapshotLimit")) {
+            snapshotLimit = Long.parseLong(sqlParameters.remove("snapshotLimit"));
+        }
+        else
+        {
+            snapshotLimit = Long.MAX_VALUE;
+        }
 
-        // cookie
+        // 把Token中的信息也绑定到变量中, 作为可能的查询变量
+        String token = ctx.header("Authorization");
+        if ((token != null) && expiringMap.containsKey(token))
+        {
+            sqlParameters.putAll(expiringMap.get(token));
+        }
+
+        // 数据结果缓存
         String cacheKey = null;
-        if (caffeineQueryCache != null && dbServiceDefinition.snapshotLimit > 0) {
+        if (snapshotLimit > dbServiceDefinition.snapshotLimit)
+        {
+            snapshotLimit = dbServiceDefinition.snapshotLimit;
+        }
+        if (caffeineQueryCache != null && snapshotLimit > 0) {
             cacheKey = sql + "|" + sqlParameters;
 
             Map<String, Object> cacheResult = caffeineQueryCache.getIfPresent(cacheKey);
             if (cacheResult != null) {
                 Long lastQueriedTimeStamp = (Long) cacheResult.get("timestamp");
-                if (System.currentTimeMillis() - lastQueriedTimeStamp <= dbServiceDefinition.snapshotLimit) {
+                if (System.currentTimeMillis() - lastQueriedTimeStamp <= snapshotLimit) {
                     // 数据还没有过时，从缓存中获得
                     ctx.json(Map.of("cached", true, "data", cacheResult));
                     return;
@@ -110,30 +151,27 @@ public class DBInstanceX {
         }
 
         // 处理传递的SQL语句
-        if (dbServiceDefinition.parameter != null && !dbServiceDefinition.parameter.isEmpty()) {
-            Map<String, String> bindParameters = new HashMap<>(dbServiceDefinition.parameter);
-            for (String name : bindParameters.keySet())
-            {
-                if (sqlParameters.containsKey(name))
-                {
-                    bindParameters.put(name, sqlParameters.get("name"));
-                }
-            }
+        if (!sqlParameters.isEmpty()) {
             Pattern pattern = Pattern.compile("\\$\\{([^}]+)}");
             Matcher matcher = pattern.matcher(sql);
             StringBuilder sb = new StringBuilder();
             while (matcher.find()) {
                 String key = matcher.group(1); // 取出 ${xxx} 中的 xxx
-                String replacement = bindParameters.get(key); // 如果没找到就替换为空
-                matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+                matcher.appendReplacement(sb, Matcher.quoteReplacement(sqlParameters.get(key)));
             }
             matcher.appendTail(sb);
             sql = sb.toString();
         }
-
+        // 执行数据库查询
         Connection conn = null;
         try {
             conn = ((DuckDBConnection)backendSqlConnection).duplicate();
+            if (dbServiceDefinition.searchPath != null && !dbServiceDefinition.searchPath.isEmpty())
+            {
+                Statement statement = conn.createStatement();
+                statement.execute("SET search_path = '" + dbServiceDefinition.searchPath + "'");
+                statement.close();
+            }
             PreparedStatement preparedStatement = conn.prepareStatement(sql);
             boolean hasResultSet  = preparedStatement.execute();
             if (hasResultSet) {
@@ -204,6 +242,7 @@ public class DBInstanceX {
 
         ClassPathResource page404Resource = new ClassPathResource("web/404.html");
 
+        // 启动Javalin应用
         this.managementApp = Javalin
                 .create(config->
                         {
@@ -221,7 +260,7 @@ public class DBInstanceX {
                     serverConfiguration.getPortX()
                 );
 
-        // 自定义404假面
+        // 自定义404界面
         this.managementApp.error(404, ctx -> ctx.html(Files.readString(Path.of(page404Resource.getURI()))));
 
         // 需要在记录器之前添加的过滤器
@@ -254,6 +293,64 @@ public class DBInstanceX {
                     ctx.result(Files.readString(Path.of(indexResource.getURI())));
                 }
         );
+
+        // 用户登录
+        this.managementApp.post("/login", ctx -> {
+            // 保存用户的Token
+            String userToken = UUID.randomUUID().toString();
+            sessionContextMap.put(userToken, new HashMap<>());
+            ctx.json(Map.of("retCode", 0, "token", userToken));
+        });
+
+        // 用户登出
+        this.managementApp.post("/logout", ctx -> {
+            String token = ctx.header("Authorization");
+            if ((token == null) || !sessionContextMap.containsKey(token))
+            {
+                ctx.json(Map.of("retCode", -1, "retMsg", "User not login or expired."));
+                return;
+            }
+            sessionContextMap.remove(token);
+            ctx.json(Map.of("retCode", 0, "retMsg", "Successful"));
+        });
+
+        // 设置用户的会话信息
+        this.managementApp.post("/setContext", ctx -> {
+            String token = ctx.header("Authorization");
+            if ((token == null) || !sessionContextMap.containsKey(token))
+            {
+                ctx.json(Map.of("retCode", -1, "retMsg", "User not login or expired."));
+                return;
+            }
+            JSONObject contextObj = JSONObject.parseObject(ctx.body());
+            if (!contextObj.isEmpty()) {
+                HashMap<String, String> sessionContextVariables = sessionContextMap.get(token);
+                for (String key : contextObj.keySet()) {
+                    sessionContextVariables.put(key, contextObj.getString(key));
+                }
+                sessionContextMap.put(token, sessionContextVariables);
+            }
+            ctx.json(Map.of("retCode", 0, "retMsg", "Successful"));
+        });
+
+        // 设置用户的会话信息
+        this.managementApp.post("/removeContext", ctx -> {
+            String token = ctx.header("Authorization");
+            if ((token == null) || !sessionContextMap.containsKey(token))
+            {
+                ctx.json(Map.of("retCode", -1, "retMsg", "User not login or expired."));
+                return;
+            }
+            JSONArray contextObj = JSONArray.parseArray(ctx.body());
+            if (!contextObj.isEmpty()) {
+                HashMap<String, String> sessionContextVariables = sessionContextMap.get(token);
+                for (Object key : contextObj.toArray()) {
+                    sessionContextVariables.remove(key.toString());
+                }
+                sessionContextMap.put(token, sessionContextVariables);
+            }
+            ctx.json(Map.of("retCode", 0, "retMsg", "Successful"));
+        });
 
         // 注册服务
         this.managementApp.post("/registerService", ctx -> {
@@ -296,11 +393,11 @@ public class DBInstanceX {
             dbService.serviceType = serviceType;
             dbService.sql = serviceSql;
             dbService.description = bodyObject.getString("description");
+            dbService.searchPath = bodyObject.getString("searchPath");
             if (bodyObject.containsKey("snapshotLimit")) {
                 dbService.snapshotLimit = Long.parseLong(bodyObject.getString("snapshotLimit"));
             }
             String serviceParametersStr = bodyObject.getString("parameters");
-
             JSONArray serviceParameters;
             if (serviceParametersStr != null && !serviceParametersStr.trim().isEmpty())
             {
@@ -369,6 +466,7 @@ public class DBInstanceX {
                         dbServiceDefinition,
                         this.backendSqlConnection,
                         queryResultCache,
+                        sessionContextMap,
                         this.logger
                 );
             }
@@ -389,6 +487,7 @@ public class DBInstanceX {
                         dbServiceDefinition,
                         this.backendSqlConnection,
                         queryResultCache,
+                        sessionContextMap,
                         this.logger
                 );
             }

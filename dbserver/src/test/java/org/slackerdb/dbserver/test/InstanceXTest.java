@@ -3,7 +3,6 @@ package org.slackerdb.dbserver.test;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.alibaba.fastjson2.JSONWriter;
-import com.sun.source.doctree.SerialFieldTree;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -71,6 +70,7 @@ public class InstanceXTest {
                 .header("Content-Type", "application/json")
                 .build();
         var ignored = client.send(request, HttpResponse.BodyHandlers.ofString());
+
         HttpRequest request2 = HttpRequest.newBuilder()
                 .uri(new URI("http://127.0.0.1:" + dbPortX + "/api/1.0/queryTest1/"))
                 .GET()
@@ -84,4 +84,55 @@ public class InstanceXTest {
                 {"columnNames":["1"],"columnTypes":["INTEGER"],"dataset":[[1]]}
                 """.trim());
     }
+
+    @Test
+    void testApiQueryWithContext() throws Exception
+    {
+        JSONObject registerTestObj = new JSONObject();
+        registerTestObj.put("serviceName", "testApiQueryWithContext");
+        registerTestObj.put("serviceVersion", "1.0");
+        registerTestObj.put("serviceType", "GET");
+        registerTestObj.put("sql", "SELECT '${context1}' as col1, 2 as col2");
+
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest requestLogin = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/login"))
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .header("Content-Type", "application/json")
+                .build();
+        HttpResponse<String> responseLogin = client.send(requestLogin, HttpResponse.BodyHandlers.ofString());
+        String userToken = JSONObject.parseObject(responseLogin.body()).getString("token");
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/registerService"))
+                .POST(HttpRequest.BodyPublishers.ofString(registerTestObj.toString()))
+                .header("Content-Type", "application/json")
+                .build();
+        client.send(request, HttpResponse.BodyHandlers.ofString());
+
+        JSONObject contextObj = new JSONObject();
+        contextObj.put("context1", "abc");
+        contextObj.put("context2", "def");
+        HttpRequest requestContext = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/setContext"))
+                .header("Content-Type", "application/json")
+                .header("Authorization", userToken)
+                .POST(HttpRequest.BodyPublishers.ofString(contextObj.toString()))
+                .build();
+        client.send(requestContext, HttpResponse.BodyHandlers.ofString());
+
+        HttpRequest request2 = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/api/1.0/testApiQueryWithContext/"))
+                .GET()
+                .header("Content-Type", "application/json")
+                .header("Authorization", userToken)
+                .build();
+        HttpResponse<String> response2 = client.send(request2, HttpResponse.BodyHandlers.ofString());
+        JSONObject responseObj = JSONObject.parseObject(response2.body()).getJSONObject("data");
+        responseObj.remove("timestamp");
+        assert JSON.toJSONString(responseObj, JSONWriter.Feature.MapSortField).equals("""
+                {"columnNames":["col1","col2"],"columnTypes":["VARCHAR","INTEGER"],"dataset":[["abc",2]]}
+                """.trim());
+    }
+
 }
