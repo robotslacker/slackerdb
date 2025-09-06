@@ -241,8 +241,9 @@ You can keep only the parameters you need to modify.
 For parameters that are not configured, means default values will be used.
 
 ### Data Service
+* Data service work with port x, please make sure enable port x in server configuration or parameter.
 It's important to note that currently, we have little regard for data security.
-This data services should work in a trusted environment. 
+This data services should work in a trusted environment.   
 
 ####  user login
 User login (note: this is optional).  After success, a token will be provided.   
