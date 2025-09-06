@@ -18,11 +18,10 @@ Based on the description, this tool achieves the following capabilities:
 *  Provides self-managed data services and API publishing.
 
 * You have multiple ways to connect to our database:
-*  Directly connect to the server
-*  Connect through a proxy. Based on the proxy, you can connect to multiple servers through one proxy.
-*  Connect through the WEB Service (to be implemented)
-*  Embed the compiled jar package into your own application, so you don't need a separate database service program.
-*  Register a data service and access it through the REST API.
+  *  Directly connect to the server
+  *  Connect through a proxy. Based on the proxy, you can connect to multiple servers through one proxy.
+  *  Embed the compiled jar package into your own application, so you don't need a separate database service program.
+  *  Register a data service and access it through the REST API.
  
 ## Usage
 ### Build from source:
@@ -242,14 +241,13 @@ You can keep only the parameters you need to modify.
 For parameters that are not configured, means default values will be used.
 
 ### Data Service
-It's important to note that currently, all data services have little regard for data security.
-Data services should operate in a trusted environment. 
-Security is not a primary focus of the program, and there are currently no plans to improve it.
+It's important to note that currently, we have little regard for data security.
+This data services should work in a trusted environment. 
 
 ####  user login
-User login (note that this is not required for subsequent operations). 
-After success, a token will be provided. Subsequent context operations or SQL access that requires context variables all require this token. 
-It can be simply understood that the token is currently the user ID.
+User login (note: this is optional).  After success, a token will be provided.   
+Context operations or SQL access that requires context variables will require token. 
+Put it simplify, the token is currently used as the user ID.
 
 | Attribute | Value    |
 |-----------|----------|
@@ -282,6 +280,7 @@ headers:
 | Attribute     | Value                                            |
 |---------------|--------------------------------------------------|
 | Authorization | NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1 |
+
 The token information here is obtained when call /login in earlier
 
 Response example:
@@ -308,6 +307,7 @@ headers:
 | Attribute     | Value                                            |
 |---------------|--------------------------------------------------|
 | Authorization | NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1 |
+
 The token information here is obtained when call /login in earlier
 
 request body:
@@ -316,8 +316,9 @@ request body:
 |-----------|--------|
 | key1      | value1 |
 | key2      | value2 |
-| key3      | value3 |
 | ...       | ...    |
+| keyx      | valuex |
+
 You can set one or more key-value pairs at once, or you can set multiple key-value pairs by calling setContext multiple times.
 
 Response example:
@@ -344,6 +345,7 @@ headers:
 | Attribute     | Value                                            |
 |---------------|--------------------------------------------------|
 | Authorization | NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1 |
+
 The token information here is obtained when call /login in earlier
 
 request body:
@@ -351,6 +353,7 @@ request body:
 | Attribute      | Value             |
 |----------------|-------------------|
 | removedKeyList | [key1,key2, ....] |
+
 You can remove one or more key-value pairs at once, or you can remove multiple key-value pairs by calling removeContext multiple times.
 
 Response example:
@@ -489,8 +492,9 @@ headers:
 | Attribute     | Value                                            |
 |---------------|--------------------------------------------------|
 | Authorization | NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1 |
-The token information here is obtained when call /login in earlier.  
-The token is optional, if you use context in your sql statement, you must set authorization.
+
+The token information here is obtained when call /login.  
+The token is optional, if you use context in your sql statement, you must set it.
 
 GET Request example:
 ```
