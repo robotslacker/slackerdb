@@ -246,7 +246,8 @@ This data services should work in a trusted environment.
 
 ####  user login
 User login (note: this is optional).  After success, a token will be provided.   
-Context operations or SQL access that requires context variables will require token. 
+Context operations or SQL access that requires context variables will require token.   
+If your program does not involve context feature, you can ignore this login.    
 Put it simplify, the token is currently used as the user ID.
 
 | Attribute | Value    |
