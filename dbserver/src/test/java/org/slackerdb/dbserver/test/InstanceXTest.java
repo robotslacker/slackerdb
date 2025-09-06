@@ -135,4 +135,59 @@ public class InstanceXTest {
                 """.trim());
     }
 
+    @Test
+    void testApiQueryWithSnapshot() throws Exception
+    {
+        JSONObject registerTestObj = new JSONObject();
+        registerTestObj.put("serviceName", "testApiQueryWithSnapshot");
+        registerTestObj.put("serviceVersion", "1.0");
+        registerTestObj.put("serviceType", "GET");
+        registerTestObj.put("sql", "SELECT 1 as col1, 2 as col2, '中国' as col3");
+
+        HttpClient client = HttpClient.newHttpClient();
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/registerService"))
+                .POST(HttpRequest.BodyPublishers.ofString(registerTestObj.toString()))
+                .header("Content-Type", "application/json")
+                .build();
+        client.send(request, HttpResponse.BodyHandlers.ofString());
+
+        HttpRequest request2 = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/api/1.0/testApiQueryWithSnapshot/"))
+                .GET()
+                .header("Content-Type", "application/json")
+                .build();
+        HttpResponse<String> response2_1 = client.send(request2, HttpResponse.BodyHandlers.ofString());
+        JSONObject responseObj = JSONObject.parseObject(response2_1.body()).getJSONObject("data");
+        responseObj.remove("timestamp");
+        assert !JSONObject.parseObject(response2_1.body()).getBoolean("cached");
+        assert JSON.toJSONString(responseObj, JSONWriter.Feature.MapSortField).equals("""
+        {"columnNames":["col1","col2","col3"],"columnTypes":["INTEGER","INTEGER","VARCHAR"],"dataset":[[1,2,"中国"]]}
+        """.trim());
+
+        // 第二次查询应该看到被缓存的结果
+        HttpResponse<String> response2_2 = client.send(request2, HttpResponse.BodyHandlers.ofString());
+        assert JSONObject.parseObject(response2_2.body()).getBoolean("cached");
+        JSONObject responseObj2 = JSONObject.parseObject(response2_2.body()).getJSONObject("data");
+        responseObj2.remove("timestamp");
+        assert JSON.toJSONString(responseObj2, JSONWriter.Feature.MapSortField).equals("""
+        {"columnNames":["col1","col2","col3"],"columnTypes":["INTEGER","INTEGER","VARCHAR"],"dataset":[[1,2,"中国"]]}
+        """.trim());
+
+        // 第三次查询指定缓存的时间
+        HttpRequest request3 = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/api/1.0/testApiQueryWithSnapshot/"))
+                .GET()
+                .header("Content-Type", "application/json")
+                .header("snapshotLimit", "5")
+                .build();
+        HttpResponse<String> response3_1 = client.send(request3, HttpResponse.BodyHandlers.ofString());
+        JSONObject responseObj3 = JSONObject.parseObject(response3_1.body()).getJSONObject("data");
+        responseObj3.remove("timestamp");
+        assert !JSONObject.parseObject(response2_1.body()).getBoolean("cached");
+        assert JSON.toJSONString(responseObj, JSONWriter.Feature.MapSortField).equals("""
+        {"columnNames":["col1","col2","col3"],"columnTypes":["INTEGER","INTEGER","VARCHAR"],"dataset":[[1,2,"中国"]]}
+        """.trim());
+    }
 }

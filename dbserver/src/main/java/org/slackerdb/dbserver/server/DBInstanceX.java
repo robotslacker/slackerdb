@@ -36,7 +36,7 @@ public class DBInstanceX {
         public String serviceType;
         public String searchPath;
         public String sql;
-        public String description;
+        public String description = "";
         public Long snapshotLimit = 300*1000L;
         public Map<String, String> parameter;
     }
@@ -115,8 +115,10 @@ public class DBInstanceX {
             }
         }
         long snapshotLimit;
-        if (sqlParameters.containsKey("snapshotLimit")) {
-            snapshotLimit = Long.parseLong(sqlParameters.remove("snapshotLimit"));
+
+        String snapshotLimitStr = ctx.header("snapshotLimit");
+        if (snapshotLimitStr != null) {
+            snapshotLimit = Long.parseLong(snapshotLimitStr);
         }
         else
         {
@@ -144,7 +146,17 @@ public class DBInstanceX {
                 Long lastQueriedTimeStamp = (Long) cacheResult.get("timestamp");
                 if (System.currentTimeMillis() - lastQueriedTimeStamp <= snapshotLimit) {
                     // 数据还没有过时，从缓存中获得
-                    ctx.json(Map.of("cached", true, "data", cacheResult));
+                    ctx.json(
+                            Map.of(
+                                    "retCode", 0,
+                                    "retMsg", "Successful",
+                                    "description", dbServiceDefinition.description,
+                                    "timestamp", lastQueriedTimeStamp,
+                                    "cached", true,
+                                    "data", cacheResult
+                            )
+                    )
+                    ;
                     return;
                 }
             }
@@ -202,17 +214,41 @@ public class DBInstanceX {
                 if (cacheKey!= null) {
                     caffeineQueryCache.put(cacheKey, result);
                 }
-                ctx.json(Map.of("cached", false, "data", result));
+                ctx.json(
+                        Map.of(
+                                "retCode", 0,
+                                "retMsg", "Successful",
+                                "description", dbServiceDefinition.description,
+                                "timestamp", System.currentTimeMillis(),
+                                "cached", false, "data", result
+                        )
+                );
             }
             else
             {
-                ctx.json(Map.of("cached", false));
+                // 非SQL查询语句
+                ctx.json(
+                        Map.of(
+                                "retCode", 0,
+                                "retMsg", "Successful",
+                                "description", dbServiceDefinition.description,
+                                "affectedRows", preparedStatement.getUpdateCount(),
+                                "cached", false
+                        )
+                );
             }
             preparedStatement.close();
             conn.close();
         } catch (Exception e) {
             logger.trace("[SERVER-API] Query failed: ", e);
-            ctx.status(500).json(Map.of("error", e.getMessage()));
+            ctx.json(
+                    Map.of(
+                            "retCode", -1,
+                            "retMsg", e.getMessage(),
+                            "description", dbServiceDefinition.description,
+                            "cached", false
+                    )
+            );
             try {
                 if (conn != null && !conn.isClosed()) {
                     conn.close();
@@ -298,8 +334,11 @@ public class DBInstanceX {
         this.managementApp.post("/login", ctx -> {
             // 保存用户的Token
             String userToken = UUID.randomUUID().toString();
+            userToken = Base64.getUrlEncoder()
+                    .withoutPadding()
+                    .encodeToString(userToken.getBytes());
             sessionContextMap.put(userToken, new HashMap<>());
-            ctx.json(Map.of("retCode", 0, "token", userToken));
+            ctx.json(Map.of("retCode", 0, "token", userToken, "retMsg", "Login successful."));
         });
 
         // 用户登出
@@ -341,13 +380,17 @@ public class DBInstanceX {
                 ctx.json(Map.of("retCode", -1, "retMsg", "User not login or expired."));
                 return;
             }
-            JSONArray contextObj = JSONArray.parseArray(ctx.body());
-            if (!contextObj.isEmpty()) {
-                HashMap<String, String> sessionContextVariables = sessionContextMap.get(token);
-                for (Object key : contextObj.toArray()) {
-                    sessionContextVariables.remove(key.toString());
+            JSONObject contextObj = JSONObject.parseObject(ctx.body());
+            if (contextObj.containsKey("removedKeyList"))
+            {
+                JSONArray contextRemoveList = contextObj.getJSONArray("removedKeyList");
+                if (!contextRemoveList.isEmpty()) {
+                    HashMap<String, String> sessionContextVariables = sessionContextMap.get(token);
+                    for (Object key : contextRemoveList.toArray()) {
+                        sessionContextVariables.remove(key.toString());
+                    }
+                    sessionContextMap.put(token, sessionContextVariables);
                 }
-                sessionContextMap.put(token, sessionContextVariables);
             }
             ctx.json(Map.of("retCode", 0, "retMsg", "Successful"));
         });
@@ -393,6 +436,10 @@ public class DBInstanceX {
             dbService.serviceType = serviceType;
             dbService.sql = serviceSql;
             dbService.description = bodyObject.getString("description");
+            if (dbService.description == null)
+            {
+                dbService.description = "NO DESCRIPTION.";
+            }
             dbService.searchPath = bodyObject.getString("searchPath");
             if (bodyObject.containsKey("snapshotLimit")) {
                 dbService.snapshotLimit = Long.parseLong(bodyObject.getString("snapshotLimit"));
@@ -449,7 +496,14 @@ public class DBInstanceX {
         });
 
         // 列出当前服务列表
-        this.managementApp.get("/listRegisteredService", ctx-> ctx.json(registeredDBService));
+        this.managementApp.get("/listRegisteredService",
+                ctx-> ctx.json(
+                        Map.of(
+                                "retCode",0,
+                                "regMsg", "Successful",
+                                "services", registeredDBService)
+                )
+        );
 
         // API的GET请求
         this.managementApp.get("/api/{apiVersion}/{apiName}", ctx -> {

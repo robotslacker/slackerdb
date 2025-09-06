@@ -15,13 +15,15 @@ Based on the description, this tool achieves the following capabilities:
   1. Advanced features
   2. Comprehensive data dictionary access support
 * You can use COPY syntax to quickly import data, compatible with PG's CopyManager.
+*  Provides self-managed data services and API publishing.
 
-You have multiple ways to connect to our database:
+* You have multiple ways to connect to our database:
 *  Directly connect to the server
 *  Connect through a proxy. Based on the proxy, you can connect to multiple servers through one proxy.
 *  Connect through the WEB Service (to be implemented)
 *  Embed the compiled jar package into your own application, so you don't need a separate database service program.
-
+*  Register a data service and access it through the REST API.
+ 
 ## Usage
 ### Build from source:
 ```
@@ -82,7 +84,7 @@ temp_dir=
 extension_dir=
 
 # Whether the program is started in the background. If true, it will run in the background
-daemonMode=
+daemon=
 
 # PID file. Used to describe the process id of running server process.
 # When server is running, the file will be exclusively locked.
@@ -101,11 +103,23 @@ log_level=INFO
 # Service port
 # 0 means the system will randomly assign a port
 # -1 means no port will be opened
-# default is 0, means random port.
-port=0
+# default is 0, means disable this feature.
+port=
+
+# Extension port. Used to execute some API operations or management commands.
+# 0 means the system will randomly assign a port
+# -1 means no port will be opened
+# default is -1, means disable this feature.
+port_x=
 
 # Service binding host
 bind=0.0.0.0
+
+# The system will check the file under data_dir and load it automatically.
+# Possible values:
+# - ON:  Enable auto load.
+# - OFF: Disable auto load (default).
+autoload=
 
 # Client idle timeout (in seconds)
 client_timeout=600
@@ -159,8 +173,8 @@ locale=
 
 # sql_history.  used to enable or disable the SQL history feature.
 # Possible values:
-# - ON: Enables SQL history tracking.
-# - OFF: Disables SQL history tracking (default).
+# - ON: Enable SQL history tracking.
+# - OFF: Disable SQL history tracking (default).
 # When set to OFF (default), SQL execution history will not be recorded.
 sql_history=OFF
 
@@ -178,6 +192,11 @@ connection_pool_maximum_idle=10
 # Once the lifecycle time is exceeded, the connection is closed and removed from the pool.
 # Default Value: 900000 (15 minutes)
 connection_pool_maximum_lifecycle_time=900000
+
+# Query result cache size (bytes)
+# Query results are only valid for requests using the API and will not have any effect on JDBC queries.
+# The default size is 1024*1024*1024 （1G）
+query_result_cache_size=
 
 ```
 ### Proxy configuration file template
@@ -221,6 +240,291 @@ locale=
 Note: All parameters are optional.   
 You can keep only the parameters you need to modify.   
 For parameters that are not configured, means default values will be used.
+
+### Data Service
+It's important to note that currently, all data services have little regard for data security.
+Data services should operate in a trusted environment. 
+Security is not a primary focus of the program, and there are currently no plans to improve it.
+
+####  user login
+User login (note that this is not required for subsequent operations). 
+After success, a token will be provided. Subsequent context operations or SQL access that requires context variables all require this token. 
+It can be simply understood that the token is currently the user ID.
+
+| Attribute | Value    |
+|-----------|----------|
+| Protocol  | HTTP     |
+| Method    | POST     |
+| Path      | `/login` |
+
+Response example:
+```
+Success response (200)
+
+  { 
+    "retCode": 0, 
+    "token": “yJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9”, 
+    "retMsg": "Login successful." 
+  }
+```
+
+####  user logout
+User logout
+
+| Attribute | Value     |
+|-----------|-----------|
+| Protocol  | HTTP      |
+| Method    | POST      |
+| Path      | `/logout` |
+
+headers:
+
+| Attribute     | Value                                            |
+|---------------|--------------------------------------------------|
+| Authorization | NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1 |
+The token information here is obtained when call /login in earlier
+
+Response example:
+```
+Success response (200)
+
+  { 
+    "retCode": 0, 
+    "retMsg": "Successful." 
+  }
+```
+
+####  set context
+set context
+
+| Attribute | Value        |
+|-----------|--------------|
+| Protocol  | HTTP         |
+| Method    | POST         |
+| Path      | `/setContxt` |
+
+headers:
+
+| Attribute     | Value                                            |
+|---------------|--------------------------------------------------|
+| Authorization | NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1 |
+The token information here is obtained when call /login in earlier
+
+request body:
+
+| Attribute | Value  |
+|-----------|--------|
+| key1      | value1 |
+| key2      | value2 |
+| key3      | value3 |
+| ...       | ...    |
+You can set one or more key-value pairs at once, or you can set multiple key-value pairs by calling setContext multiple times.
+
+Response example:
+```
+Success response (200)
+
+  { 
+    "retCode": 0, 
+    "retMsg": "Successful." 
+  }
+```
+
+#### removeContext
+remove context
+
+| Attribute | Value           |
+|-----------|-----------------|
+| Protocol  | HTTP            |
+| Method    | POST            |
+| Path      | `/removeContxt` |
+
+headers:
+
+| Attribute     | Value                                            |
+|---------------|--------------------------------------------------|
+| Authorization | NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1 |
+The token information here is obtained when call /login in earlier
+
+request body:
+
+| Attribute      | Value             |
+|----------------|-------------------|
+| removedKeyList | [key1,key2, ....] |
+You can remove one or more key-value pairs at once, or you can remove multiple key-value pairs by calling removeContext multiple times.
+
+Response example:
+```
+Success response (200)
+
+  { 
+    "retCode": 0, 
+    "retMsg": "Successful." 
+  }
+```
+
+#### registerService
+register a service
+
+
+| Attribute | Value              |
+|-----------|--------------------|
+| Protocol  | HTTP               |
+| Method    | POST               |
+| Path      | `/registerService` |
+
+
+request body:
+
+| Attribute      | Value                                                              |
+|----------------|--------------------------------------------------------------------|
+| serviceName    | service name                                                       |
+| serviceVersion | service version                                                    |
+| serviceType    | service type, GET/POST                                             |
+| searchPath     | sql default search path,  Optional parameter                       |
+| sql            | SQL statement, can contain such ${var1} variable information       |
+| description    | description                                                        |
+| snapshotLimit  | how long the query result will be cached, Optional parameter       |
+| parameter      | parameter default value when query api not provide parameter value |
+
+Request example:
+```
+  { 
+    "serviceName": "queryTest1",
+    "serviceVersion": "1.0",
+    "serviceType": "GET",
+    "sql", "SELECT 1" 
+  }
+```
+
+Response example:
+```
+Success response (200)
+
+  { 
+    "retCode": 0, 
+    "retMsg": "Successful." 
+  }
+```
+
+#### unRegisterService
+unregister a service
+
+
+| Attribute | Value                |
+|-----------|----------------------|
+| Protocol  | HTTP                 |
+| Method    | POST                 |
+| Path      | `/unRegisterService` |
+
+
+request body:
+
+| Attribute      | Value                                                              |
+|----------------|--------------------------------------------------------------------|
+| serviceName    | service name                                                       |
+| serviceVersion | service version                                                    |
+| serviceType    | service type, GET/POST                                             |
+
+Request example:
+```
+  { 
+    "serviceName": "queryTest1",
+    "serviceVersion": "1.0",
+    "serviceType": "GET",
+  }
+```
+
+Response example:
+```
+Success response (200)
+
+  { 
+    "retCode": 0, 
+    "retMsg": "Successful." 
+  }
+```
+
+#### listRegisteredService
+list all service
+
+
+| Attribute | Value                    |
+|-----------|--------------------------|
+| Protocol  | HTTP                     |
+| Method    | GET                      |
+| Path      | `/listRegisteredService` |
+
+
+Response example:
+```
+Success response (200)
+
+  { 
+    "retCode": 0, 
+    "retMsg": "Successful." 
+    "services": 
+      {
+        "Query1":
+        {
+          "seviceName" : "Query1",
+          "serviceType" : "GET",
+          ....
+        }
+      }
+  }
+```
+
+#### /api/{apiVersion}/{apiName}
+API query
+
+| Attribute | Value                         |
+|-----------|-------------------------------|
+| Protocol  | HTTP                          |
+| Method    | POST or GET                   |
+| Path      | `/api/{apiVersion}/{apiName}` |
+
+headers:
+
+| Attribute     | Value                                            |
+|---------------|--------------------------------------------------|
+| Authorization | NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1 |
+The token information here is obtained when call /login in earlier.  
+The token is optional, if you use context in your sql statement, you must set authorization.
+
+GET Request example:
+```
+  GET /api/1.0/queryApi?context1=xxx&context2=yyy
+```
+
+POST Request example:
+```
+  POST /api/1.0/queryApi
+  
+  { 
+    "context1": "xxx",
+    "context2": "yyy",
+  }
+```
+
+Response example:
+```
+Success response (200)
+
+  { 
+    "retCode": 0, 
+    "retMsg": "Successful." 
+    "description" "test 1",
+    "cached": false, 
+    "timestamp": 17777700, 
+    "data": 
+      {
+        "columnNames":["col1","col2","col3"],
+        "columnTypes":["INTEGER","INTEGER","VARCHAR"],
+        "dataset":[[1,2,"中国"]]
+      }
+  }
+```
 
 ### Embed the db server in your code
 ``` 
