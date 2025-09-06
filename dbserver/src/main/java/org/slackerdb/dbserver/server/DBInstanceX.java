@@ -15,7 +15,8 @@ import io.javalin.http.staticfiles.Location;
 import io.javalin.plugin.bundled.CorsPluginConfig;
 import net.jodah.expiringmap.ExpirationPolicy;
 import net.jodah.expiringmap.ExpiringMap;
-import org.duckdb.DuckDBConnection;
+import org.slackerdb.common.exceptions.ServerException;
+import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
@@ -23,7 +24,9 @@ import org.springframework.core.io.ClassPathResource;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.*;
+import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.Date;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -42,10 +45,10 @@ public class DBInstanceX {
     }
 
     private final Logger logger;
-    private Javalin managementApp = null;
-    private final Connection backendSqlConnection;
+    private final Javalin managementApp;
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private final ConcurrentHashMap<String, DBServiceDefinition> registeredDBService = new ConcurrentHashMap<>();
+    private final DBDataSourcePool dbDataSourcePool;
 
     // 估计对象的大小
     private static int estimateSize(Map<String, Object> result) {
@@ -66,12 +69,6 @@ public class DBInstanceX {
     // 数据结果缓存，在过期时间内的数据不会重复查询
     private Cache<String, Map<String, Object>> queryResultCache =  null;
 
-    public DBInstanceX(Connection sqlConn, Logger logger)
-    {
-        this.backendSqlConnection = sqlConn;
-        this.logger = logger;
-    }
-
     private String getClientIp(Context ctx) {
         String xff = ctx.header("X-Forwarded-For");
         return (xff != null && !xff.isEmpty())
@@ -82,7 +79,7 @@ public class DBInstanceX {
     private static void handleSqlQuery(
             Context ctx,
             DBServiceDefinition dbServiceDefinition,
-            Connection backendSqlConnection,
+            DBDataSourcePool dbDataSourcePool,
             Cache<String, Map<String, Object>> caffeineQueryCache,
             ExpiringMap<String, HashMap<String, String>> expiringMap,
             Logger logger
@@ -118,7 +115,7 @@ public class DBInstanceX {
 
         String snapshotLimitStr = ctx.header("snapshotLimit");
         if (snapshotLimitStr != null) {
-            snapshotLimit = Long.parseLong(snapshotLimitStr);
+            snapshotLimit =  Utils.convertDurationStrToSeconds(snapshotLimitStr) * 1000;
         }
         else
         {
@@ -151,7 +148,7 @@ public class DBInstanceX {
                                     "retCode", 0,
                                     "retMsg", "Successful",
                                     "description", dbServiceDefinition.description,
-                                    "timestamp", lastQueriedTimeStamp,
+                                    "timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(lastQueriedTimeStamp)),
                                     "cached", true,
                                     "data", cacheResult
                             )
@@ -177,7 +174,7 @@ public class DBInstanceX {
         // 执行数据库查询
         Connection conn = null;
         try {
-            conn = ((DuckDBConnection)backendSqlConnection).duplicate();
+            conn = dbDataSourcePool.getConnection();
             if (dbServiceDefinition.searchPath != null && !dbServiceDefinition.searchPath.isEmpty())
             {
                 Statement statement = conn.createStatement();
@@ -219,7 +216,7 @@ public class DBInstanceX {
                                 "retCode", 0,
                                 "retMsg", "Successful",
                                 "description", dbServiceDefinition.description,
-                                "timestamp", System.currentTimeMillis(),
+                                "timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(System.currentTimeMillis())),
                                 "cached", false, "data", result
                         )
                 );
@@ -238,7 +235,7 @@ public class DBInstanceX {
                 );
             }
             preparedStatement.close();
-            conn.close();
+            dbDataSourcePool.releaseConnection(conn);
         } catch (Exception e) {
             logger.trace("[SERVER-API] Query failed: ", e);
             ctx.json(
@@ -249,16 +246,19 @@ public class DBInstanceX {
                             "cached", false
                     )
             );
-            try {
-                if (conn != null && !conn.isClosed()) {
-                    conn.close();
-                }
-            } catch (SQLException ignored) {}
+            dbDataSourcePool.releaseConnection(conn);
         }
     }
 
-    public void start(ServerConfiguration serverConfiguration)
+    public DBInstanceX(
+            DBInstance dbInstance
+    )
     {
+        this.logger = dbInstance.logger;
+
+        // 读取服务配置
+        ServerConfiguration serverConfiguration = dbInstance.serverConfiguration;
+
         // 初始化查询结果缓存
         if (serverConfiguration.getQuery_result_cache_size() > 0) {
             queryResultCache = Caffeine.newBuilder()
@@ -266,6 +266,22 @@ public class DBInstanceX {
                     .weigher((String key, Map<String, Object> value) -> estimateSize(value))
                     .recordStats()
                     .build();
+        }
+
+        // 初始化数据库连接池
+        DBDataSourcePoolConfig dbDataSourcePoolConfig = new DBDataSourcePoolConfig();
+        dbDataSourcePoolConfig.setMinimumIdle(serverConfiguration.getConnection_pool_minimum_idle());
+        dbDataSourcePoolConfig.setMaximumIdle(serverConfiguration.getConnection_pool_maximum_idle());
+        dbDataSourcePoolConfig.setMaximumLifeCycleTime(serverConfiguration.getConnection_pool_maximum_lifecycle_time());
+        dbDataSourcePoolConfig.setMaximumPoolSize(serverConfiguration.getMax_connections());
+        dbDataSourcePoolConfig.setJdbcURL(dbInstance.backendConnectString);
+        dbDataSourcePoolConfig.setConnectProperties(dbInstance.backendConnectProperties);
+        try {
+            this.dbDataSourcePool = new DBDataSourcePool("SERVICE", dbDataSourcePoolConfig, logger);
+        }
+        catch (SQLException sqlException)
+        {
+            throw new ServerException("Init data service connection pool error. ", sqlException);
         }
 
         // 关闭Javalin, 如果不是在trace下
@@ -324,14 +340,9 @@ public class DBInstanceX {
                     ctx.result(Files.readString(Path.of(indexResource.getURI())));
                 }
         );
-        this.managementApp.get("/",ctx -> {
-                    ctx.contentType("text/html");
-                    ctx.result(Files.readString(Path.of(indexResource.getURI())));
-                }
-        );
 
         // 用户登录
-        this.managementApp.post("/login", ctx -> {
+        this.managementApp.post("/api/login", ctx -> {
             // 保存用户的Token
             String userToken = UUID.randomUUID().toString();
             userToken = Base64.getUrlEncoder()
@@ -342,7 +353,7 @@ public class DBInstanceX {
         });
 
         // 用户登出
-        this.managementApp.post("/logout", ctx -> {
+        this.managementApp.post("/api/logout", ctx -> {
             String token = ctx.header("Authorization");
             if ((token == null) || !sessionContextMap.containsKey(token))
             {
@@ -354,7 +365,7 @@ public class DBInstanceX {
         });
 
         // 设置用户的会话信息
-        this.managementApp.post("/setContext", ctx -> {
+        this.managementApp.post("/api/setContext", ctx -> {
             String token = ctx.header("Authorization");
             if ((token == null) || !sessionContextMap.containsKey(token))
             {
@@ -373,7 +384,7 @@ public class DBInstanceX {
         });
 
         // 设置用户的会话信息
-        this.managementApp.post("/removeContext", ctx -> {
+        this.managementApp.post("/api/removeContext", ctx -> {
             String token = ctx.header("Authorization");
             if ((token == null) || !sessionContextMap.containsKey(token))
             {
@@ -396,7 +407,7 @@ public class DBInstanceX {
         });
 
         // 注册服务
-        this.managementApp.post("/registerService", ctx -> {
+        this.managementApp.post("/api/registerService", ctx -> {
             JSONObject bodyObject;
             try {
                 bodyObject = JSONObject.parseObject(ctx.body());
@@ -442,7 +453,8 @@ public class DBInstanceX {
             }
             dbService.searchPath = bodyObject.getString("searchPath");
             if (bodyObject.containsKey("snapshotLimit")) {
-                dbService.snapshotLimit = Long.parseLong(bodyObject.getString("snapshotLimit"));
+                dbService.snapshotLimit =
+                        Utils.convertDurationStrToSeconds(bodyObject.getString("snapshotLimit")) * 1000;
             }
             String serviceParametersStr = bodyObject.getString("parameters");
             JSONArray serviceParameters;
@@ -466,7 +478,7 @@ public class DBInstanceX {
         });
 
         // 取消服务注册
-        this.managementApp.post("/unRegisterService", ctx -> {
+        this.managementApp.post("/api/unRegisterService", ctx -> {
             JSONObject bodyObject;
             try {
                 bodyObject = JSONObject.parseObject(ctx.body());
@@ -496,13 +508,28 @@ public class DBInstanceX {
         });
 
         // 列出当前服务列表
-        this.managementApp.get("/listRegisteredService",
-                ctx-> ctx.json(
-                        Map.of(
-                                "retCode",0,
-                                "regMsg", "Successful",
-                                "services", registeredDBService)
-                )
+        this.managementApp.get("/api/listRegisteredService",
+                ctx -> {
+                    JSONArray ret = new JSONArray();
+                    for (DBServiceDefinition dbServiceDefinition : registeredDBService.values()) {
+                        JSONObject item = new JSONObject();
+                        item.put("serviceName", dbServiceDefinition.serviceName);
+                        item.put("serviceVersion", dbServiceDefinition.serviceVersion);
+                        item.put("searchPath", dbServiceDefinition.searchPath);
+                        item.put("sql", dbServiceDefinition.sql);
+                        item.put("description", dbServiceDefinition.description);
+                        item.put("serviceType", dbServiceDefinition.serviceType);
+                        item.put("snapshotLimit", Utils.convertSecondsToHumanTime(dbServiceDefinition.snapshotLimit / 1000));
+                        item.put("parameter", dbServiceDefinition.parameter);
+                        ret.add(item);
+                    }
+                    ctx.json(
+                            Map.of(
+                                    "retCode",0,
+                                    "regMsg", "Successful",
+                                    "services", ret)
+                    );
+                }
         );
 
         // API的GET请求
@@ -518,7 +545,7 @@ public class DBInstanceX {
                 handleSqlQuery(
                         ctx,
                         dbServiceDefinition,
-                        this.backendSqlConnection,
+                        this.dbDataSourcePool,
                         queryResultCache,
                         sessionContextMap,
                         this.logger
@@ -539,7 +566,7 @@ public class DBInstanceX {
                 handleSqlQuery(
                         ctx,
                         dbServiceDefinition,
-                        this.backendSqlConnection,
+                        this.dbDataSourcePool,
                         queryResultCache,
                         sessionContextMap,
                         this.logger

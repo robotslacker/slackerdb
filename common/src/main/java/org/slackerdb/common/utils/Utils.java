@@ -7,6 +7,8 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.TextStyle;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class Utils {
     public static String bytesToHex(byte[] bytes) {
@@ -246,5 +248,56 @@ public class Utils {
         String[] units = {"KB", "MB", "GB", "TB", "PB", "EB"};
         int exp = (int) (Math.log(bytes) / Math.log(unit));
         return String.format("%.1f%s", bytes / Math.pow(unit, exp), units[exp - 1]);
+    }
+
+    private static final Map<String, Integer> TIME_UNITS = new HashMap<>();
+    static {
+        TIME_UNITS.put("second", 1);
+        TIME_UNITS.put("seconds", 1);
+        TIME_UNITS.put("minute", 60);
+        TIME_UNITS.put("minutes", 60);
+        TIME_UNITS.put("hour", 3600);
+        TIME_UNITS.put("hours", 3600);
+    }
+
+    public static long convertDurationStrToSeconds(String durationStr)
+    {
+        long    totalSeconds = 0;
+        // 匹配数字和时间单位，如"3 hours"或"5minutes"
+        Pattern pattern = Pattern.compile("(\\d+)\\s*(\\w+)");
+        Matcher matcher = pattern.matcher(durationStr.toLowerCase());
+
+        while (matcher.find()) {
+            int value = Integer.parseInt(matcher.group(1));
+            String unit = matcher.group(2);
+            if (TIME_UNITS.containsKey(unit)) {
+                totalSeconds += (long) value * TIME_UNITS.get(unit);
+            }
+        }
+        return totalSeconds;
+    }
+
+    public static String convertSecondsToHumanTime(long totalSeconds) {
+        if (totalSeconds < 0) {
+            return "Invalid input";
+        }
+
+        long  hours = totalSeconds / 3600;
+        long  remaining = totalSeconds % 3600;
+        long  minutes = remaining / 60;
+        long  seconds = remaining % 60;
+
+        StringBuilder result = new StringBuilder();
+        if (hours > 0) {
+            result.append(hours).append(hours == 1 ? " hour " : " hours ");
+        }
+        if (minutes > 0) {
+            result.append(minutes).append(minutes == 1 ? " minute " : " minutes ");
+        }
+        if (seconds > 0 || (hours == 0 && minutes == 0)) {
+            result.append(seconds).append(seconds == 1 ? " second" : " seconds");
+        }
+
+        return result.toString().trim();
     }
 }

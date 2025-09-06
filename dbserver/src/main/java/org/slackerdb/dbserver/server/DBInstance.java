@@ -76,6 +76,8 @@ public class DBInstance {
 
     // DuckDB对应的后端长数据库连接
     public Connection backendSysConnection;
+    public String backendConnectString;
+    public Properties backendConnectProperties = new Properties();
 
     // SqlHistoryId 当前SQL历史的主键ID
     public final AtomicLong backendSqlHistoryId = new AtomicLong(1);
@@ -555,7 +557,7 @@ public class DBInstance {
         boolean databaseFirstOpened = false;
 
         // 建立基础数据库连接
-        String backendConnectString = "jdbc:duckdb:";
+        this.backendConnectString = "jdbc:duckdb:";
 
         if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
             backendConnectString = backendConnectString + ":memory:" + instanceName;
@@ -601,19 +603,18 @@ public class DBInstance {
                 }
             }
 
-            Properties connectProperties = new Properties();
             if (serverConfiguration.getAccess_mode().equals("READ_ONLY")) {
-                connectProperties.setProperty("duckdb.read_only", "true");
+                backendConnectProperties.setProperty("duckdb.read_only", "true");
             }
             // DuckDB并不需要用户名和密码，但是这里也要设置为空，以保证Hikari工作
-            connectProperties.setProperty("user", "");
-            connectProperties.setProperty("password", "");
+            backendConnectProperties.setProperty("user", "");
+            backendConnectProperties.setProperty("password", "");
 
             // 容许未签名的扩展
-            connectProperties.setProperty("allow_unsigned_extensions", "true");
+            backendConnectProperties.setProperty("allow_unsigned_extensions", "true");
             // 用后台线程来异步清除未完成的内存分配
-            connectProperties.setProperty("allocator_background_threads", "true");
-            backendSysConnection = DriverManager.getConnection(backendConnectString, connectProperties);
+            backendConnectProperties.setProperty("allocator_background_threads", "true");
+            backendSysConnection = DriverManager.getConnection(backendConnectString, backendConnectProperties);
             if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:"))
             {
                 logger.info("[SERVER][STARTUP    ] Backend database [{}:{}] mounted with {} mode.",
@@ -738,7 +739,7 @@ public class DBInstance {
             dbDataSourcePoolConfig.setMaximumLifeCycleTime(serverConfiguration.getConnection_pool_maximum_lifecycle_time());
             dbDataSourcePoolConfig.setMaximumPoolSize(serverConfiguration.getMax_connections());
             dbDataSourcePoolConfig.setJdbcURL(backendConnectString);
-            dbDataSourcePoolConfig.setConnectProperties(connectProperties);
+            dbDataSourcePoolConfig.setConnectProperties(backendConnectProperties);
             try {
                 this.dbDataSourcePool = new DBDataSourcePool("DATABASE", dbDataSourcePoolConfig, logger);
             }
@@ -761,7 +762,7 @@ public class DBInstance {
                 sqlHistoryDataSourcePoolConfig.setMaximumLifeCycleTime(0);
                 sqlHistoryDataSourcePoolConfig.setMaximumPoolSize(serverConfiguration.getMax_Workers());
                 sqlHistoryDataSourcePoolConfig.setJdbcURL(backendConnectString);
-                sqlHistoryDataSourcePoolConfig.setConnectProperties(connectProperties);
+                sqlHistoryDataSourcePoolConfig.setConnectProperties(backendConnectProperties);
                 try {
                     this.sqlHistoryDataSourcePool = new DBDataSourcePool("HISTORY", sqlHistoryDataSourcePoolConfig, logger);
                 }
@@ -866,8 +867,7 @@ public class DBInstance {
                 javalinLogger.setLevel(Level.OFF);
                 jettyLogger.setLevel(Level.OFF);
             }
-            this.dbInstanceX = new DBInstanceX(this.backendSysConnection, this.logger);
-            this.dbInstanceX.start(serverConfiguration);
+            this.dbInstanceX = new DBInstanceX(this);
         }
         else
         {

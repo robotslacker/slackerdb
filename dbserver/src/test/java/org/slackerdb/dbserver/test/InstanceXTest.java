@@ -65,7 +65,7 @@ public class InstanceXTest {
 
         HttpClient client = HttpClient.newHttpClient();
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(new URI("http://127.0.0.1:" + dbPortX + "/registerService"))
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/api/registerService"))
                 .POST(HttpRequest.BodyPublishers.ofString(registerTestObj.toString()))
                 .header("Content-Type", "application/json")
                 .build();
@@ -96,7 +96,7 @@ public class InstanceXTest {
 
         HttpClient client = HttpClient.newHttpClient();
         HttpRequest requestLogin = HttpRequest.newBuilder()
-                .uri(new URI("http://127.0.0.1:" + dbPortX + "/login"))
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/api/login"))
                 .POST(HttpRequest.BodyPublishers.noBody())
                 .header("Content-Type", "application/json")
                 .build();
@@ -104,7 +104,7 @@ public class InstanceXTest {
         String userToken = JSONObject.parseObject(responseLogin.body()).getString("token");
 
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(new URI("http://127.0.0.1:" + dbPortX + "/registerService"))
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/api/registerService"))
                 .POST(HttpRequest.BodyPublishers.ofString(registerTestObj.toString()))
                 .header("Content-Type", "application/json")
                 .build();
@@ -114,7 +114,7 @@ public class InstanceXTest {
         contextObj.put("context1", "abc");
         contextObj.put("context2", "def");
         HttpRequest requestContext = HttpRequest.newBuilder()
-                .uri(new URI("http://127.0.0.1:" + dbPortX + "/setContext"))
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/api/setContext"))
                 .header("Content-Type", "application/json")
                 .header("Authorization", userToken)
                 .POST(HttpRequest.BodyPublishers.ofString(contextObj.toString()))
@@ -147,7 +147,7 @@ public class InstanceXTest {
         HttpClient client = HttpClient.newHttpClient();
 
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(new URI("http://127.0.0.1:" + dbPortX + "/registerService"))
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/api/registerService"))
                 .POST(HttpRequest.BodyPublishers.ofString(registerTestObj.toString()))
                 .header("Content-Type", "application/json")
                 .build();

@@ -250,11 +250,11 @@ Context operations or SQL access that requires context variables will require to
 If your program does not involve context feature, you can ignore this login.    
 Put it simplify, the token is currently used as the user ID.
 
-| Attribute | Value    |
-|-----------|----------|
-| Protocol  | HTTP     |
-| Method    | POST     |
-| Path      | `/login` |
+| Attribute | Value        |
+|-----------|--------------|
+| Protocol  | HTTP         |
+| Method    | POST         |
+| Path      | `/api/login` |
 
 Response example:
 ```
@@ -270,11 +270,11 @@ Success response (200)
 ####  user logout
 User logout
 
-| Attribute | Value     |
-|-----------|-----------|
-| Protocol  | HTTP      |
-| Method    | POST      |
-| Path      | `/logout` |
+| Attribute | Value         |
+|-----------|---------------|
+| Protocol  | HTTP          |
+| Method    | POST          |
+| Path      | `/api/logout` |
 
 headers:
 
@@ -297,11 +297,11 @@ Success response (200)
 ####  set context
 set context
 
-| Attribute | Value        |
-|-----------|--------------|
-| Protocol  | HTTP         |
-| Method    | POST         |
-| Path      | `/setContxt` |
+| Attribute | Value            |
+|-----------|------------------|
+| Protocol  | HTTP             |
+| Method    | POST             |
+| Path      | `/api/setContxt` |
 
 headers:
 
@@ -335,11 +335,11 @@ Success response (200)
 #### removeContext
 remove context
 
-| Attribute | Value           |
-|-----------|-----------------|
-| Protocol  | HTTP            |
-| Method    | POST            |
-| Path      | `/removeContxt` |
+| Attribute | Value               |
+|-----------|---------------------|
+| Protocol  | HTTP                |
+| Method    | POST                |
+| Path      | `/api/removeContxt` |
 
 headers:
 
@@ -371,11 +371,11 @@ Success response (200)
 register a service
 
 
-| Attribute | Value              |
-|-----------|--------------------|
-| Protocol  | HTTP               |
-| Method    | POST               |
-| Path      | `/registerService` |
+| Attribute | Value                  |
+|-----------|------------------------|
+| Protocol  | HTTP                   |
+| Method    | POST                   |
+| Path      | `/api/registerService` |
 
 
 request body:
@@ -390,6 +390,8 @@ request body:
 | description    | description                                                        |
 | snapshotLimit  | how long the query result will be cached, Optional parameter       |
 | parameter      | parameter default value when query api not provide parameter value |
+
+snapshotLimit format:     3 hours / 30 minutes / 45 seconds
 
 Request example:
 ```
@@ -415,11 +417,11 @@ Success response (200)
 unregister a service
 
 
-| Attribute | Value                |
-|-----------|----------------------|
-| Protocol  | HTTP                 |
-| Method    | POST                 |
-| Path      | `/unRegisterService` |
+| Attribute | Value                    |
+|-----------|--------------------------|
+| Protocol  | HTTP                     |
+| Method    | POST                     |
+| Path      | `/api/unRegisterService` |
 
 
 request body:
@@ -453,11 +455,11 @@ Success response (200)
 list all service
 
 
-| Attribute | Value                    |
-|-----------|--------------------------|
-| Protocol  | HTTP                     |
-| Method    | GET                      |
-| Path      | `/listRegisteredService` |
+| Attribute | Value                        |
+|-----------|------------------------------|
+| Protocol  | HTTP                         |
+| Method    | GET                          |
+| Path      | `/api/listRegisteredService` |
 
 
 Response example:
@@ -490,12 +492,14 @@ API query
 
 headers:
 
-| Attribute     | Value                                            |
-|---------------|--------------------------------------------------|
-| Authorization | NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1 |
+| Attribute     | Value                                                                   |
+|---------------|-------------------------------------------------------------------------|
+| Authorization | NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1                        |
+| snapshotLimit | Optional. used to overwrite service definition. 0 means no result cache |
 
 The token information here is obtained when call /login.  
-The token is optional, if you use context in your sql statement, you must set it.
+The token is optional, if you use context in your sql statement, you must set it.  
+snapshotLimit format:     3 hours / 30 minutes / 45 seconds
 
 GET Request example:
 ```
