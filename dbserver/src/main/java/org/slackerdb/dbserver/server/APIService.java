@@ -14,6 +14,10 @@ import net.jodah.expiringmap.ExpirationPolicy;
 import net.jodah.expiringmap.ExpiringMap;
 import org.slackerdb.common.utils.Utils;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -234,6 +238,56 @@ public class APIService {
     // 数据结果缓存，在过期时间内的数据不会重复查询
     private Cache<String, Map<String, Object>> queryResultCache =  null;
 
+    // 加载服务定义文件
+    private void registerServiceDefinitionFromFile(String serviceDefinitionFile) throws IOException, JSONException
+    {
+        // 从文件中读取所有内容到字符串
+        String serviceContents = new String(Files.readAllBytes(Path.of(serviceDefinitionFile)));
+
+        JSONArray serviceDefinitionList = new JSONArray();
+        try {
+            JSONObject serviceDefinitionObj = JSONObject.parseObject(serviceContents);
+            serviceDefinitionList.add(serviceDefinitionObj);
+        }
+        catch (JSONException ignored)
+        {
+            JSONArray serviceDefinitionSubList = JSONArray.parseArray(serviceContents);
+            serviceDefinitionList.addAll(serviceDefinitionSubList);
+        }
+        for (Object serviceDefinition : serviceDefinitionList) {
+            JSONObject serviceDefinitionJsonObj = (JSONObject)serviceDefinition;
+            DBServiceDefinition dbService = new DBServiceDefinition();
+            dbService.serviceName = serviceDefinitionJsonObj.getString("serviceName");
+            dbService.serviceVersion = serviceDefinitionJsonObj.getString("serviceVersion");
+            dbService.serviceType = serviceDefinitionJsonObj.getString("serviceType");
+            dbService.sql = serviceDefinitionJsonObj.getString("sql");
+            dbService.description = serviceDefinitionJsonObj.getString("description");
+            if (dbService.description == null) {
+                dbService.description = "NO DESCRIPTION.";
+            }
+            dbService.searchPath = serviceDefinitionJsonObj.getString("searchPath");
+            if (serviceDefinitionJsonObj.containsKey("snapshotLimit")) {
+                dbService.snapshotLimit =
+                        Utils.convertDurationStrToSeconds(serviceDefinitionJsonObj.getString("snapshotLimit")) * 1000;
+            }
+            String serviceParametersStr = serviceDefinitionJsonObj.getString("parameters");
+            JSONArray serviceParameters;
+            if (serviceParametersStr != null && !serviceParametersStr.trim().isEmpty()) {
+                serviceParameters = JSONArray.parseArray(serviceParametersStr);
+                for (Object obj : serviceParameters) {
+                    JSONObject serviceParameter = (JSONObject) obj;
+                    if (serviceParameter.containsKey("name")) {
+                        dbService.parameter.put(
+                                serviceParameter.getString("name"),
+                                serviceParameter.getString("defaultValue"));
+                    }
+                }
+            }
+            registeredDBService.put(dbService.serviceType.toUpperCase() + "#" +
+                    dbService.serviceName + "#" + dbService.serviceVersion, dbService);
+        }
+    }
+
     public APIService(
             DBInstance dbInstance,
             Javalin managementApp
@@ -250,6 +304,39 @@ public class APIService {
                     .weigher((String key, Map<String, Object> value) -> estimateSize(value))
                     .recordStats()
                     .build();
+        }
+
+        // 加载注册服务的预定义文件
+        List<String> serviceDefinitionFiles = new ArrayList<>();
+        if (!this.dbInstance.serverConfiguration.getData_service_schema().trim().isEmpty()) {
+            if (new File(this.dbInstance.serverConfiguration.getData_service_schema()).isFile()) {
+                serviceDefinitionFiles.add(new File(this.dbInstance.serverConfiguration.getData_service_schema()).getAbsolutePath());
+            } else if (new File(this.dbInstance.serverConfiguration.getData_service_schema()).isDirectory()) {
+                File[] files = new File(this.dbInstance.serverConfiguration.getData_service_schema()).listFiles();
+                if (files != null) {
+                    for (File file : files) {
+                        if (file.isFile() && file.getName().endsWith(".service")) {
+                            serviceDefinitionFiles.add(file.getAbsolutePath());
+                        }
+                    }
+                }
+            } else {
+                logger.warn("[SERVER][STARTUP    ] API services definition file(s) [{}] does not exist!",
+                        this.dbInstance.serverConfiguration.getData_service_schema());
+            }
+        }
+        // 脚本按照名称来排序
+        Collections.sort(serviceDefinitionFiles);
+        for (String serviceDefinitionFile : serviceDefinitionFiles) {
+            try {
+                registerServiceDefinitionFromFile(serviceDefinitionFile);
+                logger.info("[SERVER][STARTUP    ] API services definition file [{}] load successful.",
+                        serviceDefinitionFile);
+            } catch (Exception exception)
+            {
+                logger.error("[SERVER][STARTUP    ] API services definition file {} load failed.",
+                        serviceDefinitionFile, exception);
+            }
         }
 
         // 用户登录
@@ -418,11 +505,12 @@ public class APIService {
             ctx.json(Map.of("retCode", 0, "retMsg", "successful."));
         });
 
-        // 列出当前服务列表
+        // 导出所有的注册信息, 不包含retCode等信息
         this.managementApp.get("/api/listRegisteredService",
-                ctx -> {
+                ctx->{
                     JSONArray ret = new JSONArray();
-                    for (DBServiceDefinition dbServiceDefinition : registeredDBService.values()) {
+                    for (DBServiceDefinition dbServiceDefinition : registeredDBService.values())
+                    {
                         JSONObject item = new JSONObject();
                         item.put("serviceName", dbServiceDefinition.serviceName);
                         item.put("serviceVersion", dbServiceDefinition.serviceVersion);
@@ -434,12 +522,7 @@ public class APIService {
                         item.put("parameter", dbServiceDefinition.parameter);
                         ret.add(item);
                     }
-                    ctx.json(
-                            Map.of(
-                                    "retCode",0,
-                                    "regMsg", "Successful",
-                                    "services", ret)
-                    );
+                    ctx.json(ret);
                 }
         );
 

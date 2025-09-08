@@ -74,6 +74,7 @@ public class Main {
         System.out.println("  --sql_history               enable or disable sql history feature(ON|OFF). default is off.");
         System.out.println("  --query_result_cache_size   maximum size (bytes) of api query result cache.");
         System.out.println("  --autoload                  enable or disable automatically attach new datafile under data_dir. (ON|OFF). default is off.");
+        System.out.println("  --data_service_schema       predefined data service schema. default is none.");
     }
 
     public static void main(String[] args){
@@ -365,6 +366,10 @@ public class Main {
             if (appOptions.containsKey("query_result_cache_size"))
             {
                 serverConfiguration.setQuery_result_cache_size(appOptions.get("query_result_cache_size"));
+            }
+            if (appOptions.containsKey("data_service_schema"))
+            {
+                serverConfiguration.setData_service_schema(appOptions.get("data_service_schema"));
             }
 
             // 初始化日志服务

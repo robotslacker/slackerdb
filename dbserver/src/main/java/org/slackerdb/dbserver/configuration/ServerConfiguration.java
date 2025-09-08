@@ -77,6 +77,9 @@ public class ServerConfiguration {
     // 数据库API查询结果缓存区大小
     private final long default_query_result_cache_size = 1024 * 1024 * 1024;
 
+    // 数据服务初始化加载文件
+    private final String default_data_service_schema = "";
+
     private String   data;
 
     private String   data_dir;
@@ -107,6 +110,7 @@ public class ServerConfiguration {
     private int connection_pool_maximum_idle;
     private int connection_pool_maximum_lifecycle_time;
     private long query_result_cache_size;
+    private String data_service_schema;
 
     public ServerConfiguration() throws ServerException
     {
@@ -140,6 +144,7 @@ public class ServerConfiguration {
         daemonMode = defaultDaemonMode;
         query_result_cache_size = default_query_result_cache_size;
         autoload = default_autoload;
+        data_service_schema = default_data_service_schema;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -334,6 +339,13 @@ public class ServerConfiguration {
                         autoload = this.default_autoload;
                     } else {
                         setAutoload(entry.getValue().toString());
+                    }
+                }
+                case "DATA_SERVICE_SCHEMA" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        data_service_schema = this.default_data_service_schema;
+                    } else {
+                        setData_service_schema(entry.getValue().toString());
                     }
                 }
                 case "PID" -> {
@@ -910,4 +922,15 @@ public class ServerConfiguration {
     {
         pid = pPid;
     }
+
+    public void setData_service_schema(String val)
+    {
+        this.data_service_schema = val;
+    }
+
+    public String getData_service_schema()
+    {
+        return this.data_service_schema;
+    }
+
 }

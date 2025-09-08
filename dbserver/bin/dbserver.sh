@@ -60,7 +60,7 @@ start(){
     else
         mkdir -p pid
         mkdir -p logs
-        ${_SLACKERDB_JAVA} -jar $APP_NAME \
+        ${_SLACKERDB_JAVA} -Xms4096m -Xmx4096m -jar $APP_NAME \
             --daemon true \
             --conf conf/dbserver.conf \
             --pid  ${PID_FILE} \

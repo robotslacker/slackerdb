@@ -18,7 +18,7 @@ REM # Settings
 set APP_NAME=SLACKERDB-SERVER
 set JAR_FILE=jlib\slackerdb-dbserver-0.1.6-standalone.jar
 set PID_FILE=pid\slackerdb-dbserver.pid
-set JAVA_OPTS=
+set JAVA_OPTS=-Xms4096m -Xmx4096m
 set CONF_FILE=conf\dbserver.conf
 
 :: === read parameter ===
