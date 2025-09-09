@@ -191,56 +191,62 @@ public class DBInstance {
                             // 尝试独占锁定该文件，如果失败，则跳过
                             try
                             {
-                                RandomAccessFile randomAccessFile1
-                                        = new RandomAccessFile(Path.of(serverConfiguration.getData_Dir(), file.getName()).toString(), "rw");
-                                FileChannel channel1 = randomAccessFile1.getChannel();
                                 long fileLength1;
                                 long fileLength2;
                                 FileTime lastFileModifiedTime1;
                                 FileTime lastFileModifiedTime2;
-                                FileLock lock1 = channel1.tryLock();
-                                if (lock1 != null)
+
+                                if (serverConfiguration.getAutoload_access_mode().equalsIgnoreCase("READ_WRITE"))
                                 {
-                                    // 已经锁定了该文件
-                                    fileLength1 = Path.of(serverConfiguration.getData_Dir(), file.getName()).toFile().length();
-                                    lastFileModifiedTime1 = Files.readAttributes(Path.of(serverConfiguration.getData_Dir(), file.getName()), BasicFileAttributes.class).lastModifiedTime();
-                                    lock1.release();
-                                    channel1.close();
-                                    randomAccessFile1.close();
+                                   // 尝试锁定文件
+                                    RandomAccessFile randomAccessFile1
+                                            = new RandomAccessFile(Path.of(serverConfiguration.getData_Dir(), file.getName()).toString(), "rw");
+                                    FileChannel channel1 = randomAccessFile1.getChannel();
+                                    FileLock lock1 = channel1.tryLock();
+                                    if (lock1 != null)
+                                    {
+                                        // 已经锁定了该文件
+                                        lock1.release();
+                                        channel1.close();
+                                        randomAccessFile1.close();
+                                    }
+                                    else
+                                    {
+                                        // 无法锁定文件
+                                        channel1.close();
+                                        randomAccessFile1.close();
+                                        continue;
+                                    }
                                 }
-                                else
-                                {
-                                    // 无法锁定文件
-                                    channel1.close();
-                                    randomAccessFile1.close();
-                                    continue;
-                                }
+                                fileLength1 = Path.of(serverConfiguration.getData_Dir(), file.getName()).toFile().length();
+                                lastFileModifiedTime1 = Files.readAttributes(Path.of(serverConfiguration.getData_Dir(), file.getName()), BasicFileAttributes.class).lastModifiedTime();
+
                                 // 10S后再次观察文件
                                 try {
                                     Sleeper.sleep(10 * 1000);
                                 }
                                 catch (InterruptedException ignored) {}
+
                                 // 重新观察文件
-                                RandomAccessFile randomAccessFile2
-                                        = new RandomAccessFile(Path.of(serverConfiguration.getData_Dir(), file.getName()).toString(), "rw");
-                                FileChannel channel2 = randomAccessFile2.getChannel();
-                                FileLock lock2 = channel2.tryLock();
-                                if (lock2 != null)
-                                {
-                                    // 已经锁定了该文件
-                                    fileLength2 = Path.of(serverConfiguration.getData_Dir(), file.getName()).toFile().length();
-                                    lastFileModifiedTime2 = Files.readAttributes(Path.of(serverConfiguration.getData_Dir(), file.getName()), BasicFileAttributes.class).lastModifiedTime();
-                                    lock2.release();
-                                    channel2.close();
-                                    randomAccessFile2.close();
+                                if (serverConfiguration.getAutoload_access_mode().equalsIgnoreCase("READ_WRITE")) {
+                                    RandomAccessFile randomAccessFile2
+                                            = new RandomAccessFile(Path.of(serverConfiguration.getData_Dir(), file.getName()).toString(), "rw");
+                                    FileChannel channel2 = randomAccessFile2.getChannel();
+                                    FileLock lock2 = channel2.tryLock();
+                                    if (lock2 != null) {
+                                        // 已经锁定了该文件
+                                        lock2.release();
+                                        channel2.close();
+                                        randomAccessFile2.close();
+                                    } else {
+                                        // 无法锁定文件
+                                        channel2.close();
+                                        randomAccessFile2.close();
+                                        continue;
+                                    }
                                 }
-                                else
-                                {
-                                    // 无法锁定文件
-                                    channel2.close();
-                                    randomAccessFile2.close();
-                                    continue;
-                                }
+                                fileLength2 = Path.of(serverConfiguration.getData_Dir(), file.getName()).toFile().length();
+                                lastFileModifiedTime2 = Files.readAttributes(Path.of(serverConfiguration.getData_Dir(), file.getName()), BasicFileAttributes.class).lastModifiedTime();
 
                                 // 比对两次锁定的文件情况
                                 if (fileLength1 != fileLength2 || !lastFileModifiedTime1.equals(lastFileModifiedTime2))
@@ -254,10 +260,7 @@ public class DBInstance {
                                     Connection conn = ((DuckDBConnection) backendSysConnection).duplicate();
                                     Statement stmt = conn.createStatement();
                                     String sql = "ATTACH OR REPLACE '" + Path.of(serverConfiguration.getData_Dir(), file.getName()) + "' AS \"" + file.getName().replace(".db","") + "\"";
-                                    if (
-                                            serverConfiguration.getAccess_mode().equalsIgnoreCase("READ_ONLY") ||
-                                                    !Path.of(serverConfiguration.getData_Dir(), file.getName()).toFile().canWrite()
-                                    )
+                                    if (serverConfiguration.getAutoload_access_mode().equalsIgnoreCase("READ_ONLY"))
                                     {
                                         sql = sql + " (READ_ONLY)";
                                     }

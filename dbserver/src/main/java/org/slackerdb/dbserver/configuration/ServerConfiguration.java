@@ -47,6 +47,10 @@ public class ServerConfiguration {
     private final int default_threads = (int)(Runtime.getRuntime().availableProcessors() * 0.5);
     // 默认数据库可读可写
     private final String default_access_mode = "READ_WRITE";
+
+    // 默认自动挂载数据库的打开模式
+    private final String default_autoload_access_mode = "READ_ONLY";
+
     // 默认使用全部的CPU作为Netty的后台线程数
     private final int default_max_workers = Runtime.getRuntime().availableProcessors();
     // 默认客户端的超时时间
@@ -106,6 +110,7 @@ public class ServerConfiguration {
     private String   template;
     private boolean  daemonMode;
     private String   autoload;
+    private String   autoload_access_mode;
     private int connection_pool_minimum_idle;
     private int connection_pool_maximum_idle;
     private int connection_pool_maximum_lifecycle_time;
@@ -144,6 +149,7 @@ public class ServerConfiguration {
         daemonMode = defaultDaemonMode;
         query_result_cache_size = default_query_result_cache_size;
         autoload = default_autoload;
+        autoload_access_mode = default_autoload_access_mode;
         data_service_schema = default_data_service_schema;
 
         // 初始化默认一个系统的临时端口
@@ -339,6 +345,13 @@ public class ServerConfiguration {
                         autoload = this.default_autoload;
                     } else {
                         setAutoload(entry.getValue().toString());
+                    }
+                }
+                case "AUTOLOAD_ACCESS_MODE" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        autoload_access_mode = this.default_autoload_access_mode;
+                    } else {
+                        setAutoload_access_mode(entry.getValue().toString());
                     }
                 }
                 case "DATA_SERVICE_SCHEMA" -> {
@@ -916,6 +929,22 @@ public class ServerConfiguration {
             );
         }
         access_mode = pAccessMode;
+    }
+
+    public void setAutoload_access_mode(String pAccessMode) throws ServerException
+    {
+        if (!pAccessMode.equalsIgnoreCase("READ_WRITE") && !pAccessMode.equalsIgnoreCase("READ_ONLY"))
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "access_mode", pAccessMode)
+            );
+        }
+        autoload_access_mode = pAccessMode;
+    }
+
+    public String getAutoload_access_mode()
+    {
+        return autoload_access_mode;
     }
 
     public void setPid(String pPid)

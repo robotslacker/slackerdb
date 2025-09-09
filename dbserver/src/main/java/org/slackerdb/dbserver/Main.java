@@ -74,6 +74,7 @@ public class Main {
         System.out.println("  --sql_history               enable or disable sql history feature(ON|OFF). default is off.");
         System.out.println("  --query_result_cache_size   maximum size (bytes) of api query result cache.");
         System.out.println("  --autoload                  enable or disable automatically attach new datafile under data_dir. (ON|OFF). default is off.");
+        System.out.println("  --autoload_access_mode      auto load database mode, READ_ONLY|READ_WRITE, default is READ_ONLY..");
         System.out.println("  --data_service_schema       predefined data service schema. default is none.");
     }
 
@@ -342,6 +343,10 @@ public class Main {
             if (appOptions.containsKey("autoload"))
             {
                 serverConfiguration.setAutoload(appOptions.get("autoload"));
+            }
+            if (appOptions.containsKey("autoload_access_mode"))
+            {
+                serverConfiguration.setAutoload_access_mode(appOptions.get("autoload_access_mode"));
             }
             if (appOptions.containsKey("pid"))
             {
