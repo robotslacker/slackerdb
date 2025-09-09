@@ -184,7 +184,7 @@ public class ProxyInstance {
                 javalinLogger.setLevel(Level.OFF);
                 jettyLogger.setLevel(Level.OFF);
             }
-            this.proxyInstanceX = new ProxyInstanceX(this.logger);
+            this.proxyInstanceX = new ProxyInstanceX(this.logger, this);
             this.proxyInstanceX.start(serverConfiguration);
         }
         else

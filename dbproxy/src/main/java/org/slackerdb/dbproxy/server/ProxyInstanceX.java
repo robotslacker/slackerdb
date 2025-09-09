@@ -24,15 +24,20 @@ import java.util.stream.Stream;
 
 public class ProxyInstanceX {
     private final Logger logger;
+    private final ProxyInstance proxyInstance;
     private Javalin managementApp = null;
     private static final HttpClient CLIENT = HttpClient.newBuilder()
             .version(Version.HTTP_2)
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
-    public ProxyInstanceX(Logger logger)
+    public ProxyInstanceX(
+            Logger logger,
+            ProxyInstance proxyInstance
+    )
     {
         this.logger = logger;
+        this.proxyInstance = proxyInstance;
     }
 
     public ConcurrentHashMap<String, String> forwarderPathMappings = new ConcurrentHashMap<>();
@@ -238,6 +243,10 @@ public class ProxyInstanceX {
                     ctx.method(), ctx.path(), this.getClientIp(ctx), ctx.status(), duration);
         });
 
+        // 定义API服务
+        // API服务处理
+        new APIService(this.proxyInstance, this.managementApp);
+
         // 自定义404假面
         this.managementApp.error(404, ctx -> ctx.html(Files.readString(Path.of(page404Resource.getURI()))));
 
@@ -247,7 +256,7 @@ public class ProxyInstanceX {
             ctx.status(500).result("Internal Server Error");
         });
 
-        logger.info("[SERVER][STARTUP    ] Management server listening on {}:{}.",
+        logger.info("[PROXY][STARTUP    ] Management server listening on {}:{}.",
                 serverConfiguration.getBindHost(), serverConfiguration.getPortX());
     }
 
