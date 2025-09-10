@@ -14,14 +14,14 @@ Based on the description, this tool achieves the following capabilities:
 * Offers a dedicated access client within the tool that delivers:
   1. Advanced features
   2. Comprehensive data dictionary access support
-* You can use COPY syntax to quickly import data, compatible with PG's CopyManager.
-*  Provides self-managed data services and API publishing.
+* You can use COPY syntax to quickly import data, compatible with PG CopyManager.
+*  Provides self-managed data services and API.
 
 * You have multiple ways to connect to our database:
   *  Directly connect to the server
   *  Connect through a proxy. Based on the proxy, you can connect to multiple servers through one proxy.
-  *  Embed the compiled jar package into your own application, so you don't need a separate database service program.
-  *  Register a data service and access it through the REST API.
+  *  Embed the compiled jar package into your own application.
+  *  Register a data service and access it through REST API.
  
 ## Usage
 ### Build from source:
@@ -241,9 +241,9 @@ You can keep only the parameters you need to modify.
 For parameters that are not configured, means default values will be used.
 
 ### Data Service
-* Data service work with port x, please make sure enable port x in server configuration or parameter.
-It's important to note that currently, we have little regard for data security.
-This data services should work in a trusted environment.   
+* Data service work with port x, please make sure you have enabled it in server configuration or command parameter.
+It's important to note that we have consider data security.
+It means data services must work in a trusted environment.   
 
 ####  user login
 User login (note: this is optional).  After success, a token will be provided.   
@@ -602,14 +602,13 @@ Success response (200)
 
 ## Use IDE tools to connect to the database
 Since native Postgres clients often use some data dictionary information that duckdb doesn't have,   
-We do not recommend that you use the PG client to connect to our database(That works, but has limited functionality).     
+We do not recommend that you use the PG client to connect to this database(That works, but has limited functionality).     
 Instead, we suggest use the dedicated client provided in this project.
 
 ## Known Issues
 ### 1. User and password authorization
 We do not support user password authentication, just for compatibility, keep these two options.  
-you can fill in the password part as you like, it doesn't make sense.  
-The user part will be used by the default schema of the user connection.
+you can fill anything as you like, it doesn't make sense.  
 
 ### 2. Limited support for duckdb datatype
 Only some duckdb data types are supported, mainly simple types, such as int, number, double, varchar, ...
