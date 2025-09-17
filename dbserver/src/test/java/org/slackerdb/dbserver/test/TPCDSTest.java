@@ -17,7 +17,7 @@ import java.util.*;
 public class TPCDSTest {
     static final int dbPort=4309;
     // 一共需要运行几轮
-    static final int round = 1000;
+    static final int round = 10;
     // 需要几个线程并发测试
     static final int parallel = 8;
     // 数据集的规模， 1代表1G

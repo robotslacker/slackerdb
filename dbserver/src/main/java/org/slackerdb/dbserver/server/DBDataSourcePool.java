@@ -155,7 +155,8 @@ public class DBDataSourcePool {
             Connection connection = this.idleConnectionPool.poll();
             if (connection == null) {
                 if (this.usedConnectionPool.size() >= this.dbDataSourcePoolConfig.getMaximumPoolSize()) {
-                    throw new SQLException("Maximum connection reached in Pool [{}].", poolName);
+                    throw new SQLException("Maximum connection reached [" + this.usedConnectionPool.size() + "] " +
+                            "in Pool [" + poolName + "].");
                 } else {
                     // 创建一个新连接，并直接返回
                     connection = createNewConnection();
@@ -279,6 +280,7 @@ public class DBDataSourcePool {
 
         // 获取数据库连接
         Connection connection = DriverManager.getConnection(this.dbDataSourcePoolConfig.getJdbcURL(), connectProperties);
+        connection.setAutoCommit(this.dbDataSourcePoolConfig.getAutoCommit());
 
         int connectionId = this.connectionId.incrementAndGet();
         ConnectionMetaData connectionMetaData = new ConnectionMetaData();

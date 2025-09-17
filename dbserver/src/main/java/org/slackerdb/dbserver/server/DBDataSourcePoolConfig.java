@@ -9,6 +9,7 @@ public class DBDataSourcePoolConfig {
     private int minimumIdle;
     private int maximumIdle;
     private int maximumLifeCycleTime;
+    private boolean autoCommit = true;
 
     public String getJdbcURL()
     {
@@ -59,4 +60,15 @@ public class DBDataSourcePoolConfig {
     public void setMinimumIdle(int minimumIdle) {
         this.minimumIdle = minimumIdle;
     }
+
+    public void setAutoCommit(boolean val)
+    {
+        this.autoCommit = val;
+    }
+
+    public boolean getAutoCommit()
+    {
+        return this.autoCommit;
+    }
 }
+

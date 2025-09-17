@@ -25,6 +25,8 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 
 public class ExecuteRequest extends PostgresRequest {
@@ -41,6 +43,7 @@ public class ExecuteRequest extends PostgresRequest {
     private String portalName;
     private int    maximumRowsReturned;
 
+    private static final Lock sqlHistorylock = new ReentrantLock();
     public ExecuteRequest(DBInstance pDbInstance) {
         super(pDbInstance);
     }
@@ -165,6 +168,7 @@ public class ExecuteRequest extends PostgresRequest {
         String historySQL = "Insert INTO sysaux.SQL_HISTORY(ID, ServerId, SessionId, ClientIP, SQL, SqlId, StartTime) " +
                 "VALUES(?, " + ProcessHandle.current().pid() + ",?,?,?,?, current_timestamp)";
         try {
+            sqlHistorylock.lock();
             PreparedStatement preparedStatement =
                     backendSqlHistoryConnection.prepareStatement(historySQL);
             preparedStatement.setLong(1, sqlHistoryId);
@@ -174,12 +178,16 @@ public class ExecuteRequest extends PostgresRequest {
             preparedStatement.setLong(5, this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.get());
             preparedStatement.executeUpdate();
             preparedStatement.close();
+
             // 希望连接池能够复用数据库连接
             this.dbInstance.releaseSqlHistoryConn(backendSqlHistoryConnection);
         }
         catch (SQLException se)
         {
             this.dbInstance.logger.debug("[SERVER] Save to sql history failed.", se);
+        }
+        finally {
+            sqlHistorylock.unlock();
         }
         return sqlHistoryId;
     }
@@ -205,6 +213,7 @@ public class ExecuteRequest extends PostgresRequest {
                 "      ErrorMsg = ? " +
                 "WHERE ID = ?";
         try {
+            sqlHistorylock.lock();
             PreparedStatement preparedStatement = backendSqlHistoryConnection.prepareStatement(historySQL);
             if (sqlCode == 0) {
                 preparedStatement.setInt(1, sqlCode);
@@ -218,12 +227,16 @@ public class ExecuteRequest extends PostgresRequest {
             preparedStatement.setLong(4, sqlHistoryId);
             preparedStatement.execute();
             preparedStatement.close();
+
             // 希望连接池能够复用数据库连接
             this.dbInstance.releaseSqlHistoryConn(backendSqlHistoryConnection);
         }
         catch (SQLException se)
         {
             this.dbInstance.logger.warn("[SERVER] Save to sql history failed.", se);
+        }
+        finally {
+            sqlHistorylock.unlock();
         }
     }
 

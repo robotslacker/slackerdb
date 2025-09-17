@@ -766,6 +766,7 @@ public class DBInstance {
                 sqlHistoryDataSourcePoolConfig.setMaximumPoolSize(serverConfiguration.getMax_Workers());
                 sqlHistoryDataSourcePoolConfig.setJdbcURL(backendConnectString);
                 sqlHistoryDataSourcePoolConfig.setConnectProperties(backendConnectProperties);
+                sqlHistoryDataSourcePoolConfig.setAutoCommit(true);
                 try {
                     this.sqlHistoryDataSourcePool = new DBDataSourcePool("HISTORY", sqlHistoryDataSourcePoolConfig, logger);
                 }
