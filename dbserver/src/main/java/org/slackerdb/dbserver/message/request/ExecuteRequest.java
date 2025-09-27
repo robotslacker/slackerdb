@@ -77,7 +77,7 @@ public class ExecuteRequest extends PostgresRequest {
                         column.columnLength = 8;
                         column.columnValue = Utils.int64ToBytes(rs.getLong(i));
                     }
-                    case "VARCHAR" -> {
+                    case "VARCHAR", "INTERVAL" -> {
                         byte[] columnBytes = rs.getString(i).getBytes(StandardCharsets.UTF_8);
                         column.columnLength = columnBytes.length;
                         column.columnValue = columnBytes;

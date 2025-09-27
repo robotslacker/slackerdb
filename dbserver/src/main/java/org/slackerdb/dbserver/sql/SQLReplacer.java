@@ -12,8 +12,10 @@ import java.util.regex.Pattern;
 public class SQLReplacer {
     public static final List<QueryReplacerItem> SQLReplaceItems = Collections.synchronizedList(new ArrayList<>());
 
+    // 定义一个队列，对于相同的SQL不重复进行替换，来提高处理效率
     private static final LRUCache lruCache = new LRUCache();
 
+    // 加载替换规则，部分SQL在PG的通讯协议下需要进行替换，以保证PG协议的正常
     public static void load(DBInstance dbInstance)
     {
         String   catalogName;
@@ -217,6 +219,7 @@ public class SQLReplacer {
         );
     }
 
+    // 移除SQL中的注释
     public static String removeSQLComments(String sql)
     {
         StringBuilder result = new StringBuilder();
@@ -280,10 +283,14 @@ public class SQLReplacer {
         return result.toString();
     }
 
+    // 按照分号分割SQL，并依次执行
     public static List<String> splitSQLWithSemicolon(String sql) {
         List<String> result = new ArrayList<>();
         StringBuilder currentSegment = new StringBuilder();
         boolean inSingleQuote = false;
+
+        // 移除SQL中的注释
+        sql = removeSQLComments(sql);
 
         for (int i = 0; i < sql.length(); i++) {
             char c = sql.charAt(i);
@@ -309,6 +316,7 @@ public class SQLReplacer {
         return result;
     }
 
+    // 对SQL进行替换，有些SQL无法通过PG的协议，所以需要进行特殊处理
     public static String replaceSQL(DBInstance pDbInstance, String sql) {
         // 如果有缓存的SQL记录，则直接读取缓存的内容
         String replacedSQL = lruCache.getReplacedSql(sql);

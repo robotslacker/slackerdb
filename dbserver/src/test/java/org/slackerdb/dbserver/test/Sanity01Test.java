@@ -1267,11 +1267,34 @@ public class Sanity01Test {
     }
 
     @Test
-    void testJing() throws Exception {
+    void testTimeInterval() throws Exception {
         String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem?currentSchema=main";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
+
+        String sql = """
+                SELECT
+                	INTERVAL 1 YEAR, -- single unit using YEAR keyword
+                	INTERVAL (5.562) YEAR, -- parentheses necessary for variable amounts;
+                	-- stored as integer number of months
+                	INTERVAL '1 month 1 day', -- string type necessary for multiple units; stored as (1 month, 1 day)
+                	'16 months'::INTERVAL, -- string cast supported; stored as 16 months
+                	'24:00:00'::INTERVAL -- HH::MM::SS string supported
+            """;
+        Statement stmt = pgConn1.createStatement();
+        ResultSet rs = stmt.executeQuery(sql);
+        if (rs.next())
+        {
+            assert rs.getString(1).equalsIgnoreCase("1 year");
+            assert rs.getString(2).equalsIgnoreCase("5 years");
+            assert rs.getString(3).equalsIgnoreCase("1 month 1 day");
+            assert rs.getString(4).equalsIgnoreCase("1 year 4 months");
+            assert rs.getString(5).equalsIgnoreCase("24:00:00");
+        }
+        rs.close();
+        stmt.close();
+        pgConn1.close();
 
     }
 }
