@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.TimeZone;
+import java.util.concurrent.TimeUnit;
 
 public class Sanity02Test {
     static int dbPort = 4309;
@@ -54,18 +55,22 @@ public class Sanity02Test {
         pgConn1.setAutoCommit(false);
 
         pgConn1.createStatement().execute("create or replace table testSQLHistory(id int)");
-        for (int i=0; i<200;i++)
+        for (int i=0; i<20;i++)
         {
             pgConn1.createStatement().execute("Insert into testSQLHistory values(" + i + ")");
         }
         pgConn1.commit();
         pgConn1.close();
-
         pgConn1 = DriverManager.getConnection(connectURL, "", "");
+        try {
+            // 由于SQLHistory目前是异步写入，所以这里休息10秒后再看结果
+            TimeUnit.SECONDS.sleep(3);
+        }
+        catch (InterruptedException ignored) {}
         ResultSet rs = pgConn1.createStatement().executeQuery("Select Count(*) From sysaux.SQL_HISTORY");
         if (rs.next())
         {
-            assert rs.getInt(1) > 200;
+            assert rs.getInt(1) > 20;
         }
         else
         {

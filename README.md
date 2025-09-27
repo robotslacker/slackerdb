@@ -3,30 +3,30 @@
 # SlackerDB (DuckDB Postgres proxy)
 
 ## Quick Note
-This is an agile DuckDB extension that provides Java-based connectivity with network access and multi-process support capabilities.
+This is an agile DuckDB extension that provides Java-based connectivity with network access and multi-process support.
 
 ### What we can do:
-Based on the description, this tool achieves the following capabilities:
+Based on the description, this extension can do following:
 
-* Enables remote access to DuckDB via TCP/IP from multiple locations, instead of local-only limitations. 
-* Supports multi-process access to DuckDB instead of single-process restrictions. 
-* Provides PostgreSQL wire protocol compatibility (JDBC, ODBC, etc.), allowing DuckDB to function like a PostgreSQL database.
-* Offers a dedicated access client within the tool that delivers:
+* Enables remote access to DuckDB via TCP/IP from network, instead of local connect only restriction. 
+* Supports multi-process access to DuckDB instead of single-process restriction. 
+* Provides PostgreSQL wire protocol compatibility (JDBC, ODBC, etc.), allowing DuckDB to serve as a PostgreSQL database.
+* Offers a dedicated access client, which has:
   1. Advanced features
   2. Comprehensive data dictionary access support
-* You can use COPY syntax to quickly import data, compatible with PG CopyManager.
-*  Provides self-managed data services and API.
+* You can use COPY syntax to import data with high performence, this compatible with PG CopyManager.
+* Provides self-managed data services and API.
 
-* You have multiple ways to connect to our database:
-  *  Directly connect to the server
-  *  Connect through a proxy. Based on the proxy, you can connect to multiple servers through one proxy.
+* You have multiple ways to connect to this extension:
+  *  Directly connect to the server with jdbc, odbc, ..
+  *  Connect through a connection gateway which multiple servers(can on different host or different process) are behinds it.
   *  Embed the compiled jar package into your own application.
-  *  Register a data service and access it through REST API.
+  *  Register a data service and access data through REST API.
  
 ## Usage
 ### Build from source:
 ```
-    # Download JDK17 and maven 3.6+, and install them.
+    # make sure you have JDK17 and maven 3.6+ ready.
     # Download source code
     git clone ...
     # compile it
@@ -238,12 +238,12 @@ locale=
 
 Note: All parameters are optional.   
 You can keep only the parameters you need to modify.   
-For parameters that are not configured, means default values will be used.
+For parameters that are not configured, default values will be used.
 
 ### Data Service
-* Data service work with port x, please make sure you have enabled it in server configuration or command parameter.
-It's important to note that we have consider data security.
-It means data services must work in a trusted environment.   
+* Data service work with port x, please make sure you have enabled it in server configuration or from command parameter.
+It's important to note that we have no consider on data security.
+This means data services must work in a trusted environment.   
 
 ####  user login
 User login (note: this is optional).  After success, a token will be provided.   

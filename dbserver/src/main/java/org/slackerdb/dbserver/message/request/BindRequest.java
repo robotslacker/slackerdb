@@ -4,6 +4,7 @@ import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.common.utils.DBUtil;
 import org.slackerdb.dbserver.entity.ParsedStatement;
 import org.slackerdb.dbserver.entity.PostgresTypeOids;
+import org.slackerdb.dbserver.entity.SQLHistoryRecord;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.BindComplete;
@@ -16,7 +17,6 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
@@ -254,44 +254,24 @@ public class BindRequest extends PostgresRequest {
             PostgresMessage.writeAndFlush(ctx, BindComplete.class.getSimpleName(), out, this.dbInstance.logger);
         }
         catch (SQLException e) {
-            // 插入SQL执行历史
-            Connection backendSqlHistoryConnection = null;
-            try {
-                backendSqlHistoryConnection = this.dbInstance.getSqlHistoryConn();
-            } catch (SQLException se)
-            {
-                this.dbInstance.logger.warn("[SERVER] Failed to get sql history conn.", se);
-            }
-            if (backendSqlHistoryConnection != null)
-            {
-                String historySQL = "Insert INTO sysaux.SQL_HISTORY(ID, ServerID, SessionId, ClientIP, SQL, SqlId, StartTime, EndTime," +
-                        "SQLCode, AffectedRows, ErrorMsg) " +
-                        "VALUES(?," + ProcessHandle.current().pid() + ", ?,?,?,?, current_timestamp, current_timestamp, ?, 0, ?)";
-                try {
-                    PreparedStatement preparedStatement =
-                            backendSqlHistoryConnection.prepareStatement(historySQL);
-                    preparedStatement.setLong(1, this.dbInstance.backendSqlHistoryId.incrementAndGet());
-                    preparedStatement.setLong(2, getCurrentSessionId(ctx));
-                    preparedStatement.setString(3, this.dbInstance.getSession(getCurrentSessionId(ctx)).clientAddress);
-                    preparedStatement.setString(4, this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL);
-                    preparedStatement.setLong(5, this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.get());
-                    if (e.getErrorCode() == 0) {
-                        preparedStatement.setInt(6, -99);
-                    }
-                    else
-                    {
-                        preparedStatement.setInt(6, e.getErrorCode());
-                    }
-                    preparedStatement.setString(7, e.getSQLState() + ":" + e.getMessage());
-                    preparedStatement.execute();
-                    preparedStatement.close();
-                    // 希望连接池能够复用数据库连接
-                    this.dbInstance.releaseSqlHistoryConn(backendSqlHistoryConnection);
-                }
-                catch (SQLException se)
-                {
-                    this.dbInstance.logger.debug("[SERVER] Save to sql history failed.", se);
-                }
+            if (!this.dbInstance.serverConfiguration.getAccess_mode().equals("READ_ONLY") &&
+                    this.dbInstance.serverConfiguration.getSqlHistory().equalsIgnoreCase("ON")) {
+                SQLHistoryRecord sqlHistoryRecord =
+                        new SQLHistoryRecord(
+                                "INSERT",
+                                this.dbInstance.backendSqlHistoryId.incrementAndGet(),
+                                ProcessHandle.current().pid(),
+                                getCurrentSessionId(ctx),
+                                this.dbInstance.getSession(getCurrentSessionId(ctx)).clientAddress,
+                                this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL,
+                                this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.get(),
+                                LocalDateTime.now(),
+                                LocalDateTime.now(),
+                                e.getErrorCode(),
+                                0,
+                                e.getSQLState() + ":" + e.getMessage()
+                        );
+                this.dbInstance.sqlHistoryList.offer(sqlHistoryRecord);
             }
 
             // 生成一个错误消息

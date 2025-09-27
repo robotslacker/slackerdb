@@ -11,12 +11,14 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
 import org.duckdb.DuckDBConnection;
+import org.slackerdb.common.utils.BoundedQueue;
 import org.slackerdb.common.utils.OSUtil;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.logger.AppLogger;
 import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.common.utils.Utils;
+import org.slackerdb.dbserver.entity.SQLHistoryRecord;
 import org.slackerdb.dbserver.message.request.AdminClientRequest;
 import org.slackerdb.dbserver.sql.SQLReplacer;
 import org.slf4j.LoggerFactory;
@@ -38,6 +40,7 @@ import java.text.MessageFormat;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
@@ -65,8 +68,10 @@ public class DBInstance {
 
     // DuckDB的数据库连接池
     public DBDataSourcePool dbDataSourcePool = null;
-    // SQL历史记录的连接池
-    public DBDataSourcePool sqlHistoryDataSourcePool = null;
+
+    // SQL历史记录并不会直接操作，而是会放到队列中，由其他线程来完成处理
+    public BoundedQueue<SQLHistoryRecord>  sqlHistoryList
+            = new BoundedQueue<>(10*1000);
 
     // 资源文件，记录各种消息，以及日后可能的翻译信息
     public final ResourceBundle resourceBundle;
@@ -313,6 +318,106 @@ public class DBInstance {
         }
     }
     private DBInstanceMonitorThread dbInstanceMonitorThread = null;
+    // SQL历史记录线程
+    class DBInstanceSQLHistoryThread extends Thread
+    {
+        @Override
+        public void run()
+        {
+            // 设置线程名称
+            setName("Session-SQLHistory");
+
+            String historyInsertSQL = """
+                    Insert INTO sysaux.SQL_HISTORY(
+                        ID, ServerID, SessionId, ClientIP, SQL, SqlId, StartTime, EndTime,
+                        SQLCode, AffectedRows, ErrorMsg)
+                        VALUES(?,?, ?,?,?,?, ?,? , ?, ?, ?)
+                    """;
+            String historyUpdateSQL = """
+                    Update  sysaux.SQL_HISTORY
+                    SET     EndTime = ?,
+                            SqlCode = ?,
+                            AffectedRows = ?,
+                            ErrorMsg = ?
+                    WHERE ID = ?
+                    """;
+            PreparedStatement historyInsertStmt;
+            PreparedStatement historyUpdateStmt;
+            try {
+                Connection sqlHistoryConn = ((DuckDBConnection) backendSysConnection).duplicate();
+                sqlHistoryConn.setAutoCommit(false);
+                int nProcessedRows = 0;
+                historyInsertStmt = sqlHistoryConn.prepareStatement(historyInsertSQL);
+                historyUpdateStmt = sqlHistoryConn.prepareStatement(historyUpdateSQL);
+                while (!isInterrupted()) {
+                    while (!sqlHistoryList.isEmpty() && !isInterrupted()) {
+                        SQLHistoryRecord sqlHistoryRecord = sqlHistoryList.poll();
+                        if (sqlHistoryRecord.type().equalsIgnoreCase("INSERT")) {
+                            historyInsertStmt.setLong(1, sqlHistoryRecord.ID());
+                            historyInsertStmt.setLong(2, sqlHistoryRecord.ServerID());
+                            historyInsertStmt.setLong(3, sqlHistoryRecord.SessionId());
+                            historyInsertStmt.setString(4, sqlHistoryRecord.ClientIP());
+                            historyInsertStmt.setString(5, sqlHistoryRecord.SQL());
+                            historyInsertStmt.setLong(6, sqlHistoryRecord.SqlId());
+                            if (sqlHistoryRecord.StartTime() != null) {
+                                historyInsertStmt.setTimestamp(7, Timestamp.valueOf(sqlHistoryRecord.StartTime()));
+                            }
+                            else
+                            {
+                                historyInsertStmt.setTimestamp(7, null);
+                            }
+                            if (sqlHistoryRecord.EndTime() != null) {
+                                historyInsertStmt.setTimestamp(8, Timestamp.valueOf(sqlHistoryRecord.EndTime()));
+                            }
+                            else
+                            {
+                                historyInsertStmt.setTimestamp(8, null);
+                            }
+                            historyInsertStmt.setInt(9, sqlHistoryRecord.SQLCode());
+                            historyInsertStmt.setLong(10, sqlHistoryRecord.AffectedRows());
+                            historyInsertStmt.setString(11, sqlHistoryRecord.ErrorMsg());
+                            historyInsertStmt.execute();
+                            nProcessedRows = nProcessedRows + 1;
+                        } else if (sqlHistoryRecord.type().equalsIgnoreCase("UPDATE")) {
+                            if (sqlHistoryRecord.EndTime() != null) {
+                                historyUpdateStmt.setTimestamp(1, Timestamp.valueOf(sqlHistoryRecord.EndTime()));
+                            }
+                            else
+                            {
+                                historyUpdateStmt.setTimestamp(1, null);
+                            }
+                            historyUpdateStmt.setInt(2, sqlHistoryRecord.SQLCode());
+                            historyUpdateStmt.setLong(3, sqlHistoryRecord.AffectedRows());
+                            historyUpdateStmt.setString(4, sqlHistoryRecord.ErrorMsg());
+                            historyUpdateStmt.setLong(5, sqlHistoryRecord.ID());
+                            historyUpdateStmt.execute();
+                            nProcessedRows = nProcessedRows + 1;
+                        }
+                        if (nProcessedRows % 1000 == 0) {
+                            sqlHistoryConn.commit();
+                            nProcessedRows = 0;
+                        }
+                    }
+                    if (nProcessedRows != 0)
+                    {
+                        sqlHistoryConn.commit();
+                        nProcessedRows = 0;
+                    }
+                    try {
+                        TimeUnit.SECONDS.sleep(1);
+                    }
+                    catch (InterruptedException ignored) {
+                        this.interrupt();
+                    }
+                }
+            }
+            catch (SQLException sqlException)
+            {
+                logger.error("[SQLHistory] Save sql history failed.", sqlException);
+            }
+        }
+    }
+    private DBInstanceSQLHistoryThread dbInstanceSQLHistoryThread = null;
 
     // 注册/取消注册当前的服务端口到指定的监听进程上
     private void talkWithRemoteListener(String method, String remoteListenerHost, int remoteListenerPort) throws ServerException
@@ -751,34 +856,12 @@ public class DBInstance {
                 throw new ServerException("Init connection pool error [" + instanceName + "]", sqlException);
             }
 
-            // 初始化SQLHistory连接池
+            // 初始化SQLHistory
             if (!serverConfiguration.getAccess_mode().equals("READ_ONLY") &&
                     serverConfiguration.getSqlHistory().equalsIgnoreCase("ON")) {
-                DBDataSourcePoolConfig sqlHistoryDataSourcePoolConfig = new DBDataSourcePoolConfig();
-                int poolMinHandle = 20;
-                if (poolMinHandle > serverConfiguration.getMax_Workers())
-                {
-                    poolMinHandle = serverConfiguration.getMax_Workers();
-                }
-                sqlHistoryDataSourcePoolConfig.setMinimumIdle(poolMinHandle);
-                sqlHistoryDataSourcePoolConfig.setMaximumIdle(serverConfiguration.getMax_Workers());
-                sqlHistoryDataSourcePoolConfig.setMaximumLifeCycleTime(0);
-                sqlHistoryDataSourcePoolConfig.setMaximumPoolSize(serverConfiguration.getMax_Workers());
-                sqlHistoryDataSourcePoolConfig.setJdbcURL(backendConnectString);
-                sqlHistoryDataSourcePoolConfig.setConnectProperties(backendConnectProperties);
-                sqlHistoryDataSourcePoolConfig.setAutoCommit(true);
-                try {
-                    this.sqlHistoryDataSourcePool = new DBDataSourcePool("HISTORY", sqlHistoryDataSourcePoolConfig, logger);
-                }
-                catch (SQLException sqlException)
-                {
-                    throw new ServerException("Init sql history connection pool error [" + instanceName + "]", sqlException);
-                }
 
-                // 启用SQLHistory记录
-                Connection backendSqlHistoryConn = this.sqlHistoryDataSourcePool.getConnection();
                 // SQL History会保存在数据库内部。
-                Statement sqlHistoryStmt = backendSqlHistoryConn.createStatement();
+                Statement sqlHistoryStmt = backendSysConnection.createStatement();
                 sqlHistoryStmt.execute("CREATE SCHEMA IF NOT EXISTS sysaux");
                 sqlHistoryStmt.execute(
                         """
@@ -802,7 +885,7 @@ public class DBInstance {
 
                 // 获取之前最大的SqlHistory的ID
                 String sql = "Select Max(ID) From sysaux.SQL_HISTORY";
-                Statement statement = backendSqlHistoryConn.createStatement();
+                Statement statement = backendSysConnection.createStatement();
                 ResultSet resultSet = statement.executeQuery(sql);
                 if (resultSet.next())
                 {
@@ -811,8 +894,12 @@ public class DBInstance {
                 resultSet.close();
                 statement.close();
 
-                // 希望连接池能够复用数据库连接
-                this.sqlHistoryDataSourcePool.releaseConnection(backendSqlHistoryConn);
+                // 开启后台异步线程，用来同步SQL历史
+                if (dbInstanceSQLHistoryThread == null)
+                {
+                    dbInstanceSQLHistoryThread = new DBInstanceSQLHistoryThread();
+                    dbInstanceSQLHistoryThread.start();
+                }
             }
         }
         catch(SQLException | IOException e){
@@ -906,6 +993,13 @@ public class DBInstance {
                 dbInstanceMonitorThread.interrupt();
             }
             dbInstanceMonitorThread = null;
+        }
+        // 关闭SQLHistory的后台进程
+        if (dbInstanceSQLHistoryThread != null) {
+            if (dbInstanceSQLHistoryThread.isAlive()) {
+                dbInstanceSQLHistoryThread.interrupt();
+            }
+            dbInstanceSQLHistoryThread = null;
         }
 
         try {
@@ -1012,21 +1106,5 @@ public class DBInstance {
     public void setExclusiveMode(boolean exclusiveMode)
     {
         this.exclusiveMode = exclusiveMode;
-    }
-
-    // 获得sqlHistory的数据库连接
-    public Connection getSqlHistoryConn() throws SQLException
-    {
-        if (serverConfiguration.getSqlHistory().equalsIgnoreCase("OFF"))
-        {
-            // 没有开启日志服务
-            return null;
-        }
-        return this.sqlHistoryDataSourcePool.getConnection();
-    }
-
-    public void releaseSqlHistoryConn(Connection sqlHistoryConn)
-    {
-        this.sqlHistoryDataSourcePool.releaseConnection(sqlHistoryConn);
     }
 }
