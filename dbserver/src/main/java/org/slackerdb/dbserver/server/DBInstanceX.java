@@ -2,6 +2,8 @@ package org.slackerdb.dbserver.server;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import com.alibaba.fastjson2.JSONException;
+import com.alibaba.fastjson2.JSONObject;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.staticfiles.Location;
@@ -14,6 +16,7 @@ import org.slackerdb.dbserver.entity.APIHistoryRecord;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
 
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.*;
@@ -327,8 +330,77 @@ public class DBInstanceX {
                 }
         );
 
+        // 系统数据备份
+        this.managementApp.post("/backup", ctx -> {
+            JSONObject bodyObject;
+            try {
+                bodyObject = JSONObject.parseObject(ctx.body());
+            } catch (JSONException ignored) {
+                ctx.json(Map.of(
+                        "retCode", -1,
+                        "retMsg", "Rejected. Incomplete or format error in backup request.")
+                );
+                return;
+            }
+            if (bodyObject == null)
+            {
+                ctx.json(Map.of(
+                        "retCode", -1,
+                        "retMsg", "Rejected. Incomplete or format error in backup request. missing backupTag.")
+                );
+                return;
+            }
+            String backupTag = bodyObject.getString("backupTag");
+            File backupDir = new File("backup");
+            if (!backupDir.exists())
+            {
+                var ignored = backupDir.mkdirs();
+            }
+            String backupDbFile = String.valueOf(
+                    Path.of(backupDir.toString(), this.dbInstance.serverConfiguration.getData() + "_" + backupTag + ".db"));
+            if (new File(backupDbFile).exists())
+            {
+                // 如果之前有文件，就先删除该文件
+                var ignored = new File(backupDbFile).delete();
+            }
+            Connection backupConnection = ((DuckDBConnection)backendSysConnection).duplicate();
+            String currentDatabaseName;
+            if (this.dbInstance.serverConfiguration.getData_Dir().equalsIgnoreCase(":memory:"))
+            {
+                currentDatabaseName = "memory";
+            }
+            else
+            {
+                currentDatabaseName = this.dbInstance.serverConfiguration.getData();
+            }
+            String backupDBName = "backup_" + backupTag;
+            Statement statement = backendSysConnection.createStatement();
+            statement.execute("DETACH DATABASE IF EXISTS " + backupDBName);
+            statement.execute("ATTACH '" + backupDbFile + "' as " + backupDBName);
+            statement.execute("COPY FROM DATABASE \"" + currentDatabaseName + "\" TO " + backupDBName);
+            statement.execute("DETACH DATABASE " + backupDBName);
+            statement.close();
+            backupConnection.close();
+            ctx.json(Map.of(
+                    "retCode", 0,
+                    "retMsg", "Successful. Backup file has placed to [" + new File(backupDbFile).getAbsolutePath() + "].")
+            );
+        });
+
+        // 文件下载服务
+        this.managementApp.get("/download", FileHandlerHelper::handleFileDownload);
+
+        // 文件上传服务
+        this.managementApp.post("/upload", FileHandlerHelper::handleFileUpload);
+
+        // 查看日志服务
+        this.managementApp.get("/viewLog", FileHandlerHelper::handleFileView);
+
         // API服务处理
-        new APIService(dbInstance, this.managementApp);
+        new APIService(dbInstance, this.managementApp, dbInstance.logger);
+
+        // 调度服务
+        new SchedulerService(dbInstance, this.managementApp, dbInstance.logger);
 
         // 异常处理
         this.managementApp.exception(Exception.class, (e, ctx) -> {

@@ -298,10 +298,11 @@ public class APIService {
 
     public APIService(
             DBInstance dbInstance,
-            Javalin managementApp
+            Javalin managementApp,
+            Logger logger
     )
     {
-        this.logger = dbInstance.logger;
+        this.logger = logger;
         this.dbInstance = dbInstance;
         this.managementApp = managementApp;
 
