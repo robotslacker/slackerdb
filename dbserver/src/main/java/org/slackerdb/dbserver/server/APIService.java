@@ -111,6 +111,8 @@ public class APIService {
             if (cacheResult != null) {
                 Long lastQueriedTimeStamp = (Long) cacheResult.get("timestamp");
                 if (System.currentTimeMillis() - lastQueriedTimeStamp <= snapshotLimit) {
+                    ctx.attribute("cached", true);
+                    ctx.attribute("affectedRows", cacheResult.get("affectedRows"));
                     // 数据还没有过时，从缓存中获得
                     ctx.json(
                             Map.of(
@@ -121,8 +123,7 @@ public class APIService {
                                     "cached", true,
                                     "data", cacheResult
                             )
-                    )
-                    ;
+                    );
                     return;
                 }
             }
@@ -177,9 +178,12 @@ public class APIService {
                 result.put("columnNames", columnNames);
                 result.put("timestamp", System.currentTimeMillis());
                 result.put("dataset", dataset);
+                result.put("affectedRows", dataset.size());
                 if (cacheKey!= null) {
                     caffeineQueryCache.put(cacheKey, result);
                 }
+                ctx.attribute("cached", false);
+                ctx.attribute("affectedRows", dataset.size());
                 ctx.json(
                         Map.of(
                                 "retCode", 0,
@@ -193,6 +197,8 @@ public class APIService {
             else
             {
                 // 非SQL查询语句
+                ctx.attribute("cached", false);
+                ctx.attribute("affectedRows", -1);
                 ctx.json(
                         Map.of(
                                 "retCode", 0,
@@ -207,6 +213,9 @@ public class APIService {
             dbDataSourcePool.releaseConnection(conn);
         } catch (Exception e) {
             logger.trace("[SERVER-API] Query failed: ", e);
+            ctx.attribute("cached", false);
+            ctx.attribute("affectedRows", -1);
+            dbDataSourcePool.releaseConnection(conn);
             ctx.json(
                     Map.of(
                             "retCode", -1,
@@ -215,7 +224,6 @@ public class APIService {
                             "cached", false
                     )
             );
-            dbDataSourcePool.releaseConnection(conn);
         }
     }
 

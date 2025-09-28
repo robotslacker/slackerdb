@@ -60,6 +60,8 @@ public class ServerConfiguration {
     private final String default_startup_script = "";
     // 默认不记录SQL执行历史信息
     private final String default_sqlHistory = "OFF";
+    // 默认不记录API执行历史信息
+    private final String default_data_service_history = "OFF";
     // 默认不开启自动挂载
     private final String default_autoload = "OFF";
     // 默认设置系统默认的语言集
@@ -104,6 +106,7 @@ public class ServerConfiguration {
     private String   init_script;
     private String   startup_script;
     private String   sqlHistory;
+    private String   data_service_history;
     private Locale   locale;
     private String   pid;
     private int      max_connections;
@@ -151,6 +154,7 @@ public class ServerConfiguration {
         autoload = default_autoload;
         autoload_access_mode = default_autoload_access_mode;
         data_service_schema = default_data_service_schema;
+        data_service_history = default_data_service_history;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -358,7 +362,14 @@ public class ServerConfiguration {
                     if (entry.getValue().toString().isEmpty()) {
                         data_service_schema = this.default_data_service_schema;
                     } else {
-                        setData_service_schema(entry.getValue().toString());
+                        setDataServiceSchema(entry.getValue().toString());
+                    }
+                }
+                case "DATA_SERVICE_HISTORY" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        data_service_history = this.default_data_service_history;
+                    } else {
+                        setDataServiceHistory(entry.getValue().toString());
                     }
                 }
                 case "PID" -> {
@@ -546,6 +557,11 @@ public class ServerConfiguration {
     public String getSqlHistory()
     {
         return sqlHistory;
+    }
+
+    public String getDataServiceHistory()
+    {
+        return data_service_history;
     }
 
     public Locale getLocale()
@@ -840,6 +856,17 @@ public class ServerConfiguration {
         }
     }
 
+    public void setDataServiceHistory(String val)
+    {
+        if (val.trim().equalsIgnoreCase("ON") || (val.trim().equalsIgnoreCase("OFF"))) {
+            data_service_history = val.trim().toUpperCase();
+        }
+        else
+        {
+            throw new ServerException("[SERVER] Invalid config of data_service_history. ON or OFF only.");
+        }
+    }
+
     public void setAutoload(String val)
     {
         if (val.trim().equalsIgnoreCase("ON") || (val.trim().equalsIgnoreCase("OFF"))) {
@@ -952,7 +979,7 @@ public class ServerConfiguration {
         pid = pPid;
     }
 
-    public void setData_service_schema(String val)
+    public void setDataServiceSchema(String val)
     {
         this.data_service_schema = val;
     }

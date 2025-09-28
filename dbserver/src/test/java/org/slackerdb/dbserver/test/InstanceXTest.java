@@ -20,7 +20,6 @@ public class InstanceXTest {
     static int dbPort;
     static int dbPortX;
     static DBInstance dbInstance ;
-    static String     protocol = "postgresql";
 
     @BeforeAll
     static void initAll() throws ServerException {
@@ -34,6 +33,7 @@ public class InstanceXTest {
         serverConfiguration.setData("mem");
         serverConfiguration.setLog_level("INFO");
         serverConfiguration.setSqlHistory("OFF");
+        serverConfiguration.setDataServiceHistory("ON");
         dbPort = serverConfiguration.getPort();
         dbPortX  = serverConfiguration.getPortX();
 
@@ -81,7 +81,7 @@ public class InstanceXTest {
         JSONObject responseObj = JSONObject.parseObject(response2.body()).getJSONObject("data");
         responseObj.remove("timestamp");
         assert JSON.toJSONString(responseObj, JSONWriter.Feature.MapSortField).equals("""
-                {"columnNames":["1"],"columnTypes":["INTEGER"],"dataset":[[1]]}
+                {"affectedRows":1,"columnNames":["1"],"columnTypes":["INTEGER"],"dataset":[[1]]}
                 """.trim());
     }
 
@@ -131,7 +131,7 @@ public class InstanceXTest {
         JSONObject responseObj = JSONObject.parseObject(response2.body()).getJSONObject("data");
         responseObj.remove("timestamp");
         assert JSON.toJSONString(responseObj, JSONWriter.Feature.MapSortField).equals("""
-                {"columnNames":["col1","col2"],"columnTypes":["VARCHAR","INTEGER"],"dataset":[["abc",2]]}
+                {"affectedRows":1,"columnNames":["col1","col2"],"columnTypes":["VARCHAR","INTEGER"],"dataset":[["abc",2]]}
                 """.trim());
     }
 
@@ -163,7 +163,7 @@ public class InstanceXTest {
         responseObj.remove("timestamp");
         assert !JSONObject.parseObject(response2_1.body()).getBoolean("cached");
         assert JSON.toJSONString(responseObj, JSONWriter.Feature.MapSortField).equals("""
-        {"columnNames":["col1","col2","col3"],"columnTypes":["INTEGER","INTEGER","VARCHAR"],"dataset":[[1,2,"中国"]]}
+        {"affectedRows":1,"columnNames":["col1","col2","col3"],"columnTypes":["INTEGER","INTEGER","VARCHAR"],"dataset":[[1,2,"中国"]]}
         """.trim());
 
         // 第二次查询应该看到被缓存的结果
@@ -172,7 +172,7 @@ public class InstanceXTest {
         JSONObject responseObj2 = JSONObject.parseObject(response2_2.body()).getJSONObject("data");
         responseObj2.remove("timestamp");
         assert JSON.toJSONString(responseObj2, JSONWriter.Feature.MapSortField).equals("""
-        {"columnNames":["col1","col2","col3"],"columnTypes":["INTEGER","INTEGER","VARCHAR"],"dataset":[[1,2,"中国"]]}
+        {"affectedRows":1,"columnNames":["col1","col2","col3"],"columnTypes":["INTEGER","INTEGER","VARCHAR"],"dataset":[[1,2,"中国"]]}
         """.trim());
 
         // 第三次查询指定缓存的时间
@@ -187,7 +187,7 @@ public class InstanceXTest {
         responseObj3.remove("timestamp");
         assert !JSONObject.parseObject(response2_1.body()).getBoolean("cached");
         assert JSON.toJSONString(responseObj, JSONWriter.Feature.MapSortField).equals("""
-        {"columnNames":["col1","col2","col3"],"columnTypes":["INTEGER","INTEGER","VARCHAR"],"dataset":[[1,2,"中国"]]}
+        {"affectedRows":1,"columnNames":["col1","col2","col3"],"columnTypes":["INTEGER","INTEGER","VARCHAR"],"dataset":[[1,2,"中国"]]}
         """.trim());
     }
 }

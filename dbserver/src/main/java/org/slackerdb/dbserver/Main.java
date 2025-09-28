@@ -43,39 +43,41 @@ public class Main {
         }
         System.out.println("Usage: java -jar " + codeLocation + " [COMMAND] [--parameter <parameter value>]");
         System.out.println("Commands:");
-        System.out.println("  start     Start slackerdb server.");
-        System.out.println("  stop      Stop slackerdb server.");
-        System.out.println("  status    print server status.");
-        System.out.println("  help      print this message.");
-        System.out.println("  version   print server version.");
+        System.out.println("  start     Start the Slackerdb server.");
+        System.out.println("  stop      Stop the Slackerdb server.");
+        System.out.println("  status    Display server status.");
+        System.out.println("  help      Display this help message.");
+        System.out.println("  version   Display server version information.");
         System.out.println("Parameters:");
-        System.out.println("  --conf                      Configuration file.");
-        System.out.println("  --daemon                    Run server in background. default is false.");
-        System.out.println("  --pid                       process pid file, default is none.");
-        System.out.println("  --access_mode               database mode, READ_ONLY|READ_WRITE, default is READ_WRITE.");
-        System.out.println("  --locale                    default language of the program.");
-        System.out.println("  --log_level                 log level, default is INFO.");
-        System.out.println("  --log                       log file, default is CONSOLE.");
-        System.out.println("  --bind                      server bind ip address, default is 0.0.0.0");
-        System.out.println("  --host                      remote server address,  default is 127.0.0.1");
-        System.out.println("  --remote_listener           external remote listener address, default is none.");
-        System.out.println("  --port                      data service listener port. default is random");
-        System.out.println("  --portX                     management service listener port. default is random");
-        System.out.println("  --memory_limit              maximum memory size used. Format:  ....(K|M|G)");
-        System.out.println("  --max_workers               maximum concurrent quantity.");
-        System.out.println("  --threads                   maximum number of threads used on the server compute layer.");
-        System.out.println("  --data                      database name. default is slackerdb");
-        System.out.println("  --data_dir                  database file directory. default is :memory:");
-        System.out.println("  --temp_dir                  database temporary file directory. default is os dependent.");
-        System.out.println("  --extension_dir             extension file directory. default is $HOME/.duckdb/extensions.");
-        System.out.println("  --template                  template datafile file for first open. default is none.");
-        System.out.println("  --init_script               system init script or script directory. default is none.");
-        System.out.println("  --startup_script            system startup script or script directory. default is none.");
-        System.out.println("  --sql_history               enable or disable sql history feature(ON|OFF). default is off.");
-        System.out.println("  --query_result_cache_size   maximum size (bytes) of api query result cache.");
-        System.out.println("  --autoload                  enable or disable automatically attach new datafile under data_dir. (ON|OFF). default is off.");
-        System.out.println("  --autoload_access_mode      auto load database mode, READ_ONLY|READ_WRITE, default is READ_ONLY..");
-        System.out.println("  --data_service_schema       predefined data service schema. default is none.");
+        System.out.println("  --conf                      Specify configuration file path.");
+        System.out.println("  --daemon                    Run server in background daemon mode. Default: false.");
+        System.out.println("  --pid                       Specify process ID file path. Default: none.");
+        System.out.println("  --access_mode               Set database access mode: READ_ONLY|READ_WRITE. Default: READ_WRITE.");
+        System.out.println("  --locale                    Set default program locale.");
+        System.out.println("  --log_level                 Set logging level. Default: INFO.");
+        System.out.println("  --log                       Specify log output file. Default: CONSOLE.");
+        System.out.println("  --bind                      Set server binding IP address. Default: 0.0.0.0");
+        System.out.println("  --host                      Set remote server address. Default: 127.0.0.1");
+        System.out.println("  --remote_listener           Specify external remote listener address. Default: none.");
+        System.out.println("  --port                      Set data service listener port. Default: random");
+        System.out.println("  --portX                     Set management service listener port. Default: none");
+        System.out.println("  --memory_limit              Set maximum memory allocation. Format: <value>(K|M|G)");
+        System.out.println("  --max_workers               Set maximum concurrent worker processes.");
+        System.out.println("  --threads                   Set maximum thread count for server computation layer.");
+        System.out.println("  --data                      Specify database name. Default: slackerdb");
+        System.out.println("  --data_dir                  Specify database file directory. Default: :memory:");
+        System.out.println("  --temp_dir                  Specify temporary file directory. Default: OS-dependent.");
+        System.out.println("  --extension_dir             Specify extension file directory. Default: $HOME/.duckdb/extensions.");
+        System.out.println("  --template                  Specify template datafile for initial setup. Default: none.");
+        System.out.println("  --init_script               Specify system initialization script or directory. Default: none.");
+        System.out.println("  --startup_script            Specify system startup script or directory. Default: none.");
+        System.out.println("  --sql_history               Enable/disable SQL history feature (ON|OFF). Default: OFF.");
+        System.out.println("  --query_result_cache_size   Set maximum API query result cache size (bytes).");
+        System.out.println("  --autoload                  Enable/disable automatic attachment of new datafiles in data_dir (ON|OFF). Default: OFF.");
+        System.out.println("  --autoload_access_mode      Set auto-loaded database access mode: READ_ONLY|READ_WRITE. Default: READ_ONLY.");
+        System.out.println("  --data_service_schema       Specify predefined data service schema. Default: none.");
+        System.out.println("  --data_service_history      Enable/disable API history feature (ON|OFF). Default: OFF.");
+
     }
 
     public static void main(String[] args){
@@ -374,7 +376,11 @@ public class Main {
             }
             if (appOptions.containsKey("data_service_schema"))
             {
-                serverConfiguration.setData_service_schema(appOptions.get("data_service_schema"));
+                serverConfiguration.setDataServiceSchema(appOptions.get("data_service_schema"));
+            }
+            if (appOptions.containsKey("data_service_history"))
+            {
+                serverConfiguration.setDataServiceHistory(appOptions.get("data_service_history"));
             }
 
             // 初始化日志服务

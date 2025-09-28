@@ -318,6 +318,7 @@ public class DBInstance {
         }
     }
     private DBInstanceMonitorThread dbInstanceMonitorThread = null;
+
     // SQL历史记录线程
     class DBInstanceSQLHistoryThread extends Thread
     {
@@ -407,7 +408,7 @@ public class DBInstance {
                         TimeUnit.SECONDS.sleep(1);
                     }
                     catch (InterruptedException ignored) {
-                        this.interrupt();
+                        return;
                     }
                 }
             }
@@ -881,7 +882,7 @@ public class DBInstance {
                                     ErrorMsg       TEXT
                                 );""");
                 sqlHistoryStmt.close();
-                logger.info("[SERVER][STARTUP    ] Backend sql history database opened.");
+                logger.info("[SERVER][STARTUP    ] Sql history feature enabled.");
 
                 // 获取之前最大的SqlHistory的ID
                 String sql = "Select Max(ID) From sysaux.SQL_HISTORY";
