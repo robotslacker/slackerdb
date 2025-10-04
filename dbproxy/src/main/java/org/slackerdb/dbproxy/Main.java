@@ -97,7 +97,6 @@ public class Main {
                 {
                     if (subCommand == null) {
                         subCommand = arg;
-                        continue;
                     }
                     else
                     {
@@ -108,9 +107,12 @@ public class Main {
                         System.exit(255);
                     }
                 }
-                paramValue = arg;
-                appOptions.put(paramName.toLowerCase(), paramValue);
-                paramName = null;
+                else
+                {
+                    paramValue = arg;
+                    appOptions.put(paramName.toLowerCase(), paramValue);
+                    paramName = null;
+                }
             }
         }
         if (paramName != null)
@@ -124,6 +126,7 @@ public class Main {
             System.err.println("Error: At least one subcommand is required. ");
             showUsage();
             System.exit(255);
+            return;
         }
 
         // 检查是否用后台方式启动

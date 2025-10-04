@@ -1,0 +1,729 @@
+.机器人小懒
+image::robotslacker.jpg[机器人小懒]
+
+== SlackerDB (DuckDB Postgres proxy)
+
+=== Quick Note
+
+This is an agile DuckDB extension that provides Java-based connectivity
+with network access and multi-process support.
+
+==== What we can do:
+
+Based on the description, this extension can do following:
+
+* Enables remote access to DuckDB via TCP/IP from network, instead of
+local connect only restriction.
+* Supports multi-process access to DuckDB instead of single-process
+restriction.
+* Provides PostgreSQL wire protocol compatibility (JDBC, ODBC, etc.),
+allowing DuckDB to serve as a PostgreSQL database.
+* Offers a dedicated access client, which has:
+[arabic]
+. Advanced features
+. Comprehensive data dictionary access support
+* You can use COPY syntax to import data with high performence, this
+compatible with PG CopyManager.
+* Provides self-managed data services and API.
+* You have multiple ways to connect to this extension:
+** Directly connect to the server with jdbc, odbc, ..
+** Connect through a connection gateway which multiple servers(can on
+different host or different process) are behinds it.
+** Embed the compiled jar package into your own application.
+** Register a data service and access data through REST API.
+
+=== Usage
+
+==== Build from source:
+
+....
+    # make sure you have JDK17 and maven 3.6+ ready.
+    # Download source code
+    git clone ...
+    # compile it
+    cd slackerdb
+    mvn clean compile package
+
+    # All compiled results will be placed in the dist directory.
+    #    compiled Jar packages,
+    #    default configuration files.
+....
+
+==== Start db server
+
+....
+    java -jar dbserver/target/slackerdb-dbserver-0.1.6-standalone.jar start
+....
+
+==== Stop db server
+
+....
+    java -jar dbserver/target/slackerdb-dbserver-0.1.6-standalone.jar stop
+....
+
+==== Check db status
+
+....
+    java -jar dbserver/target/slackerdb-dbserver-0.1.6-standalone.jar status
+....
+
+==== Start db proxy
+
+....
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.6-standalone.jar start
+....
+
+==== Stop db proxy
+
+....
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.6-standalone.jar stop
+....
+
+==== Check proxy status
+
+....
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.6-standalone.jar status
+....
+
+==== Server configuration file template
+
+....
+# Database name
+data=slackerdb
+
+# Path where data files are saved
+# ":memory:" indicates in-memory mode (data will be lost after restart)
+data_dir=:memory:
+
+# Temporary files directory during operations
+# Disk mode:   Defaults to data_dir if not specified
+# Memory mode: Defaults to system temp directory if not specified
+# Recommended: Use high-performance storage for temp_dir
+temp_dir=
+
+# Directory for extension plugins
+# Default: $HOME/.duckdb/extensions
+extension_dir=
+
+# Run as background daemon (true/false)
+daemon=
+
+# PID file location
+# - Locks exclusively during server operation
+# - Startup aborts if file is locked by another process
+# - No file created if not configured, and no lock.
+pid=
+
+# Log output destinations (comma-separated)
+# "CONSOLE" for stdout, file paths for file logging
+log=CONSOLE,logs/slackerdb.log
+
+# Log verbosity level
+log_level=INFO
+
+# Main service port
+# 0 = random port assignment
+# -1 = disable network interface
+# Default: 0 (disabled)
+port=
+
+# Data service API port
+# 0 = random port assignment
+# -1 = disable interface (default)
+port_x=
+
+# Network binding address
+bind=0.0.0.0
+
+# Automatic database file loading
+# Values: ON (enabled), OFF (disabled, default)
+autoload=
+
+# Auto-loaded database access mode
+# Default: same to access_mode
+autoload_access_mode=
+
+# Client connection idle timeout (seconds)
+client_timeout=600
+
+# External remote listener registry endpoint
+# Format: IP:PORT
+# Default: none (disabled)
+remote_listener=
+
+# Database opening mode.
+# Default: READ_WRITE
+access_mode=READ_WRITE
+
+# Maximum concurrent connections
+# Default: 256
+max_connections=
+
+# Maximum worker threads
+# Default: CPU core count
+max_workers=
+
+# Database engine threads
+# Default: 50% of CPU cores
+# Recommendation: 5-10GB RAM per thread
+threads=
+
+# Memory usage limit (K/M/G suffix)
+# Default: 60% of available memory
+# -1 = unlimited (memory mode only)
+memory_limit=
+
+# Database template file
+template=
+
+# Initialization script(s)
+# Executes only on first launch
+# Accepts: .sql file or directory
+init_script=
+
+# Startup script(s)
+# Executes on every launch
+# Accepts: .sql file or directory
+startup_script=
+
+# System locale
+# Default: OS setting
+locale=
+
+# SQL command history
+# ON = enable tracking
+# OFF = disable (default)
+sql_history=OFF
+
+# Minimum idle connections in pool
+connection_pool_minimum_idle=3
+
+# Maximum idle connections in pool
+connection_pool_maximum_idle=10
+
+# Connection lifetime (milliseconds)
+connection_pool_maximum_lifecycle_time=900000
+
+# Query result cache configuration (in bytes)
+# - Only caches API request results (JDBC queries unaffected)
+# - Default: 1GB (1073741824 bytes)
+# - Set to 0 to disable caching
+query_result_cache_size=
+
+# Data service schema initialization
+# - Accepts:
+#   * JSON file path (single schema)
+#   * Directory path (loads all *.service files)
+# - Schema files should contain service definitions in JSON format
+data_service_schema=
+....
+
+==== Proxy configuration file template
+
+....
+# PID file location
+# - Locks exclusively during server operation
+# - Startup aborts if file is locked by another process
+# - No file created if not configured, and no lock.
+pid=
+
+# Log output destinations (comma-separated)
+# "CONSOLE" for stdout, file paths for file logging
+log=CONSOLE,logs/slackerdb-proxy.log
+
+# Log level
+log_level=INFO
+
+# Run as background daemon (true/false)
+daemon=
+
+# Main service port
+# 0 = random port assignment
+# -1 = disable network interface
+# Default: 0 (disabled)
+port=0
+
+# Data service API port
+# 0 = random port assignment
+# -1 = disable interface (default)
+port_x=0
+
+# Network binding address
+bind=0.0.0.0
+
+# Client connection idle timeout (seconds)
+client_timeout=600
+
+# Maximum worker threads
+# Default: CPU core count
+max_workers=
+
+# System locale
+# Default: OS setting
+locale=
+....
+
+Note: All parameters are optional. +
+You can keep only the parameters you need to modify. +
+For parameters that are not configured, default values will be used.
+
+==== Data Service
+
+* Data service work with port x, please make sure you have enabled it in
+server configuration or from command parameter. It’s important to note
+that we have no consider on data security. This means data services must
+work in a trusted environment.
+
+===== user login
+
+User login (note: this is optional). After success, a token will be
+provided. +
+Context operations or SQL access that requires context variables will
+require token. +
+If your program does not involve context feature, you can ignore this
+login. +
+Put it simplify, the token is currently used as the user ID.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/api/login+`
+|===
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "token": “yJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9”,
+    "retMsg": "Login successful."
+  }
+....
+
+===== user logout
+
+User logout
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/api/logout+`
+|===
+
+headers:
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Authorization |NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1
+|===
+
+The token information here is obtained when call /login in earlier
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Successful."
+  }
+....
+
+===== set context
+
+set context
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/api/setContxt+`
+|===
+
+headers:
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Authorization |NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1
+|===
+
+The token information here is obtained when call /login in earlier
+
+request body:
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|key1 |value1
+|key2 |value2
+|… |…
+|keyx |valuex
+|===
+
+You can set one or more key-value pairs at once, or you can set multiple
+key-value pairs by calling setContext multiple times.
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Successful."
+  }
+....
+
+===== removeContext
+
+remove context
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/api/removeContxt+`
+|===
+
+headers:
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Authorization |NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1
+|===
+
+The token information here is obtained when call /login in earlier
+
+request body:
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|removedKeyList |[key1,key2, ….]
+|===
+
+You can remove one or more key-value pairs at once, or you can remove
+multiple key-value pairs by calling removeContext multiple times.
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Successful."
+  }
+....
+
+===== registerService
+
+register a service
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/api/registerService+`
+|===
+
+request body:
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|Attribute |Value
+|serviceName |service name
+
+|serviceVersion |service version
+
+|serviceType |service type, GET/POST
+
+|searchPath |sql default search path, Optional parameter
+
+|sql |SQL statement, can contain such $\{var1} variable information
+
+|description |description
+
+|snapshotLimit |how long the query result will be cached, Optional
+parameter
+
+|parameter |parameter default value when query api not provide parameter
+value
+|===
+
+snapshotLimit format: 3 hours / 30 minutes / 45 seconds
+
+Request example:
+
+....
+  {
+    "serviceName": "queryTest1",
+    "serviceVersion": "1.0",
+    "serviceType": "GET",
+    "sql", "SELECT 1"
+  }
+....
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Successful."
+  }
+....
+
+===== unRegisterService
+
+unregister a service
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/api/unRegisterService+`
+|===
+
+request body:
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|Attribute |Value
+|serviceName |service name
+|serviceVersion |service version
+|serviceType |service type, GET/POST
+|===
+
+Request example:
+
+....
+  {
+    "serviceName": "queryTest1",
+    "serviceVersion": "1.0",
+    "serviceType": "GET",
+  }
+....
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Successful."
+  }
+....
+
+===== listRegisteredService
+
+list all service
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |GET
+|Path |`+/api/listRegisteredService+`
+|===
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Successful."
+    "services":
+      {
+        "Query1":
+        {
+          "seviceName" : "Query1",
+          "serviceType" : "GET",
+          ....
+        }
+      }
+  }
+....
+
+===== /api/\{apiVersion}/\{apiName}
+
+API query
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST or GET
+|Path |`+/api/{apiVersion}/{apiName}+`
+|===
+
+headers:
+
+[width="100%",cols="18%,82%",options="header",]
+|===
+|Attribute |Value
+|Authorization |NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1
+
+|snapshotLimit |Optional. used to overwrite service definition. 0 means
+no result cache
+|===
+
+The token information here is obtained when call /login. +
+The token is optional, if you use context in your sql statement, you
+must set it. +
+snapshotLimit format: 3 hours / 30 minutes / 45 seconds
+
+GET Request example:
+
+....
+  GET /api/1.0/queryApi?context1=xxx&context2=yyy
+....
+
+POST Request example:
+
+....
+  POST /api/1.0/queryApi
+
+  {
+    "context1": "xxx",
+    "context2": "yyy",
+  }
+....
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Successful."
+    "description" "test 1",
+    "cached": false,
+    "timestamp": 17777700,
+    "data":
+      {
+        "columnNames":["col1","col2","col3"],
+        "columnTypes":["INTEGER","INTEGER","VARCHAR"],
+        "dataset":[[1,2,"中国"]]
+      }
+  }
+....
+
+==== Embed the db server in your code
+
+....
+  // create configuration,  and update as your need
+  ServerConfiguration serverConfiguration = new ServerConfiguration();
+  serverConfiguration1.setPort(4309);
+  serverConfiguration1.setData("data1");
+
+  // init database
+  DBInstance dbInstance= new DBInstance(serverConfiguration1);
+
+  // startup database
+  dbInstance1.start();
+
+  // shutdown database
+  dbInstance.stop();
+
+  // We currently supports starting multiple instances running at the same time.
+  // But each instance must has his own port and instance name.
+....
+
+==== Embed the db proxy in your code
+
+....
+    ServerConfiguration proxyConfiguration = new ServerConfiguration();
+    proxyConfiguration.setPort(dbPort);
+    ProxyInstance proxyInstance = new ProxyInstance(proxyConfiguration);
+    proxyInstance.start();
+
+    // Waiting for server ready
+    while (!proxyInstance.instanceState.equalsIgnoreCase("RUNNING")) {
+        Sleeper.sleep(1000);
+    }
+....
+
+==== Jdbc program example with postgres client
+
+....
+    // "db1" is your database name in your configuration file.
+    // 3175  is your database port in your configuration file.
+    // If you are connecting for the first time, there will be no other users except the default main
+    String  connectURL = "jdbc:postgresql://127.0.0.1:3175/db1";
+    Connection pgConn = DriverManager.getConnection(connectURL, "main", "");
+    pgConn.setAutoCommit(false);
+
+    // .... Now you can execute your business logic.
+....
+
+==== Jdbc program example with slackerdb client
+
+....
+    // "db1" is your database name in your configuration file.
+    // 3175  is your database port in your configuration file.
+    // If you are connecting for the first time, there will be no other users except the default main
+    String  connectURL = "jdbc:slackerdb://127.0.0.1:3175/db1";
+    Connection pgConn = DriverManager.getConnection(connectURL, "main", "");
+    pgConn.setAutoCommit(false);
+
+    // .... Now you can execute your business logic.
+....
+
+==== Odbc and python program
+
+....
+    It also support ODBC and Python connection.
+....
+
+=== Use IDE tools to connect to the database
+
+Since native Postgres clients often use some data dictionary information
+that duckdb doesn’t have, +
+We do not recommend that you use the PG client to connect to this
+database(That works, but has limited functionality). +
+Instead, we suggest use the dedicated client provided in this project.
+
+=== Known Issues
+
+==== 1. User and password authorization
+
+We do not support user password authentication, just for compatibility,
+keep these two options. +
+you can fill anything as you like, it doesn’t make sense.
+
+==== 2. Limited support for duckdb datatype
+
+Only some duckdb data types are supported, mainly simple types, such as
+int, number, double, varchar, … For complex types, some are still under
+development, and some are not supported by the PG protocol, such as
+blob, list, map… You can refer to sanity01.java to see what we currently
+support.
+
+==== 3. postgresql-fdw
+
+fdw will use "`Declare CURSOR`" to fetch remote data, while duck doesn’t
+support this.
+
+=== Roadmap
+
+…
