@@ -31,13 +31,19 @@
         <dependency>
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
-            <version>1.4.0.0</version>
+            <version>1.4.1.0</version>
         </dependency>
         <!-- NETTY 驱动 -->
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
-            <version>4.1.116.Final</version>
+            <version>4.2.6.Final</version>
+        </dependency>
+        <!-- Crontab 工具 -->
+        <dependency>
+            <groupId>com.cronutils</groupId>
+            <artifactId>cron-utils</artifactId>
+            <version>9.2.1</version>
         </dependency>
         <!-- exec 用来daemon方式运行程序 -->
         <dependency>
