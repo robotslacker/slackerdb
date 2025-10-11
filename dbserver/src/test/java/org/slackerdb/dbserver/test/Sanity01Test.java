@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
 import org.slackerdb.common.utils.DBUtil;
+import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.dbserver.server.DBInstance;
@@ -1295,7 +1296,30 @@ public class Sanity01Test {
         rs.close();
         stmt.close();
         pgConn1.close();
+    }
 
+    @Test
+    void testBitString() throws Exception {
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem?currentSchema=main";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = """
+                SELECT  10::BITSTRING, 200::BITSTRING
+            """;
+        Statement stmt = pgConn1.createStatement();
+        ResultSet rs = stmt.executeQuery(sql);
+        if (rs.next())
+        {
+            assert rs.getString(1).equalsIgnoreCase("00000000000000000000000000001010");
+            assert rs.getString(2).equalsIgnoreCase("00000000000000000000000011001000");
+            assert Utils.bytesToHex(rs.getBytes(1)).replace("30", "0").replace("31", "1").replace(" ","").equalsIgnoreCase("00000000000000000000000000001010");
+            assert Utils.bytesToHex(rs.getBytes(2)).replace("30", "0").replace("31", "1").replace(" ","").equalsIgnoreCase("00000000000000000000000011001000");
+        }
+        rs.close();
+        stmt.close();
+        pgConn1.close();
     }
 }
 

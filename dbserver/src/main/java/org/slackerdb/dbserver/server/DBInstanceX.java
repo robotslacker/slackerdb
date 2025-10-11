@@ -31,6 +31,7 @@ public class DBInstanceX {
     private final Connection backendSysConnection;
     private final DBInstance dbInstance;
     private final AtomicLong backendApiHistoryId = new AtomicLong(1);
+    private final SchedulerService schedulerService;
     public BoundedQueue<APIHistoryRecord> apiHistoryList
             = new BoundedQueue<>(10*1000);
 
@@ -400,7 +401,8 @@ public class DBInstanceX {
         new APIService(dbInstance, this.managementApp, dbInstance.logger);
 
         // 调度服务
-        new SchedulerService(dbInstance, this.managementApp, dbInstance.logger);
+        this.schedulerService =
+                new SchedulerService(dbInstance, this.managementApp, dbInstance.logger);
 
         // 异常处理
         this.managementApp.exception(Exception.class, (e, ctx) -> {
@@ -420,6 +422,10 @@ public class DBInstanceX {
     {
         // 关闭服务器
         this.managementApp.stop();
+
+        // 关闭调度作业
+        this.schedulerService.stop();
+
         // 关闭API历史记录
         if (this.dbInstanceXAPIHistoryThread != null && this.dbInstanceXAPIHistoryThread.isAlive())
         {

@@ -108,6 +108,7 @@ public class SchedulerService {
                 }
             }
         }
+
     }
 
     public SchedulerService(
@@ -261,5 +262,13 @@ public class SchedulerService {
         this.managementApp.post("/scheduler/abortJob", ctx -> {
         });
 
+    }
+
+    public void stop()
+    {
+        // 关闭定时作业后台服务
+        if (!this.scheduleWorker.isInterrupted()) {
+            this.scheduleWorker.interrupt();
+        }
     }
 }

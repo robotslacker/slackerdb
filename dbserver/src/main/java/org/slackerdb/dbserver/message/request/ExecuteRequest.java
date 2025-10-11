@@ -120,6 +120,10 @@ public class ExecuteRequest extends PostgresRequest {
                         column.columnLength = formattedTime.length();
                         column.columnValue = formattedTime.getBytes(StandardCharsets.US_ASCII);
                     }
+                    case "BIT" -> {
+                        column.columnLength = rs.getString(i).length();
+                        column.columnValue = rs.getString(i).getBytes();
+                    }
                     default -> {
                         if (columnTypeName.toUpperCase().startsWith("DECIMAL")) {
                             // DECIMAL 应该是二进制格式，但是目前分析二进制格式的结果总是不对
@@ -347,6 +351,7 @@ public class ExecuteRequest extends PostgresRequest {
                             field.objectIdOfTable = 0;
                             field.attributeNumberOfColumn = 0;
                             field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(columnTypeName);
+
                             if (field.dataTypeId == -1 )
                             {
                                 this.dbInstance.logger.error("executeSQL: {}" , executeSQL);

@@ -5,7 +5,7 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.*;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
@@ -93,6 +93,7 @@ public class PostgresServer {
     /**
      * 关闭协议处理
      */
+    @SuppressWarnings("BusyWait")
     public void stop()
     {
         logger.info("[SERVER] Received stop request.");
@@ -102,6 +103,22 @@ public class PostgresServer {
         }
         if (bossGroup != null) {
             bossGroup.shutdownGracefully();
+        }
+        if (workerGroup != null) {
+            while (!workerGroup.isShutdown()) {
+                // 等待worker退出成功
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException ignored) {}
+            }
+        }
+        if (bossGroup != null) {
+            while (!bossGroup.isShutdown()) {
+                // 等待worker退出成功
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException ignored) {}
+            }
         }
         logger.info("[SERVER] Server stopped.");
     }
@@ -412,8 +429,8 @@ public class PostgresServer {
         }
 
         // Netty消息处理
-        bossGroup = new NioEventLoopGroup(1);
-        workerGroup = new NioEventLoopGroup(nioEventThreads);
+        bossGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+        workerGroup = new MultiThreadIoEventLoopGroup(nioEventThreads, NioIoHandler.newFactory());
 
         try {
             ServerBootstrap bootstrap = new ServerBootstrap();

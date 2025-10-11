@@ -81,6 +81,8 @@ public class RowDescription extends PostgresMessage {
             out.write(Utils.int16ToBytes(field.dataTypeSize));
             out.write(Utils.int32ToBytes(field.dataTypeModifier));
             out.write(Utils.int16ToBytes(field.formatCode));
+            this.dbInstance.logger.trace("[RowDescription->{}] OID:{} Format:{}",
+                    field.name, field.objectIdOfTable,field.formatCode);
         }
     }
 }
