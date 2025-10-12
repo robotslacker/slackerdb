@@ -1321,5 +1321,53 @@ public class Sanity01Test {
         stmt.close();
         pgConn1.close();
     }
+
+    @Test
+    void testTimeStamp() throws Exception {
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem?currentSchema=main";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = """
+                SELECT  TIMESTAMP '2026-10-01 00:00:00.123'
+            """;
+        Statement stmt = pgConn1.createStatement();
+        ResultSet rs = stmt.executeQuery(sql);
+        if (rs.next())
+        {
+            assert rs.getString(1).equalsIgnoreCase("2026-10-01 00:00:00.123");
+            assert rs.getTimestamp(1).toString().equalsIgnoreCase("2026-10-01 00:00:00.123");
+        }
+        rs.close();
+        stmt.close();
+        pgConn1.close();
+    }
+
+    @Test
+    void testInterval() throws Exception {
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem?currentSchema=main";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = """
+                SELECT  to_microseconds(1)
+            """;
+        Statement stmt = pgConn1.createStatement();
+        ResultSet rs = stmt.executeQuery(sql);
+        if (rs.next())
+        {
+            assert rs.getString(1).equalsIgnoreCase("00:00:00.000001");
+        }
+        else
+        {
+            assert false;
+        }
+        rs.close();
+        stmt.close();
+        pgConn1.close();
+    }
+
 }
 

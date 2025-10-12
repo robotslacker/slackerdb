@@ -105,9 +105,9 @@ public class ExecuteRequest extends PostgresRequest {
                         column.columnValue = Utils.int64ToBytes(Double.doubleToLongBits(rs.getDouble(i)));
                     }
                     case "TIMESTAMP" -> {
-                        column.columnLength = 19;
+                        column.columnLength = 23;
                         column.columnValue =
-                                new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+                                new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
                                         .format(rs.getTimestamp(i)).getBytes(StandardCharsets.UTF_8);
                     }
                     case "TIME" -> {

@@ -111,7 +111,7 @@ public class StartupRequest  extends PostgresRequest {
             }
             else
             {
-                stmt.execute("set search_path = '" + this.dbInstance.serverConfiguration.getData() + ".duck_catalog," + userSearchPath + "'");
+                stmt.execute("set search_path = '\"" + this.dbInstance.serverConfiguration.getData() + "\".duck_catalog," + userSearchPath + "'");
             }
             stmt.close();
 
