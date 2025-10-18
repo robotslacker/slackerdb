@@ -64,6 +64,7 @@ public class ExecuteRequest extends PostgresRequest {
             } else
             {
                 String columnTypeName = rsmd.getColumnTypeName(i);
+                // 这里的写入结果要对应RowDescription中的类型, field.formatCode
                 switch (columnTypeName.toUpperCase()) {
                     case "TINYINT", "SMALLINT" -> {
                         column.columnLength = 2;
@@ -73,7 +74,7 @@ public class ExecuteRequest extends PostgresRequest {
                         column.columnLength = 4;
                         column.columnValue = Utils.int32ToBytes(rs.getInt(i));
                     }
-                    case "BIGINT", "HUGEINT" -> {
+                    case "BIGINT" -> {
                         column.columnLength = 8;
                         column.columnValue = Utils.int64ToBytes(rs.getLong(i));
                     }
@@ -123,6 +124,11 @@ public class ExecuteRequest extends PostgresRequest {
                     case "BIT" -> {
                         column.columnLength = rs.getString(i).length();
                         column.columnValue = rs.getString(i).getBytes();
+                    }
+                    case "UINTEGER", "HUGEINT", "UBIGINT" -> {
+                        byte[] columnBytes = rs.getString(i).getBytes(StandardCharsets.US_ASCII);
+                        column.columnLength = columnBytes.length;
+                        column.columnValue = columnBytes;
                     }
                     default -> {
                         if (columnTypeName.toUpperCase().startsWith("DECIMAL")) {
@@ -359,7 +365,7 @@ public class ExecuteRequest extends PostgresRequest {
                             field.dataTypeSize = (short) 2147483647;
                             field.dataTypeModifier = -1;
                             switch (columnTypeName) {
-                                case "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "DATE", "BOOLEAN", "FLOAT", "DOUBLE" ->
+                                case "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "DATE", "BOOLEAN", "FLOAT", "DOUBLE" ->
                                     // 这些数据类型都是二进制类型返回
                                     field.formatCode = 1;
                                 default ->
