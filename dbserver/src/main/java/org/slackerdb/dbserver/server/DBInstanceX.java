@@ -212,6 +212,7 @@ public class DBInstanceX {
                 }
                 resultSet.close();
                 statement.close();
+                this.backendSysConnection.commit();
             } catch (SQLException sqlException) {
                 this.logger.error("[SERVER][STARTUP    ] Management server failed. Can't init api history table.", sqlException);
                 throw new ServerException("Management server failed. Can't init sql history table. ", sqlException);

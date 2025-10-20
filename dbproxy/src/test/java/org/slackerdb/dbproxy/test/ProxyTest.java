@@ -16,8 +16,7 @@ public class ProxyTest {
     private static DBInstance dbInstance1;
     private static DBInstance dbInstance2;
 
-    private static int dbPort = 0;
-    private static int proxyPort = 4310;
+    private static final int proxyPort = 4310;
 
     @BeforeAll
     static void initAll() throws ServerException {
@@ -81,7 +80,7 @@ public class ProxyTest {
             Statement stmt = pgConn.createStatement();
             ResultSet rs = stmt.executeQuery("select current_catalog();");
             rs.next();
-            assert rs.getString(1).equals("memory");
+            assert rs.getString(1).equals("mem1");
             rs.close();
             rs = stmt.executeQuery("select 42");
             rs.next();
@@ -98,7 +97,7 @@ public class ProxyTest {
             Statement stmt = pgConn.createStatement();
             ResultSet rs = stmt.executeQuery("select current_catalog();");
             rs.next();
-            assert rs.getString(1).equals("memory");
+            assert rs.getString(1).equals("mem2");
             rs.close();
             rs = stmt.executeQuery("select 42");
             rs.next();

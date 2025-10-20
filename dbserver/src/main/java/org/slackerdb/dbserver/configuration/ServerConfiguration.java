@@ -18,7 +18,7 @@ import org.slackerdb.common.utils.Utils;
 public class ServerConfiguration {
     // 设置默认参数
     // 默认的数据库名称
-    private final String default_data = "slackerdb";
+    private final String default_data = "";
     // 默认启动在内存下
     private final String default_data_dir = ":memory:";
     // 内存模式和文件模式的默认值不同

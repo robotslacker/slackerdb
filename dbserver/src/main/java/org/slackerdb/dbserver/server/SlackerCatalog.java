@@ -10,6 +10,7 @@ public class SlackerCatalog {
         List<String> fakeCatalogDDLList = new ArrayList<>();
 
         // 以下为了解决DBeaver的显示问题
+        fakeCatalogDDLList.add("use memory");
         fakeCatalogDDLList.add("create schema if not exists duck_catalog");
         fakeCatalogDDLList.add("""
                 CREATE or replace TABLE duck_catalog.pg_roles
@@ -143,5 +144,6 @@ public class SlackerCatalog {
             stmt.execute(sql);
         }
         stmt.close();
+        conn.commit();
     }
 }

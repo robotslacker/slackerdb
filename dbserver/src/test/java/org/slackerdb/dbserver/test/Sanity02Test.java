@@ -67,7 +67,7 @@ public class Sanity02Test {
             TimeUnit.SECONDS.sleep(3);
         }
         catch (InterruptedException ignored) {}
-        ResultSet rs = pgConn1.createStatement().executeQuery("Select Count(*) From sysaux.SQL_HISTORY");
+        ResultSet rs = pgConn1.createStatement().executeQuery("Select Count(*) From memory.sysaux.SQL_HISTORY");
         if (rs.next())
         {
             assert rs.getInt(1) > 20;
@@ -132,7 +132,7 @@ public class Sanity02Test {
         }
         rs.close();
         Collections.sort(catalogsInfo);
-        assert catalogsInfo.toString().equals("[TABLE_CAT: mem, TABLE_CAT: newdb1, TABLE_CAT: newdb2]");
+        assert catalogsInfo.toString().equals("[TABLE_CAT: mem, TABLE_CAT: mem, TABLE_CAT: newdb1, TABLE_CAT: newdb2]");
 
         // getSchemas
         List<String> schemasInfo = new ArrayList<>();

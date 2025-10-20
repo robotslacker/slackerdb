@@ -88,8 +88,8 @@ different host or different process) are behinds it.
 ==== Server configuration file template
 
 ....
-# Database name
-data=slackerdb
+# Database name, default is none.
+data=
 
 # Path where data files are saved
 # ":memory:" indicates in-memory mode (data will be lost after restart)

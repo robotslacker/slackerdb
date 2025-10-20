@@ -74,6 +74,14 @@ public class Sanity01Test {
     }
 
     @Test
+    void connectDBWithoutName() throws SQLException {
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/";
+        Connection pgConn = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn.setAutoCommit(false);
+    }
+
+    @Test
     void simpleQuery() throws SQLException {
         String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn = DriverManager.getConnection(
@@ -1269,7 +1277,7 @@ public class Sanity01Test {
 
     @Test
     void testTimeInterval() throws Exception {
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem?currentSchema=main";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -1300,7 +1308,7 @@ public class Sanity01Test {
 
     @Test
     void testBitString() throws Exception {
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem?currentSchema=main";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -1324,7 +1332,7 @@ public class Sanity01Test {
 
     @Test
     void testTimeStamp() throws Exception {
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem?currentSchema=main";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -1346,7 +1354,7 @@ public class Sanity01Test {
 
     @Test
     void testInterval() throws Exception {
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem?currentSchema=main";
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
@@ -1359,6 +1367,33 @@ public class Sanity01Test {
         if (rs.next())
         {
             assert rs.getString(1).equalsIgnoreCase("00:00:00.000001");
+        }
+        else
+        {
+            assert false;
+        }
+        rs.close();
+        stmt.close();
+        pgConn1.close();
+    }
+
+
+    @Test
+    void testCurrentSchema() throws Exception {
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem?currentSchema=main";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = """
+                SELECT  current_catalog(), current_schema()
+            """;
+        Statement stmt = pgConn1.createStatement();
+        ResultSet rs = stmt.executeQuery(sql);
+        if (rs.next())
+        {
+            assert rs.getString(1).equalsIgnoreCase("mem");
+            assert rs.getString(2).equalsIgnoreCase("main");
         }
         else
         {

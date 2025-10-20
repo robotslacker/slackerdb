@@ -64,9 +64,9 @@ public class Main {
         System.out.println("  --memory_limit              Set maximum memory allocation. Format: <value>(K|M|G)");
         System.out.println("  --max_workers               Set maximum concurrent worker processes.");
         System.out.println("  --threads                   Set maximum thread count for server computation layer.");
-        System.out.println("  --data                      Specify database name. Default: slackerdb");
+        System.out.println("  --data                      Specify database name. Default: none");
         System.out.println("  --data_dir                  Specify database file directory. Default: :memory:");
-        System.out.println("  --temp_dir                  Specify temporary file directory. Default: OS-dependent.");
+        System.out.println("  --temp_dir                  Specify temporary file directory. Default: same with data_dir(disk mode), OS-dependent(memory mode).");
         System.out.println("  --extension_dir             Specify extension file directory. Default: $HOME/.duckdb/extensions.");
         System.out.println("  --template                  Specify template datafile for initial setup. Default: none.");
         System.out.println("  --init_script               Specify system initialization script or directory. Default: none.");

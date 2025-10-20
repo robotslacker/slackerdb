@@ -81,37 +81,45 @@ public class StartupRequest  extends PostgresRequest {
                 return;
             }
 
-            String userSearchPath;
-            if (this.dbInstance.serverConfiguration.getData_Dir().equalsIgnoreCase(":memory:")) {
-                userSearchPath = "memory";
-            }
-            else
-            {
-                if (startupOptions.get("database") != null && !startupOptions.get("database").isEmpty())
-                {
-                    userSearchPath = startupOptions.get("database");
-                }
-                else
-                {
-                    userSearchPath = this.dbInstance.instanceName;
-                }
-            }
+            // 处理连接参数中的current_schema
+            String userSearchPath = "";
             if (startupOptions.get("search_path") != null && !startupOptions.get("search_path").isEmpty())
             {
-                userSearchPath = userSearchPath + "." + startupOptions.get("search_path");
+                userSearchPath = startupOptions.get("search_path");
             }
 
-            // 把查询路径指向新的schema
+            // 把查询路径指向默认数据库
             Connection conn = this.dbInstance.dbDataSourcePool.getConnection();
             Statement stmt = conn.createStatement();
             stmt.execute("set variable current_database = '" + startupOptions.get("database") + "'");
+            stmt.execute("set search_path = 'memory.duck_catalog," + userSearchPath + "'");
+            if (!startupOptions.get("database").isEmpty()) {
+                try {
+                    stmt.execute("use \"" + startupOptions.get("database") + "\"");
+                }
+                catch (SQLException sqlException)
+                {
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    // 生成一个错误消息
+                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                    errorResponse.setErrorResponse(
+                            "Catalog-Error",
+                            "Database [" + startupOptions.get("database") + " does not exist! \n" +
+                                    sqlException.getMessage());
+                    errorResponse.process(ctx, request, out);
 
-            if (this.dbInstance.serverConfiguration.getData_Dir().equalsIgnoreCase(":MEMORY:")) {
-                stmt.execute("set search_path = 'memory.duck_catalog," + userSearchPath + "'");
-            }
-            else
-            {
-                stmt.execute("set search_path = '\"" + this.dbInstance.serverConfiguration.getData() + "\".duck_catalog," + userSearchPath + "'");
+                    // 发送并刷新返回消息
+                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+                    // 关闭连接
+                    out.close();
+                    ctx.close();
+
+                    // 释放数据库信息
+                    stmt.close();
+                    this.dbInstance.dbDataSourcePool.releaseConnection(conn);
+                    return;
+                }
             }
             stmt.close();
 
