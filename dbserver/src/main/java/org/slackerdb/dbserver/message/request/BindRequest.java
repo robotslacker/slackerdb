@@ -183,7 +183,9 @@ public class BindRequest extends PostgresRequest {
                     // 执行Bind请求
                     String executeSQL = parsedStatement.sql;
                     PreparedStatement preparedStatement = parsedStatement.preparedStatement;
-                    if (!preparedStatement.isClosed() && preparedStatement.getParameterMetaData().getParameterCount() != 0) {
+                    if (preparedStatement != null &&
+                            !preparedStatement.isClosed() &&
+                            preparedStatement.getParameterMetaData().getParameterCount() != 0) {
                         // 获取参数的类型
                         int[] parameterDataTypeIds = parsedStatement.parameterDataTypeIds;
                         if (bindParameters != null) {

@@ -86,6 +86,49 @@ public class ParseRequest extends PostgresRequest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ParseRequest parseRequest = (ParseRequest) request;
 
+        if (this.dbInstance.instanceSuspendForSecretKey)
+        {
+            // 这是一个非常特殊的语句, 用来设置数据库密钥
+            String patternString = "(?i)alter\\s+database\\s+(\\w+)\\s+set\\s+encrypt\\s+key\\s+(\\w+);?";
+            Pattern pattern = Pattern.compile(patternString);
+            Matcher matcher = pattern.matcher(sql);
+            if (matcher.find())
+            {
+                String alterDatabaseName = matcher.group(1).trim();
+                if (!this.dbInstance.instanceName.equalsIgnoreCase(alterDatabaseName))
+                {
+                    // 生成一个错误消息
+                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                    errorResponse.setErrorFile("ParseRequest");
+                    errorResponse.setErrorResponse("Encrypt-Error", "Encrypted database [" + alterDatabaseName + "] dose not exist!");
+                    errorResponse.process(ctx, request, out);
+
+                    // 即使是空语句，也要更新缓存中记录的语句信息
+                    // 一些第三方工具用发送空语句解析来检测数据库状态
+                    ParsedStatement parsedPrepareStatement = new ParsedStatement();
+                    parsedPrepareStatement.sql = "";
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+                            "PreparedStatement" + "-" + preparedStmtName, parsedPrepareStatement);
+                }
+                else
+                {
+                    ParseComplete parseComplete = new ParseComplete(this.dbInstance);
+                    parseComplete.process(ctx, request, out);
+
+                    // 记录PreparedStatement,以及对应的参数类型
+                    ParsedStatement parsedPrepareStatement = new ParsedStatement();
+                    parsedPrepareStatement.sql = sql.trim();
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+                            "PreparedStatement" + "-" + preparedStmtName, parsedPrepareStatement);
+                }
+                // 发送并刷新返回消息
+                PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out, this.dbInstance.logger);
+                out.close();
+
+                return;
+            }
+        }
+
         // 处理PLSQL语句
         Matcher matcher = plsqlPattern.matcher(parseRequest.sql);
         if (matcher.matches())

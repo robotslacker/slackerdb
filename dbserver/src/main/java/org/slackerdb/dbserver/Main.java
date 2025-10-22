@@ -65,6 +65,7 @@ public class Main {
         System.out.println("  --max_workers               Set maximum concurrent worker processes.");
         System.out.println("  --threads                   Set maximum thread count for server computation layer.");
         System.out.println("  --data                      Specify database name. Default: none");
+        System.out.println("  --data_encrypt              Enable data encryption. Default: false");
         System.out.println("  --data_dir                  Specify database file directory. Default: :memory:");
         System.out.println("  --temp_dir                  Specify temporary file directory. Default: same with data_dir(disk mode), OS-dependent(memory mode).");
         System.out.println("  --extension_dir             Specify extension file directory. Default: $HOME/.duckdb/extensions.");
@@ -73,8 +74,6 @@ public class Main {
         System.out.println("  --startup_script            Specify system startup script or directory. Default: none.");
         System.out.println("  --sql_history               Enable/disable SQL history feature (ON|OFF). Default: OFF.");
         System.out.println("  --query_result_cache_size   Set maximum API query result cache size (bytes).");
-        System.out.println("  --autoload                  Enable/disable automatic attachment of new datafiles in data_dir (ON|OFF). Default: OFF.");
-        System.out.println("  --autoload_access_mode      Set auto-loaded database access mode: READ_ONLY|READ_WRITE. Default: READ_ONLY.");
         System.out.println("  --data_service_schema       Specify predefined data service schema. Default: none.");
         System.out.println("  --data_service_history      Enable/disable API history feature (ON|OFF). Default: OFF.");
 
@@ -342,14 +341,6 @@ public class Main {
             {
                 serverConfiguration.setSqlHistory(appOptions.get("sql_history"));
             }
-            if (appOptions.containsKey("autoload"))
-            {
-                serverConfiguration.setAutoload(appOptions.get("autoload"));
-            }
-            if (appOptions.containsKey("autoload_access_mode"))
-            {
-                serverConfiguration.setAutoload_access_mode(appOptions.get("autoload_access_mode"));
-            }
             if (appOptions.containsKey("pid"))
             {
                 serverConfiguration.setPid(appOptions.get("pid"));
@@ -381,6 +372,10 @@ public class Main {
             if (appOptions.containsKey("data_service_history"))
             {
                 serverConfiguration.setDataServiceHistory(appOptions.get("data_service_history"));
+            }
+            if (appOptions.containsKey("data_encrypt"))
+            {
+                serverConfiguration.setDataEncrypt(appOptions.get("data_encrypt"));
             }
 
             // 初始化日志服务

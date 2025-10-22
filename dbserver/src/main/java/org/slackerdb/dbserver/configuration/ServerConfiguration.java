@@ -26,6 +26,9 @@ public class ServerConfiguration {
     // 文件模式: 等同data_dir
     private final String default_temp_dir = "";
 
+    // 是否开启数据库的加密特性
+    private final boolean default_data_encrypt = false;
+
     //  默认使用系统的配置，即不主动配置
     private final String default_extension_dir = "";
     // 默认日志打印到控制台
@@ -48,9 +51,6 @@ public class ServerConfiguration {
     // 默认数据库可读可写
     private final String default_access_mode = "READ_WRITE";
 
-    // 默认自动挂载数据库的打开模式
-    private final String default_autoload_access_mode = "READ_ONLY";
-
     // 默认使用全部的CPU作为Netty的后台线程数
     private final int default_max_workers = Runtime.getRuntime().availableProcessors();
     // 默认客户端的超时时间
@@ -62,8 +62,6 @@ public class ServerConfiguration {
     private final String default_sqlHistory = "OFF";
     // 默认不记录API执行历史信息
     private final String default_data_service_history = "OFF";
-    // 默认不开启自动挂载
-    private final String default_autoload = "OFF";
     // 默认设置系统默认的语言集
     private final Locale default_locale = Locale.getDefault();
     // 系统的PID文件
@@ -112,8 +110,7 @@ public class ServerConfiguration {
     private int      max_connections;
     private String   template;
     private boolean  daemonMode;
-    private String   autoload;
-    private String   autoload_access_mode;
+    private boolean  data_encrypt;
     private int connection_pool_minimum_idle;
     private int connection_pool_maximum_idle;
     private int connection_pool_maximum_lifecycle_time;
@@ -151,10 +148,9 @@ public class ServerConfiguration {
         template = default_template;
         daemonMode = defaultDaemonMode;
         query_result_cache_size = default_query_result_cache_size;
-        autoload = default_autoload;
-        autoload_access_mode = default_autoload_access_mode;
         data_service_schema = default_data_service_schema;
         data_service_history = default_data_service_history;
+        data_encrypt = default_data_encrypt;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -344,20 +340,6 @@ public class ServerConfiguration {
                         setSqlHistory(entry.getValue().toString());
                     }
                 }
-                case "AUTOLOAD" -> {
-                    if (entry.getValue().toString().isEmpty()) {
-                        autoload = this.default_autoload;
-                    } else {
-                        setAutoload(entry.getValue().toString());
-                    }
-                }
-                case "AUTOLOAD_ACCESS_MODE" -> {
-                    if (entry.getValue().toString().isEmpty()) {
-                        autoload_access_mode = this.default_autoload_access_mode;
-                    } else {
-                        setAutoload_access_mode(entry.getValue().toString());
-                    }
-                }
                 case "DATA_SERVICE_SCHEMA" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         data_service_schema = this.default_data_service_schema;
@@ -405,6 +387,13 @@ public class ServerConfiguration {
                         query_result_cache_size = this.default_query_result_cache_size;
                     } else {
                         setQuery_result_cache_size(Long.parseLong(entry.getValue().toString()));
+                    }
+                }
+                case "DATA_ENCRYPT" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        data_encrypt = this.default_data_encrypt;
+                    } else {
+                        setDataEncrypt(entry.getValue().toString());
                     }
                 }
                 default ->
@@ -866,23 +855,6 @@ public class ServerConfiguration {
             throw new ServerException("[SERVER] Invalid config of data_service_history. ON or OFF only.");
         }
     }
-
-    public void setAutoload(String val)
-    {
-        if (val.trim().equalsIgnoreCase("ON") || (val.trim().equalsIgnoreCase("OFF"))) {
-            autoload = val.trim().toUpperCase();
-        }
-        else
-        {
-            throw new ServerException("[SERVER] Invalid config of autoload. ON or OFF only.");
-        }
-    }
-
-    public String getAutoload()
-    {
-        return autoload;
-    }
-
     public void setLocale(String pLocale) throws ServerException
     {
         if (pLocale == null || pLocale.isEmpty())
@@ -958,22 +930,6 @@ public class ServerConfiguration {
         access_mode = pAccessMode;
     }
 
-    public void setAutoload_access_mode(String pAccessMode) throws ServerException
-    {
-        if (!pAccessMode.equalsIgnoreCase("READ_WRITE") && !pAccessMode.equalsIgnoreCase("READ_ONLY"))
-        {
-            throw new ServerException(
-                    Utils.getMessage("SLACKERDB-00005", "access_mode", pAccessMode)
-            );
-        }
-        autoload_access_mode = pAccessMode;
-    }
-
-    public String getAutoload_access_mode()
-    {
-        return autoload_access_mode;
-    }
-
     public void setPid(String pPid)
     {
         pid = pPid;
@@ -989,4 +945,24 @@ public class ServerConfiguration {
         return this.data_service_schema;
     }
 
+    public void setDataEncrypt(String val)
+    {
+        if (val.trim().equalsIgnoreCase("true") || (val.trim().equalsIgnoreCase("false"))) {
+            data_encrypt = Boolean.parseBoolean(val.trim().toLowerCase());
+        }
+        else
+        {
+            throw new ServerException("[SERVER] Invalid config of data_encrypt. true or false only.");
+        }
+    }
+
+    public void setDataEncrypt(boolean val)
+    {
+        data_encrypt = val;
+    }
+
+    public boolean getDataEncrypt()
+    {
+        return data_encrypt;
+    }
 }

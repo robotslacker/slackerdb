@@ -22,6 +22,8 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 
 public class ExecuteRequest extends PostgresRequest {
@@ -219,6 +221,35 @@ public class ExecuteRequest extends PostgresRequest {
             // 开始处理
             ParsedStatement parsedStatement =
                     this.dbInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement("Portal" + "-" + portalName);
+            if (parsedStatement != null && dbInstance.instanceSuspendForSecretKey)
+            {
+                // 处理数据库加密的特殊语句
+                // 这是一个非常特殊的语句, 用来设置数据库密钥
+                String patternString = "(?i)alter\\s+database\\s+(\\w+)\\s+set\\s+encrypt\\s+key\\s+(\\w+);?";
+                Pattern pattern = Pattern.compile(patternString);
+                Matcher matcher = pattern.matcher(parsedStatement.sql);
+                if (matcher.find())
+                {
+                    // 数据库加密挂载
+                    String databaseEncryptKey = matcher.group(2).trim();
+                    this.dbInstance.attachDatabase(databaseEncryptKey);
+                    this.dbInstance.instanceSuspendForSecretKey = false;
+
+                    // 返回任务完成的消息
+                    CommandComplete commandComplete = new CommandComplete(this.dbInstance);
+                    commandComplete.setCommandResult("UPDATE 0");
+                    commandComplete.process(ctx, request, out);
+
+                    // 发送并刷新返回消息
+                    PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
+
+                    // PLSQL的记录保存到SQL历史中
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = parsedStatement.sql;
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.incrementAndGet();
+
+                    break tryBlock;
+                }
+            }
             if (parsedStatement != null && parsedStatement.isPlSql)
             {
                 // PLSQL处理

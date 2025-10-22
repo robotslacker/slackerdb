@@ -6,7 +6,7 @@ image::robotslacker.jpg[机器人小懒]
 === Quick Note
 
 This is an agile DuckDB extension that provides Java-based connectivity
-with network access and multi-process support.
+with network access and multiprocess support.
 
 ==== What we can do:
 
@@ -14,7 +14,7 @@ Based on the description, this extension can do following:
 
 * Enables remote access to DuckDB via TCP/IP from network, instead of
 local connect only restriction.
-* Supports multi-process access to DuckDB instead of single-process
+* Supports multiprocess access to DuckDB instead of single-process
 restriction.
 * Provides PostgreSQL wire protocol compatibility (JDBC, ODBC, etc.),
 allowing DuckDB to serve as a PostgreSQL database.
@@ -26,7 +26,7 @@ allowing DuckDB to serve as a PostgreSQL database.
 compatible with PG CopyManager.
 * Provides self-managed data services and API.
 * You have multiple ways to connect to this extension:
-** Directly connect to the server with jdbc, odbc, ..
+** Directly connect to the server with jdbc, odbc, ...
 ** Connect through a connection gateway which multiple servers(can on
 different host or different process) are behinds it.
 ** Embed the compiled jar package into your own application.
@@ -52,37 +52,37 @@ different host or different process) are behinds it.
 ==== Start db server
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.1.6-standalone.jar start
+    java -jar dbserver/target/slackerdb-dbserver-0.1.7-standalone.jar start
 ....
 
 ==== Stop db server
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.1.6-standalone.jar stop
+    java -jar dbserver/target/slackerdb-dbserver-0.1.7-standalone.jar stop
 ....
 
 ==== Check db status
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.1.6-standalone.jar status
+    java -jar dbserver/target/slackerdb-dbserver-0.1.7-standalone.jar status
 ....
 
 ==== Start db proxy
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.6-standalone.jar start
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.7-standalone.jar start
 ....
 
 ==== Stop db proxy
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.6-standalone.jar stop
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.7-standalone.jar stop
 ....
 
 ==== Check proxy status
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.6-standalone.jar status
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.7-standalone.jar status
 ....
 
 ==== Server configuration file template
@@ -134,14 +134,6 @@ port_x=
 
 # Network binding address
 bind=0.0.0.0
-
-# Automatic database file loading
-# Values: ON (enabled), OFF (disabled, default)
-autoload=
-
-# Auto-loaded database access mode
-# Default: same to access_mode
-autoload_access_mode=
 
 # Client connection idle timeout (seconds)
 client_timeout=600
@@ -646,7 +638,7 @@ Success response (200)
   dbInstance.stop();
 
   // We currently supports starting multiple instances running at the same time.
-  // But each instance must has his own port and instance name.
+  // But each instance must have his own port and instance name.
 ....
 
 ==== Embed the db proxy in your code
@@ -692,7 +684,7 @@ Success response (200)
 ==== Odbc and python program
 
 ....
-    It also support ODBC and Python connection.
+    It also supports ODBC and Python connection.
 ....
 
 === Use IDE tools to connect to the database

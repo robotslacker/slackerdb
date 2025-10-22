@@ -93,12 +93,11 @@ public class StartupRequest  extends PostgresRequest {
             Statement stmt = conn.createStatement();
             stmt.execute("set variable current_database = '" + startupOptions.get("database") + "'");
             stmt.execute("set search_path = 'memory.duck_catalog," + userSearchPath + "'");
-            if (!startupOptions.get("database").isEmpty()) {
+            if (!startupOptions.get("database").isEmpty() && !this.dbInstance.instanceSuspendForSecretKey) {
+                // 如果数据库等待密钥，则无法执行USE操作
                 try {
                     stmt.execute("use \"" + startupOptions.get("database") + "\"");
-                }
-                catch (SQLException sqlException)
-                {
+                } catch (SQLException sqlException) {
                     ByteArrayOutputStream out = new ByteArrayOutputStream();
                     // 生成一个错误消息
                     ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
@@ -120,8 +119,8 @@ public class StartupRequest  extends PostgresRequest {
                     this.dbInstance.dbDataSourcePool.releaseConnection(conn);
                     return;
                 }
+                stmt.close();
             }
-            stmt.close();
 
             // 记录会话信息
             int sessionId = getCurrentSessionId(ctx);

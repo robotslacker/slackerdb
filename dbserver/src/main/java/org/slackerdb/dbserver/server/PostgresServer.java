@@ -93,32 +93,22 @@ public class PostgresServer {
     /**
      * 关闭协议处理
      */
-    @SuppressWarnings("BusyWait")
     public void stop()
     {
         logger.info("[SERVER] Received stop request.");
         logger.info("[SERVER] Server will stop now.");
+
         if (workerGroup != null) {
             workerGroup.shutdownGracefully();
+            try {
+                var ignored = workerGroup.awaitTermination(10, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {}
         }
         if (bossGroup != null) {
             bossGroup.shutdownGracefully();
-        }
-        if (workerGroup != null) {
-            while (!workerGroup.isShutdown()) {
-                // 等待worker退出成功
-                try {
-                    Thread.sleep(500);
-                } catch (InterruptedException ignored) {}
-            }
-        }
-        if (bossGroup != null) {
-            while (!bossGroup.isShutdown()) {
-                // 等待worker退出成功
-                try {
-                    Thread.sleep(500);
-                } catch (InterruptedException ignored) {}
-            }
+            try {
+                var ignored = bossGroup.awaitTermination(10, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {}
         }
         logger.info("[SERVER] Server stopped.");
     }

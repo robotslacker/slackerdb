@@ -28,13 +28,10 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.nio.file.attribute.FileTime;
 import java.sql.*;
 import java.text.MessageFormat;
 import java.time.LocalDateTime;
@@ -78,6 +75,8 @@ public class DBInstance {
 
     // 实例的状态
     public String instanceState = "IDLE";
+    // 标记数据库是否正在输入密钥
+    public boolean instanceSuspendForSecretKey = false;
 
     // DuckDB对应的后端长数据库连接
     public Connection backendSysConnection;
@@ -96,8 +95,8 @@ public class DBInstance {
     // 管理端口服务
     public DBInstanceX dbInstanceX = null;
 
-    // 自动挂载的数据库清单
-    public List<String> autoloadDatabase = new ArrayList<>();
+    // 标记数据库是否为第一次打开
+    private boolean databaseFirstOpened = false;
 
     // 从资源文件中获取消息，为未来的多语言做准备
     private String getMessage(String code, Object... contents) {
@@ -168,141 +167,6 @@ public class DBInstance {
                     {
                         logger.warn("[SERVER] Try register current service to [{}] failed. {}",
                                 serverConfiguration.getRemoteListener(), serverException.getErrorMessage());
-                    }
-                }
-
-                // 如果启用了自动挂载，则定期检查data_dir下的内容
-                if (
-                        serverConfiguration.getAutoload().equalsIgnoreCase("ON") &&
-                                !serverConfiguration.getData_Dir().equalsIgnoreCase(":MEMORY"))
-                {
-                    File[] files = new File(serverConfiguration.getData_Dir()).listFiles();
-                    if (files != null) {
-                        for (File file : files) {
-                            if (!file.isFile()) {
-                                // 不查看子目录
-                                continue;
-                            }
-                            if (!file.getName().endsWith(".db"))
-                            {
-                                // 不查看非db文件
-                                continue;
-                            }
-                            if (autoloadDatabase.contains(file.getName()))
-                            {
-                                // 如果之前已经挂载，则不再处理
-                                continue;
-                            }
-                            // 尝试独占锁定该文件，如果失败，则跳过
-                            try
-                            {
-                                long fileLength1;
-                                long fileLength2;
-                                FileTime lastFileModifiedTime1;
-                                FileTime lastFileModifiedTime2;
-
-                                if (serverConfiguration.getAutoload_access_mode().equalsIgnoreCase("READ_WRITE"))
-                                {
-                                   // 尝试锁定文件
-                                    RandomAccessFile randomAccessFile1
-                                            = new RandomAccessFile(Path.of(serverConfiguration.getData_Dir(), file.getName()).toString(), "rw");
-                                    FileChannel channel1 = randomAccessFile1.getChannel();
-                                    FileLock lock1 = channel1.tryLock();
-                                    if (lock1 != null)
-                                    {
-                                        // 已经锁定了该文件
-                                        lock1.release();
-                                        channel1.close();
-                                        randomAccessFile1.close();
-                                    }
-                                    else
-                                    {
-                                        // 无法锁定文件
-                                        channel1.close();
-                                        randomAccessFile1.close();
-                                        continue;
-                                    }
-                                }
-                                fileLength1 = Path.of(serverConfiguration.getData_Dir(), file.getName()).toFile().length();
-                                lastFileModifiedTime1 = Files.readAttributes(Path.of(serverConfiguration.getData_Dir(), file.getName()), BasicFileAttributes.class).lastModifiedTime();
-
-                                // 10S后再次观察文件
-                                try {
-                                    Sleeper.sleep(10 * 1000);
-                                }
-                                catch (InterruptedException ignored) {}
-
-                                // 重新观察文件
-                                if (serverConfiguration.getAutoload_access_mode().equalsIgnoreCase("READ_WRITE")) {
-                                    RandomAccessFile randomAccessFile2
-                                            = new RandomAccessFile(Path.of(serverConfiguration.getData_Dir(), file.getName()).toString(), "rw");
-                                    FileChannel channel2 = randomAccessFile2.getChannel();
-                                    FileLock lock2 = channel2.tryLock();
-                                    if (lock2 != null) {
-                                        // 已经锁定了该文件
-                                        lock2.release();
-                                        channel2.close();
-                                        randomAccessFile2.close();
-                                    } else {
-                                        // 无法锁定文件
-                                        channel2.close();
-                                        randomAccessFile2.close();
-                                        continue;
-                                    }
-                                }
-                                fileLength2 = Path.of(serverConfiguration.getData_Dir(), file.getName()).toFile().length();
-                                lastFileModifiedTime2 = Files.readAttributes(Path.of(serverConfiguration.getData_Dir(), file.getName()), BasicFileAttributes.class).lastModifiedTime();
-
-                                // 比对两次锁定的文件情况
-                                if (fileLength1 != fileLength2 || !lastFileModifiedTime1.equals(lastFileModifiedTime2))
-                                {
-                                    // 文件发生了变化
-                                    continue;
-                                }
-
-                                // 挂载该文件, 如果参数为只读，或者文件为只读文件，则用只读方式挂载
-                                try {
-                                    Connection conn = ((DuckDBConnection) backendSysConnection).duplicate();
-                                    Statement stmt = conn.createStatement();
-                                    String sql = "ATTACH OR REPLACE '" + Path.of(serverConfiguration.getData_Dir(), file.getName()) + "' AS \"" + file.getName().replace(".db","") + "\"";
-                                    if (serverConfiguration.getAutoload_access_mode().equalsIgnoreCase("READ_ONLY"))
-                                    {
-                                        sql = sql + " (READ_ONLY)";
-                                    }
-                                    stmt.execute(sql);
-                                    conn.close();
-                                    logger.info("[SERVER] autoload database [{}] as [{}], attached successful.",
-                                            Path.of(serverConfiguration.getData_Dir(), file.getName()) ,
-                                            file.getName().replace(".db","") );
-                                    // 追加到文件记录中
-                                    autoloadDatabase.add(file.getName());
-                                }
-                                catch (SQLException sqlException)
-                                {
-                                    logger.error("[SERVER] Unable to load file [{}]. ",
-                                            Path.of(serverConfiguration.getData_Dir(), file.getName()).toAbsolutePath(), sqlException);
-                                }
-                            }
-                            catch (IOException ignored) {}
-
-                            // 如果有已经被挪走的文件，则强制detach这个数据库
-                            for (String dbName : autoloadDatabase)
-                            {
-                                if (!Path.of(serverConfiguration.getData_Dir(), dbName).toFile().exists())
-                                {
-                                    try {
-                                        Connection conn = ((DuckDBConnection) backendSysConnection).duplicate();
-                                        Statement stmt = conn.createStatement();
-                                        String sql = "DETACH IF EXISTS \"" + file.getName().replace(".db", "") + "\"";
-                                        stmt.execute(sql);
-                                        conn.close();
-                                    }
-                                    catch (SQLException ignored) {}
-                                    // 移除文件目录
-                                    autoloadDatabase.remove(dbName);
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -587,6 +451,251 @@ public class DBInstance {
         stmt.close();
     }
 
+    // 打开数据库
+    // 1. 挂载数据库
+    // 2. 执行初始化脚本
+    // 3. 复制模板文件
+    public void attachDatabase(String databaseEncryptKey)
+    {
+        // 如果数据库开启了加密，但是没有设置环境变量，则不要进行Attach
+        // 如果指定了Data，则需要Attach到指定的数据库上
+        try {
+            String instanceName = this.serverConfiguration.getData();
+            Statement stmt;
+            if (instanceName.isEmpty())
+            {
+                // 没有数据库名，则不需要Attach操作，直接跳过
+                return;
+            }
+            if (!Character.isLetter(instanceName.charAt(0)))
+            {
+                // 数据库名首字母必须为字母
+                throw new ServerException("Instance name [" + instanceName + "] must start with a letter!");
+            }
+            for (int i = 0; i < instanceName.length(); i++) {
+                char c = instanceName.charAt(i);
+                if (!Character.isLetterOrDigit(c) && c != '_' && c != '-') {
+                    // 数据库名必须是数字或者字母包括，也包括_和-
+                    throw new ServerException("Instance name [" + instanceName + "] can't not include special character!");
+                }
+            }
+            if (List.of("MEMORY","SYS").contains(instanceName.toUpperCase()))
+            {
+                // 数据库名必须是数字或者字母包括，也包括_和-
+                throw new ServerException("Instance name [" + instanceName + "] is not valid. It is reserved keyword!");
+            }
+
+            // 虚构一些PG的数据字典，以满足后续各种工具对数据字典的查找
+            SlackerCatalog.createFakeCatalog(this, backendSysConnection);
+
+            // SQL替换
+            // DuckDB并不支持所有的PG语法，所以需要进行转义替换，以保证第三方工具能够正确使用
+            SQLReplacer.load(this);
+
+            // 强制约定在程序推出的时候保存检查点
+            stmt = this.backendSysConnection.createStatement();
+            stmt.execute("PRAGMA enable_checkpoint_on_shutdown");
+            stmt.close();
+
+            // 处理数据库密钥
+            if (serverConfiguration.getDataEncrypt())
+            {
+                if (databaseEncryptKey == null && System.getenv("SLACKERDB_" + instanceName.toUpperCase() + "_KEY") != null)
+                {
+                    databaseEncryptKey = System.getenv("SLACKERDB_" + instanceName.toUpperCase() + "_KEY");
+                }
+                if (databaseEncryptKey == null && System.getProperty("SLACKERDB_" + instanceName.toUpperCase() + "_KEY") != null)
+                {
+                    databaseEncryptKey = System.getProperty("SLACKERDB_" + instanceName.toUpperCase() + "_KEY");
+                }
+                if (databaseEncryptKey == null)
+                {
+                    // 如果数据库被加密，且未在环境变量中提供密钥信息，则不再继续操作
+                    logger.info("[SERVER][STARTUP    ] Instance suspend and waiting for encrypt key ...");
+                    this.instanceSuspendForSecretKey = true;
+                    return;
+                }
+            }
+
+            String attachString;
+            String dataFilePath;
+            if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
+                attachString = "ATTACH ':memory:' AS \"" + instanceName + "\"";
+                dataFilePath = ":memory:";
+                databaseFirstOpened = true;
+            } else {
+                if (!new File(serverConfiguration.getData_Dir()).isDirectory()) {
+                    throw new ServerException("Data directory [" + serverConfiguration.getData_Dir() + "] does not exist!");
+                }
+                File dataFile = new File(serverConfiguration.getData_Dir(), instanceName + ".db");
+                if (!dataFile.canRead() && serverConfiguration.getAccess_mode().equalsIgnoreCase("READ_ONLY")) {
+                    throw new ServerException("Data [" + dataFile.getAbsolutePath() + "] can't be read!!");
+                }
+                if (!dataFile.exists() && !new File(serverConfiguration.getData_Dir()).canWrite()) {
+                    throw new ServerException("Data [" + dataFile.getAbsolutePath() + "] can't be create!!");
+                }
+                if (dataFile.exists() && !dataFile.canWrite() && serverConfiguration.getAccess_mode().equalsIgnoreCase("READ_WRITE")) {
+                    throw new ServerException("Data [" + dataFile.getAbsolutePath() + "] can't be write!!");
+                }
+                if (!dataFile.exists()) {
+                    // 文件的第一次被使用
+                    databaseFirstOpened = true;
+                }
+                dataFilePath = dataFile.getAbsolutePath();
+                attachString = "ATTACH '" + dataFile.getAbsolutePath() + "' AS \"" + instanceName + "\"";
+            }
+            String attachOptions = "(";
+            if (serverConfiguration.getAccess_mode().equals("READ_ONLY")) {
+                attachOptions = attachOptions + "READ_ONLY";
+            }
+            if (serverConfiguration.getDataEncrypt())
+            {
+                if (attachOptions.equalsIgnoreCase("(")) {
+                    attachOptions = attachOptions + "ENCRYPTION_KEY '" + databaseEncryptKey + "'";
+                }
+                else
+                {
+                    attachOptions = attachOptions + ", ENCRYPTION_KEY '" + databaseEncryptKey + "'";
+                }
+            }
+            attachOptions = attachOptions + ")";
+            if (attachOptions.equalsIgnoreCase("()"))
+            {
+                attachOptions = "";
+            }
+
+            stmt = backendSysConnection.createStatement();
+            if (serverConfiguration.getDataEncrypt())
+            {
+                // 尝试加载HTTPFS插件，来提高加密的处理效率
+                try {
+                    stmt.execute("load httpfs");
+                }
+                catch (SQLException ignored) {}
+                finally {
+                    try {
+                        backendSysConnection.rollback();
+                        if (!stmt.isClosed())
+                        {
+                            stmt.close();
+                        }
+                    }
+                    catch (SQLException ignored) {}
+                }
+            }
+            stmt = backendSysConnection.createStatement();
+            stmt.execute(attachString + " " + attachOptions);
+            stmt.close();
+            if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
+                if (this.serverConfiguration.getDataEncrypt())
+                {
+                    logger.info("[SERVER][STARTUP    ] Instance mounted with encrypted feature at ':memory:{}' successful.", instanceName);
+                }
+                else {
+                    logger.info("[SERVER][STARTUP    ] Instance mounted at ':memory:{}'.", instanceName);
+                }
+            }
+            else
+            {
+                if (this.serverConfiguration.getDataEncrypt())
+                {
+                    logger.info("[SERVER][STARTUP    ] Instance mounted with encrypted feature at '{}' successful.", dataFilePath);
+                }
+                else {
+                    logger.info("[SERVER][STARTUP    ] Instance mounted at '{}'.", dataFilePath);
+                }
+            }
+
+            // 数据库已经被打开
+            this.instanceSuspendForSecretKey = false;
+
+            if (!serverConfiguration.getAccess_mode().equals("READ_ONLY")) {
+                // 执行初始化脚本，如果有必要的话
+                // 只有内存数据库或者文件数据库第一次启动的时候需要执行
+                List<String> initScriptFiles = new ArrayList<>();
+                if (databaseFirstOpened && !serverConfiguration.getInit_script().trim().isEmpty()) {
+                    if (new File(serverConfiguration.getInit_script()).isFile()) {
+                        initScriptFiles.add(new File(serverConfiguration.getInit_script()).getAbsolutePath());
+                    } else if (new File(serverConfiguration.getInit_script()).isDirectory()) {
+                        File[] files = new File(serverConfiguration.getInit_script()).listFiles();
+                        if (files != null) {
+                            for (File file : files) {
+                                if (file.isFile() && file.getName().endsWith(".sql")) {
+                                    initScriptFiles.add(file.getAbsolutePath());
+                                }
+                            }
+                        }
+                    } else {
+                        logger.warn("[SERVER][STARTUP    ] Init script(s) [{}] does not exist!", serverConfiguration.getInit_script());
+                    }
+                }
+                // 脚本按照名称来排序
+                Collections.sort(initScriptFiles);
+                for (String initScriptFile : initScriptFiles) {
+                    executeScript(initScriptFile);
+                }
+                logger.debug("[SERVER][STARTUP    ] Init {} script(s) execute completed.", initScriptFiles.size());
+
+                // 执行系统启动脚本，如果有必要的话
+                // 每次启动都要执行的部分
+                List<String> startupScriptFiles = new ArrayList<>();
+                if (!serverConfiguration.getStartup_script().trim().isEmpty()) {
+                    if (new File(serverConfiguration.getStartup_script()).isFile()) {
+                        startupScriptFiles.add(new File(serverConfiguration.getStartup_script()).getAbsolutePath());
+                    } else if (new File(serverConfiguration.getStartup_script()).isDirectory()) {
+                        File[] files = new File(serverConfiguration.getStartup_script()).listFiles();
+                        if (files != null) {
+                            for (File file : files) {
+                                if (file.isFile() && file.getName().endsWith(".sql")) {
+                                    startupScriptFiles.add(file.getAbsolutePath());
+                                }
+                            }
+                        }
+                    } else {
+                        logger.warn("[SERVER][STARTUP    ] Startup script(s) [{}] does not exist!", serverConfiguration.getStartup_script());
+                    }
+                }
+                // 脚本按照名称来排序
+                Collections.sort(startupScriptFiles);
+                for (String startupScriptFile : startupScriptFiles) {
+                    executeScript(startupScriptFile);
+                }
+                logger.debug("[SERVER][STARTUP    ] Startup {} script(s) execute completed.", startupScriptFiles.size());
+
+                // 检查模板文件是否存在，如果有问题，直接退出
+                if (this.databaseFirstOpened && !this.serverConfiguration.getTemplate().trim().isEmpty()) {
+                    String templateFileName = this.serverConfiguration.getTemplate().trim();
+                    File templateFile = new File(templateFileName);
+                    if (!templateFile.exists() || !templateFile.canRead()) {
+                        throw new ServerException("Template file [" + templateFile.getAbsolutePath() + "] does not exist or no permission!");
+                    }
+                }
+
+                // 检查模板文件是否存在
+                if (databaseFirstOpened && !serverConfiguration.getTemplate().trim().isEmpty()) {
+                    String templateFileName = serverConfiguration.getTemplate().trim();
+                    File templateFile = new File(templateFileName);
+                    if (!templateFile.exists() || !templateFile.canRead()) {
+                        throw new ServerException("Template file [" + templateFile.getAbsolutePath() + "] does not exist or no permission!");
+                    }
+                    logger.info("[SERVER][STARTUP    ] Copy template database [{}] in ...", templateFile.getAbsolutePath());
+                    stmt = backendSysConnection.createStatement();
+                    stmt.execute("ATTACH '" + templateFile.getAbsolutePath() + "' AS _imp_db (READ_ONLY)");
+                    ResultSet rs = stmt.executeQuery("SELECT current_catalog()");
+                    rs.next();
+                    stmt.execute("COPY FROM DATABASE _imp_db TO " + rs.getString(1));
+                    stmt.execute("DETACH DATABASE _imp_db");
+                    stmt.close();
+                    logger.info("[SERVER][STARTUP    ] Copy template database completed.");
+                }
+            }
+        }
+        catch (SQLException | IOException exception)
+        {
+            throw new ServerException("Init backend connection error. Attach failed.", exception);
+        }
+    }
+
     // 构造函数
     public DBInstance(ServerConfiguration pServerConfiguration) throws ServerException
     {
@@ -663,9 +772,6 @@ public class DBInstance {
             }
         }
 
-        // 文件是否为第一次打开
-        boolean databaseFirstOpened = false;
-
         // 建立基础数据库连接
         this.backendConnectString = "jdbc:duckdb:memory:db" + UUID.randomUUID().toString().replace("-","");
         // 默认容许未签名的扩展, 该参数无法启动后设置，只能依赖链接参数传入
@@ -695,6 +801,8 @@ public class DBInstance {
             }
             // 默认用后台线程来异步清除未完成的内存分配
             stmt.execute("set allocator_background_threads to true");
+            // 禁用插件的自动安装机制，减少不必要的外网访问
+            stmt.execute("set autoinstall_known_extensions to true");
             stmt.close();
         }
         catch (SQLException sqlException)
@@ -703,153 +811,10 @@ public class DBInstance {
         }
         logger.info("[SERVER][STARTUP    ] Instance started successful.");
 
-        // 如果指定了Data，则需要Attach到指定的数据库上
-        if (!serverConfiguration.getData().isEmpty()) {
-            try {
-                String attachString;
-                String dataFilePath;
-                if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
-                    attachString = "ATTACH ':memory:' AS \"" + instanceName + "\"";
-                    dataFilePath = ":memory:";
-                    databaseFirstOpened = true;
-                } else {
-                    if (!new File(serverConfiguration.getData_Dir()).isDirectory()) {
-                        throw new ServerException("Data directory [" + serverConfiguration.getData_Dir() + "] does not exist!");
-                    }
-                    File dataFile = new File(serverConfiguration.getData_Dir(), instanceName + ".db");
-                    if (!dataFile.canRead() && serverConfiguration.getAccess_mode().equalsIgnoreCase("READ_ONLY")) {
-                        throw new ServerException("Data [" + dataFile.getAbsolutePath() + "] can't be read!!");
-                    }
-                    if (!dataFile.exists() && !new File(serverConfiguration.getData_Dir()).canWrite()) {
-                        throw new ServerException("Data [" + dataFile.getAbsolutePath() + "] can't be create!!");
-                    }
-                    if (dataFile.exists() && !dataFile.canWrite() && serverConfiguration.getAccess_mode().equalsIgnoreCase("READ_WRITE")) {
-                        throw new ServerException("Data [" + dataFile.getAbsolutePath() + "] can't be write!!");
-                    }
-                    if (!dataFile.exists()) {
-                        // 文件的第一次被使用
-                        databaseFirstOpened = true;
-                    }
-                    dataFilePath = dataFile.getAbsolutePath();
-                    attachString = "ATTACH '" + dataFile.getAbsolutePath() + "' AS \"" + instanceName + "\"";
-                }
-                if (serverConfiguration.getAccess_mode().equals("READ_ONLY")) {
-                    attachString = attachString + " (READ_ONLY)";
-                }
-                Statement stmt = backendSysConnection.createStatement();
-                stmt.execute(attachString);
-                stmt.close();
-                if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
-                    logger.info("[SERVER][STARTUP    ] Instance mounted at ':memory:{}'.", instanceName);
-                }
-                else
-                {
-                    logger.info("[SERVER][STARTUP    ] Instance mounted at '{}' successful.", dataFilePath);
-                }
-
-                if (!serverConfiguration.getAccess_mode().equals("READ_ONLY")) {
-                    try {
-                        // 虚构一些PG的数据字典，以满足后续各种工具对数据字典的查找
-                        SlackerCatalog.createFakeCatalog(this, backendSysConnection);
-
-                        stmt = backendSysConnection.createStatement();
-                        // 强制约定在程序推出的时候保存检查点
-                        stmt.execute("PRAGMA enable_checkpoint_on_shutdown");
-                        stmt.close();
-                    } catch (SQLException e) {
-                        logger.error("[SERVER][STARTUP    ] Init backend connection error. ", e);
-                        throw new ServerException(e);
-                    }
-
-                    // 执行初始化脚本，如果有必要的话
-                    // 只有内存数据库或者文件数据库第一次启动的时候需要执行
-                    List<String> initScriptFiles = new ArrayList<>();
-                    if (databaseFirstOpened && !serverConfiguration.getInit_script().trim().isEmpty()) {
-                        if (new File(serverConfiguration.getInit_script()).isFile()) {
-                            initScriptFiles.add(new File(serverConfiguration.getInit_script()).getAbsolutePath());
-                        } else if (new File(serverConfiguration.getInit_script()).isDirectory()) {
-                            File[] files = new File(serverConfiguration.getInit_script()).listFiles();
-                            if (files != null) {
-                                for (File file : files) {
-                                    if (file.isFile() && file.getName().endsWith(".sql")) {
-                                        initScriptFiles.add(file.getAbsolutePath());
-                                    }
-                                }
-                            }
-                        } else {
-                            logger.warn("[SERVER][STARTUP    ] Init script(s) [{}] does not exist!", serverConfiguration.getInit_script());
-                        }
-                    }
-                    // 脚本按照名称来排序
-                    Collections.sort(initScriptFiles);
-                    for (String initScriptFile : initScriptFiles) {
-                        executeScript(initScriptFile);
-                    }
-                    logger.debug("[SERVER][STARTUP    ] Init {} script(s) execute completed.", initScriptFiles.size());
-
-                    // 执行系统启动脚本，如果有必要的话
-                    // 每次启动都要执行的部分
-                    List<String> startupScriptFiles = new ArrayList<>();
-                    if (!serverConfiguration.getStartup_script().trim().isEmpty()) {
-                        if (new File(serverConfiguration.getStartup_script()).isFile()) {
-                            startupScriptFiles.add(new File(serverConfiguration.getStartup_script()).getAbsolutePath());
-                        } else if (new File(serverConfiguration.getStartup_script()).isDirectory()) {
-                            File[] files = new File(serverConfiguration.getStartup_script()).listFiles();
-                            if (files != null) {
-                                for (File file : files) {
-                                    if (file.isFile() && file.getName().endsWith(".sql")) {
-                                        startupScriptFiles.add(file.getAbsolutePath());
-                                    }
-                                }
-                            }
-                        } else {
-                            logger.warn("[SERVER][STARTUP    ] Startup script(s) [{}] does not exist!", serverConfiguration.getStartup_script());
-                        }
-                    }
-                    // 脚本按照名称来排序
-                    Collections.sort(startupScriptFiles);
-                    for (String startupScriptFile : startupScriptFiles) {
-                        executeScript(startupScriptFile);
-                    }
-                    logger.debug("[SERVER][STARTUP    ] Startup {} script(s) execute completed.", startupScriptFiles.size());
-                }
-            }
-            catch (SQLException | IOException exception)
-            {
-                throw new ServerException("Init backend connection error. Attach failed.", exception);
-            }
-        }
+        // 打开数据库
+        this.attachDatabase(null);
 
         try {
-            // 检查模板文件是否存在，如果有问题，直接退出
-            if (databaseFirstOpened && !serverConfiguration.getTemplate().trim().isEmpty()) {
-                String templateFileName = serverConfiguration.getTemplate().trim();
-                File templateFile = new File(templateFileName);
-                if (!templateFile.exists() || !templateFile.canRead())
-                {
-                    throw new ServerException("Template file [" + templateFile.getAbsolutePath() + "] does not exist or no permission!");
-                }
-            }
-
-            // 检查模板文件是否存在
-            if (databaseFirstOpened && !serverConfiguration.getTemplate().trim().isEmpty()) {
-                String templateFileName = serverConfiguration.getTemplate().trim();
-                File templateFile = new File(templateFileName);
-                if (!templateFile.exists() || !templateFile.canRead())
-                {
-                    throw new ServerException("Template file [" + templateFile.getAbsolutePath() + "] does not exist or no permission!");
-                }
-                logger.info("[SERVER][STARTUP    ] Copy template database [{}] in ...", templateFile.getAbsolutePath());
-                Statement stmt = backendSysConnection.createStatement();
-                stmt.execute("ATTACH '" + templateFile.getAbsolutePath() + "' AS _imp_db (READ_ONLY)");
-                ResultSet rs = stmt.executeQuery("SELECT current_catalog()");
-                rs.next();
-                stmt.execute("COPY FROM DATABASE _imp_db TO " + rs.getString(1));
-                stmt.execute("DETACH DATABASE _imp_db");
-                stmt.close();
-                logger.info("[SERVER][STARTUP    ] Copy template database completed.");
-            }
-
             // 初始化数据库连接池
             DBDataSourcePoolConfig dbDataSourcePoolConfig = new DBDataSourcePoolConfig();
             dbDataSourcePoolConfig.setMinimumIdle(serverConfiguration.getConnection_pool_minimum_idle());
@@ -918,10 +883,6 @@ public class DBInstance {
             throw new ServerException("Init backend connection error. ", e);
         }
 
-        // SQL替换
-        // DuckDB并不支持所有的PG语法，所以需要进行转义替换，以保证第三方工具能够正确使用
-        SQLReplacer.load(this);
-
         // 标记服务已经挂载成功
         this.instanceState = "MOUNTED";
 
@@ -950,9 +911,6 @@ public class DBInstance {
         {
             logger.info("[SERVER][STARTUP    ] Instance opened without listener successful.");
         }
-
-        // 在自动挂载列表中增加一行记录，避免被重复挂载
-        autoloadDatabase.add(instanceName + ".db");
 
         // 启动监控线程
         if (dbInstanceMonitorThread == null)
