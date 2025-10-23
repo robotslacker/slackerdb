@@ -190,210 +190,210 @@ public class ServerConfiguration {
                     if (entry.getValue().toString().isEmpty()) {
                         daemonMode = this.defaultDaemonMode;
                     } else {
-                        setDaemon(entry.getValue().toString());
+                        setDaemon(entry.getValue().toString().trim());
                     }
                 }
                 case "LOCALE" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         locale = this.default_locale;
                     } else {
-                        setLocale(entry.getValue().toString());
+                        setLocale(entry.getValue().toString().trim());
                     }
                 }
                 case "DATA" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         data = this.default_data;
                     } else {
-                        setData(entry.getValue().toString());
+                        setData(entry.getValue().toString().trim());
                     }
                 }
                 case "DATA_DIR" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         data_dir = this.default_data_dir;
                     } else {
-                        setData_dir(entry.getValue().toString());
+                        setData_dir(entry.getValue().toString().trim());
                     }
                 }
                 case "TEMP_DIR" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         temp_dir = this.default_temp_dir;
                     } else {
-                        setTemp_dir(entry.getValue().toString());
+                        setTemp_dir(entry.getValue().toString().trim());
                     }
                 }
                 case "EXTENSION_DIR" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         extension_dir = this.default_extension_dir;
                     } else {
-                        setExtension_dir(entry.getValue().toString());
+                        setExtension_dir(entry.getValue().toString().trim());
                     }
                 }
                 case "LOG" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         log = this.default_log;
                     } else {
-                        setLog(entry.getValue().toString());
+                        setLog(entry.getValue().toString().trim());
                     }
                 }
                 case "LOG_LEVEL" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         log_level = this.default_log_level;
                     } else {
-                        setLog_level(entry.getValue().toString());
+                        setLog_level(entry.getValue().toString().trim());
                     }
                 }
                 case "PORT" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         port = this.default_port;
                     } else {
-                        setPort(entry.getValue().toString());
+                        setPort(entry.getValue().toString().trim());
                     }
                 }
                 case "PORT_X" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         portX = this.default_portX;
                     } else {
-                        setPortX(entry.getValue().toString());
+                        setPortX(entry.getValue().toString().trim());
                     }
                 }
                 case "BIND" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         bind = this.default_bind;
                     } else {
-                        setBindHost(entry.getValue().toString());
+                        setBindHost(entry.getValue().toString().trim());
                     }
                 }
                 case "REMOTE_LISTENER" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         remote_listener = this.default_remote_listener;
                     } else {
-                        setRemoteListener(entry.getValue().toString());
+                        setRemoteListener(entry.getValue().toString().trim());
                     }
                 }
                 case "CLIENT_TIMEOUT" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         client_timeout = this.default_client_timeout;
                     } else {
-                        setClient_timeout(entry.getValue().toString());
+                        setClient_timeout(entry.getValue().toString().trim());
                     }
                 }
                 case "ACCESS_MODE" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         access_mode = this.default_access_mode;
                     } else {
-                        setAccess_mode(entry.getValue().toString());
+                        setAccess_mode(entry.getValue().toString().trim());
                     }
                 }
                 case "MAX_CONNECTIONS" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         max_connections = this.default_max_connections;
                     } else {
-                        setMax_connections(entry.getValue().toString());
+                        setMax_connections(entry.getValue().toString().trim());
                     }
                 }
                 case "MAX_WORKERS" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         max_workers = this.default_max_workers;
                     } else {
-                        setMax_workers(entry.getValue().toString());
+                        setMax_workers(entry.getValue().toString().trim());
                     }
                 }
                 case "THREADS" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         threads = this.default_threads;
                     } else {
-                        setThreads(entry.getValue().toString());
+                        setThreads(entry.getValue().toString().trim());
                     }
                 }
                 case "MEMORY_LIMIT" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         memory_limit = this.default_memory_limit;
                     } else {
-                        setMemory_limit(entry.getValue().toString());
+                        setMemory_limit(entry.getValue().toString().trim());
                     }
                 }
                 case "INIT_SCRIPT" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         init_script = this.default_init_script;
                     } else {
-                        setInit_script(entry.getValue().toString());
+                        setInit_script(entry.getValue().toString().trim());
                     }
                 }
                 case "STARTUP_SCRIPT" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         startup_script = this.default_startup_script;
                     } else {
-                        setStartup_script(entry.getValue().toString());
+                        setStartup_script(entry.getValue().toString().trim());
                     }
                 }
                 case "TEMPLATE" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         template = this.default_template;
                     } else {
-                        setTemplate(entry.getValue().toString());
+                        setTemplate(entry.getValue().toString().trim());
                     }
                 }
                 case "SQL_HISTORY" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         sqlHistory = this.default_sqlHistory;
                     } else {
-                        setSqlHistory(entry.getValue().toString());
+                        setSqlHistory(entry.getValue().toString().trim());
                     }
                 }
                 case "DATA_SERVICE_SCHEMA" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         data_service_schema = this.default_data_service_schema;
                     } else {
-                        setDataServiceSchema(entry.getValue().toString());
+                        setDataServiceSchema(entry.getValue().toString().trim());
                     }
                 }
                 case "DATA_SERVICE_HISTORY" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         data_service_history = this.default_data_service_history;
                     } else {
-                        setDataServiceHistory(entry.getValue().toString());
+                        setDataServiceHistory(entry.getValue().toString().trim());
                     }
                 }
                 case "PID" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         pid = this.default_pid;
                     } else {
-                        setPid(entry.getValue().toString());
+                        setPid(entry.getValue().toString().trim());
                     }
                 }
                 case "CONNECTION_POOL_MINIMUM_IDLE" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         connection_pool_minimum_idle = this.default_connection_pool_minimum_idle;
                     } else {
-                        setConnection_pool_minimum_idle(Integer.parseInt(entry.getValue().toString()));
+                        setConnection_pool_minimum_idle(Integer.parseInt(entry.getValue().toString().trim()));
                     }
                 }
                 case "CONNECTION_POOL_MAXIMUM_IDLE" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         connection_pool_maximum_idle = this.default_connection_pool_maximum_idle;
                     } else {
-                        setConnection_pool_maximum_idle(Integer.parseInt(entry.getValue().toString()));
+                        setConnection_pool_maximum_idle(Integer.parseInt(entry.getValue().toString().trim()));
                     }
                 }
                 case "CONNECTION_POOL_MAXIMUM_LIFECYCLE_TIME" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         connection_pool_maximum_lifecycle_time = this.default_connection_pool_maximum_lifecycle_time;
                     } else {
-                        setConnection_pool_maximum_lifecycle_time(Integer.parseInt(entry.getValue().toString()));
+                        setConnection_pool_maximum_lifecycle_time(Integer.parseInt(entry.getValue().toString().trim()));
                     }
                 }
                 case "QUERY_RESULT_CACHE_SIZE" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         query_result_cache_size = this.default_query_result_cache_size;
                     } else {
-                        setQuery_result_cache_size(Long.parseLong(entry.getValue().toString()));
+                        setQuery_result_cache_size(Long.parseLong(entry.getValue().toString().trim()));
                     }
                 }
                 case "DATA_ENCRYPT" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         data_encrypt = this.default_data_encrypt;
                     } else {
-                        setDataEncrypt(entry.getValue().toString());
+                        setDataEncrypt(entry.getValue().toString().trim());
                     }
                 }
                 default ->

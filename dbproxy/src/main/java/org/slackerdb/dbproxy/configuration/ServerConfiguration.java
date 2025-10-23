@@ -98,70 +98,70 @@ public class ServerConfiguration extends Throwable {
                     if (entry.getValue().toString().isEmpty()) {
                         daemonMode = this.defaultDaemonMode;
                     } else {
-                        setDaemon(entry.getValue().toString());
+                        setDaemon(entry.getValue().toString().trim());
                     }
                 }
                 case "LOCALE" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         locale = this.default_locale;
                     } else {
-                        setLocale(entry.getValue().toString());
+                        setLocale(entry.getValue().toString().trim());
                     }
                 }
                 case "LOG" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         log = this.default_log;
                     } else {
-                        setLog(entry.getValue().toString());
+                        setLog(entry.getValue().toString().trim());
                     }
                 }
                 case "LOG_LEVEL" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         log_level = this.default_log_level;
                     } else {
-                        setLog_level(entry.getValue().toString());
+                        setLog_level(entry.getValue().toString().trim());
                     }
                 }
                 case "PORT" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         port = this.default_port;
                     } else {
-                        setPort(entry.getValue().toString());
+                        setPort(entry.getValue().toString().trim());
                     }
                 }
                 case "PORT_X" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         portX = this.default_portX;
                     } else {
-                        setPortX(entry.getValue().toString());
+                        setPortX(entry.getValue().toString().trim());
                     }
                 }
                 case "BIND" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         bind = this.default_bind;
                     } else {
-                        setBindHost(entry.getValue().toString());
+                        setBindHost(entry.getValue().toString().trim());
                     }
                 }
                 case "CLIENT_TIMEOUT" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         client_timeout = this.default_client_timeout;
                     } else {
-                        setClient_timeout(entry.getValue().toString());
+                        setClient_timeout(entry.getValue().toString().trim());
                     }
                 }
                 case "MAX_WORKERS" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         max_workers = this.default_max_workers;
                     } else {
-                        setMax_workers(entry.getValue().toString());
+                        setMax_workers(entry.getValue().toString().trim());
                     }
                 }
                 case "PID" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         pid = this.default_pid;
                     } else {
-                        setPid(entry.getValue().toString());
+                        setPid(entry.getValue().toString().trim());
                     }
                 }
                 default ->
