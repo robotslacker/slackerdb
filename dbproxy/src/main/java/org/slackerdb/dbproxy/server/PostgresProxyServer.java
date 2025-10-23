@@ -72,10 +72,10 @@ public class PostgresProxyServer {
         logger.info("[PROXY] Received stop request.");
         logger.info("[PROXY] Server will stop now.");
         if (workerGroup != null) {
-            workerGroup.shutdownGracefully();
+            workerGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
         }
         if (bossGroup != null) {
-            bossGroup.shutdownGracefully();
+            bossGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
         }
         logger.info("[PROXY] Server stopped.");
     }
@@ -323,8 +323,8 @@ public class PostgresProxyServer {
             portReady = true;
             future.channel().closeFuture().sync();
         } finally {
-            bossGroup.shutdownGracefully();
-            workerGroup.shutdownGracefully();
+            workerGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
+            bossGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
         }
     }
 

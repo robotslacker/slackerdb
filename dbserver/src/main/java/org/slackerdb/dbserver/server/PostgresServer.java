@@ -99,16 +99,10 @@ public class PostgresServer {
         logger.info("[SERVER] Server will stop now.");
 
         if (workerGroup != null) {
-            workerGroup.shutdownGracefully();
-            try {
-                var ignored = workerGroup.awaitTermination(10, TimeUnit.SECONDS);
-            } catch (InterruptedException ignored) {}
+            workerGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
         }
         if (bossGroup != null) {
-            bossGroup.shutdownGracefully();
-            try {
-                var ignored = bossGroup.awaitTermination(10, TimeUnit.SECONDS);
-            } catch (InterruptedException ignored) {}
+            bossGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
         }
         logger.info("[SERVER] Server stopped.");
     }
@@ -453,8 +447,8 @@ public class PostgresServer {
             portReady = true;
             future.channel().closeFuture().sync();
         } finally {
-            bossGroup.shutdownGracefully();
-            workerGroup.shutdownGracefully();
+            workerGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
+            bossGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
         }
     }
 

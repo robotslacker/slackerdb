@@ -695,6 +695,19 @@ We do not recommend that you use the PG client to connect to this
 database(That works, but has limited functionality). +
 Instead, we suggest use the dedicated client provided in this project.
 
+=== Data Security
+Based on DuckDB's secure encryption mechanism, we support data encryption.
+
+To use this feature, you need to:
+
+1. Set the parameter data_encrypt to true.
+
+2. Set the database key through any of the following three methods:
+     . Environment variable: SLACKERDB_<dbName>_KEY (where <dbName> is replaced with the name of your database instance).
+     . Java property: Specify it when starting the program as -DSLACKERDB_<dbName>_KEY=....
+     . After startup, specify it via the statement:  ALTER DATABASE <dbName> SET Encrypt Key <key>.
+
+
 === Known Issues
 
 ==== 1. User and password authorization
