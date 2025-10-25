@@ -93,6 +93,7 @@ public class StartupRequest  extends PostgresRequest {
             Statement stmt = conn.createStatement();
             stmt.execute("set variable current_database = '" + startupOptions.get("database") + "'");
             stmt.execute("set search_path = 'memory.duck_catalog," + userSearchPath + "'");
+
             if (!startupOptions.get("database").isEmpty() && !this.dbInstance.instanceSuspendForSecretKey) {
                 // 如果数据库等待密钥，则无法执行USE操作
                 try {

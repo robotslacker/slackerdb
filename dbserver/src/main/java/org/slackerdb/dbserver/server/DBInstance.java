@@ -460,6 +460,14 @@ public class DBInstance {
         // 如果数据库开启了加密，但是没有设置环境变量，则不要进行Attach
         // 如果指定了Data，则需要Attach到指定的数据库上
         try {
+            // 虚构一些PG的数据字典，以满足后续各种工具对数据字典的查找
+            SlackerCatalog.createFakeCatalog(this, backendSysConnection);
+
+            // SQL替换
+            // DuckDB并不支持所有的PG语法，所以需要进行转义替换，以保证第三方工具能够正确使用
+            SQLReplacer.load(this);
+
+            // 校验数据库参数
             String instanceName = this.serverConfiguration.getData();
             Statement stmt;
             if (instanceName.isEmpty())
@@ -484,13 +492,6 @@ public class DBInstance {
                 // 数据库名必须是数字或者字母包括，也包括_和-
                 throw new ServerException("Instance name [" + instanceName + "] is not valid. It is reserved keyword!");
             }
-
-            // 虚构一些PG的数据字典，以满足后续各种工具对数据字典的查找
-            SlackerCatalog.createFakeCatalog(this, backendSysConnection);
-
-            // SQL替换
-            // DuckDB并不支持所有的PG语法，所以需要进行转义替换，以保证第三方工具能够正确使用
-            SQLReplacer.load(this);
 
             // 强制约定在程序推出的时候保存检查点
             stmt = this.backendSysConnection.createStatement();

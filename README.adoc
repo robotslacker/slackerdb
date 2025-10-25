@@ -693,7 +693,14 @@ Since native Postgres clients often use some data dictionary information
 that duckdb doesn’t have, +
 We do not recommend that you use the PG client to connect to this
 database(That works, but has limited functionality). +
-Instead, we suggest use the dedicated client provided in this project.
+Instead, we suggest use the dedicated client provided in this project. +
+....
+Dbeaver:
+Database -> Driver Manager -> New
+   Database type: generic database.
+   Class name:    org.slackerdb.jdbc.Driver
+   URL template:  jdbc:slackerdb://{host}:{port}/[{database}]
+....
 
 === Data Security
 Based on DuckDB's secure encryption mechanism, we support data encryption.
