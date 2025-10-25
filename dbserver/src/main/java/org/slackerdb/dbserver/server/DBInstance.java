@@ -634,6 +634,12 @@ public class DBInstance {
                 for (String initScriptFile : initScriptFiles) {
                     executeScript(initScriptFile);
                 }
+                // 尝试提交，语句中可能不包含需要提交的部分，所以忽略Commit的错误
+                try
+                {
+                    this.backendSysConnection.commit();
+                }
+                catch (SQLException ignored) {}
                 logger.debug("[SERVER][STARTUP    ] Init {} script(s) execute completed.", initScriptFiles.size());
 
                 // 执行系统启动脚本，如果有必要的话
