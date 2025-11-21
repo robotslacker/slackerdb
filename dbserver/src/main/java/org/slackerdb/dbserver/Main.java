@@ -68,6 +68,7 @@ public class Main {
         System.out.println("  --data_encrypt              Enable data encryption. Default: false");
         System.out.println("  --data_dir                  Specify database file directory. Default: :memory:");
         System.out.println("  --temp_dir                  Specify temporary file directory. Default: same with data_dir(disk mode), OS-dependent(memory mode).");
+        System.out.println("  --plugins_dir               Specify plugins file directory. Default: none.");
         System.out.println("  --extension_dir             Specify extension file directory. Default: $HOME/.duckdb/extensions.");
         System.out.println("  --template                  Specify template datafile for initial setup. Default: none.");
         System.out.println("  --init_script               Specify system initialization script or directory. Default: none.");
@@ -328,6 +329,10 @@ public class Main {
             if (appOptions.containsKey("extension_dir"))
             {
                 serverConfiguration.setExtension_dir(appOptions.get("extension_dir"));
+            }
+            if (appOptions.containsKey("plugins_dir"))
+            {
+                serverConfiguration.setPlugins_dir(appOptions.get("plugins_dir"));
             }
             if (appOptions.containsKey("init_script"))
             {

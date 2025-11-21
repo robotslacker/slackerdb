@@ -21,6 +21,8 @@ import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.entity.SQLHistoryRecord;
 import org.slackerdb.dbserver.message.request.AdminClientRequest;
 import org.slackerdb.dbserver.sql.SQLReplacer;
+import org.slackerdb.dbserver.sql.SqlCommentStripper;
+import org.slackerdb.plugin.DBPluginManager;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
@@ -97,6 +99,9 @@ public class DBInstance {
 
     // 标记数据库是否为第一次打开
     private boolean databaseFirstOpened = false;
+
+    // 插件管理器
+    private DBPluginManager dbPluginManager = null;
 
     // 从资源文件中获取消息，为未来的多语言做准备
     private String getMessage(String code, Object... contents) {
@@ -437,7 +442,7 @@ public class DBInstance {
         Statement stmt = backendSysConnection.createStatement();
         List<String> sqlItems = SQLReplacer.splitSQLWithSemicolon(sqlFileContents);
         for (String sqlItem : sqlItems) {
-            String sql = SQLReplacer.removeSQLComments(sqlItem);
+            String sql = SqlCommentStripper.stripComments(sqlItem);
             if (!sql.trim().isEmpty()) {
                 try {
                     logger.debug("[SERVER][STARTUP    ]   Executing sql: {} ;", sql);
@@ -781,6 +786,7 @@ public class DBInstance {
 
         // 建立基础数据库连接
         this.backendConnectString = "jdbc:duckdb:memory:db" + UUID.randomUUID().toString().replace("-","");
+
         // 默认容许未签名的扩展, 该参数无法启动后设置，只能依赖链接参数传入
         backendConnectProperties.setProperty("allow_unsigned_extensions", "true");
         try {
@@ -817,6 +823,19 @@ public class DBInstance {
             throw new ServerException("Init backend connection error. ", sqlException);
         }
         logger.info("[SERVER][STARTUP    ] Instance started successful.");
+
+        // 关闭pf4j的日志, 如果不是在trace下
+        Logger nettyLogger = (Logger) LoggerFactory.getLogger("org.pf4j");
+        if (!this.logger.getLevel().equals(Level.TRACE)) {
+            nettyLogger.setLevel(Level.OFF);
+        }
+        // 加载数据库插件, 但是不要启动
+        if (!serverConfiguration.getPlugins_dir().isEmpty() && Path.of(serverConfiguration.getPlugins_dir()).toFile().exists())
+        {
+            this.dbPluginManager = new DBPluginManager(Path.of(serverConfiguration.getPlugins_dir()));
+            dbPluginManager.setContextValue("Connection", this.backendSysConnection);
+            dbPluginManager.loadPlugins();
+        }
 
         // 打开数据库
         this.attachDatabase(null);

@@ -86,6 +86,13 @@
                 <include>slackerdb-dbdriver-*.jar</include>
             </includes>
         </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../plugin/target</directory>
+            <outputDirectory>jlib</outputDirectory>
+            <includes>
+                <include>slackerdb-plugin-*.jar</include>
+            </includes>
+        </fileSet>
     </fileSets>
 
 </assembly>

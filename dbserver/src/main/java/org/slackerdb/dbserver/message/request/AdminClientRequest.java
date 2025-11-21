@@ -159,6 +159,7 @@ public class AdminClientRequest  extends PostgresRequest {
                 feedBackMsg.append(String.format("%-20s", "  Init_Script:")).append(this.dbInstance.serverConfiguration.getInit_script()).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Startup_Script:")).append(this.dbInstance.serverConfiguration.getStartup_script()).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Extension_Dir:")).append(this.dbInstance.serverConfiguration.getExtension_dir()).append("\n");
+                feedBackMsg.append(String.format("%-20s", "  Plugins_Dir:")).append(this.dbInstance.serverConfiguration.getPlugins_dir()).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Threads:")).append(this.dbInstance.serverConfiguration.getThreads()).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Memory_Limit:")).append(this.dbInstance.serverConfiguration.getMemory_limit()).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Max_Workers:")).append(this.dbInstance.serverConfiguration.getMax_Workers()).append("\n");

@@ -1,0 +1,72 @@
+<?xml version="1.0"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+
+    <artifactId>slackerdb-plugin-example</artifactId>
+    <packaging>jar</packaging>
+
+    <parent>
+        <groupId>org.robotslacker</groupId>
+        <artifactId>slackerdb</artifactId>
+        <version>0.1.7</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <dependencies>
+        <!-- PF4J 插件 -->
+        <dependency>
+            <groupId>org.pf4j</groupId>
+            <artifactId>pf4j</artifactId>
+            <version>3.13.0</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-plugin</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+
+<!--    <build>-->
+<!--        <finalName>slackerdb-extension-example</finalName>-->
+<!--        <resources>-->
+<!--            <resource>-->
+<!--                <directory>src/main/resources</directory>-->
+<!--                <includes>-->
+<!--                    <include>**/*</include>-->
+<!--                </includes>-->
+<!--            </resource>-->
+<!--        </resources>-->
+<!--        <plugins>-->
+<!--            &lt;!&ndash; 插件必须包含 plugin.properties &ndash;&gt;-->
+<!--            <plugin>-->
+<!--                <groupId>org.apache.maven.plugins</groupId>-->
+<!--                <artifactId>maven-resources-plugin</artifactId>-->
+<!--                <version>3.3.1</version>-->
+<!--                <configuration>-->
+<!--                    <encoding>UTF-8</encoding>-->
+<!--                </configuration>-->
+<!--            </plugin>-->
+
+<!--            &lt;!&ndash; PF4J 官方推荐方式：jar + MANIFEST.MF &ndash;&gt;-->
+<!--            <plugin>-->
+<!--                <groupId>org.apache.maven.plugins</groupId>-->
+<!--                <artifactId>maven-jar-plugin</artifactId>-->
+<!--                <version>3.4.2</version>-->
+<!--                <configuration>-->
+<!--                    <archive>-->
+<!--                        <manifest>-->
+<!--                            <addClasspath>true</addClasspath>-->
+<!--                            <classpathPrefix>lib/</classpathPrefix>-->
+<!--                        </manifest>-->
+<!--                    </archive>-->
+<!--                </configuration>-->
+<!--            </plugin>-->
+<!--        </plugins>-->
+<!--    </build>-->
+</project>

@@ -219,70 +219,6 @@ public class SQLReplacer {
         );
     }
 
-    // 移除SQL中的注释
-    public static String removeSQLComments(String sql)
-    {
-        StringBuilder result = new StringBuilder();
-        boolean inString = false;    // 是否在单引号字符串中
-        boolean inSingleLineComment = false; // 是否在单行注释中
-        boolean inBlockComment = false;      // 是否在块注释中
-
-        int length = sql.length();
-        for (int i = 0; i < length; i++) {
-            char currentChar = sql.charAt(i);
-
-            // 处理字符串中的转义单引号（例如：'It''s a string'）
-            if (inString) {
-                if (currentChar == '\'') {
-                    // 检查下一个字符是否也是单引号（转义情况）
-                    if (i + 1 < length && sql.charAt(i + 1) == '\'') {
-                        result.append(currentChar).append(sql.charAt(i + 1));
-                        i++; // 跳过下一个字符
-                    } else {
-                        inString = false; // 结束字符串
-                    }
-                }
-                result.append(currentChar);
-                continue;
-            }
-
-            // 处理单行注释（--）
-            if (inSingleLineComment) {
-                if (currentChar == '\n') {
-                    inSingleLineComment = false;
-                    result.append(currentChar); // 保留换行符
-                }
-                continue;
-            }
-
-            // 处理块注释（/* ... */）
-            if (inBlockComment) {
-                if (currentChar == '*' && i + 1 < length && sql.charAt(i + 1) == '/') {
-                    inBlockComment = false;
-                    i++; // 跳过结束符号'/'
-                }
-                continue;
-            }
-
-            // 检测注释或字符串起始
-            if (currentChar == '-' && i + 1 < length && sql.charAt(i + 1) == '-') {
-                inSingleLineComment = true;
-                i++; // 跳过下一个'-'
-                continue;
-            } else if (currentChar == '/' && i + 1 < length && sql.charAt(i + 1) == '*') {
-                inBlockComment = true;
-                i++; // 跳过下一个'*'
-                continue;
-            } else if (currentChar == '\'') {
-                inString = true; // 进入字符串
-            }
-
-            // 非注释内容直接保留
-            result.append(currentChar);
-        }
-        return result.toString();
-    }
-
     // 按照分号分割SQL，并依次执行
     public static List<String> splitSQLWithSemicolon(String sql) {
         List<String> result = new ArrayList<>();
@@ -290,7 +226,7 @@ public class SQLReplacer {
         boolean inSingleQuote = false;
 
         // 移除SQL中的注释
-        sql = removeSQLComments(sql);
+        sql = SqlCommentStripper.stripComments(sql);
 
         for (int i = 0; i < sql.length(); i++) {
             char c = sql.charAt(i);
@@ -332,7 +268,7 @@ public class SQLReplacer {
         // 按照分号分割，但不要处理带有转义字符的内容
         List<String> sqlItems = splitSQLWithSemicolon(sql.trim());
         for (int i=0; i<sqlItems.size(); i++) {
-            String oldSql = removeSQLComments(sqlItems.get(i));
+            String oldSql = SqlCommentStripper.stripComments(sqlItems.get(i));
             if (oldSql.isEmpty())
             {
                 // 空语句，不再执行

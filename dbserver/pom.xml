@@ -27,29 +27,28 @@
             <artifactId>slackerdb-plsql</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-plugin</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!-- DuckDB 数据库驱动 -->
         <dependency>
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
             <version>1.4.2.0</version>
         </dependency>
+        <!-- PF4J 插件 -->
+        <dependency>
+            <groupId>org.pf4j</groupId>
+            <artifactId>pf4j</artifactId>
+            <version>3.13.0</version>
+        </dependency>
         <!-- NETTY 驱动 -->
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
             <version>4.2.6.Final</version>
-        </dependency>
-        <!-- Crontab 工具 -->
-        <dependency>
-            <groupId>com.cronutils</groupId>
-            <artifactId>cron-utils</artifactId>
-            <version>9.2.1</version>
-        </dependency>
-        <!-- exec 用来daemon方式运行程序 -->
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-exec</artifactId>
-            <version>1.4.0</version>
         </dependency>
         <!-- CSV解析 -->
         <dependency>
@@ -62,6 +61,7 @@
             <groupId>com.zaxxer</groupId>
             <artifactId>HikariCP</artifactId>
             <version>6.2.1</version>
+            <scope>test</scope>
         </dependency>
         <!-- SQL语法解析 -->
         <dependency>

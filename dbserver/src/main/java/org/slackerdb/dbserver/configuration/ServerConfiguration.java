@@ -31,14 +31,21 @@ public class ServerConfiguration {
 
     //  默认使用系统的配置，即不主动配置
     private final String default_extension_dir = "";
+
     // 默认日志打印到控制台
     private final String default_log = "console";
+
     // 默认系统的日志级别为INFO
     private final Level default_log_level = Level.INFO;
+
     // 默认数据库访问服务的端口
     private final int default_port = 0;
+
     // 默认数据库的管理端口
     private final int default_portX = -1;
+
+    // 默认的插件目录
+    private final String default_plugins_dir = "";
 
     // 默认绑定的主机地址
     private final String default_bind = "0.0.0.0";
@@ -90,6 +97,7 @@ public class ServerConfiguration {
     private String   temp_dir;
 
     private String   extension_dir;
+    private String   plugins_dir;
     private String   log;
     private Level    log_level;
     private int      port;
@@ -151,6 +159,7 @@ public class ServerConfiguration {
         data_service_schema = default_data_service_schema;
         data_service_history = default_data_service_history;
         data_encrypt = default_data_encrypt;
+        plugins_dir = default_plugins_dir;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -387,6 +396,13 @@ public class ServerConfiguration {
                         query_result_cache_size = this.default_query_result_cache_size;
                     } else {
                         setQuery_result_cache_size(Long.parseLong(entry.getValue().toString().trim()));
+                    }
+                }
+                case "PLUGINS_DIR" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        plugins_dir = this.default_plugins_dir;
+                    } else {
+                        setPlugins_dir(entry.getValue().toString().trim());
                     }
                 }
                 case "DATA_ENCRYPT" -> {
@@ -964,5 +980,15 @@ public class ServerConfiguration {
     public boolean getDataEncrypt()
     {
         return data_encrypt;
+    }
+
+    public void setPlugins_dir(String val)
+    {
+        this.plugins_dir = val;
+    }
+
+    public String getPlugins_dir()
+    {
+        return this.plugins_dir;
     }
 }
