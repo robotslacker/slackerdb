@@ -90,7 +90,49 @@
             <directory>${project.basedir}/../plugin/target</directory>
             <outputDirectory>jlib</outputDirectory>
             <includes>
-                <include>slackerdb-plugin-*.jar</include>
+                <include>slackerdb-plugin-*api.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../plugin/target</directory>
+            <outputDirectory>source</outputDirectory>
+            <includes>
+                <include>slackerdb-plugin-*sources.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../dbproxy/target</directory>
+            <outputDirectory>source</outputDirectory>
+            <includes>
+                <include>slackerdb-dbproxy-*sources.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../dbserver/target</directory>
+            <outputDirectory>source</outputDirectory>
+            <includes>
+                <include>slackerdb-dbserver-*sources.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../common/target</directory>
+            <outputDirectory>source</outputDirectory>
+            <includes>
+                <include>slackerdb-common-*sources.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../dbdriver/target</directory>
+            <outputDirectory>source</outputDirectory>
+            <includes>
+                <include>slackerdb-dbdriver-*sources.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../plugin-example/target</directory>
+            <outputDirectory>source</outputDirectory>
+            <includes>
+                <include>slackerdb-plugin-*-example-sources.jar</include>
             </includes>
         </fileSet>
     </fileSets>

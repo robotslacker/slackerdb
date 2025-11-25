@@ -1,6 +1,7 @@
 package org.slackerdb.dbproxy.test;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.slackerdb.common.exceptions.ServerException;
@@ -80,11 +81,11 @@ public class ProxyTest {
             Statement stmt = pgConn.createStatement();
             ResultSet rs = stmt.executeQuery("select current_catalog();");
             rs.next();
-            assert rs.getString(1).equals("mem1");
+            Assertions.assertEquals("mem1", rs.getString(1));
             rs.close();
             rs = stmt.executeQuery("select 42");
             rs.next();
-            assert rs.getString(1).equals("42");
+            Assertions.assertEquals("42", rs.getString(1));
             rs.close();
             stmt.close();
             pgConn.close();
@@ -97,11 +98,11 @@ public class ProxyTest {
             Statement stmt = pgConn.createStatement();
             ResultSet rs = stmt.executeQuery("select current_catalog();");
             rs.next();
-            assert rs.getString(1).equals("mem2");
+            Assertions.assertEquals("mem2", rs.getString(1));
             rs.close();
             rs = stmt.executeQuery("select 42");
             rs.next();
-            assert rs.getString(1).equals("42");
+            Assertions.assertEquals("42", rs.getString(1));
             rs.close();
             stmt.close();
             pgConn.close();

@@ -2,17 +2,32 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0">
     <modelVersion>4.0.0</modelVersion>
 
+    <groupId>org.robotslacker</groupId>
     <artifactId>slackerdb-plugin-example</artifactId>
+    <version>0.1.7</version>
     <packaging>jar</packaging>
 
-    <parent>
-        <groupId>org.robotslacker</groupId>
-        <artifactId>slackerdb</artifactId>
-        <version>0.1.7</version>
-        <relativePath>../pom.xml</relativePath>
-    </parent>
-
     <dependencies>
+        <!-- 日志组件 -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-core</artifactId>
+            <version>1.5.15</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>1.5.15</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.16</version>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- PF4J 插件 -->
         <dependency>
             <groupId>org.pf4j</groupId>
@@ -22,51 +37,64 @@
         </dependency>
         <dependency>
             <groupId>org.robotslacker</groupId>
-            <artifactId>slackerdb-common</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.robotslacker</groupId>
             <artifactId>slackerdb-plugin</artifactId>
-            <version>${project.version}</version>
+            <version>0.1.7</version>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 
-<!--    <build>-->
-<!--        <finalName>slackerdb-extension-example</finalName>-->
-<!--        <resources>-->
-<!--            <resource>-->
-<!--                <directory>src/main/resources</directory>-->
-<!--                <includes>-->
-<!--                    <include>**/*</include>-->
-<!--                </includes>-->
-<!--            </resource>-->
-<!--        </resources>-->
-<!--        <plugins>-->
-<!--            &lt;!&ndash; 插件必须包含 plugin.properties &ndash;&gt;-->
-<!--            <plugin>-->
-<!--                <groupId>org.apache.maven.plugins</groupId>-->
-<!--                <artifactId>maven-resources-plugin</artifactId>-->
-<!--                <version>3.3.1</version>-->
-<!--                <configuration>-->
-<!--                    <encoding>UTF-8</encoding>-->
-<!--                </configuration>-->
-<!--            </plugin>-->
+    <build>
+        <finalName>slackerdb-plugin-${project.version}-example</finalName>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <includes>
+                    <include>**/*</include>
+                </includes>
+            </resource>
+        </resources>
+        <plugins>
+            <!-- 插件必须包含 plugin.properties -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <configuration>
+                    <encoding>UTF-8</encoding>
+                </configuration>
+            </plugin>
 
-<!--            &lt;!&ndash; PF4J 官方推荐方式：jar + MANIFEST.MF &ndash;&gt;-->
-<!--            <plugin>-->
-<!--                <groupId>org.apache.maven.plugins</groupId>-->
-<!--                <artifactId>maven-jar-plugin</artifactId>-->
-<!--                <version>3.4.2</version>-->
-<!--                <configuration>-->
-<!--                    <archive>-->
-<!--                        <manifest>-->
-<!--                            <addClasspath>true</addClasspath>-->
-<!--                            <classpathPrefix>lib/</classpathPrefix>-->
-<!--                        </manifest>-->
-<!--                    </archive>-->
-<!--                </configuration>-->
-<!--            </plugin>-->
-<!--        </plugins>-->
-<!--    </build>-->
+            <!-- PF4J 官方推荐方式：jar + MANIFEST.MF -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.2</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <addClasspath>true</addClasspath>
+                            <classpathPrefix>lib/</classpathPrefix>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.2.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                        <configuration>
+                            <classifier>sources</classifier>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
