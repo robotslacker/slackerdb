@@ -10,6 +10,7 @@ public class DBDataSourcePoolConfig {
     private int maximumIdle;
     private int maximumLifeCycleTime;
     private boolean autoCommit = true;
+    private long connectionAcquireTimeoutMs = 30_000L;
 
     public String getJdbcURL()
     {
@@ -69,6 +70,14 @@ public class DBDataSourcePoolConfig {
     public boolean getAutoCommit()
     {
         return this.autoCommit;
+    }
+
+    public long getConnectionAcquireTimeoutMs() {
+        return connectionAcquireTimeoutMs;
+    }
+
+    public void setConnectionAcquireTimeoutMs(long connectionAcquireTimeoutMs) {
+        this.connectionAcquireTimeoutMs = connectionAcquireTimeoutMs;
     }
 }
 

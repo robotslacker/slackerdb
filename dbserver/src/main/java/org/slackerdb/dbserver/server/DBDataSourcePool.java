@@ -10,7 +10,10 @@ import java.sql.SQLException;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class DBDataSourcePool {
     // 连接池扩展信息
@@ -20,7 +23,7 @@ public class DBDataSourcePool {
     private final DBDataSourcePoolConfig dbDataSourcePoolConfig;
     // 空闲连接的连接池
     private final ConcurrentLinkedQueue<Connection> idleConnectionPool = new ConcurrentLinkedQueue<>();
-    // 使用中的文件连接池
+    // 使用中的连接池
     private final ConcurrentLinkedQueue<Connection> usedConnectionPool = new ConcurrentLinkedQueue<>();
     private final Logger logger;
     // 连接ID
@@ -32,6 +35,9 @@ public class DBDataSourcePool {
 
     // 连接池的名称
     private final String poolName;
+    private final ReentrantLock poolLock = new ReentrantLock();
+    private final Condition connectionAvailable = poolLock.newCondition();
+    private final long connectionAcquireTimeoutMs;
 
     static class DBDataSourcePoolMonitor extends Thread
     {
@@ -41,6 +47,7 @@ public class DBDataSourcePool {
         {
             this.dbDataSourcePool = dbDataSourcePool;
             this.logger = this.dbDataSourcePool.logger;
+            setDaemon(true);
         }
 
         @Override
@@ -50,30 +57,31 @@ public class DBDataSourcePool {
             while (!isInterrupted()) {
                 try {
                     if (this.dbDataSourcePool.dbDataSourcePoolConfig.getMaximumIdle() != 0) {
-                        if (this.dbDataSourcePool.idleConnectionPool.size() > this.dbDataSourcePool.dbDataSourcePoolConfig.getMaximumIdle()) {
-                            // 销毁多余连接
-                            int currentIdleConnectionPoolSize = this.dbDataSourcePool.idleConnectionPool.size();
-                            for (int i = this.dbDataSourcePool.dbDataSourcePoolConfig.getMaximumIdle(); i < currentIdleConnectionPoolSize; i++) {
+                        this.dbDataSourcePool.poolLock.lock();
+                        try {
+                            int targetIdle = this.dbDataSourcePool.dbDataSourcePoolConfig.getMaximumIdle();
+                            int extra = this.dbDataSourcePool.idleConnectionPool.size() - targetIdle;
+                            for (int i = 0; i < extra; i++) {
                                 Connection connection = this.dbDataSourcePool.idleConnectionPool.poll();
                                 if (connection != null) {
-                                    logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Free connection {}. ",
-                                            this.dbDataSourcePool.poolName,
-                                            this.dbDataSourcePool.connectionMetaDataMap.get(connection).getConnectionId());
-                                    this.dbDataSourcePool.connectionMetaDataMap.remove(connection);
-                                    if (!connection.isClosed()) {
-                                        connection.close();
-                                    }
+                                    this.dbDataSourcePool.retireConnection(connection, "exceeds maximumIdle");
                                 }
-                           }
+                            }
+                        } finally {
+                            this.dbDataSourcePool.poolLock.unlock();
                         }
                     }
                     if (this.dbDataSourcePool.dbDataSourcePoolConfig.getMinimumIdle() != 0) {
-                        if (this.dbDataSourcePool.idleConnectionPool.size() < this.dbDataSourcePool.dbDataSourcePoolConfig.getMinimumIdle()) {
-                            // 补充空闲连接
-                            int currentIdleConnectionPoolSize = this.dbDataSourcePool.idleConnectionPool.size();
-                            for (int i = currentIdleConnectionPoolSize; i < this.dbDataSourcePool.dbDataSourcePoolConfig.getMinimumIdle(); i++) {
-                                this.dbDataSourcePool.idleConnectionPool.offer(this.dbDataSourcePool.createNewConnection());
+                        this.dbDataSourcePool.poolLock.lock();
+                        try {
+                            while (this.dbDataSourcePool.idleConnectionPool.size() < this.dbDataSourcePool.dbDataSourcePoolConfig.getMinimumIdle()
+                                    && this.dbDataSourcePool.connectionMetaDataMap.size() < this.dbDataSourcePool.dbDataSourcePoolConfig.getMaximumPoolSize()) {
+                                Connection connection = this.dbDataSourcePool.createNewConnection();
+                                this.dbDataSourcePool.idleConnectionPool.offer(connection);
+                                this.dbDataSourcePool.connectionAvailable.signal();
                             }
+                        } finally {
+                            this.dbDataSourcePool.poolLock.unlock();
                         }
                     }
                 } catch (SQLException sqlException) {
@@ -104,6 +112,41 @@ public class DBDataSourcePool {
         }
     }
 
+    private boolean isReusable(Connection connection) {
+        if (!validateConnection(connection)) {
+            return false;
+        }
+        if (this.dbDataSourcePoolConfig.getMaximumLifeCycleTime() > 0) {
+            ConnectionMetaData metaData = connectionMetaDataMap.get(connection);
+            if (metaData != null) {
+                long life = System.currentTimeMillis() - metaData.getCreatedTime();
+                if (life > this.dbDataSourcePoolConfig.getMaximumLifeCycleTime()) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private void retireConnection(Connection connection, String reason) {
+        if (connection == null) {
+            return;
+        }
+        ConnectionMetaData metaData = connectionMetaDataMap.remove(connection);
+        int connectionNumber = metaData != null ? metaData.getConnectionId() : -1;
+        logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Retire connection {}. Reason: {}",
+                this.poolName, connectionNumber, reason);
+        this.usedConnectionPool.remove(connection);
+        this.idleConnectionPool.remove(connection);
+        try {
+            if (!connection.isClosed()) {
+                connection.close();
+            }
+        } catch (SQLException ignored) {
+        }
+        connectionAvailable.signalAll();
+    }
+
     public DBDataSourcePool(
             String poolName,
             DBDataSourcePoolConfig config,
@@ -123,6 +166,7 @@ public class DBDataSourcePool {
         }
 
         this.dbDataSourcePoolConfig = config;
+        this.connectionAcquireTimeoutMs = Math.max(0, config.getConnectionAcquireTimeoutMs());
 
         // 初始化 minimumIdle 个连接
         for (int i = 0; i < this.dbDataSourcePoolConfig.getMinimumIdle(); i++)
@@ -150,91 +194,82 @@ public class DBDataSourcePool {
     }
 
     public Connection getConnection() throws SQLException {
-        while (true) {
-            // 从连接池中获取一个连接
-            Connection connection = this.idleConnectionPool.poll();
-            if (connection == null) {
-                if (this.usedConnectionPool.size() >= this.dbDataSourcePoolConfig.getMaximumPoolSize()) {
-                    throw new SQLException("Maximum connection reached [" + this.usedConnectionPool.size() + "] " +
-                            "in Pool [" + poolName + "].");
-                } else {
-                    // 创建一个新连接，并直接返回
-                    connection = createNewConnection();
-                    usedConnectionPool.offer(connection);
-                    return connection;
-                }
-            } else {
-                if (connection.isClosed())
-                {
-                    // 对连接进行有效性验证
-                    logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Connection {} has closed, remove it.",
-                            this.poolName,
-                            connectionMetaDataMap.get(connection).getConnectionId());
-                    connectionMetaDataMap.remove(connection);
-                    continue;
-                }
-                if (this.dbDataSourcePoolConfig.getMaximumLifeCycleTime() > 0) {
-                    if (System.currentTimeMillis() - connectionMetaDataMap.get(connection).getCreatedTime() >
-                            this.dbDataSourcePoolConfig.getMaximumLifeCycleTime()) {
-                        // 对连接进行生命周期验证
-                        logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Connection {} has retired, remove it.",
+        long timeoutMs = this.connectionAcquireTimeoutMs;
+        long deadline = timeoutMs > 0 ? System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs) : Long.MAX_VALUE;
+
+        poolLock.lock();
+        try {
+            while (true) {
+                Connection connection = this.idleConnectionPool.poll();
+                if (connection != null) {
+                    if (isReusable(connection)) {
+                        usedConnectionPool.offer(connection);
+                        updateHighWaterMark();
+                        ConnectionMetaData metaData = connectionMetaDataMap.get(connection);
+                        int connectionNumber = metaData != null ? metaData.getConnectionId() : -1;
+                        logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Offer reused connection {}.",
                                 this.poolName,
-                                connectionMetaDataMap.get(connection).getConnectionId());
-                        connectionMetaDataMap.remove(connection);
-                        // 已经超过最大生命周期，没有必要继续保留
-                        try {
-                            connection.close();
-                        } catch (SQLException ignored) {
-                        }
-                        continue;
+                                connectionNumber);
+                        return connection;
                     }
-                }
-                if (!this.validateConnection(connection)) {
-                    // 对连接进行验证
-                    logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Connection {} can't pass validation, remove it.",
-                            this.poolName,
-                            connectionMetaDataMap.get(connection).getConnectionId());
-                    connectionMetaDataMap.remove(connection);
-                    try {
-                        connection.close();
-                    } catch (SQLException ignored) {
-                    }
+                    retireConnection(connection, "failed validation");
                     continue;
                 }
-                usedConnectionPool.offer(connection);
-                logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Offer reused connection {}.",
-                        this.poolName,
-                        connectionMetaDataMap.get(connection).getConnectionId());
-                return connection;
+
+                if (this.connectionMetaDataMap.size() < this.dbDataSourcePoolConfig.getMaximumPoolSize()) {
+                    Connection newConnection = createNewConnection();
+                    usedConnectionPool.offer(newConnection);
+                    updateHighWaterMark();
+                    return newConnection;
+                }
+
+                try {
+                    if (timeoutMs <= 0) {
+                        connectionAvailable.await();
+                    } else {
+                        long remaining = deadline - System.nanoTime();
+                        if (remaining <= 0) {
+                            throw new SQLException("Timeout while waiting for connection in Pool [" + poolName + "].");
+                        }
+                        connectionAvailable.awaitNanos(remaining);
+                    }
+                } catch (InterruptedException interruptedException) {
+                    Thread.currentThread().interrupt();
+                    throw new SQLException("Interrupted while waiting for connection in Pool [" + poolName + "].",
+                            interruptedException);
+                }
             }
+        } finally {
+            poolLock.unlock();
         }
     }
 
     public void releaseConnection(Connection connection) {
-        this.logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Release connection {}.",
-                this.poolName,
-                connectionMetaDataMap.get(connection).getConnectionId());
-        this.usedConnectionPool.remove(connection);
-
-        // 将连接放入连接池，准备复用
-        try
-        {
-            if (!connection.isClosed()) {
-                if (this.dbDataSourcePoolConfig.getMaximumLifeCycleTime() != 0)
-                {
-                    if (System.currentTimeMillis() - connectionMetaDataMap.get(connection).getCreatedTime()
-                            > this.dbDataSourcePoolConfig.getMaximumLifeCycleTime())
-                    {
-                        connectionMetaDataMap.remove(connection);
-                        // 已经超过最大生命周期，没有必要继续保留
-                        connection.close();
-                        return;
-                    }
-                }
-                this.idleConnectionPool.offer(connection);
-            }
+        if (connection == null) {
+            return;
         }
-        catch (SQLException ignored) {}
+
+        poolLock.lock();
+        try {
+            ConnectionMetaData metaData = connectionMetaDataMap.get(connection);
+            int connectionNumber = metaData != null ? metaData.getConnectionId() : -1;
+            this.logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Release connection {}.",
+                    this.poolName, connectionNumber);
+
+            if (!this.usedConnectionPool.remove(connection)) {
+                return;
+            }
+
+            if (!isReusable(connection)) {
+                retireConnection(connection, "failed validation on release");
+                return;
+            }
+
+            this.idleConnectionPool.offer(connection);
+            connectionAvailable.signal();
+        } finally {
+            poolLock.unlock();
+        }
     }
 
     public void shutdown()
@@ -242,33 +277,46 @@ public class DBDataSourcePool {
         this.logger.debug("[SERVER][CONN POOL  ]: Pool [{}] DBDataSourcePool will shutdown ... ",
                 this.poolName);
         dbDataSourcePoolMonitor.interrupt();
-
-        // 关闭连接
-        for (Connection connection : this.usedConnectionPool) {
-            try {
-                if (connection != null && !connection.isClosed()) {
-                    this.logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Will close used connection {} .",
-                            this.poolName,
-                            connectionMetaDataMap.get(connection).getConnectionId());
-                    connection.close();
-                }
-            } catch (SQLException ignored) {
-            }
-        }
-        for (Connection connection : this.idleConnectionPool) {
-            try {
-                if (connection != null && !connection.isClosed()) {
-                    this.logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Will close idle connection {} .",
-                            this.poolName,
-                            connectionMetaDataMap.get(connection).getConnectionId());
-                    connection.close();
-                }
-            } catch (SQLException ignored) {
-            }
+        try {
+            dbDataSourcePoolMonitor.join(5_000);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
         }
 
-        // 清空所有扩展信息
-        connectionMetaDataMap.clear();
+        poolLock.lock();
+        try {
+            // 关闭连接
+            for (Connection connection : this.usedConnectionPool) {
+                try {
+                    if (connection != null && !connection.isClosed()) {
+                        this.logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Will close used connection {} .",
+                                this.poolName,
+                                connectionMetaDataMap.get(connection).getConnectionId());
+                        connection.close();
+                    }
+                } catch (SQLException ignored) {
+                }
+            }
+            for (Connection connection : this.idleConnectionPool) {
+                try {
+                    if (connection != null && !connection.isClosed()) {
+                        this.logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Will close idle connection {} .",
+                                this.poolName,
+                                connectionMetaDataMap.get(connection).getConnectionId());
+                        connection.close();
+                    }
+                } catch (SQLException ignored) {
+                }
+            }
+
+            this.usedConnectionPool.clear();
+            this.idleConnectionPool.clear();
+
+            // 清空所有扩展信息
+            connectionMetaDataMap.clear();
+        } finally {
+            poolLock.unlock();
+        }
     }
 
     private Connection createNewConnection() throws SQLException {
@@ -289,12 +337,12 @@ public class DBDataSourcePool {
         this.connectionMetaDataMap.put(connection, connectionMetaData);
         logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Create new connection {}.",
                 this.poolName, connectionId);
+        return connection;
+    }
 
-        // 标记连接池的最高水位线
-        if (this.highWaterMark < this.usedConnectionPool.size())
-        {
+    private void updateHighWaterMark() {
+        if (this.highWaterMark < this.usedConnectionPool.size()) {
             this.highWaterMark = this.usedConnectionPool.size();
         }
-        return connection;
     }
 }
