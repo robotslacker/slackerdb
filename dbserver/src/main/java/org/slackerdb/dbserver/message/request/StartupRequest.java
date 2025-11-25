@@ -13,6 +13,10 @@ import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.*;
 
+/**
+ * StartupRequest 用于处理客户端发起的 PG StartupMessage，
+ * 其职责包括：解析登录参数、构建 DuckDB 连接、设置 search_path 并返回标准 PG 响应。
+ */
 public class StartupRequest  extends PostgresRequest {
     //  StartupMessage (F)
     //    Int32
@@ -144,7 +148,7 @@ public class StartupRequest  extends PostgresRequest {
         authenticationOk.process(ctx, request, out);
         PostgresMessage.writeAndFlush(ctx, AuthenticationOk.class.getSimpleName(), out, this.dbInstance.logger);
 
-        // 返回一些参数信息
+        // 返回一些参数信息（对齐 PG 协议要求的 server_version、client_encoding 等）
         ParameterStatus parameterStatus = new ParameterStatus(this.dbInstance);
         parameterStatus.setKeyValue("server_version", "15");
         parameterStatus.process(ctx, request, out);

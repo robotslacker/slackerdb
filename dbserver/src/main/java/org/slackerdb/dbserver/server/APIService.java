@@ -27,6 +27,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * APIService 暴露基于 Javalin 的 REST 接口，用于登录、上下文管理以及按 service definition 运行 SQL。
+ * 它同时维护查询结果缓存、用户会话上下文和动态注册的服务定义。
+ */
 public class APIService {
     static class DBServiceDefinition {
         public String serviceName;
@@ -45,6 +49,12 @@ public class APIService {
     private final ConcurrentHashMap<String, DBServiceDefinition> registeredDBService = new ConcurrentHashMap<>();
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    /**
+     * 处理 REST API 的核心逻辑。
+     * 1. 合并默认参数 + 用户参数；
+     * 2. 按需读取 Token 中的上下文，构造最终 SQL；
+     * 3. 命中缓存则直接返回，否则执行真实 SQL 并写入缓存。
+     */
     private static void handleSqlQuery(
             Context ctx,
             DBServiceDefinition dbServiceDefinition,
@@ -265,6 +275,7 @@ public class APIService {
         for (Object serviceDefinition : serviceDefinitionList) {
             JSONObject serviceDefinitionJsonObj = (JSONObject)serviceDefinition;
             DBServiceDefinition dbService = new DBServiceDefinition();
+            // 逐个字段读取，允许 JSON 中缺省 description、searchPath 等可选字段
             dbService.serviceName = serviceDefinitionJsonObj.getString("serviceName");
             dbService.serviceVersion = serviceDefinitionJsonObj.getString("serviceVersion");
             dbService.serviceType = serviceDefinitionJsonObj.getString("serviceType");

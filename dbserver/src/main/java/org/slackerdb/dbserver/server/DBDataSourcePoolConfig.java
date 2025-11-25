@@ -2,6 +2,9 @@ package org.slackerdb.dbserver.server;
 
 import java.util.Properties;
 
+/**
+ * DBDataSourcePoolConfig 对外暴露连接池调优参数，大部分为整数或布尔开关，方便通过配置文件注入。
+ */
 public class DBDataSourcePoolConfig {
     private String jdbcURL;
     private Properties connectProperties;
@@ -10,6 +13,7 @@ public class DBDataSourcePoolConfig {
     private int maximumIdle;
     private int maximumLifeCycleTime;
     private boolean autoCommit = true;
+    // 新增的获取连接等待时间，默认 30s，可按需关闭（<=0）
     private long connectionAcquireTimeoutMs = 30_000L;
 
     public String getJdbcURL()

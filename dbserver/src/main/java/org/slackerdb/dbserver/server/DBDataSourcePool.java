@@ -15,6 +15,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * DBDataSourcePool 是对 DuckDB JDBC 连接的一个轻量封装。
+ * 由于 DuckDB 原生不支持常见连接池，这里通过简单的阻塞队列+监控线程来完成连接复用、超时等待以及生命周期管理。
+ */
 public class DBDataSourcePool {
     // 连接池扩展信息
     // Duck的连接对象不支持setClientInfo，所以不得不扩展实现这个
@@ -35,6 +39,7 @@ public class DBDataSourcePool {
 
     // 连接池的名称
     private final String poolName;
+    // 使用显式锁来协调“借/还”连接，避免高并发时出现竞态
     private final ReentrantLock poolLock = new ReentrantLock();
     private final Condition connectionAvailable = poolLock.newCondition();
     private final long connectionAcquireTimeoutMs;
@@ -55,6 +60,7 @@ public class DBDataSourcePool {
         {
             setName("DataSourcePool");
             while (!isInterrupted()) {
+                // 监控线程负责做两件事：缩容（释放多余 idle 连接）和扩容（补足 minimumIdle）
                 try {
                     if (this.dbDataSourcePool.dbDataSourcePoolConfig.getMaximumIdle() != 0) {
                         this.dbDataSourcePool.poolLock.lock();
@@ -113,9 +119,11 @@ public class DBDataSourcePool {
     }
 
     private boolean isReusable(Connection connection) {
+        // 先走基础校验，确保连接仍然可用
         if (!validateConnection(connection)) {
             return false;
         }
+        // 再检查生命周期，超龄连接会被强制更换，避免长期占用导致潜在资源泄漏
         if (this.dbDataSourcePoolConfig.getMaximumLifeCycleTime() > 0) {
             ConnectionMetaData metaData = connectionMetaDataMap.get(connection);
             if (metaData != null) {
@@ -132,6 +140,7 @@ public class DBDataSourcePool {
         if (connection == null) {
             return;
         }
+        // Retire = 从两个队列中摘除 + 关闭底层 JDBC 连接
         ConnectionMetaData metaData = connectionMetaDataMap.remove(connection);
         int connectionNumber = metaData != null ? metaData.getConnectionId() : -1;
         logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Retire connection {}. Reason: {}",
@@ -199,6 +208,7 @@ public class DBDataSourcePool {
 
         poolLock.lock();
         try {
+            // 主循环：优先复用已有连接；若没有，就判断是否可以新建；否则进入等待
             while (true) {
                 Connection connection = this.idleConnectionPool.poll();
                 if (connection != null) {
@@ -256,6 +266,7 @@ public class DBDataSourcePool {
             this.logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Release connection {}.",
                     this.poolName, connectionNumber);
 
+            // 如果连接不在 used 队列里，说明已经被回收或是重复释放，直接跳过
             if (!this.usedConnectionPool.remove(connection)) {
                 return;
             }
@@ -266,6 +277,7 @@ public class DBDataSourcePool {
             }
 
             this.idleConnectionPool.offer(connection);
+            // 唤醒等待中的借连接线程
             connectionAvailable.signal();
         } finally {
             poolLock.unlock();
@@ -323,6 +335,7 @@ public class DBDataSourcePool {
         Properties connectProperties = new Properties();
         if (this.dbDataSourcePoolConfig.getConnectProperties() != null)
         {
+            // DuckDB 允许通过 Properties 透传特殊参数，这里做一次浅拷贝避免外部修改
             connectProperties.putAll(this.dbDataSourcePoolConfig.getConnectProperties());
         }
 

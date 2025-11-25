@@ -11,6 +11,10 @@ import org.slackerdb.dbserver.message.PostgresRequest;
 import java.net.InetSocketAddress;
 import java.time.LocalDateTime;
 
+/**
+ * PostgresServerHandler 承担 PG 前端协议与内部 DBInstance 的桥接工作，
+ * 负责维护 Netty Channel 生命周期、统计活跃会话以及把底层消息交给具体的 PostgresRequest 实现处理。
+ */
 public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
     private final DBInstance dbInstance;
     private final Logger logger;

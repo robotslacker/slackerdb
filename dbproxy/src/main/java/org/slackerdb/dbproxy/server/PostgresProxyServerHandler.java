@@ -26,6 +26,10 @@ import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * PostgresProxyServerHandler 负责处理进入代理实例的 PG 协议流量，
+ * 包括 SSL 探测、Startup 消息解析、根据 database alias 转发到真实的后端服务器。
+ */
 public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
     private final Logger logger;
     private final AtomicLong maxSessionId = new AtomicLong(1000);
@@ -57,7 +61,7 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
     public void channelRead(final ChannelHandlerContext ctx, Object msg) throws IOException {
         final Channel inboundChannel = ctx.channel();
 
-       if (msg instanceof SSLRequest) {
+        if (msg instanceof SSLRequest) {
             // SSLRequest请求不需要转发，直接回复即可
             ByteArrayOutputStream out = new ByteArrayOutputStream();
 
@@ -106,6 +110,7 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
 
                     return;
                 }
+                // 根据别名查找真实的 DuckDB 服务信息
                 PostgresProxyTarget postgresProxyTarget = this.proxyInstance.proxyTarget.get(aliasName);
 
                 // 构建一个目的转发器
@@ -243,7 +248,7 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
         }
         Thread.currentThread().setName("Session-" + sessionId);
 
-        if (evt instanceof IdleStateEvent event) {
+            if (evt instanceof IdleStateEvent event) {
             if (event.state() == IdleState.READER_IDLE) {
                 logger.trace("[PROXY] Connection {} error. Read timeout. ", ctx.channel().remoteAddress());
             } else if (event.state() == IdleState.WRITER_IDLE) {

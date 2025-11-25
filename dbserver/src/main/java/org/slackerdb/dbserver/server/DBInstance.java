@@ -44,6 +44,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
+/**
+ * DBInstance 表示一个独立的 DuckDB 服务实例，负责：
+ * 1. 解析配置、启动 Netty PG 协议监听；
+ * 2. 管理 DuckDB 后端连接与 SQL 历史；
+ * 3. 暴露管理端口（APIService、AdminClient 等）。
+ */
 public class DBInstance {
     // 服务器启动模式
     // 是否为独占模式，默认否
