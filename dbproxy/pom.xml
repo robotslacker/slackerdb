@@ -139,6 +139,7 @@
                 <configuration>
                     <includes>
                         <include>**/ProxyTest.java</include>
+                        <include>**/PostgresProxyServerHandlerTest.java</include>
                     </includes>
                     <parallel>none</parallel> <!-- Disable parallel execution -->
                     <forkCount>1</forkCount>  <!-- Execute tests in a single process -->
