@@ -52,37 +52,37 @@ different host or different process) are behinds it.
 ==== Start db server
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.1.7-standalone.jar start
+    java -jar dbserver/target/slackerdb-dbserver-0.1.8-standalone.jar start
 ....
 
 ==== Stop db server
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.1.7-standalone.jar stop
+    java -jar dbserver/target/slackerdb-dbserver-0.1.8-standalone.jar stop
 ....
 
 ==== Check db status
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.1.7-standalone.jar status
+    java -jar dbserver/target/slackerdb-dbserver-0.1.8-standalone.jar status
 ....
 
 ==== Start db proxy
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.7-standalone.jar start
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.8-standalone.jar start
 ....
 
 ==== Stop db proxy
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.7-standalone.jar stop
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.8-standalone.jar stop
 ....
 
 ==== Check proxy status
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.7-standalone.jar status
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.8-standalone.jar status
 ....
 
 ==== Server configuration file template
@@ -620,6 +620,274 @@ Success response (200)
   }
 ....
 
+==== SQL REPL Server
+
+SQL REPL Server provides an asynchronous WebSocket interface for executing SQL queries and fetching results in pages.
+It is useful for long-running queries where you want to avoid blocking the client, and aligns with the MCP (Model Context Protocol) philosophy of using WebSocket for bidirectional communication.
+
+To use it, ensure the data service API port (port_x) is enabled in server configuration.
+
+===== WebSocket Endpoint
+
+Connect to the WebSocket endpoint:
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |WebSocket (ws:// or wss://)
+|Path |`+/sql/ws+`
+|===
+
+Once connected, you can send JSON messages with the following general format:
+
+....
+{
+  "id": "unique-request-id",   // used to match responses
+  "type": "message-type",      // one of: start, exec, fetch, cancel, close
+  "data": { ... }              // payload specific to the message type
+}
+....
+
+The server will respond with a JSON message that mirrors the request `id` and includes a `retCode` (0 for success, non‑zero for error) and relevant data.
+
+===== Session Management
+
+A session is created by sending a `start` message. The server returns a `sessionId` that must be included in subsequent messages for the same session.
+
+Start message:
+
+....
+{
+  "id": "1",
+  "type": "start",
+  "data": {}
+}
+....
+
+Response:
+
+....
+{
+  "id": "1",
+  "retCode": 0,
+  "retMsg": "Session created",
+  "sessionId": "session-123"
+}
+....
+
+All further messages for this session must include `"sessionId": "session-123"` in their `data` field.
+
+===== Execute SQL (async)
+
+Submits a SQL statement for asynchronous execution. Returns a task ID that can be used to fetch results later.
+
+Message:
+
+....
+{
+  "id": "2",
+  "type": "exec",
+  "data": {
+    "sessionId": "session-123",
+    "sql": "SELECT * FROM large_table",
+    "maxRows": 1000   // optional, default is 1000
+  }
+}
+....
+
+Response:
+
+....
+{
+  "id": "2",
+  "retCode": 0,
+  "retMsg": "Task submitted",
+  "taskId": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "running"   // or "completed" if result fits in first page
+}
+....
+
+If the SQL execution fails immediately (e.g., syntax error), the response will contain `retCode` != 0 and an error message.
+
+===== Fetch Results
+
+Retrieves a page of results for a given task ID. The endpoint returns a fixed number of rows (up to `maxRows` specified in execute) and indicates whether more rows are available.
+
+Message:
+
+....
+{
+  "id": "3",
+  "type": "fetch",
+  "data": {
+    "sessionId": "session-123",
+    "taskId": "550e8400-e29b-41d4-a716-446655440000",
+    "maxRows": 100   // optional, overrides the default page size
+  }
+}
+....
+
+Response:
+
+....
+{
+  "id": "3",
+  "retCode": 0,
+  "retMsg": "Success",
+  "taskId": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "completed",   // "running", "completed", or "error"
+  "hasMore": false,        // true if there are more rows to fetch
+  "columnNames": ["id", "name"],
+  "columnTypes": ["INTEGER", "VARCHAR"],
+  "dataset": [
+    [1, "Alice"],
+    [2, "Bob"]
+  ]
+}
+....
+
+If the task is still running (status = "running"), `dataset` may be empty and `hasMore` will be true.
+If the task has completed and all rows have been fetched, `status` becomes "completed" and `hasMore` false.
+If an error occurs during execution, `status` becomes "error" and `retMsg` contains the error details.
+
+You can send multiple `fetch` messages until `hasMore` becomes false. Each call returns the next page of rows.
+
+===== Cancel Task
+
+Cancels an ongoing SQL task. If no taskId is provided, cancels the current session's active task.
+
+Message:
+
+....
+{
+  "id": "4",
+  "type": "cancel",
+  "data": {
+    "sessionId": "session-123",
+    "taskId": "550e8400-e29b-41d4-a716-446655440000"   // optional, omit to cancel the session's active task
+  }
+}
+....
+
+Response:
+
+....
+{
+  "id": "4",
+  "retCode": 0,
+  "retMsg": "Task cancelled"
+}
+....
+
+===== Close Session
+
+Closes the session and releases all associated resources (including any pending tasks).
+
+Message:
+
+....
+{
+  "id": "5",
+  "type": "close",
+  "data": {
+    "sessionId": "session-123"
+  }
+}
+....
+
+Response:
+
+....
+{
+  "id": "5",
+  "retCode": 0,
+  "retMsg": "Session closed"
+}
+....
+
+After closing, the session ID is no longer valid.
+
+===== Example Workflow (using JavaScript/Node.js)
+
+1. Connect to WebSocket endpoint:
+
+[source,javascript]
+----
+const WebSocket = require('ws');
+const ws = new WebSocket('ws://localhost:8080/sql/ws');
+----
+
+2. Create a session:
+
+[source,javascript]
+----
+ws.send(JSON.stringify({
+  id: "1",
+  type: "start",
+  data: {}
+}));
+----
+
+3. Execute a long query:
+
+[source,javascript]
+----
+ws.send(JSON.stringify({
+  id: "2",
+  type: "exec",
+  data: {
+    sessionId: "session-123",
+    sql: "SELECT * FROM huge_table",
+    maxRows: 500
+  }
+}));
+----
+
+4. Fetch first page:
+
+[source,javascript]
+----
+ws.send(JSON.stringify({
+  id: "3",
+  type: "fetch",
+  data: {
+    sessionId: "session-123",
+    taskId: "abc123",
+    maxRows: 100
+  }
+}));
+----
+
+5. Fetch subsequent pages until `hasMore` becomes false.
+
+6. Optionally cancel if needed:
+
+[source,javascript]
+----
+ws.send(JSON.stringify({
+  id: "4",
+  type: "cancel",
+  data: {
+    sessionId: "session-123",
+    taskId: "abc123"
+  }
+}));
+----
+
+7. Close the session when done:
+
+[source,javascript]
+----
+ws.send(JSON.stringify({
+  id: "5",
+  type: "close",
+  data: {
+    sessionId: "session-123"
+  }
+}));
+----
+
+*Note:* The examples above assume you handle incoming messages asynchronously. In a real client you would match responses by their `id`.
 ==== Embed the db server in your code
 
 ....

@@ -11,7 +11,7 @@
 
     <groupId>org.robotslacker</groupId>
     <artifactId>slackerdb</artifactId>
-    <version>0.1.7</version>
+    <version>0.1.8</version>
     <packaging>pom</packaging>
 
     <modules>
@@ -41,19 +41,19 @@
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-core</artifactId>
-            <version>6.2.2</version>
+            <version>6.2.11</version>
         </dependency>
 
         <!-- 日志组件 -->
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-core</artifactId>
-            <version>1.5.15</version>
+            <version>1.5.19</version>
         </dependency>
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
-            <version>1.5.15</version>
+            <version>1.5.19</version>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>

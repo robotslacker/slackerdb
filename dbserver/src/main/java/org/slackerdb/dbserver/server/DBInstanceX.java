@@ -13,6 +13,7 @@ import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.utils.BoundedQueue;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.dbserver.entity.APIHistoryRecord;
+import org.slackerdb.dbserver.server.repl.SqlReplServer;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
 
@@ -32,6 +33,7 @@ public class DBInstanceX {
     private final DBInstance dbInstance;
     private final AtomicLong backendApiHistoryId = new AtomicLong(1);
     private final SchedulerService schedulerService;
+
     public BoundedQueue<APIHistoryRecord> apiHistoryList
             = new BoundedQueue<>(10*1000);
 
@@ -334,6 +336,15 @@ public class DBInstanceX {
                     ctx.result(Files.readString(Path.of(indexResource.getURI())));
                 }
         );
+
+        // 初始化SQLREPL服务
+        try {
+            SqlReplServer sqlReplServer = new SqlReplServer();
+            sqlReplServer.run(this.managementApp, dbInstance.backendSysConnection);
+        } catch (Exception e) {
+            this.logger.error("[SERVER][STARTUP    ] Management server failed. Can't init ws service. ", e);
+            throw new ServerException("Management server failed. Can't init ws service. ", e);
+        }
 
         // 系统数据备份
         this.managementApp.post("/backup", ctx -> {

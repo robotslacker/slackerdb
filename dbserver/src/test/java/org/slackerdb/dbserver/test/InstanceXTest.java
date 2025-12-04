@@ -14,7 +14,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.WebSocket;
 import java.util.TimeZone;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
 public class InstanceXTest {
     static int dbPort;
@@ -189,5 +192,161 @@ public class InstanceXTest {
         assert JSON.toJSONString(responseObj, JSONWriter.Feature.MapSortField).equals("""
         {"affectedRows":1,"columnNames":["col1","col2","col3"],"columnTypes":["INTEGER","INTEGER","VARCHAR"],"dataset":[[1,2,"中国"]]}
         """.trim());
+    }
+
+    // WebSocket 测试辅助类
+    static class WebSocketTestClient {
+        private final WebSocket ws;
+        private final java.util.concurrent.LinkedBlockingQueue<String> responseQueue = new java.util.concurrent.LinkedBlockingQueue<>();
+
+        public WebSocketTestClient(String url) throws Exception {
+            HttpClient client = HttpClient.newHttpClient();
+            CompletableFuture<WebSocket> wsFuture = client.newWebSocketBuilder()
+                    .buildAsync(URI.create(url), new WebSocket.Listener() {
+                        @Override
+                        public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                            responseQueue.offer(data.toString());
+                            return WebSocket.Listener.super.onText(webSocket, data, last);
+                        }
+
+                        @Override
+                        public void onError(WebSocket webSocket, Throwable error) {
+                            error.printStackTrace();
+                        }
+                    });
+            ws = wsFuture.join();
+            // 等待连接建立
+            Thread.sleep(100);
+        }
+
+        public String sendAndReceive(String message) throws Exception {
+            responseQueue.clear(); // 清除之前的响应
+            ws.sendText(message, true);
+            // 等待响应，超时时间为5秒
+            String response = responseQueue.poll(5, java.util.concurrent.TimeUnit.SECONDS);
+            if (response == null) {
+                throw new RuntimeException("Timeout waiting for response");
+            }
+            return response;
+        }
+
+        public void close() throws Exception {
+            ws.sendClose(WebSocket.NORMAL_CLOSURE, "done");
+        }
+    }
+
+    @Test
+    void testSqlReplExec() throws Exception {
+        // 连接到 WebSocket
+        WebSocketTestClient client = new WebSocketTestClient("ws://127.0.0.1:" + dbPortX + "/sql/ws");
+
+        // 1. 创建会话
+        JSONObject startMsg = new JSONObject();
+        startMsg.put("id", "1");
+        startMsg.put("type", "start");
+        startMsg.put("data", new JSONObject());
+        String startResp = client.sendAndReceive(startMsg.toString());
+        JSONObject startJson = JSONObject.parseObject(startResp);
+        assert startJson.getString("type").equals("start");
+        String sessionId = startJson.getJSONObject("data").getString("sessionId");
+        assert sessionId != null && !sessionId.isEmpty();
+
+        // 2. 执行SQL（异步）
+        JSONObject execData = new JSONObject();
+        execData.put("sessionId", sessionId);
+        execData.put("sql", "SELECT 1 as col");
+        execData.put("fetchSize", 100);
+        JSONObject execMsg = new JSONObject();
+        execMsg.put("id", "2");
+        execMsg.put("type", "exec");
+        execMsg.put("data", execData);
+        String execResp = client.sendAndReceive(execMsg.toString());
+        JSONObject execJson = JSONObject.parseObject(execResp);
+        assert execJson.getString("type").equals("exec");
+        String taskId = execJson.getJSONObject("data").getString("taskId");
+        assert taskId != null && !taskId.isEmpty();
+        String status = execJson.getJSONObject("data").getString("status");
+        assert "running".equals(status) || "completed".equals(status);
+
+        // 3. 获取结果（轮询直到完成）
+        JSONObject fetchData = new JSONObject();
+        fetchData.put("sessionId", sessionId);
+        fetchData.put("taskId", taskId);
+        fetchData.put("maxRows", 100);
+        JSONObject fetchMsg = new JSONObject();
+        fetchMsg.put("id", "3");
+        fetchMsg.put("type", "fetch");
+        fetchMsg.put("data", fetchData);
+
+        JSONObject fetchJson = null;
+        for (int i = 0; i < 10; i++) {
+            String fetchResp = client.sendAndReceive(fetchMsg.toString());
+            fetchJson = JSONObject.parseObject(fetchResp);
+            if (!"running".equals(fetchJson.getJSONObject("data").getString("status"))) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assert "completed".equals(fetchJson.getJSONObject("data").getString("status"));
+        assert fetchJson.getJSONObject("data").containsKey("columns");
+        assert fetchJson.getJSONObject("data").containsKey("rows");
+        assert fetchJson.getJSONObject("data").getJSONArray("columns").contains("col");
+        assert fetchJson.getJSONObject("data").getJSONArray("rows").size() == 1;
+        assert fetchJson.getJSONObject("data").getJSONArray("rows").getJSONObject(0).getInteger("col") == 1;
+
+        // 4. 关闭会话
+        JSONObject closeData = new JSONObject();
+        closeData.put("sessionId", sessionId);
+        JSONObject closeMsg = new JSONObject();
+        closeMsg.put("id", "4");
+        closeMsg.put("type", "close");
+        closeMsg.put("data", closeData);
+        String closeResp = client.sendAndReceive(closeMsg.toString());
+        JSONObject closeJson = JSONObject.parseObject(closeResp);
+        assert closeJson.getString("type").equals("close");
+        assert "closed".equals(closeJson.getJSONObject("data").getString("status"));
+
+        client.close();
+    }
+
+    @Test
+    void testSqlReplCancel() throws Exception {
+        WebSocketTestClient client = new WebSocketTestClient("ws://127.0.0.1:" + dbPortX + "/sql/ws");
+
+        // 1. 创建会话
+        JSONObject startMsg = new JSONObject();
+        startMsg.put("id", "1");
+        startMsg.put("type", "start");
+        startMsg.put("data", new JSONObject());
+        String startResp = client.sendAndReceive(startMsg.toString());
+        JSONObject startJson = JSONObject.parseObject(startResp);
+        String sessionId = startJson.getJSONObject("data").getString("sessionId");
+        assert sessionId != null && !sessionId.isEmpty();
+
+        // 立即发送取消请求
+        JSONObject cancelData = new JSONObject();
+        cancelData.put("sessionId", sessionId);
+        JSONObject cancelMsg = new JSONObject();
+        cancelMsg.put("id", "2");
+        cancelMsg.put("type", "cancel");
+        cancelMsg.put("data", cancelData);
+        String cancelResp = client.sendAndReceive(cancelMsg.toString());
+        JSONObject cancelJson = JSONObject.parseObject(cancelResp);
+        // 取消可能成功或没有运行语句，两者都可接受
+        String status = cancelJson.getJSONObject("data").getString("status");
+        assert "canceled".equals(status) || "no-running-statement".equals(status);
+
+        // 3. 关闭会话
+        JSONObject closeData = new JSONObject();
+        closeData.put("sessionId", sessionId);
+        JSONObject closeMsg = new JSONObject();
+        closeMsg.put("id", "3");
+        closeMsg.put("type", "close");
+        closeMsg.put("data", closeData);
+        String closeResp = client.sendAndReceive(closeMsg.toString());
+        JSONObject closeJson = JSONObject.parseObject(closeResp);
+        assert "closed".equals(closeJson.getJSONObject("data").getString("status"));
+
+        client.close();
     }
 }

@@ -9,7 +9,7 @@ else
     _SLACKERDB_JAVA="java"
 fi
 
-APP_NAME=jlib/slackerdb-dbproxy-0.1.7-standalone.jar
+APP_NAME=jlib/slackerdb-dbproxy-0.1.8-standalone.jar
 PID_FILE=pid/slackerdb-dbproxy.pid
 
 usage(){
