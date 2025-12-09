@@ -825,9 +825,9 @@ public class DBInstance {
         logger.info("[SERVER][STARTUP    ] Instance started successful.");
 
         // 关闭pf4j的日志, 如果不是在trace下
-        Logger nettyLogger = (Logger) LoggerFactory.getLogger("org.pf4j");
+        Logger pf4jLogger = (Logger) LoggerFactory.getLogger("org.pf4j");
         if (!this.logger.getLevel().equals(Level.TRACE)) {
-            nettyLogger.setLevel(Level.OFF);
+            pf4jLogger.setLevel(Level.OFF);
         }
         // 加载数据库插件, 但是不要启动
         if (!serverConfiguration.getPlugins_dir().isEmpty() && Path.of(serverConfiguration.getPlugins_dir()).toFile().exists())

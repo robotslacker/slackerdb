@@ -75,6 +75,11 @@
             <artifactId>javalin-bundle</artifactId>
             <version>6.6.0</version>
         </dependency>
+        <dependency>
+            <groupId>org.java-websocket</groupId>
+            <artifactId>Java-WebSocket</artifactId>
+            <version>1.6.0</version>
+        </dependency>
         <!-- 查询结果缓存 -->
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
@@ -141,6 +146,7 @@
                         <include>**/Sanity02Test.java</include>
                         <include>**/Sanity03Test.java</include>
                         <include>**/InstanceXTest.java</include>
+                        <include>**/MCPTest.java</include>
                         <include>**/MultiDBInstanceTest.java</include>
                         <include>**/DatabaseStabilityTest.java</include>
                     </includes>

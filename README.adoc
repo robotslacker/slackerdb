@@ -1,5 +1,5 @@
-.机器人小懒
-image::robotslacker.jpg[机器人小懒]
+.RobotSlacker
+image::robotslacker.jpg[RobotSlacker]
 
 == SlackerDB (DuckDB Postgres proxy)
 
@@ -810,7 +810,7 @@ After closing, the session ID is no longer valid.
 ===== Example Workflow (using JavaScript/Node.js)
 
 1. Connect to WebSocket endpoint:
-
++
 [source,javascript]
 ----
 const WebSocket = require('ws');
@@ -818,7 +818,7 @@ const ws = new WebSocket('ws://localhost:8080/sql/ws');
 ----
 
 2. Create a session:
-
++
 [source,javascript]
 ----
 ws.send(JSON.stringify({
@@ -829,7 +829,7 @@ ws.send(JSON.stringify({
 ----
 
 3. Execute a long query:
-
++
 [source,javascript]
 ----
 ws.send(JSON.stringify({
@@ -844,7 +844,7 @@ ws.send(JSON.stringify({
 ----
 
 4. Fetch first page:
-
++
 [source,javascript]
 ----
 ws.send(JSON.stringify({
@@ -861,7 +861,7 @@ ws.send(JSON.stringify({
 5. Fetch subsequent pages until `hasMore` becomes false.
 
 6. Optionally cancel if needed:
-
++
 [source,javascript]
 ----
 ws.send(JSON.stringify({
@@ -875,7 +875,7 @@ ws.send(JSON.stringify({
 ----
 
 7. Close the session when done:
-
++
 [source,javascript]
 ----
 ws.send(JSON.stringify({
@@ -888,6 +888,146 @@ ws.send(JSON.stringify({
 ----
 
 *Note:* The examples above assume you handle incoming messages asynchronously. In a real client you would match responses by their `id`.
+==== 基础服务 (Basic Services)
+
+以下HTTP端点提供独立于SQL REPL Server的基础管理功能，如备份、文件上传/下载、日志查看和状态监控。这些端点在数据服务API端口（port_x）启用时可用。
+
+===== /backup (POST)
+
+Performs a database backup. The backup file is saved in the `backup/` directory with the naming pattern `\{database\}_\{backupTag\}.db`.
+
+.Request body (JSON):
+[source,json]
+----
+{
+  "backupTag": "mybackup"
+}
+----
+
+.Response example (success):
+[source,json]
+----
+{
+  "retCode": 0,
+  "retMsg": "Successful. Backup file has placed to [C:\\Work\\slackerdb\\backup\\mydb_mybackup.db]."
+}
+----
+
+===== /download (GET)
+
+Downloads a file from the server's working directory.
+
+.Query parameters:
+* `filename` (required) – relative path to the file.
+
+.Example:
+ GET /download?filename=logs/slackerdb.log
+
+The endpoint supports Range requests for partial downloads.
+
+===== /upload (POST)
+
+Uploads a file to the server's working directory.
+
+.Query parameters:
+* `filename` (required) – target file path.
+
+.Form data:
+* `file` (required) – the file to upload.
+
+.Example using curl:
+[source,bash]
+----
+curl -X POST -F "file=@local.txt" "http://localhost:8080/upload?filename=uploads/remote.txt"
+----
+
+.Response:
+[source,json]
+----
+"uploaded: C:\\Work\\slackerdb\\uploads\\remote.txt"
+----
+
+===== /viewLog (GET)
+
+Retrieves the last N lines of a log file.
+
+.Query parameters:
+* `filename` (required) – path to the log file.
+* `lines` (optional) – number of lines to return (default 100, max 10000).
+
+.Example:
+ GET /viewLog?filename=logs/slackerdb.log&lines=50
+
+.Response (JSON array of strings):
+[source,json]
+----
+[
+  "2025-12-04 10:00:00 INFO  Server started",
+  "2025-12-04 10:00:01 INFO  Listening on port 8080"
+]
+----
+
+===== /status (GET)
+
+Returns comprehensive server status information, including server details, database metrics, configuration parameters, usage statistics, installed extensions, and active sessions.
+
+.Example:
+ GET /status
+
+.Response (abbreviated):
+[source,json]
+----
+{
+  "server": {
+    "status": "RUNNING",
+    "version": "0.1.8",
+    "build": "2025-12-04 10:00:00.000 UTC",
+    "pid": 12345,
+    "now": "2025-12-04 15:20:00",
+    "bootTime": "2025-12-04 10:00:00",
+    "runTime": "5 hours, 20 minutes, 0 seconds"
+  },
+  "database": {
+    "version": "v1.0.0",
+    "size": "1.2 GB",
+    "memoryUsage": "256 MB",
+    "walSize": "0 B"
+  },
+  "parameters": {},
+  "usage": {},
+  "extensions": [],
+  "sessions": []
+}
+----
+==== Web-based SQL Console
+
+image::imgs/console.png[Console]
+
+SlackerDB includes a web-based SQL console that provides an interactive interface for executing SQL queries, viewing results, and performing administrative tasks directly from your browser.
+
+*Access:* After starting the server with data service API port (port_x) enabled, open `http://<server>:<port_x>/console.html` in a modern browser.
+
+*Features:*
+
+* **Interactive SQL Shell:** Type SQL statements at the prompt and execute them with Enter. Command history is available with up/down arrows.
+* **WebSocket Connection:** The console automatically connects to the SQL REPL server via WebSocket (`/sql/ws`) and manages sessions.
+* **Tabular Results:** Query results are displayed as formatted tables with column names and types.
+* **Sidebar Tools Panel:** Provides quick access to:
+** *Server Status* – detailed modal with server metrics, database parameters, usage statistics, extensions, and active sessions.
+** *Backup Database* – modal to create a backup with optional download of the resulting file.
+** *Log Viewer* – modal to inspect server logs in real time.
+* **Connection Indicator:** Visual indicator shows whether the console is connected to the server.
+* **Asynchronous Execution:** Long-running queries are executed asynchronously; results can be fetched in pages.
+
+*Usage:*
+
+1. Ensure the server is running with `port_x` configured (e.g., `port_x=8080`).
+2. Navigate to `http://localhost:8080/console.html`.
+3. The console will attempt to connect automatically. Once connected, you can start typing SQL.
+4. Use the sidebar buttons to open status, backup, or log modals.
+
+The console is built with plain HTML/JavaScript and requires no additional installation. It is intended for development and administrative purposes in trusted environments.
+
 ==== Embed the db server in your code
 
 ....
@@ -976,7 +1116,6 @@ Based on DuckDB's secure encryption mechanism, we support data encryption.
 To use this feature, you need to:
 
 1. Set the parameter data_encrypt to true.
-
 2. Set the database key through any of the following three methods:
      . Environment variable: SLACKERDB_<dbName>_KEY (where <dbName> is replaced with the name of your database instance).
      . Java property: Specify it when starting the program as -DSLACKERDB_<dbName>_KEY=....

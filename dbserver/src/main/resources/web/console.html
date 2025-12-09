@@ -1,0 +1,1706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SlackerDB SQL Shell</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Courier New', monospace;
+            background: #1e1e1e;
+            color: #f0f0f0;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background: #2d2d2d;
+            padding: 10px 20px;
+            border-bottom: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 {
+            font-size: 1.2rem;
+            color: #4fc3f7;
+        }
+        .database-name {
+            font-size: 0.9rem;
+            color: #aaa;
+            margin-left: 10px;
+            font-style: italic;
+        }
+        .status {
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+        }
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .connected {
+            background: #4caf50;
+        }
+        .disconnected {
+            background: #f44336;
+        }
+        .container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            overflow: hidden;
+        }
+        .output {
+            flex: 1;
+            overflow-y: auto;
+            background: #252525;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            user-select: text;
+            -webkit-user-select: text;
+            -moz-user-select: text;
+            -ms-user-select: text;
+            cursor: text;
+        }
+        .output ::selection {
+            background-color: #4fc3f7;
+            color: #000;
+        }
+        .output ::-moz-selection {
+            background-color: #4fc3f7;
+            color: #000;
+        }
+        .output * {
+            user-select: text;
+            -webkit-user-select: text;
+            -moz-user-select: text;
+            -ms-user-select: text;
+        }
+        .output .prompt {
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+        }
+        .output .prompt {
+            color: #4fc3f7;
+            font-weight: bold;
+        }
+        .output .command {
+            color: #ffffff;
+        }
+        .output .error {
+            color: #ff6b6b;
+        }
+        .output .success {
+            color: #66bb6a;
+        }
+        .output table {
+            border-collapse: collapse;
+            margin: 10px 0;
+            width: 100%;
+            background: #2d2d2d;
+            border: 1px solid #444;
+        }
+        .output th, .output td {
+            border: 1px solid #444;
+            padding: 8px 12px;
+            text-align: left;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+        .output th {
+            background: #3d3d3d;
+            color: #bb86fc;
+        }
+        .output td {
+            color: #e0e0e0;
+        }
+        .output .message {
+            color: #aaaaaa;
+            font-style: italic;
+        }
+        .input-line {
+            display: flex;
+            align-items: center;
+            background: #2d2d2d;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 10px;
+        }
+        .prompt-sign {
+            color: #4fc3f7;
+            font-weight: bold;
+            margin-right: 10px;
+            user-select: none;
+        }
+        #commandInput {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #ffffff;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            outline: none;
+            caret-color: #4fc3f7;
+        }
+        #commandInput::placeholder {
+            color: #666;
+        }
+        .help {
+            margin-top: 10px;
+            font-size: 0.8rem;
+            color: #888;
+            text-align: center;
+        }
+        .help kbd {
+            background: #444;
+            padding: 2px 6px;
+            border-radius: 3px;
+            border: 1px solid #666;
+        }
+        .footer {
+            padding: 10px;
+            text-align: center;
+            color: #666;
+            font-size: 0.8rem;
+            border-top: 1px solid #444;
+        }
+        /* Sidebar styles */
+        .main-wrapper {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        .container {
+            flex: 4;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            overflow: hidden;
+            transition: flex 0.3s ease;
+        }
+        .sidebar {
+            flex: 1;
+            background: #2d2d2d;
+            border-left: 1px solid #444;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transition: flex 0.3s ease, width 0.3s ease;
+            min-width: 0;
+        }
+        .sidebar.collapsed {
+            flex: 0;
+            width: 0;
+            min-width: 0;
+            border-left: none;
+        }
+        .sidebar-header {
+            padding: 15px;
+            background: #3d3d3d;
+            border-bottom: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .sidebar-header h2 {
+            font-size: 1rem;
+            color: #4fc3f7;
+            margin: 0;
+        }
+        .toggle-btn {
+            background: #4fc3f7;
+            color: #1e1e1e;
+            border: none;
+            border-radius: 4px;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        .toggle-btn:hover {
+            background: #29b6f6;
+        }
+        .sidebar-content {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+        }
+        .sidebar-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .sidebar-btn {
+            background: #3d3d3d;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #f0f0f0;
+            padding: 12px 15px;
+            font-size: 0.9rem;
+            font-weight: bold;
+            cursor: pointer;
+            text-align: left;
+            transition: background 0.2s;
+        }
+        .sidebar-btn:hover {
+            background: #4d4d4d;
+        }
+        .sidebar-btn:active {
+            background: #2d2d2d;
+        }
+        .sidebar-btn.active {
+            background: #4fc3f7;
+            color: #1e1e1e;
+        }
+        .sidebar-panel {
+            display: none;
+            padding: 15px;
+            color: #ccc;
+            font-size: 0.9rem;
+        }
+        .sidebar-panel.active {
+            display: block;
+        }
+        /* Collapse/expand icon */
+        .main-wrapper {
+            position: relative;
+        }
+        #sidebarCollapseIcon {
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #4fc3f7;
+            color: #1e1e1e;
+            border: none;
+            border-radius: 4px 0 0 4px;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: bold;
+            display: none;
+            z-index: 1000;
+            box-shadow: -2px 0 5px rgba(0,0,0,0.5);
+        }
+        #sidebarCollapseIcon:hover {
+            background: #29b6f6;
+        }
+        .sidebar.collapsed + #sidebarCollapseIcon {
+            display: block;
+        }
+
+        /* Status Modal */
+        .status-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+        }
+        .status-modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        .status-modal {
+            background: #2d2d2d;
+            border: 1px solid #444;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 1000px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+        .status-modal-header {
+            background: #3d3d3d;
+            padding: 20px;
+            border-bottom: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .status-modal-header h2 {
+            font-size: 1.5rem;
+            color: #4fc3f7;
+            margin: 0;
+        }
+        .status-modal-close {
+            background: transparent;
+            border: none;
+            color: #aaa;
+            font-size: 1.5rem;
+            cursor: pointer;
+            line-height: 1;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+        }
+        .status-modal-close:hover {
+            background: #444;
+            color: #fff;
+        }
+        .status-modal-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            color: #e0e0e0;
+        }
+        .status-section {
+            margin-bottom: 25px;
+            border: 1px solid #444;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .status-section-header {
+            background: #3d3d3d;
+            padding: 12px 20px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+        .status-section-header h3 {
+            font-size: 1.1rem;
+            color: #bb86fc;
+            margin: 0;
+        }
+        .status-section-header .toggle-icon {
+            color: #aaa;
+            transition: transform 0.3s;
+        }
+        .status-section-header.collapsed .toggle-icon {
+            transform: rotate(-90deg);
+        }
+        .status-section-content {
+            padding: 20px;
+            background: #252525;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+        }
+        .status-item {
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+            background: #2d2d2d;
+            border: 1px solid #444;
+            border-radius: 4px;
+        }
+        .status-item-label {
+            font-size: 0.9rem;
+            color: #aaa;
+            margin-bottom: 5px;
+        }
+        .status-item-value {
+            font-size: 1rem;
+            color: #f0f0f0;
+            word-break: break-all;
+        }
+        .status-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        .status-table th,
+        .status-table td {
+            border: 1px solid #444;
+            padding: 10px;
+            text-align: left;
+        }
+        .status-table th {
+            background: #3d3d3d;
+            color: #bb86fc;
+        }
+        .status-table td {
+            background: #2d2d2d;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        .status-badge.running {
+            background: #4caf50;
+            color: #000;
+        }
+        .status-badge.idle {
+            background: #ff9800;
+            color: #000;
+        }
+        .status-badge.error {
+            background: #f44336;
+            color: #fff;
+        }
+
+        /* Log Modal */
+        .log-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+        }
+        .log-modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        .log-modal {
+            background: #2d2d2d;
+            border: 1px solid #444;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 1000px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+        .log-modal-header {
+            background: #3d3d3d;
+            padding: 20px;
+            border-bottom: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .log-modal-header h2 {
+            font-size: 1.5rem;
+            color: #4fc3f7;
+            margin: 0;
+        }
+        .log-modal-close {
+            background: transparent;
+            border: none;
+            color: #aaa;
+            font-size: 1.5rem;
+            cursor: pointer;
+            line-height: 1;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+        }
+        .log-modal-close:hover {
+            background: #444;
+            color: #fff;
+        }
+        .log-modal-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            color: #e0e0e0;
+        }
+        .log-textarea {
+            width: 100%;
+            height: 60vh;
+            background: #252525;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #f0f0f0;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.4;
+            padding: 15px;
+            resize: none;
+            overflow-y: auto;
+            white-space: pre;
+            word-wrap: normal;
+        }
+        .log-textarea:focus {
+            outline: none;
+            border-color: #4fc3f7;
+        }
+
+        /* Backup Modal */
+        .backup-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+        }
+        .backup-modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        .backup-modal {
+            background: #2d2d2d;
+            border: 1px solid #444;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+        .backup-modal-header {
+            background: #3d3d3d;
+            padding: 20px;
+            border-bottom: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .backup-modal-header h2 {
+            font-size: 1.5rem;
+            color: #4fc3f7;
+            margin: 0;
+        }
+        .backup-modal-close {
+            background: transparent;
+            border: none;
+            color: #aaa;
+            font-size: 1.5rem;
+            cursor: pointer;
+            line-height: 1;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+        }
+        .backup-modal-close:hover {
+            background: #444;
+            color: #fff;
+        }
+        .backup-modal-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            color: #e0e0e0;
+        }
+        .backup-input-group {
+            margin-bottom: 20px;
+        }
+        .backup-input-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #aaa;
+        }
+        .backup-input-group input {
+            width: 100%;
+            padding: 10px;
+            background: #252525;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #f0f0f0;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        .backup-input-group input:focus {
+            outline: none;
+            border-color: #4fc3f7;
+        }
+        .backup-progress {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            gap: 15px;
+        }
+        .backup-spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid #444;
+            border-top-color: #4fc3f7;
+            border-radius: 50%;
+            animation: backup-spin 1s linear infinite;
+        }
+        @keyframes backup-spin {
+            to { transform: rotate(360deg); }
+        }
+        .backup-timer {
+            font-size: 1rem;
+            color: #aaa;
+        }
+        .backup-status {
+            margin-bottom: 20px;
+            min-height: 20px;
+            color: #4fc3f7;
+        }
+        .backup-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        .backup-btn {
+            background: #4fc3f7;
+            color: #1e1e1e;
+            border: none;
+            border-radius: 4px;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        .backup-btn:hover {
+            background: #29b6f6;
+        }
+        .backup-btn:disabled {
+            background: #666;
+            color: #999;
+            cursor: not-allowed;
+        }
+        .backup-btn.cancel {
+            background: #f44336;
+            color: #fff;
+        }
+        .backup-btn.cancel:hover {
+            background: #d32f2f;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>SlackerDB SQL Shell</h1>
+            <span class="database-name" id="databaseName">Loading...</span>
+        </div>
+        <div class="status">
+            <div class="status-indicator disconnected" id="statusIndicator"></div>
+            <span id="statusText">Disconnected</span>
+        </div>
+    </div>
+    <div class="main-wrapper">
+        <div class="container">
+            <div class="output" id="output">
+                <div class="message">Connecting to server...</div>
+            </div>
+            <div class="input-line">
+                <span class="prompt-sign">slacker></span>
+                <label for="commandInput"></label><input type="text" id="commandInput" placeholder="Enter SQL statement (press Enter to execute, Shift+Enter for new line)" autofocus>
+            </div>
+            <div class="help">
+                <kbd>Enter</kbd> Execute &nbsp;|&nbsp;
+                <kbd>Shift+Enter</kbd> New line &nbsp;|&nbsp;
+                <kbd>↑↓</kbd> History
+            </div>
+        </div>
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h2>Tools Panel</h2>
+                <button class="toggle-btn" id="sidebarToggle">Collapse</button>
+            </div>
+            <div class="sidebar-content">
+                <div class="sidebar-buttons">
+                    <button class="sidebar-btn" data-panel="status">Status</button>
+                    <button class="sidebar-btn" data-panel="backup">Backup</button>
+                    <button class="sidebar-btn" data-panel="logs">Log Viewer</button>
+                </div>
+                <div class="sidebar-panel" id="panel-status">
+                    <h3>Server Status</h3>
+                    <p>Connection status: <span id="panelStatusText">Unknown</span></p>
+                    <p>Database: <span id="panelDbName">Unknown</span></p>
+                    <p>Active sessions: <span id="panelActiveSessions">0</span></p>
+                </div>
+                <div class="sidebar-panel" id="panel-backup">
+                    <h3>Backup Database</h3>
+                    <p>Enter backup path:</p>
+                    <label for="backupPath"></label><input type="text" id="backupPath" placeholder="/path/to/backup.db" style="width:100%; padding:5px; margin-bottom:10px;">
+                    <button id="backupBtn" class="sidebar-btn">Start Backup</button>
+                    <div id="backupResult"></div>
+                </div>
+                <div class="sidebar-panel" id="panel-logs">
+                    <h3>Server Logs</h3>
+                    <div id="logContent" style="background:#252525; padding:10px; border-radius:4px; max-height:300px; overflow-y:auto; font-family:monospace; font-size:12px;">
+                         Loading...
+                    </div>
+                    <button id="refreshLogs" class="sidebar-btn" style="margin-top:10px;">Refresh Logs</button>
+                </div>
+            </div>
+        </div>
+        <button id="sidebarCollapseIcon" title="Expand sidebar">▶</button>
+    </div>
+    <div class="footer">
+        Powered by RobotSlacker
+    </div>
+
+    <script>
+        // WebSocket and state
+        let ws = null;
+        let sessionId = null;
+        let currentTaskId = null;
+        let commandHistory = [];
+        let historyIndex = -1;
+        let tempInput = '';
+        let heartbeatInterval = null;
+
+        // DOM elements
+        const outputEl = document.getElementById('output');
+        const commandInput = document.getElementById('commandInput');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const databaseNameEl = document.getElementById('databaseName');
+
+        // Helper to append a line to output
+        function output(line, className = '') {
+            const div = document.createElement('div');
+            if (className) div.className = className;
+            div.textContent = line;
+            outputEl.appendChild(div);
+            outputEl.scrollTop = outputEl.scrollHeight;
+        }
+
+        // Helper to append a prompt + command
+        function outputCommand(cmd) {
+            const div = document.createElement('div');
+            div.innerHTML = `<span class="prompt">slacker></span> <span class="command">${escapeHtml(cmd)}</span>`;
+            outputEl.appendChild(div);
+            outputEl.scrollTop = outputEl.scrollHeight;
+        }
+
+        // Helper to append a table
+        function outputTable(columns, rows) {
+            const table = document.createElement('table');
+            const thead = document.createElement('thead');
+            const tbody = document.createElement('tbody');
+            const headerRow = document.createElement('tr');
+            columns.forEach(col => {
+                const th = document.createElement('th');
+                th.textContent = col;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            rows.forEach(row => {
+                const tr = document.createElement('tr');
+                columns.forEach(col => {
+                    const td = document.createElement('td');
+                    td.textContent = row[col] !== null && row[col] !== undefined ? String(row[col]) : 'NULL';
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+            table.appendChild(thead);
+            table.appendChild(tbody);
+            outputEl.appendChild(table);
+            outputEl.scrollTop = outputEl.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Update connection status
+        function updateStatus(connected) {
+            statusIndicator.className = 'status-indicator ' + (connected ? 'connected' : 'disconnected');
+            statusText.textContent = connected ? 'Connected' : 'Disconnected';
+        }
+
+        // Connect WebSocket
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/sql/ws`;
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                updateStatus(true);
+                output('Connected to server.', 'success');
+                startSession();
+                // Start heartbeat to keep connection alive
+                if (heartbeatInterval) clearInterval(heartbeatInterval);
+                heartbeatInterval = setInterval(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send("ping");
+                    }
+                }, 20000);
+                // Fetch database name from status endpoint
+                fetch('/status')
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Status response:', data);
+                        let dbName = 'unknown';
+                        const params = data.parameters;
+                        if (params) {
+                            if (params.data && params.data !== '') {
+                                dbName = params.data;
+                            } else if (params.dataDir && params.dataDir === ':memory:') {
+                                dbName = 'memory';
+                            } else if (params.dataDir && params.dataDir !== '') {
+                                // Extract the last part of the path as database name
+                                const parts = params.dataDir.split(/[/\\]/);
+                                dbName = parts[parts.length - 1] || 'file';
+                            }
+                        }
+                        databaseNameEl.textContent = `Database: ${dbName}`;
+                    })
+                    .catch(err => {
+                        console.error('Failed to fetch status:', err);
+                        databaseNameEl.textContent = 'Database: error';
+                    });
+            };
+
+            ws.onclose = () => {
+                updateStatus(false);
+                output('Disconnected from server.', 'error');
+                // Clear heartbeat interval
+                if (heartbeatInterval) {
+                    clearInterval(heartbeatInterval);
+                    heartbeatInterval = null;
+                }
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = (err) => {
+                // Extract error message from event
+                let errMsg = '';
+                if (err instanceof Error) {
+                    errMsg = err.message;
+                } else if (err.type) {
+                    errMsg = `type: ${err.type}`;
+                } else if (err.target && err.target.readyState === WebSocket.CLOSED) {
+                    errMsg = 'WebSocket closed';
+                } else {
+                    errMsg = String(err);
+                    // If it's the generic [object Event], try to get more info
+                    if (errMsg === '[object Event]') {
+                        errMsg = 'WebSocket error event';
+                    }
+                }
+                // Filter out connection idle timeout errors to avoid disturbing the user
+                const lower = errMsg.toLowerCase();
+                if (!lower.includes('connection idle timeout') && !lower.includes('websockettimeoutexception')) {
+                    // Output a user-friendly error message
+                    output('WebSocket error: ' + errMsg, 'error');
+                }
+            };
+
+            ws.onmessage = (event) => {
+                const data = event.data;
+                // Handle heartbeat "pong" response
+                if (data === 'pong' || data === '"pong"') {
+                    // Silently ignore, no need to log
+                    return;
+                }
+                try {
+                    const msg = JSON.parse(data);
+                    handleMessage(msg);
+                } catch (e) {
+                    output('Invalid message: ' + e, 'error');
+                }
+            };
+        }
+
+        // Start a new session
+        function startSession() {
+            sendMessage({
+                id: generateId(),
+                type: 'start',
+                data: {}
+            });
+        }
+
+        // Send a message to WebSocket
+        function sendMessage(msg) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(msg));
+            } else {
+                output('WebSocket not ready', 'error');
+            }
+        }
+
+        function generateId() {
+            return Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+        }
+
+        // Handle incoming messages
+        function handleMessage(msg) {
+            const { id, type, data, error } = msg;
+            if (error) {
+                output('Error: ' + error, 'error');
+                return;
+            }
+            switch (type) {
+                case 'start':
+                    sessionId = data.sessionId;
+                    output('Session started. Type SQL to execute.', 'success');
+                    break;
+                case 'exec':
+                    currentTaskId = data.taskId;
+                    output('Query executing...', 'message');
+                    // Poll for completion
+                    setTimeout(() => fetchResult(), 100);
+                    break;
+                case 'fetch':
+                    if (data.status === 'running') {
+                        setTimeout(() => fetchResult(), 200);
+                    } else if (data.status === 'error') {
+                        output('Query failed: ' + data.error, 'error');
+                        resetTask();
+                    } else if (data.status === 'completed') {
+                        if (data.updateCount !== undefined) {
+                            output(`Query completed. ${data.updateCount} row(s) affected.`, 'success');
+                            resetTask();
+                        } else {
+                            // Result set
+                            const columns = data.columns || [];
+                            const rows = data.rows || [];
+                            if (columns.length > 0) {
+                                outputTable(columns, rows);
+                                output(`Fetched ${rows.length} rows.`, 'message');
+                            } else {
+                                output('No rows returned.', 'message');
+                            }
+                            if (data.hasMore) {
+                                output('More rows available. Fetching...', 'message');
+                                setTimeout(() => fetchResult(), 0);
+                            } else {
+                                resetTask();
+                            }
+                        }
+                    }
+                    break;
+                case 'cancel':
+                    output('Query canceled.', 'message');
+                    resetTask();
+                    break;
+                case 'close':
+                    output('Session closed.', 'message');
+                    sessionId = null;
+                    break;
+                default:
+                    output('Unknown message type: ' + type, 'error');
+            }
+        }
+
+        // Execute SQL command
+        function executeCommand(sql) {
+            if (!sql.trim()) return;
+            if (!sessionId) {
+                output('No active session.', 'error');
+                return;
+            }
+            outputCommand(sql);
+            commandHistory.push(sql);
+            historyIndex = commandHistory.length;
+            sendMessage({
+                id: generateId(),
+                type: 'exec',
+                data: {
+                    sessionId: sessionId,
+                    sql: sql,
+                    fetchSize: 100
+                }
+            });
+        }
+
+        // Fetch result for current task
+        function fetchResult() {
+            if (!sessionId || !currentTaskId) return;
+            sendMessage({
+                id: generateId(),
+                type: 'fetch',
+                data: {
+                    sessionId: sessionId,
+                    taskId: currentTaskId,
+                    maxRows: 100
+                }
+            });
+        }
+
+        // Reset task state
+        function resetTask() {
+            currentTaskId = null;
+        }
+
+        // Cancel current query
+        function cancelQuery() {
+            if (!sessionId) return;
+            sendMessage({
+                id: generateId(),
+                type: 'cancel',
+                data: { sessionId: sessionId }
+            });
+        }
+
+        // Input handling
+        commandInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                if (e.shiftKey) {
+                    // Insert new line (not supported in input, but we can switch to textarea)
+                    // For simplicity, we'll just ignore and keep as single line.
+                } else {
+                    e.preventDefault();
+                    const cmd = commandInput.value.trim();
+                    if (cmd) {
+                        executeCommand(cmd);
+                        commandInput.value = '';
+                    }
+                }
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (commandHistory.length > 0) {
+                    if (historyIndex === -1) {
+                        tempInput = commandInput.value;
+                        historyIndex = commandHistory.length;
+                    }
+                    historyIndex = Math.max(0, historyIndex - 1);
+                    commandInput.value = commandHistory[historyIndex];
+                }
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (commandHistory.length > 0) {
+                    if (historyIndex < commandHistory.length - 1) {
+                        historyIndex++;
+                        commandInput.value = commandHistory[historyIndex];
+                    } else {
+                        historyIndex = commandHistory.length;
+                        commandInput.value = tempInput;
+                    }
+                }
+            }
+        });
+
+        // Focus input on click anywhere except output area, modals, and sidebar
+        document.addEventListener('click', (event) => {
+            const outputEl = document.getElementById('output');
+            const target = event.target;
+            // Check if target is inside a modal overlay or sidebar
+            const isInModal = target.closest('.status-modal-overlay, .log-modal-overlay, .backup-modal-overlay');
+            const isInSidebar = target.closest('#sidebar');
+            if (!outputEl.contains(target) && !isInModal && !isInSidebar) {
+                commandInput.focus();
+            }
+        });
+
+        // Sidebar functionality
+        const sidebar = document.getElementById('sidebar');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarButtons = document.querySelectorAll('.sidebar-btn');
+        const panels = document.querySelectorAll('.sidebar-panel');
+
+        // Toggle sidebar collapse/expand
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+            if (sidebar.classList.contains('collapsed')) {
+                sidebarToggle.textContent = 'Expand';
+            } else {
+                sidebarToggle.textContent = 'Collapse';
+            }
+        });
+
+        // Expand sidebar via collapse icon
+        document.getElementById('sidebarCollapseIcon').addEventListener('click', () => {
+            sidebar.classList.remove('collapsed');
+            sidebarToggle.textContent = 'Collapse';
+        });
+
+        // Switch panels
+        sidebarButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const panelId = btn.getAttribute('data-panel');
+                // Update active button
+                sidebarButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                // Show corresponding panel
+                panels.forEach(p => p.classList.remove('active'));
+                document.getElementById(`panel-${panelId}`).classList.add('active');
+            });
+        });
+
+        // Update status panel with current connection info
+        function updateStatusPanel() {
+            const panelStatusText = document.getElementById('panelStatusText');
+            const panelDbName = document.getElementById('panelDbName');
+            panelStatusText.textContent = statusText.textContent;
+            panelDbName.textContent = databaseNameEl.textContent.replace('Database: ', '');
+            // TODO: fetch active sessions via API
+        }
+
+        // Backup button
+        document.getElementById('backupBtn').addEventListener('click', () => {
+            const path = document.getElementById('backupPath').value.trim();
+            if (!path) {
+                document.getElementById('backupResult').innerHTML = '<span style="color:#ff6b6b">Please enter backup path</span>';
+                return;
+            }
+            document.getElementById('backupResult').innerHTML = '<span style="color:#aaa">Backup in progress...</span>';
+            fetch('/api/backup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: path })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('backupResult').innerHTML = '<span style="color:#66bb6a">Backup successful</span>';
+                } else {
+                    document.getElementById('backupResult').innerHTML = `<span style="color:#ff6b6b">Failed: ${data.error}</span>`;
+                }
+            })
+            .catch(err => {
+                document.getElementById('backupResult').innerHTML = `<span style="color:#ff6b6b">Request error: ${err}</span>`;
+            });
+        });
+
+
+        // Logs refresh
+        function refreshLogs() {
+            const logContent = document.getElementById('logContent');
+            logContent.textContent = 'Loading...';
+            fetch('/logfile')
+            .then(response => response.text())
+            .then(text => {
+                logContent.textContent = text;
+            })
+            .catch(err => {
+                logContent.textContent = 'Failed to load logs: ' + err;
+            });
+        }
+        document.getElementById('refreshLogs').addEventListener('click', refreshLogs);
+        // Load logs initially
+        refreshLogs();
+
+        // Update status panel periodically
+        setInterval(updateStatusPanel, 5000);
+        updateStatusPanel();
+
+        // Initialize
+        connectWebSocket();
+
+        // Status Modal functionality
+        const statusModalOverlay = document.createElement('div');
+        statusModalOverlay.className = 'status-modal-overlay';
+        statusModalOverlay.innerHTML = `
+            <div class="status-modal">
+                <div class="status-modal-header">
+                    <h2>Server Status Details</h2>
+                    <button class="status-modal-close" title="Close">×</button>
+                </div>
+                <div class="status-modal-content" id="statusModalContent">
+                    <div class="status-section">
+                        <div class="status-section-header">
+                            <h3>Server</h3>
+                            <span class="toggle-icon">▼</span>
+                        </div>
+                        <div class="status-section-content" id="server-section"></div>
+                    </div>
+                    <div class="status-section">
+                        <div class="status-section-header">
+                            <h3>Database</h3>
+                            <span class="toggle-icon">▼</span>
+                        </div>
+                        <div class="status-section-content" id="database-section"></div>
+                    </div>
+                    <div class="status-section">
+                        <div class="status-section-header">
+                            <h3>Parameters</h3>
+                            <span class="toggle-icon">▼</span>
+                        </div>
+                        <div class="status-section-content" id="parameters-section"></div>
+                    </div>
+                    <div class="status-section">
+                        <div class="status-section-header">
+                            <h3>Usage</h3>
+                            <span class="toggle-icon">▼</span>
+                        </div>
+                        <div class="status-section-content" id="usage-section"></div>
+                    </div>
+                    <div class="status-section">
+                        <div class="status-section-header">
+                            <h3>Extensions</h3>
+                            <span class="toggle-icon">▼</span>
+                        </div>
+                        <div class="status-section-content" id="extensions-section"></div>
+                    </div>
+                    <div class="status-section">
+                        <div class="status-section-header">
+                            <h3>Sessions</h3>
+                            <span class="toggle-icon">▼</span>
+                        </div>
+                        <div class="status-section-content" id="sessions-section"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(statusModalOverlay);
+
+        const modalCloseBtn = statusModalOverlay.querySelector('.status-modal-close');
+        const sectionHeaders = statusModalOverlay.querySelectorAll('.status-section-header');
+
+        // Toggle section collapse/expand
+        sectionHeaders.forEach(header => {
+            header.addEventListener('click', () => {
+                header.classList.toggle('collapsed');
+                const content = header.nextElementSibling;
+                if (header.classList.contains('collapsed')) {
+                    content.style.display = 'none';
+                } else {
+                    content.style.display = 'grid';
+                }
+            });
+        });
+
+        // Close modal
+        modalCloseBtn.addEventListener('click', () => {
+            statusModalOverlay.classList.remove('active');
+        });
+        statusModalOverlay.addEventListener('click', (e) => {
+            if (e.target === statusModalOverlay) {
+                statusModalOverlay.classList.remove('active');
+            }
+        });
+
+        // Function to open status modal and fetch data
+        function openStatusModal() {
+            statusModalOverlay.classList.add('active');
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    renderStatusData(data);
+                })
+                .catch(err => {
+                    console.error('Failed to fetch status:', err);
+                    output('Failed to load status details.', 'error');
+                });
+        }
+
+        // Render status data into sections
+        function renderStatusData(data) {
+            renderSection('server', data.server);
+            renderSection('database', data.database);
+            renderSection('parameters', data.parameters);
+            renderSection('usage', data.usage);
+            renderListSection('extensions', data.extensions);
+            renderSessionsSection('sessions', data.sessions);
+        }
+
+        function renderSection(sectionId, obj) {
+            const container = document.getElementById(`${sectionId}-section`);
+            if (!container) return;
+            if (!obj || Object.keys(obj).length === 0) {
+                container.innerHTML = '<div class="status-item"><span class="status-item-label">No data</span></div>';
+                return;
+            }
+            let html = '';
+            for (const [key, value] of Object.entries(obj)) {
+                html += `
+                    <div class="status-item">
+                        <span class="status-item-label">${escapeHtml(key)}</span>
+                        <span class="status-item-value">${escapeHtml(String(value))}</span>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        }
+
+        function renderListSection(sectionId, array) {
+            const container = document.getElementById(`${sectionId}-section`);
+            if (!container) return;
+            if (!array || array.length === 0) {
+                container.innerHTML = '<div class="status-item"><span class="status-item-label">None</span></div>';
+                return;
+            }
+            let html = '';
+            array.forEach(item => {
+                html += `
+                    <div class="status-item">
+                        <span class="status-item-value">${escapeHtml(item)}</span>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function renderSessionsSection(sectionId, sessions) {
+            const container = document.getElementById(`${sectionId}-section`);
+            if (!container) return;
+            if (!sessions || sessions.length === 0) {
+                container.innerHTML = '<div class="status-item"><span class="status-item-label">No active sessions</span></div>';
+                return;
+            }
+            // Create a table
+            let html = '<table class="status-table"><thead><tr><th>ID</th><th>Client IP</th><th>Connected Time</th><th>Status</th><th>Executing SQL</th></tr></thead><tbody>';
+            sessions.forEach(session => {
+                const statusClass = session.status === 'RUNNING' ? 'running' : (session.status === 'IDLE' ? 'idle' : 'error');
+                html += `
+                    <tr>
+                        <td>${escapeHtml(session.id)}</td>
+                        <td>${escapeHtml(session.clientIp || '')}</td>
+                        <td>${escapeHtml(session.connectedTime || '')}</td>
+                        <td><span class="status-badge ${statusClass}">${escapeHtml(session.status)}</span></td>
+                        <td>${escapeHtml(session.executingSql || '')}</td>
+                    </tr>
+                `;
+            });
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        // Log Modal functionality
+        const logModalOverlay = document.createElement('div');
+        logModalOverlay.className = 'log-modal-overlay';
+        logModalOverlay.innerHTML = `
+            <div class="log-modal">
+                <div class="log-modal-header">
+                    <h2>Server Logs</h2>
+                    <button class="log-modal-close" title="Close">×</button>
+                </div>
+                <div class="log-modal-content">
+                    <textarea class="log-textarea" id="logTextarea" readonly></textarea>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(logModalOverlay);
+
+        const logModalCloseBtn = logModalOverlay.querySelector('.log-modal-close');
+        const logTextarea = logModalOverlay.querySelector('#logTextarea');
+
+        // Close log modal
+        logModalCloseBtn.addEventListener('click', () => {
+            logModalOverlay.classList.remove('active');
+        });
+        logModalOverlay.addEventListener('click', (e) => {
+            if (e.target === logModalOverlay) {
+                logModalOverlay.classList.remove('active');
+            }
+        });
+
+        // Function to open log modal and fetch logs
+        function openLogModal() {
+            logModalOverlay.classList.add('active');
+            logTextarea.value = 'Loading logs...';
+            fetch('/logfile')
+                .then(response => response.text())
+                .then(text => {
+                    logTextarea.value = text;
+                    // Auto-scroll to bottom
+                    logTextarea.scrollTop = logTextarea.scrollHeight;
+                })
+                .catch(err => {
+                    logTextarea.value = 'Failed to load logs: ' + err;
+                });
+        }
+
+        // Override Log Viewer button click to open modal instead of panel
+        const logsButton = document.querySelector('.sidebar-btn[data-panel="logs"]');
+        if (logsButton) {
+            // Remove existing click handler by replacing with new one
+            const newLogsButton = logsButton.cloneNode(true);
+            logsButton.parentNode.replaceChild(newLogsButton, logsButton);
+            newLogsButton.addEventListener('click', (e) => {
+                e.preventDefault();
+                openLogModal();
+                // Update active button (optional)
+                document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
+                newLogsButton.classList.add('active');
+                // Hide other panels
+                document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+            });
+        }
+
+        // Override Status button click to open modal instead of panel
+        const statusButton = document.querySelector('.sidebar-btn[data-panel="status"]');
+        if (statusButton) {
+            // Remove existing click handler by replacing with new one
+            const newStatusButton = statusButton.cloneNode(true);
+            statusButton.parentNode.replaceChild(newStatusButton, statusButton);
+            newStatusButton.addEventListener('click', (e) => {
+                e.preventDefault();
+                openStatusModal();
+                // Update active button (optional)
+                document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
+                newStatusButton.classList.add('active');
+                // Hide other panels
+                document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+            });
+        }
+
+        // Backup Modal functionality
+        const backupModalOverlay = document.createElement('div');
+        backupModalOverlay.className = 'backup-modal-overlay';
+        backupModalOverlay.innerHTML = `
+            <div class="backup-modal">
+                <div class="backup-modal-header">
+                    <h2>Backup Database</h2>
+                    <button class="backup-modal-close" title="Close">×</button>
+                </div>
+                <div class="backup-modal-content">
+                    <div class="backup-input-group">
+                        <label for="backupFilename">Backup tag (no dots, will be appended with .db)</label>
+                        <input type="text" id="backupFilename" placeholder="e.g., mybackup" maxlength="100">
+                    </div>
+                    <div class="backup-progress">
+                        <div class="backup-spinner" id="backupSpinner" style="display:none;"></div>
+                        <div class="backup-timer" id="backupTimer">Elapsed: 0s</div>
+                    </div>
+                    <div class="backup-status" id="backupStatus"></div>
+                    <div class="backup-actions">
+                        <button class="backup-btn" id="backupStartBtn">Start Backup</button>
+                        <button class="backup-btn cancel" id="backupCancelBtn" disabled>Cancel</button>
+                        <button class="backup-btn" id="backupCloseBtn" style="display:none;">Close</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(backupModalOverlay);
+
+        const backupModalCloseBtn = backupModalOverlay.querySelector('.backup-modal-close');
+        const backupFilenameInput = backupModalOverlay.querySelector('#backupFilename');
+        const backupSpinner = backupModalOverlay.querySelector('#backupSpinner');
+        const backupTimer = backupModalOverlay.querySelector('#backupTimer');
+        const backupStatus = backupModalOverlay.querySelector('#backupStatus');
+        const backupStartBtn = backupModalOverlay.querySelector('#backupStartBtn');
+        const backupCancelBtn = backupModalOverlay.querySelector('#backupCancelBtn');
+        const backupCloseBtn = backupModalOverlay.querySelector('#backupCloseBtn');
+
+        let backupStartTime = null;
+        let backupTimerInterval = null;
+        let backupInProgress = false;
+
+        // Close backup modal
+        backupModalCloseBtn.addEventListener('click', () => {
+            backupModalOverlay.classList.remove('active');
+        });
+        backupModalOverlay.addEventListener('click', (e) => {
+            if (e.target === backupModalOverlay) {
+                backupModalOverlay.classList.remove('active');
+            }
+        });
+
+        // Function to open backup modal
+        function openBackupModal() {
+            backupModalOverlay.classList.add('active');
+            backupFilenameInput.value = '';
+            backupSpinner.style.display = 'none';
+            backupTimer.textContent = 'Elapsed: 0s';
+            backupStatus.textContent = '';
+            backupStartBtn.disabled = false;
+            backupStartBtn.style.display = 'inline-block';
+            backupCancelBtn.disabled = false;
+            backupCancelBtn.style.display = 'inline-block';
+            backupCloseBtn.style.display = 'none';
+            backupInProgress = false;
+            if (backupTimerInterval) {
+                clearInterval(backupTimerInterval);
+                backupTimerInterval = null;
+            }
+            // Set focus to input after modal is shown, with a small delay to ensure visibility
+            setTimeout(() => {
+                backupFilenameInput.focus();
+                backupFilenameInput.select();
+            }, 10);
+        }
+
+        // Validate filename (no Windows/Linux path symbols)
+        function isValidFilename(filename) {
+            if (!filename || filename.trim() === '') return false;
+            // Disallow characters that could be used for path traversal
+            const forbidden = /[<>:"|?*\\/]/;
+            return !forbidden.test(filename);
+        }
+
+        // Update timer
+        function updateBackupTimer() {
+            if (!backupStartTime) return;
+            const elapsed = Math.floor((Date.now() - backupStartTime) / 1000);
+            backupTimer.textContent = `Elapsed: ${elapsed}s`;
+        }
+
+        // Start backup process
+        function startBackup() {
+            const filename = backupFilenameInput.value.trim();
+            if (!isValidFilename(filename)) {
+                backupStatus.textContent = 'Invalid filename. Do not use path symbols (<, >, :, ", |, ?, *, \\, /).';
+                backupStatus.style.color = '#ff6b6b';
+                return;
+            }
+
+            backupStartBtn.disabled = true;
+            backupCancelBtn.disabled = true;
+            backupSpinner.style.display = 'block';
+            backupStatus.textContent = 'Starting backup...';
+            backupStatus.style.color = '#4fc3f7';
+            backupStartTime = Date.now();
+            backupTimerInterval = setInterval(updateBackupTimer, 1000);
+            backupInProgress = true;
+
+            // Call /backup endpoint
+            fetch('/backup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ backupTag: filename })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => {
+                        throw new Error(`HTTP ${response.status}: ${text}`);
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    // Determine the filename for download (use data.filename if provided, otherwise fallback)
+                    let downloadPath = data.filename || `backup/${filename}`;
+                    // Extract basename for download attribute (strip 'backup/' prefix if present)
+                    let downloadBasename = downloadPath.replace(/^backup\//, '');
+                    backupStatus.textContent = 'Backup completed. Downloading...';
+                    backupStatus.style.color = '#66bb6a';
+                    // After backup, call /download to get the file
+                    return fetch(`/download?filename=${encodeURIComponent(downloadPath)}`)
+                        .then(response => {
+                            if (!response.ok) throw new Error('Download failed');
+                            return response.blob();
+                        })
+                        .then(blob => {
+                            // Create a download link and trigger download
+                            const url = window.URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = downloadBasename;
+                            document.body.appendChild(a);
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                            document.body.removeChild(a);
+
+                            backupStatus.textContent = 'Backup downloaded successfully.';
+                            backupStatus.style.color = '#66bb6a';
+                            backupSpinner.style.display = 'none';
+                            backupStartBtn.style.display = 'none';
+                            backupCancelBtn.disabled = true;
+                            backupCancelBtn.style.display = 'none';
+                            backupCloseBtn.style.display = 'inline-block';
+                            backupInProgress = false;
+                            clearInterval(backupTimerInterval);
+                        });
+                } else {
+                    throw new Error(data.error || 'Backup failed');
+                }
+            })
+            .catch(err => {
+                backupStatus.textContent = 'Error: ' + err.message;
+                backupStatus.style.color = '#ff6b6b';
+                backupSpinner.style.display = 'none';
+                backupStartBtn.disabled = false;
+                backupCancelBtn.disabled = false;
+                backupCloseBtn.style.display = 'none';
+                backupInProgress = false;
+                if (backupTimerInterval) {
+                    clearInterval(backupTimerInterval);
+                    backupTimerInterval = null;
+                }
+            });
+        }
+
+        // Cancel backup
+        function cancelBackup() {
+            if (!backupInProgress) {
+                backupModalOverlay.classList.remove('active');
+                return;
+            }
+            // Optionally call a cancel endpoint if exists
+            backupStatus.textContent = 'Backup cancelled.';
+            backupStatus.style.color = '#ff9800';
+            backupSpinner.style.display = 'none';
+            backupStartBtn.disabled = false;
+            backupCancelBtn.disabled = true;
+            backupInProgress = false;
+            if (backupTimerInterval) {
+                clearInterval(backupTimerInterval);
+                backupTimerInterval = null;
+            }
+        }
+
+        // Event listeners
+        backupStartBtn.addEventListener('click', startBackup);
+        backupCancelBtn.addEventListener('click', cancelBackup);
+        backupCloseBtn.addEventListener('click', () => {
+            backupModalOverlay.classList.remove('active');
+        });
+
+        // Override Backup button click to open modal instead of panel
+        const backupButton = document.querySelector('.sidebar-btn[data-panel="backup"]');
+        if (backupButton) {
+            const newBackupButton = backupButton.cloneNode(true);
+            backupButton.parentNode.replaceChild(newBackupButton, backupButton);
+            newBackupButton.addEventListener('click', (e) => {
+                e.preventDefault();
+                openBackupModal();
+                // Update active button (optional)
+                document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
+                newBackupButton.classList.add('active');
+                // Hide other panels
+                document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+            });
+        }
+
+        // Also override the existing backup panel's button to open modal
+        const panelBackupBtn = document.getElementById('backupBtn');
+        if (panelBackupBtn) {
+            panelBackupBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                openBackupModal();
+            });
+        }
+    </script>
+</body>
+</html>
