@@ -888,9 +888,9 @@ ws.send(JSON.stringify({
 ----
 
 *Note:* The examples above assume you handle incoming messages asynchronously. In a real client you would match responses by their `id`.
-==== 基础服务 (Basic Services)
 
-以下HTTP端点提供独立于SQL REPL Server的基础管理功能，如备份、文件上传/下载、日志查看和状态监控。这些端点在数据服务API端口（port_x）启用时可用。
+==== Basic Services
+The following HTTP endpoints provide basic administrative functions, such as backup, file upload/download, log viewing, and status monitoring. These endpoints are available when the Data Services API port (port_x) is enabled.
 
 ===== /backup (POST)
 
@@ -1003,9 +1003,11 @@ Returns comprehensive server status information, including server details, datab
 
 image::imgs/console.png[Console]
 
-SlackerDB includes a web-based SQL console that provides an interactive interface for executing SQL queries, viewing results, and performing administrative tasks directly from your browser.
+*Note: The web console is **not a production‑ready feature**. It is a demonstration tool designed to help you understand and verify the backend services (Data Service, MCP Tool, and MCP Resource) in a visual, interactive way.*
 
-*Access:* After starting the server with data service API port (port_x) enabled, open `http://<server>:<port_x>/console.html` in a modern browser.
+SlackerDB includes a web‑based SQL console that provides an interactive interface for executing SQL queries, viewing results, and performing administrative tasks directly from your browser. In addition to the core SQL REPL, the console offers dedicated panels for managing **Data Service**, **MCP Tool**, and **MCP Resource** – three key extension mechanisms of the SlackerDB ecosystem.
+
+*Access:* After starting the server with the data‑service API port (`port_x`) enabled, open `http://<server>:<port_x>/console.html` in a modern browser.
 
 *Features:*
 
@@ -1017,16 +1019,26 @@ SlackerDB includes a web-based SQL console that provides an interactive interfac
 ** *Backup Database* – modal to create a backup with optional download of the resulting file.
 ** *Log Viewer* – modal to inspect server logs in real time.
 * **Connection Indicator:** Visual indicator shows whether the console is connected to the server.
-* **Asynchronous Execution:** Long-running queries are executed asynchronously; results can be fetched in pages.
+* **Asynchronous Execution:** Long‑running queries are executed asynchronously; results can be fetched in pages.
+* **Data Service Management Panel:** Register, list, load, save, and unregister data services. You can also download the service definitions as a JSON file (the download will prompt you to choose a save location via the browser’s file‑picker dialog).
+* **MCP Tool Management Panel:** List, load, save, and unregister MCP (Model Context Protocol) tools. Download the tool definitions as JSON (with file‑picker dialog).
+* **MCP Resource Management Panel:** List, load, save, and unregister MCP resources. Download the resource definitions as JSON (with file‑picker dialog).
 
 *Usage:*
 
 1. Ensure the server is running with `port_x` configured (e.g., `port_x=8080`).
 2. Navigate to `http://localhost:8080/console.html`.
 3. The console will attempt to connect automatically. Once connected, you can start typing SQL.
-4. Use the sidebar buttons to open status, backup, or log modals.
+4. Use the left‑sidebar buttons to switch between the **Console**, **Data Service**, **MCP Tool**, and **MCP Resource** views.
+5. In each management panel you can:
+   * Refresh the list of registered items.
+   * Select items with checkboxes and perform batch operations (unregister, download).
+   * Load definitions from a JSON file.
+   * Save definitions to the server’s configuration directory.
+   * Download definitions as a JSON file – the browser will show a file‑save dialog, allowing you to choose the location and filename.
+6. Use the right‑sidebar buttons to open status, backup, or log modals.
 
-The console is built with plain HTML/JavaScript and requires no additional installation. It is intended for development and administrative purposes in trusted environments.
+The console is built with plain HTML/JavaScript and requires no additional installation. It is intended for development, testing, and administrative purposes in trusted environments. Its primary goal is to demonstrate how the backend services work and to provide a convenient way to experiment with the Data Service, MCP Tool, and MCP Resource subsystems.
 
 ==== Embed the db server in your code
 

@@ -1,0 +1,26 @@
+{
+  "tools": [
+    {
+      "name": "echo",
+      "description": "Echo back the input text",
+      "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } } },
+      "handler": "builtin:echo"
+    },
+    {
+      "name": "query",
+      "description": "Execute SQL query",
+      "inputSchema": { ... },
+      "handler": "builtin:query"
+    }
+  ],
+  "resources": [
+    {
+      "uri": "file:///docs/readme.txt",
+      "name": "Readme",
+      "description": "Project documentation",
+      "mimeType": "text/plain",
+      "contents": "Hello from resource",
+      "filePath": "./docs/readme.txt"   // 可选，指向外部文件
+    }
+  ]
+}

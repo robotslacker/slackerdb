@@ -139,6 +139,54 @@ public class DBInstance {
     class DBInstanceMonitorThread extends Thread
     {
         private static String lastRegisterMessage = "";
+        private final Map<String, Long> lastModifiedMap = new HashMap<>();
+
+        // 检查文件或目录变化
+        private boolean hasChanged(String path) {
+            if (path == null || path.isEmpty()) {
+                return false;
+            }
+            Path filePath = Path.of(path);
+            if (!Files.exists(filePath)) {
+                // 路径不存在，无法监视
+                return false;
+            }
+            long lastModified;
+            try {
+                if (Files.isDirectory(filePath)) {
+                    // 获取目录及其所有子目录中任何文件的最后修改时间
+                    try (var stream = Files.walk(filePath)) {
+                        lastModified = stream
+                                .filter(Files::isRegularFile)
+                                .mapToLong(p -> {
+                                    try {
+                                        return Files.getLastModifiedTime(p).toMillis();
+                                    } catch (IOException e) {
+                                        return 0L;
+                                    }
+                                })
+                                .max()
+                                .orElse(0L);
+                    }
+                } else {
+                    lastModified = Files.getLastModifiedTime(filePath).toMillis();
+                }
+            } catch (IOException e) {
+                logger.warn("[SERVER] Failed to check modification time for {}: {}", path, e.getMessage());
+                return false;
+            }
+            Long previous = lastModifiedMap.get(path);
+            if (previous == null) {
+                // 第一次看到，存储并返回false（无变化）
+                lastModifiedMap.put(path, lastModified);
+                return false;
+            }
+            if (!Objects.equals(previous, lastModified)) {
+                lastModifiedMap.put(path, lastModified);
+                return true;
+            }
+            return false;
+        }
 
         @Override
         public void run()
@@ -174,6 +222,7 @@ public class DBInstance {
                                 serverConfiguration.getRemoteListener(), serverException.getErrorMessage());
                     }
                 }
+
 
                 // 每10秒钟循环一次
                 try {

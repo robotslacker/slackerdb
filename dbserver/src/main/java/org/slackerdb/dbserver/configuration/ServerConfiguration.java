@@ -90,6 +90,8 @@ public class ServerConfiguration {
 
     // 数据服务初始化加载文件
     private final String default_data_service_schema = "";
+    // MCP配置路径
+    private final String default_mcp_config = "";
 
     private String   data;
 
@@ -124,6 +126,7 @@ public class ServerConfiguration {
     private int connection_pool_maximum_lifecycle_time;
     private long query_result_cache_size;
     private String data_service_schema;
+    private String mcp_config;
 
     public ServerConfiguration() throws ServerException
     {
@@ -158,6 +161,7 @@ public class ServerConfiguration {
         query_result_cache_size = default_query_result_cache_size;
         data_service_schema = default_data_service_schema;
         data_service_history = default_data_service_history;
+        mcp_config = default_mcp_config;
         data_encrypt = default_data_encrypt;
         plugins_dir = default_plugins_dir;
 
@@ -410,6 +414,13 @@ public class ServerConfiguration {
                         data_encrypt = this.default_data_encrypt;
                     } else {
                         setDataEncrypt(entry.getValue().toString().trim());
+                    }
+                }
+                case "MCP_CONFIG" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        mcp_config = this.default_mcp_config;
+                    } else {
+                        setMcpConfig(entry.getValue().toString().trim());
                     }
                 }
                 default ->
@@ -990,5 +1001,15 @@ public class ServerConfiguration {
     public String getPlugins_dir()
     {
         return this.plugins_dir;
+    }
+
+    public void setMcpConfig(String val)
+    {
+        this.mcp_config = val;
+    }
+
+    public String getMcpConfig()
+    {
+        return this.mcp_config;
     }
 }

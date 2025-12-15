@@ -2,7 +2,7 @@ package org.slackerdb.dbserver.server;
 
 public class ConnectionMetaData {
     private int     connectionId;
-    private long    createdTime;
+    private long    createdNanoTime;
 
     public int getConnectionId() {
         return connectionId;
@@ -12,11 +12,11 @@ public class ConnectionMetaData {
         this.connectionId = connectionId;
     }
 
-    public long getCreatedTime() {
-        return createdTime;
+    public long getCreatedNanoTime() {
+        return createdNanoTime;
     }
 
-    public void setCreatedTime(long createdTime) {
-        this.createdTime = createdTime;
+    public void setCreatedNanoTime(long createdNanoTime) {
+        this.createdNanoTime = createdNanoTime;
     }
 }

@@ -27,6 +27,8 @@
             <outputDirectory>conf</outputDirectory>
             <includes>
                 <include>dbserver.conf</include>
+                <include>mcp_config_example.service</include>
+                <include>data_service_example.service</include>
             </includes>
         </fileSet>
         <fileSet>

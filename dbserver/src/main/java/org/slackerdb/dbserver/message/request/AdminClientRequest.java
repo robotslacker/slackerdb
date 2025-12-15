@@ -170,6 +170,8 @@ public class AdminClientRequest  extends PostgresRequest {
                 feedBackMsg.append(String.format("%-20s", "  Client_Timeout:")).append(this.dbInstance.serverConfiguration.getClient_timeout()).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Query_Result_Cache_Size:"))
                         .append(Utils.formatBytes(this.dbInstance.serverConfiguration.getQuery_result_cache_size())).append("\n");
+                feedBackMsg.append(String.format("%-20s", "  Data_Service_Schema:")).append(this.dbInstance.serverConfiguration.getData_service_schema()).append("\n");
+                feedBackMsg.append(String.format("%-20s", "  MCP_Config:")).append(this.dbInstance.serverConfiguration.getMcpConfig()).append("\n");
 
                 // 显示数据库基本信息
                 feedBackMsg.append("SERVER USAGE: \n");

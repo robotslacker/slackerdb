@@ -482,6 +482,20 @@ public class SqlReplServer {
         if (error == null) {
             return false;
         }
+        // 检查异常类型是否为常见的连接中断异常
+        if (error instanceof java.nio.channels.ClosedChannelException || error instanceof java.io.EOFException) {
+            return true;
+        }
+        // 检查 SocketException 且消息包含 closed 或 reset
+        if (error instanceof java.net.SocketException) {
+            String msg = error.getMessage();
+            if (msg != null) {
+                msg = msg.toLowerCase();
+                if (msg.contains("closed") || msg.contains("reset") || msg.contains("broken pipe")) {
+                    return true;
+                }
+            }
+        }
         String msg = error.getMessage();
         if (msg == null) {
             return false;

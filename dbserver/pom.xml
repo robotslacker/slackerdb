@@ -36,7 +36,7 @@
         <dependency>
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
-            <version>1.4.2.0</version>
+            <version>1.4.3.0</version>
         </dependency>
         <!-- PF4J 插件 -->
         <dependency>
@@ -149,6 +149,7 @@
                         <include>**/MCPTest.java</include>
                         <include>**/MultiDBInstanceTest.java</include>
                         <include>**/DatabaseStabilityTest.java</include>
+                        <include>**/DatabaseStabilityWSTest.java</include>
                     </includes>
                     <parallel>none</parallel> <!-- Disable parallel execution -->
                     <forkCount>1</forkCount>  <!-- Execute tests in a single process -->

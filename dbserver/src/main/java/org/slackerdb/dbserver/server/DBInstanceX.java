@@ -12,9 +12,10 @@ import org.duckdb.DuckDBConnection;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.utils.BoundedQueue;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
+import org.slackerdb.dbserver.dataservice.APIService;
 import org.slackerdb.dbserver.entity.APIHistoryRecord;
 import org.slackerdb.dbserver.repl.SqlReplServer;
-import org.slackerdb.dbserver.mcp.McpServer;
+import org.slackerdb.dbserver.mcpservice.McpServer;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
 
@@ -343,20 +344,13 @@ public class DBInstanceX {
         });
 
         // 默认页面
-        ClassPathResource indexResource = new ClassPathResource("web/index.html");
-        this.managementApp.get("/" + serverConfiguration.getData() + "/",
+        ClassPathResource consoleResource = new ClassPathResource("web/console.html");
+        this.managementApp.get("/" ,
                 ctx -> {
                     ctx.contentType("text/html");
-                    ctx.result(Files.readString(Path.of(indexResource.getURI())));
+                    ctx.result(Files.readString(Path.of(consoleResource.getURI())));
                 }
         );
-
-        // 控制台页面
-        ClassPathResource consoleResource = new ClassPathResource("web/console.html");
-        this.managementApp.get("/console", ctx -> {
-            ctx.contentType("text/html");
-            ctx.result(Files.readString(Path.of(consoleResource.getURI())));
-        });
 
         // 初始化SQLREPL服务,MCP服务
         try {
@@ -521,6 +515,18 @@ public class DBInstanceX {
         // 状态服务
         this.managementApp.get("/status", ctx -> ctx.json(getStatusJson()));
 
+        // 帮助页面 - 显示 README.html
+        ClassPathResource readmeResource = new ClassPathResource("web/README.html");
+        this.managementApp.get("/help", ctx -> {
+            try {
+                ctx.contentType("text/html; charset=utf-8");
+                ctx.result(Files.readString(Path.of(readmeResource.getURI())));
+            } catch (IOException e) {
+                logger.error("Failed to read README.html", e);
+                ctx.status(500).result("Internal server error");
+            }
+        });
+
         // API服务处理
         new APIService(dbInstance, this.managementApp, dbInstance.logger);
 
@@ -651,6 +657,8 @@ public class DBInstanceX {
             parameters.put("locale", config.getLocale());
             parameters.put("clientTimeout", config.getClient_timeout());
             parameters.put("queryResultCacheSize", org.slackerdb.common.utils.Utils.formatBytes(config.getQuery_result_cache_size()));
+            parameters.put("dataServiceSchema", config.getData_service_schema());
+            parameters.put("mcpConfig", config.getMcpConfig());
             status.put("parameters", parameters);
 
             // 构建 usage 对象

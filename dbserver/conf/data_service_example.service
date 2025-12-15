@@ -1,0 +1,22 @@
+[
+    {
+      "serviceName": "getUsers",
+      "category": "data_service_example",
+      "serviceVersion": "v1",
+      "serviceType": "GET",
+      "sql": "SELECT 42",
+      "description": "Retrieve all users",
+      "searchPath": "main",
+      "snapshotLimit": "300 seconds",
+      "parameters": [
+            {
+                "name": "limit",
+                "defaultValue": 10
+            },
+            {
+                "name": "offset",
+                "defaultValue": "0"
+            }
+        ]
+    },
+]

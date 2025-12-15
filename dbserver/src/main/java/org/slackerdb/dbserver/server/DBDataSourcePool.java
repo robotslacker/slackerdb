@@ -31,7 +31,7 @@ public class DBDataSourcePool {
     // 连接监控进程，用来回收多余连接，重建连接等
     DBDataSourcePoolMonitor dbDataSourcePoolMonitor;
     // 连接池最高水位线，用来标记历史最高连接数
-    private int   highWaterMark = 0;
+    private volatile int   highWaterMark = 0;
 
     // 连接池的名称
     private final String poolName;
@@ -119,8 +119,9 @@ public class DBDataSourcePool {
         if (this.dbDataSourcePoolConfig.getMaximumLifeCycleTime() > 0) {
             ConnectionMetaData metaData = connectionMetaDataMap.get(connection);
             if (metaData != null) {
-                long life = System.currentTimeMillis() - metaData.getCreatedTime();
-                return life <= this.dbDataSourcePoolConfig.getMaximumLifeCycleTime();
+                long lifeNs = System.nanoTime() - metaData.getCreatedNanoTime();
+                long lifeMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(lifeNs);
+                return lifeMs <= this.dbDataSourcePoolConfig.getMaximumLifeCycleTime();
             }
         }
         return true;
@@ -275,10 +276,22 @@ public class DBDataSourcePool {
         this.logger.debug("[SERVER][CONN POOL  ]: Pool [{}] DBDataSourcePool will shutdown ... ",
                 this.poolName);
         dbDataSourcePoolMonitor.interrupt();
-        try {
-            dbDataSourcePoolMonitor.join(5_000);
-        } catch (InterruptedException ignored) {
-            Thread.currentThread().interrupt();
+        // 等待监控线程完全终止
+        long waitStart = System.nanoTime();
+        long timeoutNs = TimeUnit.SECONDS.toNanos(10);
+        while (dbDataSourcePoolMonitor.isAlive()) {
+            try {
+                dbDataSourcePoolMonitor.join(100);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+                // 如果当前线程被中断，强制退出等待
+                break;
+            }
+            if (System.nanoTime() - waitStart >= timeoutNs) {
+                logger.warn("[SERVER][CONN POOL  ]: Pool [{}] Monitor thread did not terminate within timeout, proceeding anyway.",
+                        this.poolName);
+                break;
+            }
         }
 
         poolLock.lock();
@@ -331,7 +344,7 @@ public class DBDataSourcePool {
         int connectionId = this.connectionId.incrementAndGet();
         ConnectionMetaData connectionMetaData = new ConnectionMetaData();
         connectionMetaData.setConnectionId(connectionId);
-        connectionMetaData.setCreatedTime(System.currentTimeMillis());
+        connectionMetaData.setCreatedNanoTime(System.nanoTime());
         this.connectionMetaDataMap.put(connection, connectionMetaData);
         logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Create new connection {}.",
                 this.poolName, connectionId);

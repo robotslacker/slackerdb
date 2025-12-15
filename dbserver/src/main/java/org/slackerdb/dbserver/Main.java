@@ -77,6 +77,7 @@ public class Main {
         System.out.println("  --query_result_cache_size   Set maximum API query result cache size (bytes).");
         System.out.println("  --data_service_schema       Specify predefined data service schema. Default: none.");
         System.out.println("  --data_service_history      Enable/disable API history feature (ON|OFF). Default: OFF.");
+        System.out.println("  --mcp-config                Specify MCP configuration file path. Default: empty.");
 
     }
 
@@ -381,6 +382,10 @@ public class Main {
             if (appOptions.containsKey("data_encrypt"))
             {
                 serverConfiguration.setDataEncrypt(appOptions.get("data_encrypt"));
+            }
+            if (appOptions.containsKey("mcp-config"))
+            {
+                serverConfiguration.setMcpConfig(appOptions.get("mcp-config"));
             }
 
             // 初始化日志服务
