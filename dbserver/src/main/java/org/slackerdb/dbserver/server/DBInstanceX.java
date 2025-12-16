@@ -48,7 +48,8 @@ public class DBInstanceX {
     private final DBInstance dbInstance;
     private final AtomicLong backendApiHistoryId = new AtomicLong(1);
     private final SchedulerService schedulerService;
-
+    private final APIService apiService;
+    private final McpServer mcpServer;
     public BoundedQueue<APIHistoryRecord> apiHistoryList
             = new BoundedQueue<>(10*1000);
 
@@ -354,11 +355,11 @@ public class DBInstanceX {
 
         // 初始化SQLREPL服务,MCP服务
         try {
-            SqlReplServer sqlReplServer = new SqlReplServer(this.logger);
-            McpServer mcpServer = new McpServer(this.logger);
+            SqlReplServer sqlReplServer = new SqlReplServer(dbInstance, this.managementApp, dbInstance.logger);
+            this.mcpServer = new McpServer(dbInstance, this.managementApp, dbInstance.logger);
 
-            mcpServer.run(this.managementApp, dbInstance.backendSysConnection);
-            sqlReplServer.run(this.managementApp, dbInstance.backendSysConnection);
+            mcpServer.run();
+            sqlReplServer.run();
         } catch (Exception e) {
             this.logger.error("[SERVER][STARTUP    ] Management server failed. Can't init ws service. ", e);
             throw new ServerException("Management server failed. Can't init ws service. ", e);
@@ -528,7 +529,7 @@ public class DBInstanceX {
         });
 
         // API服务处理
-        new APIService(dbInstance, this.managementApp, dbInstance.logger);
+        this.apiService = new APIService(dbInstance, this.managementApp, dbInstance.logger);
 
         // 调度服务
         this.schedulerService =
@@ -732,6 +733,17 @@ public class DBInstanceX {
         if (this.dbInstanceXAPIHistoryThread != null && this.dbInstanceXAPIHistoryThread.isAlive())
         {
             this.dbInstanceXAPIHistoryThread.interrupt();
+        }
+
+        // 关闭API服务
+        if (this.apiService != null)
+        {
+            this.apiService.stop();
+        }
+
+        // 关闭MCP服务器
+        if (this.mcpServer != null) {
+            this.mcpServer.shutdown();
         }
     }
 }

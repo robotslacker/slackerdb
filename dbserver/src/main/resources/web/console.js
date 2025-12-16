@@ -532,9 +532,20 @@
         function updateStatusPanel() {
             const panelStatusText = document.getElementById('panelStatusText');
             const panelDbName = document.getElementById('panelDbName');
+            const panelActiveSessions = document.getElementById('panelActiveSessions');
             panelStatusText.textContent = statusText.textContent;
             panelDbName.textContent = databaseNameEl.textContent.replace('Database: ', '');
-            // TODO: fetch active sessions via API
+            // fetch active sessions via API
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    const sessions = data.sessions || [];
+                    panelActiveSessions.textContent = sessions.length;
+                })
+                .catch(err => {
+                    console.error('Failed to fetch active sessions:', err);
+                    panelActiveSessions.textContent = '?';
+                });
         }
 
         // Backup button

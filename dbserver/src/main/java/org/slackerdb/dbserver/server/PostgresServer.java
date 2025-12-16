@@ -310,7 +310,7 @@ public class PostgresServer {
                         pushMsgObject(out, queryRequest);
 
                         // 标记当前步骤
-                        lastRequestCommand = DescribeRequest.class.getSimpleName();
+                        lastRequestCommand = QueryRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                     }
                     case 'd' -> {

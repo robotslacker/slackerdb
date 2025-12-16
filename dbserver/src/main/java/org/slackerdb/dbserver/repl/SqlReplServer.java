@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import io.javalin.Javalin;
 import io.javalin.websocket.WsContext;
 import org.duckdb.DuckDBConnection;
+import org.slackerdb.dbserver.server.DBInstance;
 
 import java.sql.*;
 import java.util.*;
@@ -21,14 +22,23 @@ public class SqlReplServer {
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
     private final AtomicBoolean heartbeatStarted = new AtomicBoolean(false);
     private final Logger logger;
+    private final Javalin managementApp;
+    private final DBInstance dbInstance;
 
-    public SqlReplServer(Logger logger) {
+    public SqlReplServer(
+        DBInstance dbInstance,
+        Javalin managementApp,
+        Logger logger
+    )
+    {
+        this.dbInstance = dbInstance;
         this.logger = logger;
+        this.managementApp = managementApp;
     }
 
-    public void run(Javalin app, Connection conn) throws Exception {
+    public void run() throws Exception {
         // 只注册 WebSocket 端点
-        app.ws("/sql/ws", ws -> {
+        this.managementApp.ws("/sql/ws", ws -> {
             ws.onConnect(ctx -> {
                 activeConnections.put(ctx, System.currentTimeMillis());
                 startHeartbeatIfNeeded();
@@ -46,7 +56,7 @@ public class SqlReplServer {
                             ctx.message(),
                             new TypeReference<>() {}
                     );
-                    handleWebSocketMessage(ctx, msg, conn);
+                    handleWebSocketMessage(ctx, msg);
                 } catch (Exception e) {
                     sendError(ctx, "Invalid message format: " + e.getMessage());
                 }
@@ -81,7 +91,7 @@ public class SqlReplServer {
         });
     }
 
-    private void handleWebSocketMessage(WsContext ctx, Map<String, Object> msg, Connection conn) {
+    private void handleWebSocketMessage(WsContext ctx, Map<String, Object> msg) {
         Object idObj = msg.get("id");
         Object typeObj = msg.get("type");
         if (!(idObj instanceof String id)) {
@@ -110,7 +120,7 @@ public class SqlReplServer {
 
         switch (type) {
             case "start":
-                handleStart(ctx, id, conn);
+                handleStart(ctx, id);
                 break;
             case "exec":
                 handleExec(ctx, id, data);
@@ -129,10 +139,11 @@ public class SqlReplServer {
         }
     }
 
-    private void handleStart(WsContext ctx, String requestId, Connection conn) {
+    private void handleStart(WsContext ctx, String requestId) {
         try {
             String sid = UUID.randomUUID().toString();
-            Connection localConn = ((DuckDBConnection) conn).duplicate();
+            Connection localConn =
+                    ((DuckDBConnection) this.dbInstance.backendSysConnection).duplicate();
             localConn.setAutoCommit(true);
 
             SqlSession session = new SqlSession(sid, localConn);
@@ -348,6 +359,15 @@ public class SqlReplServer {
                 int fetched = 0;
                 boolean more;
                 try {
+                    // 如果有缓冲行，先处理缓冲行
+                    if (session.hasPendingRow && session.pendingRow != null) {
+                        rows.add(session.pendingRow);
+                        fetched++;
+                        session.fetchedRowCount.incrementAndGet();
+                        session.hasPendingRow = false;
+                        session.pendingRow = null;
+                    }
+                    // 继续读取直到达到 maxRows 或结果集耗尽
                     while (rs.next() && fetched < maxRows) {
                         Map<String, Object> row = new LinkedHashMap<>();
                         for (String c : columns) {
@@ -358,7 +378,25 @@ public class SqlReplServer {
                         session.fetchedRowCount.incrementAndGet();
                     }
                     // 判断是否还有更多行
-                    more = fetched == maxRows;
+                    if (fetched == maxRows) {
+                        // 尝试再读一行，探测是否还有更多数据
+                        if (rs.next()) {
+                            // 还有一行，缓冲起来
+                            Map<String, Object> pendingRow = new LinkedHashMap<>();
+                            for (String c : columns) {
+                                pendingRow.put(c, rs.getObject(c));
+                            }
+                            session.pendingRow = pendingRow;
+                            session.hasPendingRow = true;
+                            more = true;
+                        } else {
+                            // 没有更多行
+                            more = false;
+                        }
+                    } else {
+                        // 读取的行数不足 maxRows，说明结果集已耗尽
+                        more = false;
+                    }
                 } catch (SQLException e) {
                     sendError(ctx, "Failed to fetch rows: " + e.getMessage());
                     return;

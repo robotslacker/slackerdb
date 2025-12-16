@@ -42,47 +42,48 @@ different host or different process) are behinds it.
     git clone ...
     # compile it
     cd slackerdb
-    mvn clean compile package
+    mvn clean compile package -Dmaven.test.skip=true
 
     # All compiled results will be placed in the dist directory.
     #    compiled Jar packages,
+    #    source jar packages
     #    default configuration files.
 ....
 
 ==== Start db server
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.1.8-standalone.jar start
+    java -jar dbserver/target/slackerdb-dbserver-0.1.9-standalone.jar start
 ....
 
 ==== Stop db server
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.1.8-standalone.jar stop
+    java -jar dbserver/target/slackerdb-dbserver-0.1.9-standalone.jar stop
 ....
 
 ==== Check db status
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.1.8-standalone.jar status
+    java -jar dbserver/target/slackerdb-dbserver-0.1.9-standalone.jar status
 ....
 
 ==== Start db proxy
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.8-standalone.jar start
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.9-standalone.jar start
 ....
 
 ==== Stop db proxy
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.8-standalone.jar stop
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.9-standalone.jar stop
 ....
 
 ==== Check proxy status
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.8-standalone.jar status
+    java -jar dbproxy/target/slackerdb-dbproxy-0.1.9-standalone.jar status
 ....
 
 ==== Server configuration file template
@@ -208,6 +209,14 @@ query_result_cache_size=
 #   * Directory path (loads all *.service files)
 # - Schema files should contain service definitions in JSON format
 data_service_schema=
+
+# MCP configuration file/path
+# Specifies the Model Context Protocol configuration file for dynamic tool/resource loading.
+# - Accepts:
+#   * JSON file path (single config)
+#   * Directory path (loads all *.mcp files)
+# Default: empty (no MCP configuration)
+mcp_config=
 ....
 
 ==== Proxy configuration file template
@@ -259,9 +268,57 @@ Note: All parameters are optional. +
 You can keep only the parameters you need to modify. +
 For parameters that are not configured, default values will be used.
 
+==== JDBC Support
+
+SlackerDB provides full PostgreSQL wire protocol compatibility, allowing you to connect using standard JDBC drivers. This enables you to use any PostgreSQL‑compatible JDBC client, including the native SlackerDB JDBC driver for optimal integration.
+
+*PostgreSQL JDBC Driver*
+You can use the standard PostgreSQL JDBC driver (`org.postgresql.Driver`) with the connection URL format `jdbc:postgresql://host:port/database`. This is useful when you want to reuse existing PostgreSQL tooling.
+
+*SlackerDB JDBC Driver*
+For better integration and additional features, use the native SlackerDB JDBC driver (`org.slackerdb.jdbc.Driver`). The connection URL format is `jdbc:slackerdb://host:port/database`. This driver is included in the distribution and is recommended for new applications.
+
+*Connection Examples*
+
+....
+// PostgreSQL JDBC driver
+String url = "jdbc:postgresql://127.0.0.1:3175/db1";
+Connection conn = DriverManager.getConnection(url, "main", "");
+conn.setAutoCommit(false);
+
+// SlackerDB JDBC driver
+String url = "jdbc:slackerdb://127.0.0.1:3175/db1";
+Connection conn = DriverManager.getConnection(url, "main", "");
+conn.setAutoCommit(false);
+....
+
+*IDE Integration*
+
+You can connect to SlackerDB from database tools DBeaver. (For other tools, we have not verified it.) +
+*Use Postgresl driver* +
+Download postgresql server and connect database like a pg.
+
+*Use custom driver* +
+Since native Postgres clients often use some data dictionary information
+that duckdb doesn’t have, +
+You can create a generic JDBC driver with the following settings: +
+
+....
+Dbeaver:
+Database -> Driver Manager -> New
+   Database type: generic database.
+   Class name:    org.slackerdb.jdbc.Driver
+   URL template:  jdbc:slackerdb://{host}:{port}/[{database}]
+....
+
+
+
+*ODBC and Python*
+SlackerDB also supports ODBC and Python connections via the same PostgreSQL wire protocol. Refer to the respective client documentation for setup details.
+
 ==== Data Service
 
-* Data service work with port x, please make sure you have enabled it in
+* Data service work with port_x, please make sure you have enabled it in
 server configuration or from command parameter. It’s important to note
 that we have no consider on data security. This means data services must
 work in a trusted environment.
@@ -690,7 +747,7 @@ Message:
   "data": {
     "sessionId": "session-123",
     "sql": "SELECT * FROM large_table",
-    "maxRows": 1000   // optional, default is 1000
+    "fetchSize": 1000   // optional, default is 1000
   }
 }
 ....
@@ -711,7 +768,7 @@ If the SQL execution fails immediately (e.g., syntax error), the response will c
 
 ===== Fetch Results
 
-Retrieves a page of results for a given task ID. The endpoint returns a fixed number of rows (up to `maxRows` specified in execute) and indicates whether more rows are available.
+Retrieves a page of results for a given task ID. The endpoint returns a fixed number of rows (up to `fetchSize` specified in execute) and indicates whether more rows are available.
 
 Message:
 
@@ -737,16 +794,16 @@ Response:
   "taskId": "550e8400-e29b-41d4-a716-446655440000",
   "status": "completed",   // "running", "completed", or "error"
   "hasMore": false,        // true if there are more rows to fetch
-  "columnNames": ["id", "name"],
-  "columnTypes": ["INTEGER", "VARCHAR"],
-  "dataset": [
-    [1, "Alice"],
-    [2, "Bob"]
-  ]
+  "columns": ["id", "name"],
+  "rows": [
+    {"id": 1, "name": "Alice"},
+    {"id": 2, "name": "Bob"}
+  ],
+  "fetched": 2
 }
 ....
 
-If the task is still running (status = "running"), `dataset` may be empty and `hasMore` will be true.
+If the task is still running (status = "running"), `rows` may be empty and `hasMore` will be true.
 If the task has completed and all rows have been fetched, `status` becomes "completed" and `hasMore` false.
 If an error occurs during execution, `status` becomes "error" and `retMsg` contains the error details.
 
@@ -838,7 +895,7 @@ ws.send(JSON.stringify({
   data: {
     sessionId: "session-123",
     sql: "SELECT * FROM huge_table",
-    maxRows: 500
+    fetchSize: 500
   }
 }));
 ----
@@ -980,7 +1037,7 @@ Returns comprehensive server status information, including server details, datab
 {
   "server": {
     "status": "RUNNING",
-    "version": "0.1.8",
+    "version": "0.1.9",
     "build": "2025-12-04 10:00:00.000 UTC",
     "pid": 12345,
     "now": "2025-12-04 15:20:00",
@@ -1075,54 +1132,7 @@ The console is built with plain HTML/JavaScript and requires no additional insta
     }
 ....
 
-==== Jdbc program example with postgres client
-
-....
-    // "db1" is your database name in your configuration file.
-    // 3175  is your database port in your configuration file.
-    // If you are connecting for the first time, there will be no other users except the default main
-    String  connectURL = "jdbc:postgresql://127.0.0.1:3175/db1";
-    Connection pgConn = DriverManager.getConnection(connectURL, "main", "");
-    pgConn.setAutoCommit(false);
-
-    // .... Now you can execute your business logic.
-....
-
-==== Jdbc program example with slackerdb client
-
-....
-    // "db1" is your database name in your configuration file.
-    // 3175  is your database port in your configuration file.
-    // If you are connecting for the first time, there will be no other users except the default main
-    String  connectURL = "jdbc:slackerdb://127.0.0.1:3175/db1";
-    Connection pgConn = DriverManager.getConnection(connectURL, "main", "");
-    pgConn.setAutoCommit(false);
-
-    // .... Now you can execute your business logic.
-....
-
-==== Odbc and python program
-
-....
-    It also supports ODBC and Python connection.
-....
-
-=== Use IDE tools to connect to the database
-
-Since native Postgres clients often use some data dictionary information
-that duckdb doesn’t have, +
-We do not recommend that you use the PG client to connect to this
-database(That works, but has limited functionality). +
-Instead, we suggest use the dedicated client provided in this project. +
-....
-Dbeaver:
-Database -> Driver Manager -> New
-   Database type: generic database.
-   Class name:    org.slackerdb.jdbc.Driver
-   URL template:  jdbc:slackerdb://{host}:{port}/[{database}]
-....
-
-=== Data Security
+==== Data Security
 Based on DuckDB's secure encryption mechanism, we support data encryption.
 
 To use this feature, you need to:

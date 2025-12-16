@@ -10,7 +10,7 @@
 
     <groupId>org.robotslacker</groupId>
     <artifactId>slackerdb-plugin-example</artifactId>
-    <version>0.1.8</version>
+    <version>0.1.9</version>
     <packaging>jar</packaging>
 
     <dependencies>
@@ -44,7 +44,7 @@
         <dependency>
             <groupId>org.robotslacker</groupId>
             <artifactId>slackerdb-plugin</artifactId>
-            <version>0.1.8</version>
+            <version>0.1.9</version>
             <scope>provided</scope>
         </dependency>
     </dependencies>

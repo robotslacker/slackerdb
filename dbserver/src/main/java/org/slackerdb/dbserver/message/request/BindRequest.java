@@ -214,7 +214,7 @@ public class BindRequest extends PostgresRequest {
                                         case "BIGINT" ->
                                                 preparedStatement.setLong(i + 1, Utils.bytesToInt64(bindParameters[i]));
                                         case "BOOLEAN" ->
-                                                preparedStatement.setBoolean(i + 1, bindParameters[i][0] == (byte) 0);
+                                                preparedStatement.setBoolean(i + 1, bindParameters[i][0] == (byte) 1);
                                         case "DECIMAL" -> {
 //                                            typedef struct NumericVar
 //                                            {

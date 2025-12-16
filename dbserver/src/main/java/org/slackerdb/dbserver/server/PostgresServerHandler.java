@@ -53,16 +53,18 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
-        // 开始处理，标记活跃会话数加一
-        dbInstance.activeSessions.incrementAndGet();
         try {
+            // 开始处理，标记活跃会话数加一
+            dbInstance.activeSessions.incrementAndGet();
             PostgresRequest postgresRequest = (PostgresRequest) msg;
             postgresRequest.process(ctx, msg);
         } catch (Exception e) {
             logger.error("[SERVER][PG PROTOCOL]: Error processing request", e);
         }
-        // 结束处理，标记活跃会话数减一
-        dbInstance.activeSessions.decrementAndGet();
+        finally {
+            // 结束处理，标记活跃会话数减一
+            dbInstance.activeSessions.decrementAndGet();
+        }
     }
 
     @Override

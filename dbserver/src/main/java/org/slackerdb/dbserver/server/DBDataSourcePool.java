@@ -57,38 +57,42 @@ public class DBDataSourcePool {
             while (!isInterrupted()) {
                 try {
                     if (this.dbDataSourcePool.dbDataSourcePoolConfig.getMaximumIdle() != 0) {
-                        this.dbDataSourcePool.poolLock.lock();
-                        try {
-                            int targetIdle = this.dbDataSourcePool.dbDataSourcePoolConfig.getMaximumIdle();
-                            int extra = this.dbDataSourcePool.idleConnectionPool.size() - targetIdle;
-                            for (int i = 0; i < extra; i++) {
-                                Connection connection = this.dbDataSourcePool.idleConnectionPool.poll();
-                                if (connection != null) {
-                                    this.dbDataSourcePool.retireConnection(connection, "exceeds maximumIdle");
+                        int targetIdle = this.dbDataSourcePool.dbDataSourcePoolConfig.getMaximumIdle();
+                        int extra = this.dbDataSourcePool.idleConnectionPool.size() - targetIdle;
+                        if (extra > 0) {
+                            try {
+                                this.dbDataSourcePool.poolLock.lock();
+                                for (int i = 0; i < extra; i++) {
+                                    Connection connection = this.dbDataSourcePool.idleConnectionPool.poll();
+                                    if (connection != null) {
+                                        this.dbDataSourcePool.retireConnection(connection, "exceeds maximumIdle");
+                                    }
                                 }
+                            } finally {
+                                this.dbDataSourcePool.poolLock.unlock();
                             }
-                        } finally {
-                            this.dbDataSourcePool.poolLock.unlock();
                         }
                     }
                     if (this.dbDataSourcePool.dbDataSourcePoolConfig.getMinimumIdle() != 0) {
-                        this.dbDataSourcePool.poolLock.lock();
-                        try {
-                            while (this.dbDataSourcePool.idleConnectionPool.size() < this.dbDataSourcePool.dbDataSourcePoolConfig.getMinimumIdle()
-                                    && this.dbDataSourcePool.connectionMetaDataMap.size() < this.dbDataSourcePool.dbDataSourcePoolConfig.getMaximumPoolSize()) {
-                                Connection connection = this.dbDataSourcePool.createNewConnection();
-                                this.dbDataSourcePool.idleConnectionPool.offer(connection);
-                                this.dbDataSourcePool.connectionAvailable.signal();
+                        if (this.dbDataSourcePool.idleConnectionPool.size() < this.dbDataSourcePool.dbDataSourcePoolConfig.getMinimumIdle()
+                                && this.dbDataSourcePool.connectionMetaDataMap.size() < this.dbDataSourcePool.dbDataSourcePoolConfig.getMaximumPoolSize()) {
+                            try {
+                                this.dbDataSourcePool.poolLock.lock();
+                                while (this.dbDataSourcePool.idleConnectionPool.size() < this.dbDataSourcePool.dbDataSourcePoolConfig.getMinimumIdle()
+                                        && this.dbDataSourcePool.connectionMetaDataMap.size() < this.dbDataSourcePool.dbDataSourcePoolConfig.getMaximumPoolSize()) {
+                                    Connection connection = this.dbDataSourcePool.createNewConnection();
+                                    this.dbDataSourcePool.idleConnectionPool.offer(connection);
+                                    this.dbDataSourcePool.connectionAvailable.signal();
+                                }
+                            } finally {
+                                this.dbDataSourcePool.poolLock.unlock();
                             }
-                        } finally {
-                            this.dbDataSourcePool.poolLock.unlock();
                         }
                     }
                 } catch (SQLException sqlException) {
                     logger.trace("[SERVER] Internal error in Connection Pool [{}].",
                             this.dbDataSourcePool.poolName, sqlException);
                 }
-
                 try {
                     Sleeper.sleep(30 * 1000);
                 }

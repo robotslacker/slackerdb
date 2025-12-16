@@ -3,13 +3,14 @@ package org.slackerdb.dbserver.mcpservice;
 import ch.qos.logback.classic.Logger;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.javalin.Javalin;
+import org.slackerdb.dbserver.server.DBInstance;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -32,17 +33,20 @@ public class McpServer {
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final Logger logger;
     private final String mcpConfigPath;
+    private final Javalin managementApp;
+    private final Object saveLock = new Object();
 
-    public McpServer(Logger logger) {
-        this(logger, "");
-    }
-
-    public McpServer(Logger logger, String mcpConfigPath) {
+    public McpServer(
+            DBInstance dbInstance,
+            Javalin managementApp,
+            Logger logger
+    ) {
         this.logger = logger;
-        this.mcpConfigPath = mcpConfigPath;
+        this.managementApp = managementApp;
+        this.mcpConfigPath = dbInstance.serverConfiguration.getMcpConfig();
     }
 
-    public void run(Javalin app, Connection conn) throws Exception {
+    public void run() throws Exception {
         // Example tool: Echo
         ObjectMapper localMapper = new ObjectMapper();
         addTool("echo", "Echo back the input text",
@@ -57,7 +61,7 @@ public class McpServer {
                 "Hello, MCP!", "example");
 
         // SSE endpoint for MCP protocol
-        app.sse("/sse", client -> {
+        this.managementApp.sse("/sse", client -> {
             try {
                 client.sendEvent("message", mapper.writeValueAsString(Map.of(
                     "jsonrpc", "2.0",
@@ -73,11 +77,42 @@ public class McpServer {
         });
 
         // JSON-RPC over HTTP endpoint for MCP
-        app.post("/jsonrpc", ctx -> {
-            JsonNode request = mapper.readTree(ctx.body());
-            String method = request.get("method").asText();
+        this.managementApp.post("/jsonrpc", ctx -> {
+            JsonNode request;
+            try {
+                request = mapper.readTree(ctx.body());
+            } catch (Exception e) {
+                // Parse error
+                ctx.result(mapper.writeValueAsString(Map.of(
+                    "jsonrpc", "2.0",
+                    "error", Map.of("code", -32700, "message", "Parse error: " + e.getMessage())
+                )));
+                return;
+            }
+
+            // Validate jsonrpc version
+            JsonNode jsonrpcNode = request.get("jsonrpc");
+            if (jsonrpcNode == null || !"2.0".equals(jsonrpcNode.asText())) {
+                ctx.result(mapper.writeValueAsString(Map.of(
+                    "jsonrpc", "2.0",
+                    "error", Map.of("code", -32600, "message", "Invalid Request: jsonrpc must be exactly '2.0'")
+                )));
+                return;
+            }
+
+            // Validate method
+            JsonNode methodNode = request.get("method");
+            if (methodNode == null || !methodNode.isTextual()) {
+                ctx.result(mapper.writeValueAsString(Map.of(
+                    "jsonrpc", "2.0",
+                    "error", Map.of("code", -32600, "message", "Invalid Request: method must be a string")
+                )));
+                return;
+            }
+            String method = methodNode.asText();
+
             JsonNode params = request.get("params");
-            JsonNode id = request.get("id");
+            JsonNode id = request.get("id"); // may be null, number, string, etc.
 
             if ("tools/list".equals(method)) {
                 List<Map<String, Object>> toolList = new ArrayList<>();
@@ -95,8 +130,26 @@ public class McpServer {
                     "result", Map.of("tools", toolList)
                 )));
             } else if ("tools/call".equals(method)) {
-                String toolName = params.get("name").asText();
-                JsonNode arguments = params.get("arguments");
+                // Validate params
+                if (params == null || !params.isObject()) {
+                    ctx.result(mapper.writeValueAsString(Map.of(
+                        "jsonrpc", "2.0",
+                        "id", id,
+                        "error", Map.of("code", -32600, "message", "Invalid Request: params must be an object")
+                    )));
+                    return;
+                }
+                JsonNode nameNode = params.get("name");
+                JsonNode argumentsNode = params.get("arguments");
+                if (nameNode == null || !nameNode.isTextual()) {
+                    ctx.result(mapper.writeValueAsString(Map.of(
+                        "jsonrpc", "2.0",
+                        "id", id,
+                        "error", Map.of("code", -32600, "message", "Invalid Request: params.name must be a string")
+                    )));
+                    return;
+                }
+                String toolName = nameNode.asText();
                 Tool tool = tools.get(toolName);
                 if (tool == null) {
                     ctx.result(mapper.writeValueAsString(Map.of(
@@ -106,9 +159,33 @@ public class McpServer {
                     )));
                     return;
                 }
-                Map<String, Object> argsMap = mapper.convertValue(arguments, new TypeReference<>() {});
+                Map<String, Object> argsMap;
+                if (argumentsNode == null || argumentsNode.isNull()) {
+                    argsMap = Map.of();
+                } else {
+                    try {
+                        argsMap = mapper.convertValue(argumentsNode, new TypeReference<>() {});
+                    } catch (Exception e) {
+                        ctx.result(mapper.writeValueAsString(Map.of(
+                            "jsonrpc", "2.0",
+                            "id", id,
+                            "error", Map.of("code", -32602, "message", "Invalid params: arguments must be a valid object")
+                        )));
+                        return;
+                    }
+                }
                 CompletableFuture<Object> future = CompletableFuture.supplyAsync(() -> tool.handler.apply(argsMap), executor);
-                Object result = future.get();
+                Object result;
+                try {
+                    result = future.get();
+                } catch (Exception e) {
+                    ctx.result(mapper.writeValueAsString(Map.of(
+                        "jsonrpc", "2.0",
+                        "id", id,
+                        "error", Map.of("code", -32603, "message", "Internal error: " + e.getMessage())
+                    )));
+                    return;
+                }
                 ctx.result(mapper.writeValueAsString(Map.of(
                     "jsonrpc", "2.0",
                     "id", id,
@@ -131,7 +208,25 @@ public class McpServer {
                     "result", Map.of("resources", resourceList)
                 )));
             } else if ("resources/read".equals(method)) {
-                String uri = params.get("uri").asText();
+                // Validate params
+                if (params == null || !params.isObject()) {
+                    ctx.result(mapper.writeValueAsString(Map.of(
+                        "jsonrpc", "2.0",
+                        "id", id,
+                        "error", Map.of("code", -32600, "message", "Invalid Request: params must be an object")
+                    )));
+                    return;
+                }
+                JsonNode uriNode = params.get("uri");
+                if (uriNode == null || !uriNode.isTextual()) {
+                    ctx.result(mapper.writeValueAsString(Map.of(
+                        "jsonrpc", "2.0",
+                        "id", id,
+                        "error", Map.of("code", -32600, "message", "Invalid Request: params.uri must be a string")
+                    )));
+                    return;
+                }
+                String uri = uriNode.asText();
                 Resource res = resources.get(uri);
                 if (res == null) {
                     ctx.result(mapper.writeValueAsString(Map.of(
@@ -156,7 +251,7 @@ public class McpServer {
         });
 
         // Register MCP Tool endpoint
-        app.post("/mcp/registerMCPTool", ctx -> {
+        this.managementApp.post("/mcp/registerMCPTool", ctx -> {
             try {
                 JsonNode body = mapper.readTree(ctx.body());
                 String name = body.get("name").asText();
@@ -212,7 +307,7 @@ public class McpServer {
         });
 
         // Unregister MCP Tool endpoint
-        app.post("/mcp/unregisterMCPTool", ctx -> {
+        this.managementApp.post("/mcp/unregisterMCPTool", ctx -> {
             try {
                 JsonNode body = mapper.readTree(ctx.body());
                 String name = body.get("name").asText();
@@ -245,7 +340,7 @@ public class McpServer {
         });
 
         // Register MCP Resource endpoint
-        app.post("/mcp/registerMCPResource", ctx -> {
+        this.managementApp.post("/mcp/registerMCPResource", ctx -> {
             try {
                 JsonNode body = mapper.readTree(ctx.body());
                 String uri = body.get("uri").asText();
@@ -311,7 +406,7 @@ public class McpServer {
         });
 
         // Unregister MCP Resource endpoint
-        app.post("/mcp/unregisterMCPResource", ctx -> {
+        this.managementApp.post("/mcp/unregisterMCPResource", ctx -> {
             try {
                 JsonNode body = mapper.readTree(ctx.body());
                 String uri = body.get("uri").asText();
@@ -344,7 +439,7 @@ public class McpServer {
         });
 
         // Load MCP Tool definitions from JSON
-        app.post("/mcp/loadMCPTool", ctx -> {
+        this.managementApp.post("/mcp/loadMCPTool", ctx -> {
             try {
                 JsonNode body = mapper.readTree(ctx.body());
                 if (body.isArray()) {
@@ -410,7 +505,7 @@ public class McpServer {
         });
 
         // Save MCP Tool definitions to file
-        app.post("/mcp/saveMCPTool", ctx -> {
+        this.managementApp.post("/mcp/saveMCPTool", ctx -> {
             try {
                 if (mcpConfigPath == null || mcpConfigPath.trim().isEmpty()) {
                     ctx.result(mapper.writeValueAsString(Map.of(
@@ -421,32 +516,33 @@ public class McpServer {
                 }
                 File configFile = new File(mcpConfigPath);
                 if (configFile.isFile()) {
-                    // Single file: write all tools as JSON array
-                    String json = dumpToolsAsJson();
-                    Files.write(configFile.toPath(), json.getBytes());
-                    logger.info("[MCP] Saved {} tools to {}", tools.size(), configFile.getAbsolutePath());
+                    // Single file: read existing config, update tools, keep resources
+                    synchronized (saveLock) {
+                        JsonNode config = readConfigFile(configFile);
+                        ObjectNode configObj = (ObjectNode) config;
+                        configObj.set("tools", generateToolDefinitionsJsonArray());
+                        // keep existing resources if any
+                        String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(configObj);
+                        Files.write(configFile.toPath(), json.getBytes());
+                        logger.info("[MCP] Saved {} tools to {}", tools.size(), configFile.getAbsolutePath());
+                    }
                     ctx.result(mapper.writeValueAsString(Map.of(
                         "retCode", 0,
                         "retMsg", "Tools saved successfully",
                         "savedPath", configFile.getAbsolutePath()
                     )));
                 } else if (configFile.isDirectory()) {
-                    // Directory: group by category, each category a file named <category>.tool
+                    // Directory: group by category, each category a file named <category>.service
                     Map<String, JsonNode> byCategory = generateToolDefinitionsByCategory();
                     int totalFiles = 0;
                     int totalTools = 0;
                     for (Map.Entry<String, JsonNode> entry : byCategory.entrySet()) {
                         String category = entry.getKey();
                         JsonNode toolsArray = entry.getValue();
-                        // Sanitize filename (replace invalid characters)
-                        String safeCategory = category.replaceAll("[\\\\/:*?\"<>|]", "_");
-                        String fileName = safeCategory + ".tool";
-                        File targetFile = new File(configFile, fileName);
-                        String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(toolsArray);
-                        Files.write(targetFile.toPath(), json.getBytes());
+                        updateToolsInCategoryFile(configFile, category, toolsArray);
                         totalFiles++;
                         totalTools += toolsArray.size();
-                        logger.debug("[MCP] Saved category '{}' with {} tools to {}", category, toolsArray.size(), targetFile.getAbsolutePath());
+                        logger.debug("[MCP] Updated tools in category '{}' with {} tools", category, toolsArray.size());
                     }
                     logger.info("[MCP] Saved {} tools ({} categories) to directory {}", totalTools, totalFiles, configFile.getAbsolutePath());
                     ctx.result(mapper.writeValueAsString(Map.of(
@@ -461,7 +557,11 @@ public class McpServer {
                     if (configFile.getParentFile() != null && !configFile.getParentFile().exists()) {
                         var ignored = configFile.getParentFile().mkdirs();
                     }
-                    String json = dumpToolsAsJson();
+                    // New file: write both tools and empty resources
+                    ObjectNode configObj = mapper.createObjectNode();
+                    configObj.set("tools", generateToolDefinitionsJsonArray());
+                    configObj.set("resources", mapper.createArrayNode());
+                    String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(configObj);
                     Files.write(configFile.toPath(), json.getBytes());
                     logger.info("[MCP] Created new file and saved {} tools to {}", tools.size(), configFile.getAbsolutePath());
                     ctx.result(mapper.writeValueAsString(Map.of(
@@ -480,7 +580,7 @@ public class McpServer {
         });
 
         // Dump MCP Tool definitions as JSON (download)
-        app.post("/mcp/dumpMCPTool", ctx -> {
+        this.managementApp.post("/mcp/dumpMCPTool", ctx -> {
             try {
                 String json = dumpToolsAsJson();
                 ctx.header("Content-Type", "application/json");
@@ -497,7 +597,7 @@ public class McpServer {
         });
 
         // Load MCP Resource definitions from JSON
-        app.post("/mcp/loadMCPResource", ctx -> {
+        this.managementApp.post("/mcp/loadMCPResource", ctx -> {
             try {
                 JsonNode body = mapper.readTree(ctx.body());
                 if (body.isArray()) {
@@ -558,7 +658,7 @@ public class McpServer {
         });
 
         // Save MCP Resource definitions to file (saveMCPSource)
-        app.post("/mcp/saveMCPSource", ctx -> {
+        this.managementApp.post("/mcp/saveMCPSource", ctx -> {
             try {
                 if (mcpConfigPath == null || mcpConfigPath.trim().isEmpty()) {
                     ctx.result(mapper.writeValueAsString(Map.of(
@@ -569,32 +669,33 @@ public class McpServer {
                 }
                 File configFile = new File(mcpConfigPath);
                 if (configFile.isFile()) {
-                    // Single file: write all resources as JSON array
-                    String json = dumpResourcesAsJson();
-                    Files.write(configFile.toPath(), json.getBytes());
-                    logger.info("[MCP] Saved {} resources to {}", resources.size(), configFile.getAbsolutePath());
+                    // Single file: read existing config, update resources, keep tools
+                    synchronized (saveLock) {
+                        JsonNode config = readConfigFile(configFile);
+                        ObjectNode configObj = (ObjectNode) config;
+                        configObj.set("resources", generateResourceDefinitionsJsonArray());
+                        // keep existing tools if any
+                        String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(configObj);
+                        Files.write(configFile.toPath(), json.getBytes());
+                        logger.info("[MCP] Saved {} resources to {}", resources.size(), configFile.getAbsolutePath());
+                    }
                     ctx.result(mapper.writeValueAsString(Map.of(
                         "retCode", 0,
                         "retMsg", "Resources saved successfully",
                         "savedPath", configFile.getAbsolutePath()
                     )));
                 } else if (configFile.isDirectory()) {
-                    // Directory: group by category, each category a file named <category>.resource
+                    // Directory: group by category, each category a file named <category>.service
                     Map<String, JsonNode> byCategory = generateResourceDefinitionsByCategory();
                     int totalFiles = 0;
                     int totalResources = 0;
                     for (Map.Entry<String, JsonNode> entry : byCategory.entrySet()) {
                         String category = entry.getKey();
                         JsonNode resourcesArray = entry.getValue();
-                        // Sanitize filename (replace invalid characters)
-                        String safeCategory = category.replaceAll("[\\\\/:*?\"<>|]", "_");
-                        String fileName = safeCategory + ".resource";
-                        File targetFile = new File(configFile, fileName);
-                        String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(resourcesArray);
-                        Files.write(targetFile.toPath(), json.getBytes());
+                        updateResourcesInCategoryFile(configFile, category, resourcesArray);
                         totalFiles++;
                         totalResources += resourcesArray.size();
-                        logger.debug("[MCP] Saved category '{}' with {} resources to {}", category, resourcesArray.size(), targetFile.getAbsolutePath());
+                        logger.debug("[MCP] Updated resources in category '{}' with {} resources", category, resourcesArray.size());
                     }
                     logger.info("[MCP] Saved {} resources ({} categories) to directory {}", totalResources, totalFiles, configFile.getAbsolutePath());
                     ctx.result(mapper.writeValueAsString(Map.of(
@@ -609,7 +710,11 @@ public class McpServer {
                     if (configFile.getParentFile() != null && !configFile.getParentFile().exists()) {
                         var ignored = configFile.getParentFile().mkdirs();
                     }
-                    String json = dumpResourcesAsJson();
+                    // New file: write both resources and empty tools
+                    ObjectNode configObj = mapper.createObjectNode();
+                    configObj.set("tools", mapper.createArrayNode());
+                    configObj.set("resources", generateResourceDefinitionsJsonArray());
+                    String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(configObj);
                     Files.write(configFile.toPath(), json.getBytes());
                     logger.info("[MCP] Created new file and saved {} resources to {}", resources.size(), configFile.getAbsolutePath());
                     ctx.result(mapper.writeValueAsString(Map.of(
@@ -628,7 +733,7 @@ public class McpServer {
         });
 
         // Dump MCP Resource definitions as JSON (dumpMCPSource)
-        app.post("/mcp/dumpMCPSource", ctx -> {
+        this.managementApp.post("/mcp/dumpMCPSource", ctx -> {
             try {
                 String json = dumpResourcesAsJson();
                 ctx.header("Content-Type", "application/json");
@@ -747,6 +852,85 @@ public class McpServer {
         return mapper.writerWithDefaultPrettyPrinter().writeValueAsString(generateResourceDefinitionsJsonArray());
     }
 
+    /**
+     * Read existing config file (if exists) and return a JsonNode representing the whole config.
+     * The config is expected to be a JSON object with optional "tools" and "resources" fields.
+     * If the file does not exist or is invalid, returns an empty object.
+     */
+    private JsonNode readConfigFile(File configFile) {
+        if (!configFile.exists() || configFile.length() == 0) {
+            return mapper.createObjectNode();
+        }
+        try {
+            JsonNode root = mapper.readTree(configFile);
+            if (root.isObject()) {
+                return root;
+            } else if (root.isArray()) {
+                // Legacy format: assume it's an array of tools (or resources?)
+                // We'll treat it as tools array and wrap into an object.
+                ObjectNode obj = mapper.createObjectNode();
+                obj.set("tools", root);
+                return obj;
+            } else {
+                logger.warn("[MCP] Config file has unexpected format, treating as empty");
+                return mapper.createObjectNode();
+            }
+        } catch (Exception e) {
+            logger.warn("[MCP] Failed to parse config file, treating as empty", e);
+            return mapper.createObjectNode();
+        }
+    }
+
+    /**
+     * Update the tools section in a category .service file.
+     * Reads existing file (if any), merges tools, keeps resources unchanged.
+     * Writes back as a JSON object with "tools" and "resources" fields.
+     */
+    private void updateToolsInCategoryFile(File configDir, String category, JsonNode newTools) throws IOException {
+        String safeCategory = category.replaceAll("[\\\\/:*?\"<>|]", "_");
+        String fileName = safeCategory + ".service";
+        File targetFile = new File(configDir, fileName);
+        JsonNode root = readConfigFile(targetFile);
+        ObjectNode rootObj;
+        if (root.isObject()) {
+            rootObj = (ObjectNode) root;
+        } else {
+            // If root is array or something else, treat as empty object
+            rootObj = mapper.createObjectNode();
+        }
+        rootObj.set("tools", newTools);
+        // Ensure resources field exists (if missing, create empty array)
+        if (!rootObj.has("resources")) {
+            rootObj.set("resources", mapper.createArrayNode());
+        }
+        String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(rootObj);
+        Files.write(targetFile.toPath(), json.getBytes());
+        logger.debug("[MCP] Updated tools in category '{}' to {}", category, targetFile.getAbsolutePath());
+    }
+
+    /**
+     * Update the resources section in a category .service file.
+     */
+    private void updateResourcesInCategoryFile(File configDir, String category, JsonNode newResources) throws IOException {
+        String safeCategory = category.replaceAll("[\\\\/:*?\"<>|]", "_");
+        String fileName = safeCategory + ".service";
+        File targetFile = new File(configDir, fileName);
+        JsonNode root = readConfigFile(targetFile);
+        ObjectNode rootObj;
+        if (root.isObject()) {
+            rootObj = (ObjectNode) root;
+        } else {
+            rootObj = mapper.createObjectNode();
+        }
+        rootObj.set("resources", newResources);
+        if (!rootObj.has("tools")) {
+            rootObj.set("tools", mapper.createArrayNode());
+        }
+        String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(rootObj);
+        Files.write(targetFile.toPath(), json.getBytes());
+        logger.debug("[MCP] Updated resources in category '{}' to {}", category, targetFile.getAbsolutePath());
+    }
+
     public void addTool(String name, String description, JsonNode inputSchema, Function<Map<String,Object>, Object> handler, String category) {
         tools.put(name, new Tool(name, description, inputSchema, handler, category));
     }
@@ -755,6 +939,9 @@ public class McpServer {
         resources.put(uri, new Resource(uri, name, description, mimeType, contents, category));
     }
 
+    public void shutdown() {
+        executor.shutdown();
+    }
 
     private static class Tool {
         final String name;

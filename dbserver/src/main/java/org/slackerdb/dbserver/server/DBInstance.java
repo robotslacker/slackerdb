@@ -1061,7 +1061,9 @@ public class DBInstance {
         }
 
         // 停止数据库对外网络服务
-        protocolServer.stop();
+        if (protocolServer != null) {
+            protocolServer.stop();
+        }
 
         // 取消之前注册的远程监听
         String remoteListener = serverConfiguration.getRemoteListener();
@@ -1105,6 +1107,9 @@ public class DBInstance {
 
     public int getRegisteredConnectionsCount()
     {
+        if (this.protocolServer == null) {
+            return 0;
+        }
         return this.protocolServer.getRegisteredConnectionsCount();
     }
 

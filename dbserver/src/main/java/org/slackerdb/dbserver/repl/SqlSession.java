@@ -3,6 +3,7 @@ package org.slackerdb.dbserver.repl;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.Map;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -21,11 +22,16 @@ public class SqlSession {
     public volatile int totalRows; // -1 表示未知
     public volatile String error;
     public volatile boolean hasMore;
+    // 缓冲行，用于处理分页时多读的一行
+    public volatile Map<String, Object> pendingRow;
+    public volatile boolean hasPendingRow;
 
     public SqlSession(String id, Connection conn) {
         this.id = id;
         this.conn = conn;
         this.taskStatus = "IDLE";
+        this.hasPendingRow = false;
+        this.pendingRow = null;
     }
 
     public void resetTask() {
@@ -43,5 +49,7 @@ public class SqlSession {
         this.totalRows = -1;
         this.error = null;
         this.hasMore = false;
+        this.hasPendingRow = false;
+        this.pendingRow = null;
     }
 }

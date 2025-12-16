@@ -16,6 +16,13 @@
             </includes>
         </fileSet>
         <fileSet>
+            <directory>${project.basedir}/target/generated-docs</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>README.pdf</include>
+            </includes>
+        </fileSet>
+        <fileSet>
             <directory>${project.basedir}/../dbserver/target</directory>
             <outputDirectory>jlib</outputDirectory>
             <includes>
@@ -87,6 +94,9 @@
             <includes>
                 <include>slackerdb-dbdriver-*.jar</include>
             </includes>
+            <excludes>
+                <exclude>slackerdb-dbdriver-*sources.jar</exclude>
+            </excludes>
         </fileSet>
         <fileSet>
             <directory>${project.basedir}/../plugin/target</directory>

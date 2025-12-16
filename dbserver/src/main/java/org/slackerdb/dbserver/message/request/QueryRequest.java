@@ -239,6 +239,7 @@ public class QueryRequest  extends PostgresRequest {
             catch (SQLException e) {
                 if (!e.getMessage().contains("no transaction is active"))
                 {
+                    preparedStatement.close();
                     throw e;
                 }
             }
@@ -294,6 +295,7 @@ public class QueryRequest  extends PostgresRequest {
                     nAffectedRows = preparedStatement.getUpdateCount();
                 }
             }
+            preparedStatement.close();
 
             // 设置语句的事务级别
             if (sql.toUpperCase().startsWith("BEGIN")) {

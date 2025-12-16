@@ -552,7 +552,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <div id="content">
 <div class="imageblock">
 <div class="content">
-<img src="robotslacker.jpg" alt="RobotSlacker">
+<img src="../../../../../robotslacker.jpg" alt="RobotSlacker">
 </div>
 <div class="title">Figure 1. RobotSlacker</div>
 </div>
@@ -639,10 +639,11 @@ different host or different process) are behinds it.</p>
     git clone ...
     # compile it
     cd slackerdb
-    mvn clean compile package
+    mvn clean compile package -Dmaven.test.skip=true
 
     # All compiled results will be placed in the dist directory.
     #    compiled Jar packages,
+    #    source jar packages
     #    default configuration files.</pre>
 </div>
 </div>
@@ -651,7 +652,7 @@ different host or different process) are behinds it.</p>
 <h4 id="_start_db_server">Start db server</h4>
 <div class="literalblock">
 <div class="content">
-<pre>    java -jar dbserver/target/slackerdb-dbserver-0.1.8-standalone.jar start</pre>
+<pre>    java -jar dbserver/target/slackerdb-dbserver-0.1.9-standalone.jar start</pre>
 </div>
 </div>
 </div>
@@ -659,7 +660,7 @@ different host or different process) are behinds it.</p>
 <h4 id="_stop_db_server">Stop db server</h4>
 <div class="literalblock">
 <div class="content">
-<pre>    java -jar dbserver/target/slackerdb-dbserver-0.1.8-standalone.jar stop</pre>
+<pre>    java -jar dbserver/target/slackerdb-dbserver-0.1.9-standalone.jar stop</pre>
 </div>
 </div>
 </div>
@@ -667,7 +668,7 @@ different host or different process) are behinds it.</p>
 <h4 id="_check_db_status">Check db status</h4>
 <div class="literalblock">
 <div class="content">
-<pre>    java -jar dbserver/target/slackerdb-dbserver-0.1.8-standalone.jar status</pre>
+<pre>    java -jar dbserver/target/slackerdb-dbserver-0.1.9-standalone.jar status</pre>
 </div>
 </div>
 </div>
@@ -675,7 +676,7 @@ different host or different process) are behinds it.</p>
 <h4 id="_start_db_proxy">Start db proxy</h4>
 <div class="literalblock">
 <div class="content">
-<pre>    java -jar dbproxy/target/slackerdb-dbproxy-0.1.8-standalone.jar start</pre>
+<pre>    java -jar dbproxy/target/slackerdb-dbproxy-0.1.9-standalone.jar start</pre>
 </div>
 </div>
 </div>
@@ -683,7 +684,7 @@ different host or different process) are behinds it.</p>
 <h4 id="_stop_db_proxy">Stop db proxy</h4>
 <div class="literalblock">
 <div class="content">
-<pre>    java -jar dbproxy/target/slackerdb-dbproxy-0.1.8-standalone.jar stop</pre>
+<pre>    java -jar dbproxy/target/slackerdb-dbproxy-0.1.9-standalone.jar stop</pre>
 </div>
 </div>
 </div>
@@ -691,7 +692,7 @@ different host or different process) are behinds it.</p>
 <h4 id="_check_proxy_status">Check proxy status</h4>
 <div class="literalblock">
 <div class="content">
-<pre>    java -jar dbproxy/target/slackerdb-dbproxy-0.1.8-standalone.jar status</pre>
+<pre>    java -jar dbproxy/target/slackerdb-dbproxy-0.1.9-standalone.jar status</pre>
 </div>
 </div>
 </div>
@@ -818,7 +819,15 @@ query_result_cache_size=
 #   * JSON file path (single schema)
 #   * Directory path (loads all *.service files)
 # - Schema files should contain service definitions in JSON format
-data_service_schema=</pre>
+data_service_schema=
+
+# MCP configuration file/path
+# Specifies the Model Context Protocol configuration file for dynamic tool/resource loading.
+# - Accepts:
+#   * JSON file path (single config)
+#   * Directory path (loads all *.mcp files)
+# Default: empty (no MCP configuration)
+mcp_config=</pre>
 </div>
 </div>
 </div>
@@ -875,11 +884,68 @@ For parameters that are not configured, default values will be used.</p>
 </div>
 </div>
 <div class="sect3">
+<h4 id="_jdbc_support">JDBC Support</h4>
+<div class="paragraph">
+<p>SlackerDB provides full PostgreSQL wire protocol compatibility, allowing you to connect using standard JDBC drivers. This enables you to use any PostgreSQL‑compatible JDBC client, including the native SlackerDB JDBC driver for optimal integration.</p>
+</div>
+<div class="paragraph">
+<p><strong>PostgreSQL JDBC Driver</strong>
+You can use the standard PostgreSQL JDBC driver (<code>org.postgresql.Driver</code>) with the connection URL format <code>jdbc:postgresql://host:port/database</code>. This is useful when you want to reuse existing PostgreSQL tooling.</p>
+</div>
+<div class="paragraph">
+<p><strong>SlackerDB JDBC Driver</strong>
+For better integration and additional features, use the native SlackerDB JDBC driver (<code>org.slackerdb.jdbc.Driver</code>). The connection URL format is <code>jdbc:slackerdb://host:port/database</code>. This driver is included in the distribution and is recommended for new applications.</p>
+</div>
+<div class="paragraph">
+<p><strong>Connection Examples</strong></p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>// PostgreSQL JDBC driver
+String url = "jdbc:postgresql://127.0.0.1:3175/db1";
+Connection conn = DriverManager.getConnection(url, "main", "");
+conn.setAutoCommit(false);
+
+// SlackerDB JDBC driver
+String url = "jdbc:slackerdb://127.0.0.1:3175/db1";
+Connection conn = DriverManager.getConnection(url, "main", "");
+conn.setAutoCommit(false);</pre>
+</div>
+</div>
+<div class="paragraph">
+<p><strong>IDE Integration</strong></p>
+</div>
+<div class="paragraph">
+<p>You can connect to SlackerDB from database tools DBeaver. (For other tools, we have not verified it.)<br>
+<strong>Use Postgresl driver</strong><br>
+Download postgresql server and connect database like a pg.</p>
+</div>
+<div class="paragraph">
+<p><strong>Use custom driver</strong><br>
+Since native Postgres clients often use some data dictionary information
+that duckdb doesn’t have,<br>
+You can create a generic JDBC driver with the following settings:<br></p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>Dbeaver:
+Database -&gt; Driver Manager -&gt; New
+   Database type: generic database.
+   Class name:    org.slackerdb.jdbc.Driver
+   URL template:  jdbc:slackerdb://{host}:{port}/[{database}]</pre>
+</div>
+</div>
+<div class="paragraph">
+<p><strong>ODBC and Python</strong>
+SlackerDB also supports ODBC and Python connections via the same PostgreSQL wire protocol. Refer to the respective client documentation for setup details.</p>
+</div>
+</div>
+<div class="sect3">
 <h4 id="_data_service">Data Service</h4>
 <div class="ulist">
 <ul>
 <li>
-<p>Data service work with port x, please make sure you have enabled it in
+<p>Data service work with port_x, please make sure you have enabled it in
 server configuration or from command parameter. It’s important to note
 that we have no consider on data security. This means data services must
 work in a trusted environment.</p>
@@ -2041,7 +2107,7 @@ const ws = <span style="color:#080;font-weight:bold">new</span> WebSocket(<span 
 <pre class="CodeRay highlight"><code data-lang="json">{
   <span style="color:#606"><span style="color:#404">&quot;</span><span>server</span><span style="color:#404">&quot;</span></span>: {
     <span style="color:#606"><span style="color:#404">&quot;</span><span>status</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">RUNNING</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606"><span style="color:#404">&quot;</span><span>version</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">0.1.8</span><span style="color:#710">&quot;</span></span>,
+    <span style="color:#606"><span style="color:#404">&quot;</span><span>version</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">0.1.9</span><span style="color:#710">&quot;</span></span>,
     <span style="color:#606"><span style="color:#404">&quot;</span><span>build</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">2025-12-04 10:00:00.000 UTC</span><span style="color:#710">&quot;</span></span>,
     <span style="color:#606"><span style="color:#404">&quot;</span><span>pid</span><span style="color:#404">&quot;</span></span>: <span style="color:#00D">12345</span>,
     <span style="color:#606"><span style="color:#404">&quot;</span><span>now</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">2025-12-04 15:20:00</span><span style="color:#710">&quot;</span></span>,
@@ -2067,7 +2133,7 @@ const ws = <span style="color:#080;font-weight:bold">new</span> WebSocket(<span 
 <h4 id="_web_based_sql_console">Web-based SQL Console</h4>
 <div class="imageblock">
 <div class="content">
-<img src="imgs/console.png" alt="Console">
+<img src="../../../../../imgs/console.png" alt="Console">
 </div>
 </div>
 <div class="paragraph">
@@ -2214,65 +2280,7 @@ const ws = <span style="color:#080;font-weight:bold">new</span> WebSocket(<span 
 </div>
 </div>
 <div class="sect3">
-<h4 id="_jdbc_program_example_with_postgres_client">Jdbc program example with postgres client</h4>
-<div class="literalblock">
-<div class="content">
-<pre>    // "db1" is your database name in your configuration file.
-    // 3175  is your database port in your configuration file.
-    // If you are connecting for the first time, there will be no other users except the default main
-    String  connectURL = "jdbc:postgresql://127.0.0.1:3175/db1";
-    Connection pgConn = DriverManager.getConnection(connectURL, "main", "");
-    pgConn.setAutoCommit(false);
-
-    // .... Now you can execute your business logic.</pre>
-</div>
-</div>
-</div>
-<div class="sect3">
-<h4 id="_jdbc_program_example_with_slackerdb_client">Jdbc program example with slackerdb client</h4>
-<div class="literalblock">
-<div class="content">
-<pre>    // "db1" is your database name in your configuration file.
-    // 3175  is your database port in your configuration file.
-    // If you are connecting for the first time, there will be no other users except the default main
-    String  connectURL = "jdbc:slackerdb://127.0.0.1:3175/db1";
-    Connection pgConn = DriverManager.getConnection(connectURL, "main", "");
-    pgConn.setAutoCommit(false);
-
-    // .... Now you can execute your business logic.</pre>
-</div>
-</div>
-</div>
-<div class="sect3">
-<h4 id="_odbc_and_python_program">Odbc and python program</h4>
-<div class="literalblock">
-<div class="content">
-<pre>    It also supports ODBC and Python connection.</pre>
-</div>
-</div>
-</div>
-</div>
-<div class="sect2">
-<h3 id="_use_ide_tools_to_connect_to_the_database">Use IDE tools to connect to the database</h3>
-<div class="paragraph">
-<p>Since native Postgres clients often use some data dictionary information
-that duckdb doesn’t have,<br>
-We do not recommend that you use the PG client to connect to this
-database(That works, but has limited functionality).<br>
-Instead, we suggest use the dedicated client provided in this project.<br></p>
-</div>
-<div class="literalblock">
-<div class="content">
-<pre>Dbeaver:
-Database -&gt; Driver Manager -&gt; New
-   Database type: generic database.
-   Class name:    org.slackerdb.jdbc.Driver
-   URL template:  jdbc:slackerdb://{host}:{port}/[{database}]</pre>
-</div>
-</div>
-</div>
-<div class="sect2">
-<h3 id="_data_security">Data Security</h3>
+<h4 id="_data_security">Data Security</h4>
 <div class="paragraph">
 <p>Based on DuckDB&#8217;s secure encryption mechanism, we support data encryption.</p>
 </div>
@@ -2301,6 +2309,7 @@ Database -&gt; Driver Manager -&gt; New
 </div>
 </li>
 </ol>
+</div>
 </div>
 </div>
 <div class="sect2">
@@ -2342,7 +2351,7 @@ support this.</p>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2025-12-15 13:22:14 +0800
+Last updated 2025-12-16 11:21:58 +0800
 </div>
 </div>
 <script>
