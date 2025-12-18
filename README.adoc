@@ -1165,6 +1165,180 @@ support.
 fdw will use "`Declare CURSOR`" to fetch remote data, while duck doesn’t
 support this.
 
+=== Plugin System
+
+SlackerDB provides a PF4J‑based plugin framework that allows developers to extend the database server's functionality. Plugins can access database connections, loggers, and the Javalin web application instance, enabling them to register custom HTTP endpoints, execute background tasks, or integrate external services.
+
+==== Plugin Mechanism Overview
+
+The plugin system is built on top of PF4J (Plugin Framework for Java) and is customized to provide database‑specific context. The core components are:
+
+* *DBPlugin* – Abstract plugin base class that extends PF4J's `Plugin` class and implements the `IDBPluginContext` interface. Plugins must extend this class and implement lifecycle methods.
+* *DBPluginContext* – Plugin context object that contains a database connection, a logger, and the Javalin application instance. The plugin manager injects this context before the plugin starts.
+* *DBPluginManager* – Custom plugin manager responsible for loading, starting, stopping, and unloading plugins. It uses a custom `DBPluginFactory` to ensure the context is automatically injected when a plugin is created.
+* *DBPluginFactory* – Custom plugin factory that, after creating a plugin instance, checks whether the plugin implements `IDBPluginContext` and, if so, injects the `DBPluginContext`.
+
+Plugin lifecycle:
+1. *Load* – When the server starts, it scans the configured plugin directory (`plugins_dir`) and loads all JAR packages that conform to the PF4J specification.
+2. *Create* – The plugin instance is created via `DBPluginFactory`, and the `DBPluginContext` is injected.
+3. *Start* – The plugin's `start()` method is called, which executes `beforeStart()`, `onStart()`, and `afterStart()` in order.
+4. *Run* – The plugin executes its custom logic in `onStart()`, e.g., registering Javalin routes, initializing database tables, etc.
+5. *Stop* – When the server shuts down, the plugin's `stop()` method is called, executing `beforeStop()`, `onStop()`, and `afterStop()`.
+6. *Delete* – When a plugin is unloaded, its `delete()` method is called, executing `beforeDelete()`, `onDelete()`, and `afterDelete()`.
+
+Plugins can access the following resources:
+* *Database connection* – Obtain a new connection to the backend database via `getDbConnection()` (created via `DuckDBConnection.duplicate()`).
+* *Logger* – Obtain a configured SLF4J logger via `getLogger()`.
+* *Web application instance* – Obtain the Javalin application instance via `getJavalinApp()`, which can be used to register HTTP routes and middleware.
+
+==== How to Write a Plugin
+
+The following steps are based on the `plugin‑example` module and demonstrate how to write a SlackerDB plugin.
+
+===== 1. Create a Maven Project
+
+The plugin project needs to depend on the `slackerdb‑plugin` module. Add the following dependency to your `pom.xml`:
+
+[source,xml]
+----
+<dependency>
+    <groupId>org.slackerdb</groupId>
+    <artifactId>slackerdb-plugin</artifactId>
+    <version>0.1.9</version>
+    <scope>provided</scope>
+</dependency>
+----
+
+The PF4J core library is also required (usually already a transitive dependency of `slackerdb‑plugin`).
+
+===== 2. Implement the Plugin Main Class
+
+Create a class that extends `DBPlugin` and implements the necessary lifecycle methods. Example:
+
+[source,java]
+----
+package org.slackerdb.myplugin;
+
+import io.javalin.Javalin;
+import org.pf4j.PluginWrapper;
+import org.slackerdb.plugin.DBPlugin;
+import org.slf4j.Logger;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+
+public class MyPlugin extends DBPlugin {
+    private Connection conn;
+    private Javalin app;
+    private Logger logger;
+
+    protected MyPlugin(PluginWrapper wrapper) {
+        super(wrapper);
+    }
+
+    @Override
+    protected void onStart() {
+        // Obtain resources
+        try {
+            this.conn = getDbConnection();
+        } catch (SQLException e) {
+            // Handle exception
+        }
+        this.logger = getLogger();
+        this.app = getJavalinApp();
+
+        // Register a custom HTTP endpoint
+        app.get("/myplugin/hello", ctx -> {
+            ctx.result("Hello from MyPlugin!");
+        });
+
+        // Initialize a database table
+        try (var stmt = conn.createStatement()) {
+            stmt.execute("CREATE TABLE IF NOT EXISTS myplugin_data (id INTEGER, name VARCHAR)");
+        } catch (SQLException e) {
+            logger.error("Failed to create table", e);
+        }
+
+        logger.info("MyPlugin started successfully");
+    }
+
+    @Override
+    protected void onStop() {
+        // Clean up resources
+        if (conn != null) {
+            try { conn.close(); } catch (SQLException ignored) {}
+        }
+        logger.info("MyPlugin stopped");
+    }
+
+    // Optional: override other lifecycle hook methods
+    // beforeStart, afterStart, beforeStop, afterStop, beforeDelete, afterDelete
+}
+----
+
+===== 3. Configure the Plugin Descriptor File
+
+Create a `plugin.properties` file in the `src/main/resources` directory with the following content:
+
+[source,properties]
+----
+# Plugin unique identifier, must match the plugin JAR filename (without extension)
+plugin.id=myplugin
+
+# Fully qualified name of the plugin main class, must extend org.slackerdb.plugin.DBPlugin
+plugin.class=org.slackerdb.myplugin.MyPlugin
+
+# Plugin version number, follows semantic versioning
+plugin.version=1.0.0
+
+# Plugin dependency requirement, * means no specific dependency
+plugin.requires=*
+----
+
+===== 4. Build the Plugin
+
+Package the plugin with Maven:
+
+[source,bash]
+----
+mvn clean package
+----
+
+The resulting JAR file (e.g., `myplugin‑1.0.0.jar`) should contain the plugin class and the `plugin.properties` file.
+
+===== 5. Deploy the Plugin
+
+Place the plugin JAR file into the SlackerDB server's plugin directory (specified by the `plugins_dir` parameter in the configuration file, default is `$HOME/.slackerdb/plugins`). Ensure the directory exists and the server has read permission.
+
+===== 6. Start the Server
+
+Start the SlackerDB server; the plugin will be loaded and started automatically. Check the server logs to confirm successful plugin loading:
+
+[source]
+----
+[SERVER][PLUGIN     ] Load plugin [myplugin] ...
+[SERVER][PLUGIN     ] start plugin [myplugin] ...
+----
+
+If the plugin registered an HTTP endpoint, you can access it at `http://localhost:<port_x>/myplugin/hello` (assuming the management port `port_x` is enabled).
+
+===== 7. Debugging Plugins
+
+* *Logging* – Plugins can output logs via `getLogger()`; the log level is controlled by the server's `log_level` configuration.
+* *Error handling* – Exceptions in plugin lifecycle methods are caught and wrapped as `RuntimeException`, causing the plugin to fail to start. Error messages are recorded in the server log.
+* *Hot reload* – Hot reloading is not currently supported; you must restart the server after modifying a plugin.
+
+==== Plugin Example
+
+The `plugin‑example` module in the project provides a complete plugin example that demonstrates the basic structure and resource access methods. Developers can refer to this example to get started quickly.
+
+==== Notes
+
+1. *Thread safety* – The plugin instance is a singleton during the server's lifetime; ensure that methods like `onStart()` are thread‑safe.
+2. *Resource management* – Database connections obtained via `getDbConnection()` must be managed by the plugin and closed when the plugin stops.
+3. *Dependency conflicts* – Avoid introducing library versions that conflict with server dependencies; it is recommended to use the `provided` scope for libraries already provided by the server.
+4. *Performance impact* – Plugin execution consumes server resources; avoid performing long‑blocking operations in plugins.
+
 === Roadmap
 
 …

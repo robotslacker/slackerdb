@@ -108,7 +108,7 @@ public class APIService {
             snapshotLimit = dbServiceDefinition.snapshotLimit;
         }
         if (caffeineQueryCache != null && snapshotLimit > 0) {
-            cacheKey = sql + "|" + sqlParameters;
+            cacheKey = generateCacheKey(sql, sqlParameters);
 
             Map<String, Object> cacheResult = caffeineQueryCache.getIfPresent(cacheKey);
             if (cacheResult != null) {
@@ -136,9 +136,32 @@ public class APIService {
         if (!sqlParameters.isEmpty()) {
             Pattern pattern = Pattern.compile("\\$\\{([^}]+)}");
             Matcher matcher = pattern.matcher(sql);
+            // 首先检查所有变量是否都有值
+            Set<String> missingKeys = new HashSet<>();
+            while (matcher.find()) {
+                String key = matcher.group(1);
+                if (!sqlParameters.containsKey(key) || sqlParameters.get(key) == null) {
+                    missingKeys.add(key);
+                }
+            }
+            if (!missingKeys.isEmpty()) {
+                ctx.attribute("cached", false);
+                ctx.attribute("affectedRows", -1);
+                ctx.json(
+                        Map.of(
+                                "retCode", -1,
+                                "retMsg", "Missing required parameters: " + String.join(", ", missingKeys),
+                                "description", dbServiceDefinition.description,
+                                "cached", false
+                        )
+                );
+                return;
+            }
+            // 重新匹配进行替换
+            matcher.reset();
             StringBuilder sb = new StringBuilder();
             while (matcher.find()) {
-                String key = matcher.group(1); // 取出 ${xxx} 中的 xxx
+                String key = matcher.group(1);
                 matcher.appendReplacement(sb, Matcher.quoteReplacement(sqlParameters.get(key)));
             }
             matcher.appendTail(sb);
@@ -148,77 +171,74 @@ public class APIService {
         Connection conn = null;
         try {
             conn = dbDataSourcePool.getConnection();
-            if (dbServiceDefinition.searchPath != null && !dbServiceDefinition.searchPath.isEmpty())
-            {
-                Statement statement = conn.createStatement();
-                statement.execute("SET search_path = '" + dbServiceDefinition.searchPath + "'");
-                statement.close();
-            }
-            PreparedStatement preparedStatement = conn.prepareStatement(sql);
-            boolean hasResultSet  = preparedStatement.execute();
-            if (hasResultSet) {
-                ResultSet rs = preparedStatement.getResultSet();
-                ResultSetMetaData resultSetMetaData = rs.getMetaData();
-                List<String> columnNames = new ArrayList<>();
-                List<String> columnTypes = new ArrayList<>();
-                List<List<Object>> dataset = new ArrayList<>();
-                for (int nPos=0; nPos<resultSetMetaData.getColumnCount(); nPos++)
-                {
-                    columnNames.add(resultSetMetaData.getColumnName(nPos+1));
-                    columnTypes.add(resultSetMetaData.getColumnTypeName(nPos+1));
+            if (dbServiceDefinition.searchPath != null && !dbServiceDefinition.searchPath.isEmpty()) {
+                try (Statement statement = conn.createStatement()) {
+                    statement.execute("SET search_path = '" + dbServiceDefinition.searchPath + "'");
                 }
-                while (rs.next())
-                {
-                    List<Object> row = new ArrayList<>();
-                    for (int nPos=0; nPos<resultSetMetaData.getColumnCount(); nPos++) {
-                        row.add(rs.getObject(nPos+1));
+            }
+            try (PreparedStatement preparedStatement = conn.prepareStatement(sql)) {
+                boolean hasResultSet = preparedStatement.execute();
+                if (hasResultSet) {
+                    try (ResultSet rs = preparedStatement.getResultSet()) {
+                        ResultSetMetaData resultSetMetaData = rs.getMetaData();
+                        List<String> columnNames = new ArrayList<>();
+                        List<String> columnTypes = new ArrayList<>();
+                        List<List<Object>> dataset = new ArrayList<>();
+                        for (int nPos = 0; nPos < resultSetMetaData.getColumnCount(); nPos++) {
+                            columnNames.add(resultSetMetaData.getColumnName(nPos + 1));
+                            columnTypes.add(resultSetMetaData.getColumnTypeName(nPos + 1));
+                        }
+                        while (rs.next()) {
+                            List<Object> row = new ArrayList<>();
+                            for (int nPos = 0; nPos < resultSetMetaData.getColumnCount(); nPos++) {
+                                row.add(rs.getObject(nPos + 1));
+                            }
+                            dataset.add(row);
+                        }
+                        Map<String, Object> result = new HashMap<>();
+                        result.put("columnTypes", columnTypes);
+                        result.put("columnNames", columnNames);
+                        result.put("timestamp", System.currentTimeMillis());
+                        result.put("dataset", dataset);
+                        result.put("affectedRows", dataset.size());
+                        if (cacheKey != null) {
+                            caffeineQueryCache.put(cacheKey, result);
+                        }
+                        ctx.attribute("cached", false);
+                        ctx.attribute("affectedRows", dataset.size());
+                        ctx.json(
+                                Map.of(
+                                        "retCode", 0,
+                                        "retMsg", "Successful",
+                                        "description", dbServiceDefinition.description,
+                                        "timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(System.currentTimeMillis())),
+                                        "cached", false, "data", result
+                                )
+                        );
                     }
-                    dataset.add(row);
+                } else {
+                    // 非SQL查询语句
+                    ctx.attribute("cached", false);
+                    ctx.attribute("affectedRows", -1);
+                    ctx.json(
+                            Map.of(
+                                    "retCode", 0,
+                                    "retMsg", "Successful",
+                                    "description", dbServiceDefinition.description,
+                                    "affectedRows", preparedStatement.getUpdateCount(),
+                                    "cached", false
+                            )
+                    );
                 }
-                rs.close();
-                Map<String, Object> result = new HashMap<>();
-                result.put("columnTypes", columnTypes);
-                result.put("columnNames", columnNames);
-                result.put("timestamp", System.currentTimeMillis());
-                result.put("dataset", dataset);
-                result.put("affectedRows", dataset.size());
-                if (cacheKey!= null) {
-                    caffeineQueryCache.put(cacheKey, result);
-                }
-                ctx.attribute("cached", false);
-                ctx.attribute("affectedRows", dataset.size());
-                ctx.json(
-                        Map.of(
-                                "retCode", 0,
-                                "retMsg", "Successful",
-                                "description", dbServiceDefinition.description,
-                                "timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(System.currentTimeMillis())),
-                                "cached", false, "data", result
-                        )
-                );
             }
-            else
-            {
-                // 非SQL查询语句
-                ctx.attribute("cached", false);
-                ctx.attribute("affectedRows", -1);
-                ctx.json(
-                        Map.of(
-                                "retCode", 0,
-                                "retMsg", "Successful",
-                                "description", dbServiceDefinition.description,
-                                "affectedRows", preparedStatement.getUpdateCount(),
-                                "cached", false
-                        )
-                );
-            }
-            preparedStatement.close();
             dbDataSourcePool.releaseConnection(conn);
         } catch (Exception e) {
             logger.trace("[SERVER-API] Query failed: ", e);
             ctx.attribute("cached", false);
             ctx.attribute("affectedRows", -1);
-            dbDataSourcePool.releaseConnection(conn);
+            if (conn != null) {
+                dbDataSourcePool.releaseConnection(conn);
+            }
             ctx.json(
                     Map.of(
                             "retCode", -1,
@@ -228,6 +248,26 @@ public class APIService {
                     )
             );
         }
+    }
+
+    // 生成稳定的缓存键（按键排序）
+    private static String generateCacheKey(String sql, Map<String, String> parameters) {
+        if (parameters.isEmpty()) {
+            return sql;
+        }
+        // 按键排序以保证稳定
+        List<String> keys = new ArrayList<>(parameters.keySet());
+        Collections.sort(keys);
+        StringBuilder sb = new StringBuilder(sql);
+        sb.append("|");
+        for (String key : keys) {
+            sb.append(key).append("=").append(parameters.get(key)).append("&");
+        }
+        // 删除最后一个多余的 "&"
+        if (sb.charAt(sb.length() - 1) == '&') {
+            sb.deleteCharAt(sb.length() - 1);
+        }
+        return sb.toString();
     }
 
     // 估计对象的大小

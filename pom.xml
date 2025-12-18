@@ -22,6 +22,7 @@
         <module>dbproxy</module>
         <module>plugin</module>
         <module>plugin-example</module>
+        <module>plugin-osmon</module>
         <module>build</module>
     </modules>
 

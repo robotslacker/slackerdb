@@ -35,8 +35,8 @@ public class FileHandlerHelper {
         String filename = ctx.queryParam("filename");
         if (filename == null || filename.isBlank())
         {
-            ctx.status(500);
-            ctx.result("Download error. Missed filename parameter. ");
+            ctx.status(400);
+            ctx.result("Missing filename parameter for download.");
             return;
         }
         Path filePath = BASE_DIR.resolve(filename).normalize();
@@ -137,8 +137,8 @@ public class FileHandlerHelper {
         String targetName = ctx.queryParam("filename");
         if (targetName == null || targetName.isBlank())
         {
-            ctx.status(500);
-            ctx.result("Download error. Missed filename parameter. ");
+            ctx.status(400);
+            ctx.result("Missing filename parameter for upload.");
             return;
         }
 
@@ -197,10 +197,8 @@ public class FileHandlerHelper {
                 }
             }
             out.flush();
-        } catch (IOException e) {
+        } catch (IOException ignored) {
             // 客户端中断连接的时候会抛异常，忽略即可
-            // e.g. java.io.IOException: Broken pipe
-            // 这里选择忽略以便服务端继续稳定运行
         }
     }
 
@@ -217,8 +215,8 @@ public class FileHandlerHelper {
         String filename = ctx.queryParam("filename");
         if (filename == null || filename.isBlank())
         {
-            ctx.status(500);
-            ctx.result("Download error. Missed filename parameter. ");
+            ctx.status(400);
+            ctx.result("Missing filename parameter for view.");
             return;
         }
 

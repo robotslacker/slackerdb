@@ -14,6 +14,22 @@
     </parent>
 
     <dependencies>
+        <!-- JavaLin -->
+        <dependency>
+            <groupId>io.javalin</groupId>
+            <artifactId>javalin-bundle</artifactId>
+            <version>6.6.0</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- DUCKDB -->
+        <dependency>
+            <groupId>org.duckdb</groupId>
+            <artifactId>duckdb_jdbc</artifactId>
+            <version>1.4.3.0</version>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- PF4J 插件 -->
         <dependency>
             <groupId>org.pf4j</groupId>

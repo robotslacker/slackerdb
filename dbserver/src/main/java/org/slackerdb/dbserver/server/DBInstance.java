@@ -11,6 +11,7 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
 import org.duckdb.DuckDBConnection;
+import org.pf4j.PluginManager;
 import org.slackerdb.common.utils.BoundedQueue;
 import org.slackerdb.common.utils.OSUtil;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
@@ -22,6 +23,7 @@ import org.slackerdb.dbserver.entity.SQLHistoryRecord;
 import org.slackerdb.dbserver.message.request.AdminClientRequest;
 import org.slackerdb.dbserver.sql.SQLReplacer;
 import org.slackerdb.dbserver.sql.SqlCommentStripper;
+import org.slackerdb.plugin.DBPluginContext;
 import org.slackerdb.plugin.DBPluginManager;
 import org.slf4j.LoggerFactory;
 
@@ -101,7 +103,7 @@ public class DBInstance {
     private boolean databaseFirstOpened = false;
 
     // 插件管理器
-    private DBPluginManager dbPluginManager = null;
+    private PluginManager dbPluginManager = null;
 
     // 从资源文件中获取消息，为未来的多语言做准备
     private String getMessage(String code, Object... contents) {
@@ -878,13 +880,6 @@ public class DBInstance {
         if (!this.logger.getLevel().equals(Level.TRACE)) {
             pf4jLogger.setLevel(Level.OFF);
         }
-        // 加载数据库插件, 但是不要启动
-        if (!serverConfiguration.getPlugins_dir().isEmpty() && Path.of(serverConfiguration.getPlugins_dir()).toFile().exists())
-        {
-            this.dbPluginManager = new DBPluginManager(Path.of(serverConfiguration.getPlugins_dir()));
-            dbPluginManager.setContextValue("Connection", this.backendSysConnection);
-            dbPluginManager.loadPlugins();
-        }
 
         // 打开数据库
         this.attachDatabase(null);
@@ -1008,6 +1003,34 @@ public class DBInstance {
         else
         {
             logger.info("[SERVER][STARTUP    ] Management server listener has been disabled.");
+        }
+
+        // 加载数据库插件, 但是不要启动
+        if (!serverConfiguration.getPlugins_dir().isEmpty() && Path.of(serverConfiguration.getPlugins_dir()).toFile().exists())
+        {
+            logger.info("[SERVER][PLUGIN     ] Will scan directory [{}] for plugin ...", Path.of(serverConfiguration.getPlugins_dir()));
+            DBPluginContext dbPluginContext = new DBPluginContext();
+            dbPluginContext.setDbBackendConn(this.backendSysConnection);
+            dbPluginContext.setLogger(this.logger);
+            if (this.dbInstanceX != null) {
+                dbPluginContext.setJavalin(this.dbInstanceX.getManagementApp());
+            }
+            else
+            {
+                dbPluginContext.setJavalin(null);
+            }
+            this.dbPluginManager = new DBPluginManager(Path.of(serverConfiguration.getPlugins_dir()), dbPluginContext);
+
+            dbPluginManager.loadPlugins();
+            for (int i=0; i< dbPluginManager.getPlugins().size(); i++)
+            {
+                logger.info("[SERVER][PLUGIN     ] Load plugin [{}] ...", dbPluginManager.getPlugins().get(i).getPluginId());
+            }
+            for (int i=0; i< dbPluginManager.getPlugins().size(); i++)
+            {
+                logger.info("[SERVER][PLUGIN     ] start plugin [{}] ...", dbPluginManager.getPlugins().get(i).getPluginId());
+                dbPluginManager.startPlugin(dbPluginManager.getPlugins().get(i).getPluginId());
+            }
         }
 
         // 标记服务已经启动完成

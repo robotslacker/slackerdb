@@ -746,4 +746,9 @@ public class DBInstanceX {
             this.mcpServer.shutdown();
         }
     }
+
+    public Javalin getManagementApp()
+    {
+        return this.managementApp;
+    }
 }

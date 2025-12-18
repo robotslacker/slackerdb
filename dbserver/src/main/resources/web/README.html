@@ -1735,7 +1735,7 @@ It is useful for long-running queries where you want to avoid blocking the clien
   "data": {
     "sessionId": "session-123",
     "sql": "SELECT * FROM large_table",
-    "maxRows": 1000   // optional, default is 1000
+    "fetchSize": 1000   // optional, default is 1000
   }
 }</pre>
 </div>
@@ -1761,7 +1761,7 @@ It is useful for long-running queries where you want to avoid blocking the clien
 <div class="sect4">
 <h5 id="_fetch_results">Fetch Results</h5>
 <div class="paragraph">
-<p>Retrieves a page of results for a given task ID. The endpoint returns a fixed number of rows (up to <code>maxRows</code> specified in execute) and indicates whether more rows are available.</p>
+<p>Retrieves a page of results for a given task ID. The endpoint returns a fixed number of rows (up to <code>fetchSize</code> specified in execute) and indicates whether more rows are available.</p>
 </div>
 <div class="paragraph">
 <p>Message:</p>
@@ -1791,17 +1791,17 @@ It is useful for long-running queries where you want to avoid blocking the clien
   "taskId": "550e8400-e29b-41d4-a716-446655440000",
   "status": "completed",   // "running", "completed", or "error"
   "hasMore": false,        // true if there are more rows to fetch
-  "columnNames": ["id", "name"],
-  "columnTypes": ["INTEGER", "VARCHAR"],
-  "dataset": [
-    [1, "Alice"],
-    [2, "Bob"]
-  ]
+  "columns": ["id", "name"],
+  "rows": [
+    {"id": 1, "name": "Alice"},
+    {"id": 2, "name": "Bob"}
+  ],
+  "fetched": 2
 }</pre>
 </div>
 </div>
 <div class="paragraph">
-<p>If the task is still running (status = "running"), <code>dataset</code> may be empty and <code>hasMore</code> will be true.
+<p>If the task is still running (status = "running"), <code>rows</code> may be empty and <code>hasMore</code> will be true.
 If the task has completed and all rows have been fetched, <code>status</code> becomes "completed" and <code>hasMore</code> false.
 If an error occurs during execution, <code>status</code> becomes "error" and <code>retMsg</code> contains the error details.</p>
 </div>
@@ -1912,7 +1912,7 @@ const ws = <span style="color:#080;font-weight:bold">new</span> WebSocket(<span 
   <span style="color:#606">data</span>: {
     <span style="color:#606">sessionId</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">session-123</span><span style="color:#710">&quot;</span></span>,
     <span style="color:#606">sql</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">SELECT * FROM huge_table</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606">maxRows</span>: <span style="color:#00D">500</span>
+    <span style="color:#606">fetchSize</span>: <span style="color:#00D">500</span>
   }
 }));</code></pre>
 </div>
@@ -2341,6 +2341,238 @@ support this.</p>
 </div>
 </div>
 <div class="sect2">
+<h3 id="_plugin_system">Plugin System</h3>
+<div class="paragraph">
+<p>SlackerDB provides a PF4J‑based plugin framework that allows developers to extend the database server&#8217;s functionality. Plugins can access database connections, loggers, and the Javalin web application instance, enabling them to register custom HTTP endpoints, execute background tasks, or integrate external services.</p>
+</div>
+<div class="sect3">
+<h4 id="_plugin_mechanism_overview">Plugin Mechanism Overview</h4>
+<div class="paragraph">
+<p>The plugin system is built on top of PF4J (Plugin Framework for Java) and is customized to provide database‑specific context. The core components are:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>DBPlugin</strong> – Abstract plugin base class that extends PF4J&#8217;s <code>Plugin</code> class and implements the <code>IDBPluginContext</code> interface. Plugins must extend this class and implement lifecycle methods.</p>
+</li>
+<li>
+<p><strong>DBPluginContext</strong> – Plugin context object that contains a database connection, a logger, and the Javalin application instance. The plugin manager injects this context before the plugin starts.</p>
+</li>
+<li>
+<p><strong>DBPluginManager</strong> – Custom plugin manager responsible for loading, starting, stopping, and unloading plugins. It uses a custom <code>DBPluginFactory</code> to ensure the context is automatically injected when a plugin is created.</p>
+</li>
+<li>
+<p><strong>DBPluginFactory</strong> – Custom plugin factory that, after creating a plugin instance, checks whether the plugin implements <code>IDBPluginContext</code> and, if so, injects the <code>DBPluginContext</code>.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Plugin lifecycle:
+1. <strong>Load</strong> – When the server starts, it scans the configured plugin directory (<code>plugins_dir</code>) and loads all JAR packages that conform to the PF4J specification.
+2. <strong>Create</strong> – The plugin instance is created via <code>DBPluginFactory</code>, and the <code>DBPluginContext</code> is injected.
+3. <strong>Start</strong> – The plugin&#8217;s <code>start()</code> method is called, which executes <code>beforeStart()</code>, <code>onStart()</code>, and <code>afterStart()</code> in order.
+4. <strong>Run</strong> – The plugin executes its custom logic in <code>onStart()</code>, e.g., registering Javalin routes, initializing database tables, etc.
+5. <strong>Stop</strong> – When the server shuts down, the plugin&#8217;s <code>stop()</code> method is called, executing <code>beforeStop()</code>, <code>onStop()</code>, and <code>afterStop()</code>.
+6. <strong>Delete</strong> – When a plugin is unloaded, its <code>delete()</code> method is called, executing <code>beforeDelete()</code>, <code>onDelete()</code>, and <code>afterDelete()</code>.</p>
+</div>
+<div class="paragraph">
+<p>Plugins can access the following resources:
+* <strong>Database connection</strong> – Obtain a new connection to the backend database via <code>getDbConnection()</code> (created via <code>DuckDBConnection.duplicate()</code>).
+* <strong>Logger</strong> – Obtain a configured SLF4J logger via <code>getLogger()</code>.
+* <strong>Web application instance</strong> – Obtain the Javalin application instance via <code>getJavalinApp()</code>, which can be used to register HTTP routes and middleware.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_how_to_write_a_plugin">How to Write a Plugin</h4>
+<div class="paragraph">
+<p>The following steps are based on the <code>plugin‑example</code> module and demonstrate how to write a SlackerDB plugin.</p>
+</div>
+<div class="sect4">
+<h5 id="_1_create_a_maven_project">1. Create a Maven Project</h5>
+<div class="paragraph">
+<p>The plugin project needs to depend on the <code>slackerdb‑plugin</code> module. Add the following dependency to your <code>pom.xml</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="xml"><span style="color:#070;font-weight:bold">&lt;dependency&gt;</span>
+    <span style="color:#070;font-weight:bold">&lt;groupId&gt;</span>org.slackerdb<span style="color:#070;font-weight:bold">&lt;/groupId&gt;</span>
+    <span style="color:#070;font-weight:bold">&lt;artifactId&gt;</span>slackerdb-plugin<span style="color:#070;font-weight:bold">&lt;/artifactId&gt;</span>
+    <span style="color:#070;font-weight:bold">&lt;version&gt;</span>0.1.9<span style="color:#070;font-weight:bold">&lt;/version&gt;</span>
+    <span style="color:#070;font-weight:bold">&lt;scope&gt;</span>provided<span style="color:#070;font-weight:bold">&lt;/scope&gt;</span>
+<span style="color:#070;font-weight:bold">&lt;/dependency&gt;</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The PF4J core library is also required (usually already a transitive dependency of <code>slackerdb‑plugin</code>).</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_2_implement_the_plugin_main_class">2. Implement the Plugin Main Class</h5>
+<div class="paragraph">
+<p>Create a class that extends <code>DBPlugin</code> and implements the necessary lifecycle methods. Example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="java"><span style="color:#080;font-weight:bold">package</span> <span style="color:#707;font-weight:bold">org.slackerdb.myplugin</span>;
+
+<span style="color:#080;font-weight:bold">import</span> <span style="color:#B44;font-weight:bold">io.javalin.Javalin</span>;
+<span style="color:#080;font-weight:bold">import</span> <span style="color:#B44;font-weight:bold">org.pf4j.PluginWrapper</span>;
+<span style="color:#080;font-weight:bold">import</span> <span style="color:#B44;font-weight:bold">org.slackerdb.plugin.DBPlugin</span>;
+<span style="color:#080;font-weight:bold">import</span> <span style="color:#B44;font-weight:bold">org.slf4j.Logger</span>;
+
+<span style="color:#080;font-weight:bold">import</span> <span style="color:#B44;font-weight:bold">java.sql.Connection</span>;
+<span style="color:#080;font-weight:bold">import</span> <span style="color:#B44;font-weight:bold">java.sql.SQLException</span>;
+
+<span style="color:#088;font-weight:bold">public</span> <span style="color:#339;font-weight:bold">class</span> <span style="color:#B06;font-weight:bold">MyPlugin</span> <span style="color:#088;font-weight:bold">extends</span> DBPlugin {
+    <span style="color:#088;font-weight:bold">private</span> <span style="color:#0a8;font-weight:bold">Connection</span> conn;
+    <span style="color:#088;font-weight:bold">private</span> Javalin app;
+    <span style="color:#088;font-weight:bold">private</span> <span style="color:#0a8;font-weight:bold">Logger</span> logger;
+
+    <span style="color:#088;font-weight:bold">protected</span> MyPlugin(PluginWrapper wrapper) {
+        <span style="color:#950">super</span>(wrapper);
+    }
+
+    <span style="color:#007">@Override</span>
+    <span style="color:#088;font-weight:bold">protected</span> <span style="color:#339;font-weight:bold">void</span> onStart() {
+        <span style="color:#777">// Obtain resources</span>
+        <span style="color:#080;font-weight:bold">try</span> {
+            <span style="color:#950">this</span>.conn = getDbConnection();
+        } <span style="color:#080;font-weight:bold">catch</span> (<span style="color:#C00;font-weight:bold">SQLException</span> e) {
+            <span style="color:#777">// Handle exception</span>
+        }
+        <span style="color:#950">this</span>.logger = getLogger();
+        <span style="color:#950">this</span>.app = getJavalinApp();
+
+        <span style="color:#777">// Register a custom HTTP endpoint</span>
+        app.get(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">/myplugin/hello</span><span style="color:#710">&quot;</span></span>, ctx -&gt; {
+            ctx.result(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">Hello from MyPlugin!</span><span style="color:#710">&quot;</span></span>);
+        });
+
+        <span style="color:#777">// Initialize a database table</span>
+        <span style="color:#080;font-weight:bold">try</span> (<span style="color:#339;font-weight:bold">var</span> stmt = conn.createStatement()) {
+            stmt.execute(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">CREATE TABLE IF NOT EXISTS myplugin_data (id INTEGER, name VARCHAR)</span><span style="color:#710">&quot;</span></span>);
+        } <span style="color:#080;font-weight:bold">catch</span> (<span style="color:#C00;font-weight:bold">SQLException</span> e) {
+            logger.error(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">Failed to create table</span><span style="color:#710">&quot;</span></span>, e);
+        }
+
+        logger.info(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">MyPlugin started successfully</span><span style="color:#710">&quot;</span></span>);
+    }
+
+    <span style="color:#007">@Override</span>
+    <span style="color:#088;font-weight:bold">protected</span> <span style="color:#339;font-weight:bold">void</span> onStop() {
+        <span style="color:#777">// Clean up resources</span>
+        <span style="color:#080;font-weight:bold">if</span> (conn != <span style="color:#069">null</span>) {
+            <span style="color:#080;font-weight:bold">try</span> { conn.close(); } <span style="color:#080;font-weight:bold">catch</span> (<span style="color:#C00;font-weight:bold">SQLException</span> ignored) {}
+        }
+        logger.info(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">MyPlugin stopped</span><span style="color:#710">&quot;</span></span>);
+    }
+
+    <span style="color:#777">// Optional: override other lifecycle hook methods</span>
+    <span style="color:#777">// beforeStart, afterStart, beforeStop, afterStop, beforeDelete, afterDelete</span>
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_3_configure_the_plugin_descriptor_file">3. Configure the Plugin Descriptor File</h5>
+<div class="paragraph">
+<p>Create a <code>plugin.properties</code> file in the <code>src/main/resources</code> directory with the following content:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="properties"># Plugin unique identifier, must match the plugin JAR filename (without extension)
+plugin.id=myplugin
+
+# Fully qualified name of the plugin main class, must extend org.slackerdb.plugin.DBPlugin
+plugin.class=org.slackerdb.myplugin.MyPlugin
+
+# Plugin version number, follows semantic versioning
+plugin.version=1.0.0
+
+# Plugin dependency requirement, * means no specific dependency
+plugin.requires=*</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_4_build_the_plugin">4. Build the Plugin</h5>
+<div class="paragraph">
+<p>Package the plugin with Maven:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="bash">mvn clean package</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The resulting JAR file (e.g., <code>myplugin‑1.0.0.jar</code>) should contain the plugin class and the <code>plugin.properties</code> file.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_5_deploy_the_plugin">5. Deploy the Plugin</h5>
+<div class="paragraph">
+<p>Place the plugin JAR file into the SlackerDB server&#8217;s plugin directory (specified by the <code>plugins_dir</code> parameter in the configuration file, default is <code>$HOME/.slackerdb/plugins</code>). Ensure the directory exists and the server has read permission.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_6_start_the_server">6. Start the Server</h5>
+<div class="paragraph">
+<p>Start the SlackerDB server; the plugin will be loaded and started automatically. Check the server logs to confirm successful plugin loading:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code>[SERVER][PLUGIN     ] Load plugin [myplugin] ...
+[SERVER][PLUGIN     ] start plugin [myplugin] ...</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>If the plugin registered an HTTP endpoint, you can access it at <code><a href="http://localhost:&lt;port_x&gt;/myplugin/hello" class="bare">http://localhost:&lt;port_x&gt;/myplugin/hello</a></code> (assuming the management port <code>port_x</code> is enabled).</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_7_debugging_plugins">7. Debugging Plugins</h5>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Logging</strong> – Plugins can output logs via <code>getLogger()</code>; the log level is controlled by the server&#8217;s <code>log_level</code> configuration.</p>
+</li>
+<li>
+<p><strong>Error handling</strong> – Exceptions in plugin lifecycle methods are caught and wrapped as <code>RuntimeException</code>, causing the plugin to fail to start. Error messages are recorded in the server log.</p>
+</li>
+<li>
+<p><strong>Hot reload</strong> – Hot reloading is not currently supported; you must restart the server after modifying a plugin.</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_plugin_example">Plugin Example</h4>
+<div class="paragraph">
+<p>The <code>plugin‑example</code> module in the project provides a complete plugin example that demonstrates the basic structure and resource access methods. Developers can refer to this example to get started quickly.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_notes">Notes</h4>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p><strong>Thread safety</strong> – The plugin instance is a singleton during the server&#8217;s lifetime; ensure that methods like <code>onStart()</code> are thread‑safe.</p>
+</li>
+<li>
+<p><strong>Resource management</strong> – Database connections obtained via <code>getDbConnection()</code> must be managed by the plugin and closed when the plugin stops.</p>
+</li>
+<li>
+<p><strong>Dependency conflicts</strong> – Avoid introducing library versions that conflict with server dependencies; it is recommended to use the <code>provided</code> scope for libraries already provided by the server.</p>
+</li>
+<li>
+<p><strong>Performance impact</strong> – Plugin execution consumes server resources; avoid performing long‑blocking operations in plugins.</p>
+</li>
+</ol>
+</div>
+</div>
+</div>
+<div class="sect2">
 <h3 id="_roadmap">Roadmap</h3>
 <div class="paragraph">
 <p>…</p>
@@ -2351,7 +2583,7 @@ support this.</p>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2025-12-16 11:21:58 +0800
+Last updated 2025-12-19 00:33:38 +0800
 </div>
 </div>
 <script>

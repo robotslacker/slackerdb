@@ -1,6 +1,7 @@
 package org.slackerdb.common.utils;
 
 import org.apache.commons.io.FileUtils;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.core.io.support.ResourcePatternResolver;
@@ -53,19 +54,44 @@ public class ClassUtil {
                 final URL url = resource.getURL();
                 String path = url.toString();
                 if (!path.endsWith("/")) {
-                    String canonicalPath = path.replace(resourceBasePath, "");
-                    File targetFile = Paths.get(toDir.toString(), canonicalPath).toFile();
-                    if (!targetFile.getParentFile().exists())
-                    {
-                        FileUtils.forceMkdir(targetFile.getParentFile());
+                    String relativePath;
+                    if (resource instanceof ClassPathResource) {
+                        // 使用 ClassPathResource 提供的路径，该路径是类路径内的相对路径
+                        relativePath = ((ClassPathResource) resource).getPath();
+                    } else {
+                        // 回退到基于 resourceBasePath 的提取
+                        String canonicalPath = path.replace(resourceBasePath, "");
+                        // 如果替换未改变路径，说明不匹配，尝试从 URL 路径中提取
+                        if (canonicalPath.equals(path)) {
+                            // 尝试从 jar:file:...!/ 中提取路径
+                            if (path.startsWith("jar:file:")) {
+                                int bang = path.indexOf("!/");
+                                if (bang != -1) {
+                                    relativePath = path.substring(bang + 2);
+                                } else {
+                                    relativePath = resource.getFilename();
+                                }
+                            } else {
+                                relativePath = resource.getFilename();
+                            }
+                        } else {
+                            relativePath = canonicalPath;
+                        }
                     }
+                    // 确保相对路径是规范的（去除前导斜杠）
+                    if (relativePath != null && relativePath.startsWith("/")) {
+                        relativePath = relativePath.substring(1);
+                    }
+                    File targetFile = Paths.get(toDir.toString(), relativePath).toFile();
                     long len = resource.contentLength();
-                    if (!targetFile.exists() || targetFile.length() != len) {
-                        // Only copy new files
+                    if (!targetFile.exists() || targetFile.length() != len)
+                    {
                         FileUtils.copyURLToFile(url, targetFile);
                     }
-                    else
-                    {
+                    else {
+                        if (!targetFile.getParentFile().exists()) {
+                            FileUtils.forceMkdir(targetFile.getParentFile());
+                        }
                         CRC32 targetCRC32 = new CRC32();
                         try (FileInputStream fis = new FileInputStream(targetFile)) {
                             byte[] byteArray = new byte[1024];
@@ -84,8 +110,7 @@ public class ClassUtil {
                                 source32.update(buffer, 0, bytesRead);
                             }
                         }
-                        if (source32.getValue() != targetCRC32.getValue())
-                        {
+                        if (source32.getValue() != targetCRC32.getValue()) {
                             FileUtils.copyURLToFile(url, targetFile);
                         }
                     }

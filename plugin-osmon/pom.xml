@@ -9,7 +9,7 @@
     </properties>
 
     <groupId>org.robotslacker</groupId>
-    <artifactId>slackerdb-plugin-example</artifactId>
+    <artifactId>slackerdb-plugin-osmon</artifactId>
     <version>0.1.9</version>
     <packaging>jar</packaging>
 
@@ -62,6 +62,13 @@
             <artifactId>slackerdb-plugin</artifactId>
             <version>0.1.9</version>
             <scope>provided</scope>
+        </dependency>
+
+        <!-- 系统监控信息库 -->
+        <dependency>
+            <groupId>com.github.oshi</groupId>
+            <artifactId>oshi-core</artifactId>
+            <version>6.9.1</version>
         </dependency>
     </dependencies>
 

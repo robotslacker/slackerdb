@@ -144,7 +144,7 @@
             <directory>${project.basedir}/../plugin-example/target</directory>
             <outputDirectory>source</outputDirectory>
             <includes>
-                <include>slackerdb-plugin-*-example-sources.jar</include>
+                <include>slackerdb-plugin-example-*-sources.jar</include>
             </includes>
         </fileSet>
     </fileSets>
