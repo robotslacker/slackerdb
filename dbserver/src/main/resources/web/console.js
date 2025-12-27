@@ -486,7 +486,7 @@
             });
         });
 
-        // Function to switch main view between Console, Data Service, MCP Tool, and MCP Resource
+        // Function to switch main view between Console, Data Service, MCP Tool, MCP Resource, MCP Service, and AI Chat
         function switchMainView(panelId) {
             const outputEl = document.getElementById('output');
             const inputLine = document.querySelector('.input-line');
@@ -494,6 +494,8 @@
             const dataServiceMain = document.getElementById('data-service-main');
             const mcpToolMain = document.getElementById('mcp-tool-main');
             const mcpResourceMain = document.getElementById('mcp-resource-main');
+            const mcpServiceMain = document.getElementById('mcp-service-main');
+            const aiChatMain = document.getElementById('ai-chat-main');
             // Hide all main views first
             outputEl.style.display = 'none';
             inputLine.style.display = 'none';
@@ -501,6 +503,8 @@
             dataServiceMain.style.display = 'none';
             mcpToolMain.style.display = 'none';
             mcpResourceMain.style.display = 'none';
+            if (mcpServiceMain) mcpServiceMain.style.display = 'none';
+            if (aiChatMain) aiChatMain.style.display = 'none';
             if (panelId === 'console') {
                 // Show SQL console elements
                 outputEl.style.display = 'block';
@@ -525,6 +529,20 @@
                 mcpResourceMain.style.display = 'block';
                 // Load MCP Resource list if not already loaded
                 loadMCPResourceList();
+            } else if (panelId === 'mcp-service') {
+                // Show MCP Service elements
+                if (mcpServiceMain) {
+                    mcpServiceMain.style.display = 'block';
+                    // Load MCP Service list if not already loaded
+                    loadMCPServiceList();
+                }
+            } else if (panelId === 'ai-chat') {
+                // Show AI Chat elements
+                if (aiChatMain) {
+                    aiChatMain.style.display = 'block';
+                    // Initialize AI Chat if not already initialized
+                    initAIChat();
+                }
             }
         }
 
@@ -2352,3 +2370,661 @@
                 mcpResourceSubmitBtn.disabled = false;
             });
         });
+
+        // ==================== MCP Service Management ====================
+        // Global state for selected MCP services
+        let selectedMCPServices = new Set(); // stores service names
+
+        // Load MCP Service list from API
+        function loadMCPServiceList() {
+            const tbody = document.getElementById('mcpServiceTableBody');
+            const messageEl = document.getElementById('mcpServiceListMessage');
+            const countEl = document.getElementById('mcpServiceCount');
+            tbody.innerHTML = '';
+            messageEl.textContent = 'Loading MCP Services...';
+            // Use JSON-RPC endpoint /jsonrpc with method "services/list"
+            fetch('/jsonrpc', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: 1,
+                    method: 'services/list',
+                    params: {}
+                })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        messageEl.textContent = 'Error: ' + data.error.message;
+                        return;
+                    }
+                    const services = data.result.services || [];
+                    if (services.length === 0) {
+                        messageEl.textContent = 'No MCP services found.';
+                        countEl.textContent = '0 services';
+                        return;
+                    }
+                    messageEl.textContent = '';
+                    services.forEach(service => {
+                        const row = document.createElement('tr');
+                        row.dataset.serviceName = service.name;
+                        // Checkbox cell
+                        const checkboxCell = document.createElement('td');
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.className = 'mcp-service-checkbox';
+                        checkbox.dataset.serviceName = service.name;
+                        checkbox.addEventListener('change', (e) => {
+                            const checked = e.target.checked;
+                            if (checked) {
+                                selectedMCPServices.add(service.name);
+                            } else {
+                                selectedMCPServices.delete(service.name);
+                            }
+                            updateSelectAllMCPServiceCheckbox();
+                        });
+                        checkboxCell.appendChild(checkbox);
+                        row.appendChild(checkboxCell);
+                        // Service Name
+                        const nameCell = document.createElement('td');
+                        nameCell.textContent = service.name;
+                        row.appendChild(nameCell);
+                        // Description
+                        const descCell = document.createElement('td');
+                        descCell.textContent = service.description || '';
+                        row.appendChild(descCell);
+                        // Category
+                        const categoryCell = document.createElement('td');
+                        categoryCell.textContent = service.category || '';
+                        row.appendChild(categoryCell);
+                        // Capabilities
+                        const capabilitiesCell = document.createElement('td');
+                        capabilitiesCell.textContent = service.capabilities ? JSON.stringify(service.capabilities) : '';
+                        row.appendChild(capabilitiesCell);
+                        // Use Cases
+                        const useCasesCell = document.createElement('td');
+                        useCasesCell.textContent = service.use_cases ? JSON.stringify(service.use_cases) : '';
+                        row.appendChild(useCasesCell);
+                        // Parameters
+                        const parametersCell = document.createElement('td');
+                        parametersCell.textContent = service.parameters ? JSON.stringify(service.parameters) : '';
+                        row.appendChild(parametersCell);
+                        // Examples
+                        const examplesCell = document.createElement('td');
+                        examplesCell.textContent = service.examples ? JSON.stringify(service.examples) : '';
+                        row.appendChild(examplesCell);
+                        tbody.appendChild(row);
+                    });
+                    countEl.textContent = `${services.length} service(s)`;
+                    updateSelectAllMCPServiceCheckbox();
+                })
+                .catch(err => {
+                    console.error('Error loading MCP services:', err);
+                    messageEl.textContent = 'Error loading MCP services: ' + err.message;
+                });
+        }
+
+        // Update "Select All" checkbox state for MCP services
+        function updateSelectAllMCPServiceCheckbox() {
+            const selectAll = document.getElementById('selectAllMCPServiceCheckbox');
+            const checkboxes = document.querySelectorAll('.mcp-service-checkbox');
+            if (checkboxes.length === 0) {
+                selectAll.checked = false;
+                selectAll.indeterminate = false;
+                return;
+            }
+            const checkedCount = Array.from(checkboxes).filter(cb => cb.checked).length;
+            if (checkedCount === 0) {
+                selectAll.checked = false;
+                selectAll.indeterminate = false;
+            } else if (checkedCount === checkboxes.length) {
+                selectAll.checked = true;
+                selectAll.indeterminate = false;
+            } else {
+                selectAll.checked = false;
+                selectAll.indeterminate = true;
+            }
+        }
+
+        // Select all / deselect all for MCP services
+        document.getElementById('selectAllMCPServiceCheckbox').addEventListener('change', function(e) {
+            const checked = e.target.checked;
+            const checkboxes = document.querySelectorAll('.mcp-service-checkbox');
+            selectedMCPServices.clear();
+            checkboxes.forEach(cb => {
+                cb.checked = checked;
+                if (checked) {
+                    selectedMCPServices.add(cb.dataset.serviceName);
+                }
+            });
+        });
+
+        // Load MCP Service button
+        document.getElementById('loadMCPServiceBtn').addEventListener('click', function() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json,.service';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const content = event.target.result;
+                    fetch('/mcp/loadMCPService', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: content
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.retCode === 0) {
+                            output('MCP Services loaded successfully.', 'success');
+                            loadMCPServiceList();
+                        } else {
+                            output('Failed to load MCP Services: ' + data.retMsg, 'error');
+                        }
+                    })
+                    .catch(err => {
+                        output('Error loading MCP Services: ' + err.message, 'error');
+                    });
+                };
+                reader.readAsText(file);
+            };
+            input.click();
+        });
+
+        // Save MCP Service button
+        document.getElementById('saveMCPServiceBtn').addEventListener('click', function() {
+            output('Saving MCP Services to file...', 'message');
+            fetch('/mcp/saveMCPService', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.retCode === 0) {
+                    output('MCP Services saved successfully. Saved path: ' + (data.savedPath || 'unknown'), 'success');
+                    showToast('Save successful');
+                } else {
+                    output('Failed to save MCP Services: ' + data.retMsg, 'error');
+                    showToast('Save failed: ' + data.retMsg, true);
+                }
+            })
+            .catch(err => {
+                output('Error saving MCP Services: ' + err.message, 'error');
+                showToast('Save error: ' + err.message, true);
+            });
+        });
+
+        // Download MCP Service button
+        document.getElementById('downloadMCPServiceBtn').addEventListener('click', function() {
+            output('Downloading MCP Services as JSON file...', 'message');
+            fetch('/mcp/dumpMCPService', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            })
+                .then(response => {
+                    if (!response.ok) throw new Error('Download failed: ' + response.status);
+                    return response.blob();
+                })
+                .then(blob => {
+                    // Use file picker dialog (or fallback)
+                    saveFileWithPicker(blob, 'mcp_services.json')
+                        .then(() => {
+                            // Success: no message displayed
+                        })
+                        .catch(err => {
+                            output('Error saving file: ' + err.message, 'error');
+                        });
+                })
+                .catch(err => {
+                    output('Error downloading MCP Services: ' + err.message, 'error');
+                });
+        });
+
+        // Register MCP Service button (open modal)
+        document.getElementById('registerMCPServiceBtn').addEventListener('click', function() {
+            openMCPServiceModal();
+        });
+
+        // Unregister MCP Service button
+        document.getElementById('unregisterMCPServiceBtn').addEventListener('click', function() {
+            if (selectedMCPServices.size === 0) {
+                output('No MCP service selected.', 'error');
+                showToast('No MCP service selected', true);
+                return;
+            }
+            if (!confirm(`Are you sure you want to unregister ${selectedMCPServices.size} MCP service(s)?`)) {
+                return;
+            }
+            const promises = [];
+            selectedMCPServices.forEach(serviceName => {
+                promises.push(
+                    fetch('/mcp/unregisterMCPService', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: serviceName })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.retCode !== 0) {
+                            throw new Error(`Failed to unregister ${serviceName}: ${data.retMsg}`);
+                        }
+                    })
+                );
+            });
+            Promise.all(promises)
+                .then(() => {
+                    output(`Successfully unregistered ${selectedMCPServices.size} MCP service(s).`, 'success');
+                    showToast(`Successfully unregistered ${selectedMCPServices.size} MCP service(s)`);
+                    selectedMCPServices.clear();
+                    loadMCPServiceList();
+                })
+                .catch(err => {
+                    output('Error during unregister: ' + err.message, 'error');
+                });
+        });
+
+        // Load MCP Service list when panel becomes active
+        const mcpServiceBtn = document.querySelector('.sidebar-btn[data-panel="mcp-service"]');
+        if (mcpServiceBtn) {
+            mcpServiceBtn.addEventListener('click', () => {
+                setTimeout(loadMCPServiceList, 100);
+            });
+        }
+
+        // ==================== MCP Service Registration Modal ====================
+        const mcpServiceModalOverlay = document.createElement('div');
+        mcpServiceModalOverlay.className = 'backup-modal-overlay'; // reuse same styling
+        mcpServiceModalOverlay.innerHTML = `
+            <div class="backup-modal">
+                <div class="backup-modal-header">
+                    <h2>Register New MCP Service</h2>
+                    <button class="backup-modal-close" title="Close">×</button>
+                </div>
+                <div class="backup-modal-content">
+                    <div class="backup-input-group">
+                        <label for="mcpServiceName">Service Name *</label>
+                        <input type="text" id="mcpServiceName" placeholder="e.g., weather_service" maxlength="100">
+                    </div>
+                    <div class="backup-input-group">
+                        <label for="mcpServiceDescription">Description *</label>
+                        <textarea id="mcpServiceDescription" rows="2" placeholder="Description of the service" style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
+                    </div>
+                    <div class="backup-input-group">
+                        <label for="mcpServiceCategory">Category (optional)</label>
+                        <input type="text" id="mcpServiceCategory" placeholder="e.g., weather" maxlength="100">
+                    </div>
+                    <div class="backup-input-group">
+                        <label for="mcpServiceCapabilities">Capabilities (JSON array of strings) *</label>
+                        <textarea id="mcpServiceCapabilities" rows="2" placeholder='["获取实时数据", "按条件过滤"]' style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
+                    </div>
+                    <div class="backup-input-group">
+                        <label for="mcpServiceUseCases">Use Cases (JSON array of strings) *</label>
+                        <textarea id="mcpServiceUseCases" rows="2" placeholder='["用户想知道天气情况", "用户需要出行建议"]' style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
+                    </div>
+                    <div class="backup-input-group">
+                        <label for="mcpServiceParameters">Parameters (JSON array of objects) *</label>
+                        <textarea id="mcpServiceParameters" rows="4" placeholder='[{"name": "city", "type": "string", "required": true, "description": "城市名称"}]' style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
+                    </div>
+                    <div class="backup-input-group">
+                        <label for="mcpServiceExamples">Examples (JSON array of objects) *</label>
+                        <textarea id="mcpServiceExamples" rows="4" placeholder='[{"user_query": "北京的天气如何？", "parameters": {"city": "北京"}}]' style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
+                    </div>
+                    <div class="backup-status" id="mcpServiceStatus"></div>
+                    <div class="backup-actions">
+                        <button class="backup-btn" id="mcpServiceSubmitBtn">Register</button>
+                        <button class="backup-btn cancel" id="mcpServiceCancelBtn">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(mcpServiceModalOverlay);
+
+        const mcpServiceModalCloseBtn = mcpServiceModalOverlay.querySelector('.backup-modal-close');
+        const mcpServiceCancelBtn = mcpServiceModalOverlay.querySelector('#mcpServiceCancelBtn');
+        const mcpServiceSubmitBtn = mcpServiceModalOverlay.querySelector('#mcpServiceSubmitBtn');
+        const mcpServiceStatus = mcpServiceModalOverlay.querySelector('#mcpServiceStatus');
+
+        // Close modal
+        mcpServiceModalCloseBtn.addEventListener('click', () => {
+            mcpServiceModalOverlay.classList.remove('active');
+        });
+        mcpServiceCancelBtn.addEventListener('click', () => {
+            mcpServiceModalOverlay.classList.remove('active');
+        });
+        mcpServiceModalOverlay.addEventListener('click', (e) => {
+            if (e.target === mcpServiceModalOverlay) {
+                mcpServiceModalOverlay.classList.remove('active');
+            }
+        });
+
+        // Function to open MCP Service registration modal
+        function openMCPServiceModal() {
+            mcpServiceModalOverlay.classList.add('active');
+            // Clear previous inputs
+            document.getElementById('mcpServiceName').value = '';
+            document.getElementById('mcpServiceDescription').value = '';
+            document.getElementById('mcpServiceCategory').value = '';
+            document.getElementById('mcpServiceCapabilities').value = '';
+            document.getElementById('mcpServiceUseCases').value = '';
+            document.getElementById('mcpServiceParameters').value = '';
+            document.getElementById('mcpServiceExamples').value = '';
+            mcpServiceStatus.textContent = '';
+            // Focus first input
+            setTimeout(() => {
+                document.getElementById('mcpServiceName').focus();
+            }, 10);
+        }
+
+        // Submit registration
+        mcpServiceSubmitBtn.addEventListener('click', () => {
+            const name = document.getElementById('mcpServiceName').value.trim();
+            const description = document.getElementById('mcpServiceDescription').value.trim();
+            const category = document.getElementById('mcpServiceCategory').value.trim();
+            const capabilitiesStr = document.getElementById('mcpServiceCapabilities').value.trim();
+            const useCasesStr = document.getElementById('mcpServiceUseCases').value.trim();
+            const parametersStr = document.getElementById('mcpServiceParameters').value.trim();
+            const examplesStr = document.getElementById('mcpServiceExamples').value.trim();
+
+            if (!name || !description || !capabilitiesStr || !useCasesStr || !parametersStr || !examplesStr) {
+                mcpServiceStatus.textContent = 'Please fill in required fields (Name, Description, Capabilities, Use Cases, Parameters, Examples).';
+                mcpServiceStatus.style.color = '#ff6b6b';
+                return;
+            }
+
+            // Validate capabilities JSON (array of strings)
+            let capabilities;
+            try {
+                capabilities = JSON.parse(capabilitiesStr);
+                if (!Array.isArray(capabilities) || !capabilities.every(item => typeof item === 'string')) {
+                    throw new Error('Capabilities must be a JSON array of strings');
+                }
+            } catch (e) {
+                mcpServiceStatus.textContent = 'Invalid capabilities JSON: ' + e.message;
+                mcpServiceStatus.style.color = '#ff6b6b';
+                return;
+            }
+
+            // Validate use_cases JSON (array of strings)
+            let use_cases;
+            try {
+                use_cases = JSON.parse(useCasesStr);
+                if (!Array.isArray(use_cases) || !use_cases.every(item => typeof item === 'string')) {
+                    throw new Error('Use Cases must be a JSON array of strings');
+                }
+            } catch (e) {
+                mcpServiceStatus.textContent = 'Invalid use cases JSON: ' + e.message;
+                mcpServiceStatus.style.color = '#ff6b6b';
+                return;
+            }
+
+            // Validate parameters JSON (array of objects)
+            let parameters;
+            try {
+                parameters = JSON.parse(parametersStr);
+                if (!Array.isArray(parameters) || !parameters.every(item => typeof item === 'object' && item !== null)) {
+                    throw new Error('Parameters must be a JSON array of objects');
+                }
+            } catch (e) {
+                mcpServiceStatus.textContent = 'Invalid parameters JSON: ' + e.message;
+                mcpServiceStatus.style.color = '#ff6b6b';
+                return;
+            }
+
+            // Validate examples JSON (array of objects)
+            let examples;
+            try {
+                examples = JSON.parse(examplesStr);
+                if (!Array.isArray(examples) || !examples.every(item => typeof item === 'object' && item !== null)) {
+                    throw new Error('Examples must be a JSON array of objects');
+                }
+            } catch (e) {
+                mcpServiceStatus.textContent = 'Invalid examples JSON: ' + e.message;
+                mcpServiceStatus.style.color = '#ff6b6b';
+                return;
+            }
+
+            // Build service definition object
+            const serviceDef = {
+                name,
+                description,
+                category: category || '',
+                capabilities,
+                use_cases,
+                parameters,
+                examples
+            };
+
+            mcpServiceStatus.textContent = 'Registering...';
+            mcpServiceStatus.style.color = '#4fc3f7';
+            mcpServiceSubmitBtn.disabled = true;
+
+            fetch('/mcp/registerMCPService', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(serviceDef)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.retCode === 0) {
+                    mcpServiceStatus.textContent = 'MCP Service registered successfully.';
+                    mcpServiceStatus.style.color = '#66bb6a';
+                    setTimeout(() => {
+                        mcpServiceModalOverlay.classList.remove('active');
+                        output('MCP Service registered successfully.', 'success');
+                        loadMCPServiceList();
+                    }, 1500);
+                } else {
+                    mcpServiceStatus.textContent = 'Registration failed: ' + data.retMsg;
+                    mcpServiceStatus.style.color = '#ff6b6b';
+                }
+            })
+            .catch(err => {
+                mcpServiceStatus.textContent = 'Error: ' + err.message;
+                mcpServiceStatus.style.color = '#ff6b6b';
+            })
+            .finally(() => {
+                mcpServiceSubmitBtn.disabled = false;
+            });
+        });
+
+        // ==================== AI Chat Management ====================
+        // Global state for AI Chat
+        let aiChatWs = null;
+        let aiChatConnected = false;
+        let aiChatMessages = [];
+
+        // Initialize AI Chat panel
+        function initAIChat() {
+            // Connect WebSocket if not already connected
+            if (!aiChatWs || aiChatWs.readyState !== WebSocket.OPEN) {
+                connectAIChatWebSocket();
+            }
+            // Load existing messages
+            renderAIChatMessages();
+            // Attach event listeners
+            attachAIChatEventListeners();
+        }
+
+        // Connect to AI Chat WebSocket
+        function connectAIChatWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/aichat`;
+            aiChatWs = new WebSocket(wsUrl);
+
+            aiChatWs.onopen = () => {
+                aiChatConnected = true;
+                updateAIChatStatus('Connected', true);
+                addAIChatMessage('system', 'Connected to AI Chat server.');
+                // Update button states
+                document.getElementById('aiChatConnectBtn').disabled = true;
+                document.getElementById('aiChatDisconnectBtn').disabled = false;
+            };
+
+            aiChatWs.onclose = () => {
+                aiChatConnected = false;
+                updateAIChatStatus('Disconnected', false);
+                addAIChatMessage('system', 'Disconnected from AI Chat server.');
+                // Update button states
+                document.getElementById('aiChatConnectBtn').disabled = false;
+                document.getElementById('aiChatDisconnectBtn').disabled = true;
+                // Attempt to reconnect after 3 seconds
+                setTimeout(connectAIChatWebSocket, 3000);
+            };
+
+            aiChatWs.onerror = (err) => {
+                console.error('AI Chat WebSocket error:', err);
+                updateAIChatStatus('Error', false);
+                addAIChatMessage('system', 'WebSocket error occurred.');
+            };
+
+            aiChatWs.onmessage = (event) => {
+                const data = event.data;
+                // Handle heartbeat "pong" response
+                if (data === 'pong' || data === '"pong"') {
+                    // Silently ignore, no need to log
+                    return;
+                }
+                try {
+                    const data = JSON.parse(event.data);
+                    handleAIChatMessage(data);
+                } catch (e) {
+                    console.error('Failed to parse AI Chat message:', e);
+                    addAIChatMessage('system', 'Error parsing server response.');
+                }
+            };
+        }
+
+        // Handle incoming AI Chat messages
+        function handleAIChatMessage(data) {
+            if (data.type === 'chat' || data.type === 'response') {
+                addAIChatMessage('assistant', data.content);
+            } else if (data.type === 'error') {
+                addAIChatMessage('error', data.content || 'Unknown error');
+            } else if (data.type === 'status') {
+                updateAIChatStatus(data.content, true);
+            }
+        }
+
+        // Update AI Chat status indicator
+        function updateAIChatStatus(status, isConnected) {
+            const statusText = document.getElementById('aiChatStatusText');
+            const statusIndicator = document.getElementById('aiChatStatusIndicator');
+            if (statusText) {
+                statusText.textContent = status;
+            }
+            if (statusIndicator) {
+                statusIndicator.className = 'status-indicator ' + (isConnected ? 'connected' : 'disconnected');
+            }
+        }
+
+        // Add a message to the chat
+        function addAIChatMessage(role, content) {
+            const timestamp = new Date().toLocaleTimeString();
+            aiChatMessages.push({ role, content, timestamp });
+            renderAIChatMessages();
+        }
+
+        // Render all chat messages
+        function renderAIChatMessages() {
+            const container = document.getElementById('aiChatMessages');
+            if (!container) return;
+            
+            container.innerHTML = '';
+            aiChatMessages.forEach(msg => {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = `message ${msg.role}`;
+                
+                const content = document.createElement('div');
+                content.className = 'message-content';
+                content.textContent = msg.content;
+                
+                const time = document.createElement('div');
+                time.className = 'message-time';
+                time.textContent = msg.timestamp;
+                
+                msgDiv.appendChild(content);
+                msgDiv.appendChild(time);
+                container.appendChild(msgDiv);
+            });
+            
+            // Scroll to bottom
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // Send a chat message
+        function sendAIChatMessage() {
+            const input = document.getElementById('aiChatInput');
+            const message = input.value.trim();
+            if (!message) return;
+            
+            if (!aiChatConnected || !aiChatWs || aiChatWs.readyState !== WebSocket.OPEN) {
+                addAIChatMessage('system', 'Not connected to AI Chat server.');
+                return;
+            }
+            
+            // Add user message to chat
+            addAIChatMessage('user', message);
+            
+            // Send to server
+            aiChatWs.send(JSON.stringify({
+                type: 'chat',
+                content: message
+            }));
+            
+            // Clear input
+            input.value = '';
+            input.focus();
+        }
+
+        // Clear chat history
+        function clearAIChat() {
+            if (aiChatMessages.length === 0) return;
+            
+            if (confirm('Clear all chat messages?')) {
+                aiChatMessages = [];
+                renderAIChatMessages();
+                addAIChatMessage('system', 'Chat cleared.');
+            }
+        }
+
+        // Attach event listeners for AI Chat controls
+        function attachAIChatEventListeners() {
+            const clearBtn = document.getElementById('aiChatClearBtn');
+            const connectBtn = document.getElementById('aiChatConnectBtn');
+            const disconnectBtn = document.getElementById('aiChatDisconnectBtn');
+            const input = document.getElementById('aiChatInput');
+
+            if (clearBtn) {
+                clearBtn.addEventListener('click', clearAIChat);
+            }
+
+            if (connectBtn) {
+                connectBtn.addEventListener('click', () => {
+                    if (!aiChatConnected) {
+                        connectAIChatWebSocket();
+                    }
+                });
+            }
+
+            if (disconnectBtn) {
+                disconnectBtn.addEventListener('click', () => {
+                    if (aiChatWs && aiChatWs.readyState === WebSocket.OPEN) {
+                        aiChatWs.close();
+                    }
+                });
+            }
+
+            if (input) {
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendAIChatMessage();
+                    }
+                });
+            }
+        }

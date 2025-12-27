@@ -22,7 +22,7 @@ allowing DuckDB to serve as a PostgreSQL database.
 [arabic]
 . Advanced features
 . Comprehensive data dictionary access support
-* You can use COPY syntax to import data with high performence, this
+* You can use COPY syntax to import data with high performance, this
 compatible with PG CopyManager.
 * Provides self-managed data services and API.
 * You have multiple ways to connect to this extension:
@@ -315,6 +315,117 @@ Database -> Driver Manager -> New
 
 *ODBC and Python*
 SlackerDB also supports ODBC and Python connections via the same PostgreSQL wire protocol. Refer to the respective client documentation for setup details.
+
+==== Basic Services
+The following HTTP endpoints provide basic administrative functions, such as backup, file upload/download, log viewing, and status monitoring. These endpoints are available when the Data Services API port (port_x) is enabled.
+
+===== /backup (POST)
+
+Performs a database backup. The backup file is saved in the `backup/` directory with the naming pattern `\{database\}_\{backupTag\}.db`.
+
+.Request body (JSON):
+[source,json]
+----
+{
+  "backupTag": "mybackup"
+}
+----
+
+.Response example (success):
+[source,json]
+----
+{
+  "retCode": 0,
+  "retMsg": "Successful. Backup file has placed to [C:\\Work\\slackerdb\\backup\\mydb_mybackup.db]."
+}
+----
+
+===== /download (GET)
+
+Downloads a file from the server's working directory.
+
+.Query parameters:
+* `filename` (required) – relative path to the file.
+
+.Example:
+ GET /download?filename=logs/slackerdb.log
+
+The endpoint supports Range requests for partial downloads.
+
+===== /upload (POST)
+
+Uploads a file to the server's working directory.
+
+.Query parameters:
+* `filename` (required) – target file path.
+
+.Form data:
+* `file` (required) – the file to upload.
+
+.Example using curl:
+[source,bash]
+----
+curl -X POST -F "file=@local.txt" "http://localhost:8080/upload?filename=uploads/remote.txt"
+----
+
+.Response:
+[source,json]
+----
+"uploaded: C:\\Work\\slackerdb\\uploads\\remote.txt"
+----
+
+===== /viewLog (GET)
+
+Retrieves the last N lines of a log file.
+
+.Query parameters:
+* `filename` (required) – path to the log file.
+* `lines` (optional) – number of lines to return (default 100, max 10000).
+
+.Example:
+ GET /viewLog?filename=logs/slackerdb.log&lines=50
+
+.Response (JSON array of strings):
+[source,json]
+----
+[
+  "2025-12-04 10:00:00 INFO  Server started",
+  "2025-12-04 10:00:01 INFO  Listening on port 8080"
+]
+----
+
+===== /status (GET)
+
+Returns comprehensive server status information, including server details, database metrics, configuration parameters, usage statistics, installed extensions, and active sessions.
+
+.Example:
+ GET /status
+
+.Response (abbreviated):
+[source,json]
+----
+{
+  "server": {
+    "status": "RUNNING",
+    "version": "0.1.9",
+    "build": "2025-12-04 10:00:00.000 UTC",
+    "pid": 12345,
+    "now": "2025-12-04 15:20:00",
+    "bootTime": "2025-12-04 10:00:00",
+    "runTime": "5 hours, 20 minutes, 0 seconds"
+  },
+  "database": {
+    "version": "v1.0.0",
+    "size": "1.2 GB",
+    "memoryUsage": "256 MB",
+    "walSize": "0 B"
+  },
+  "parameters": {},
+  "usage": {},
+  "extensions": [],
+  "sessions": []
+}
+----
 
 ==== Data Service
 
@@ -677,6 +788,531 @@ Success response (200)
   }
 ....
 
+==== MCP Tool
+
+MCP (Model Context Protocol) Tool provides a way to register, manage, and invoke tools through the MCP protocol. These tools can be used by AI assistants and other clients that support MCP to perform specific operations or queries.
+
+===== registerMCPTool
+
+Register an MCP tool.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/registerMCPTool+`
+|===
+
+request body:
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|Attribute |Value
+|name |tool name (required)
+
+|version |tool version (required)
+
+|description |tool description (required)
+
+|category |tool category (optional)
+
+|capabilities |list of capabilities (optional array)
+
+|use_cases |list of use cases (optional array)
+
+|parameters |list of parameters (optional array of objects with name, type, required, description)
+
+|examples |list of examples (optional array of objects with user_query, parameters)
+|===
+
+Request example:
+
+....
+  {
+    "name": "queryDatabase",
+    "version": "1.0",
+    "description": "Execute SQL queries on the database",
+    "category": "database",
+    "capabilities": ["query", "execute"],
+    "use_cases": ["data analysis", "report generation"],
+    "parameters": [
+      {
+        "name": "sql",
+        "type": "string",
+        "required": true,
+        "description": "SQL query to execute"
+      }
+    ],
+    "examples": [
+      {
+        "user_query": "Get all customers from the database",
+        "parameters": {"sql": "SELECT * FROM customers"}
+      }
+    ]
+  }
+....
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Tool registered successfully"
+  }
+....
+
+===== unregisterMCPTool
+
+Unregister an MCP tool.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/unregisterMCPTool+`
+|===
+
+request body:
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|Attribute |Value
+|name |tool name (required)
+|===
+
+Request example:
+
+....
+  {
+    "name": "queryDatabase"
+  }
+....
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Tool unregistered successfully"
+  }
+....
+
+===== loadMCPTool
+
+Load MCP tool definitions from JSON.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/loadMCPTool+`
+|===
+
+request body: JSON array of tool definitions or a single tool definition object.
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Tools loaded successfully"
+  }
+....
+
+===== saveMCPTool
+
+Save MCP tool definitions to configuration file.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/saveMCPTool+`
+|===
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Tools saved successfully",
+    "savedPath": "/path/to/config/file"
+  }
+....
+
+===== dumpMCPTool
+
+Dump MCP tool definitions as JSON for download.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/dumpMCPTool+`
+|===
+
+Response: JSON file download with Content-Disposition header.
+
+==== MCP Resource
+
+MCP (Model Context Protocol) Resource provides a way to register, manage, and access resources through the MCP protocol. These resources can be used by AI assistants and other clients that support MCP to access data, files, or other resources.
+
+===== registerMCPResource
+
+Register an MCP resource.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/registerMCPResource+`
+|===
+
+request body:
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|Attribute |Value
+|name |resource name (required)
+
+|type |resource type (required, e.g., "file", "database", "api")
+
+|description |resource description (required)
+
+|uri |resource URI or path (required)
+
+|metadata |additional metadata (optional object)
+
+|access_method |access method (optional, e.g., "read", "write", "both")
+|===
+
+Request example:
+
+....
+  {
+    "name": "customerData",
+    "type": "database",
+    "description": "Customer database table",
+    "uri": "duckdb://localhost/customers",
+    "metadata": {
+      "schema": "public",
+      "table": "customers"
+    },
+    "access_method": "read"
+  }
+....
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Resource registered successfully"
+  }
+....
+
+===== unregisterMCPResource
+
+Unregister an MCP resource.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/unregisterMCPResource+`
+|===
+
+request body:
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|Attribute |Value
+|name |resource name (required)
+|===
+
+Request example:
+
+....
+  {
+    "name": "customerData"
+  }
+....
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Resource unregistered successfully"
+  }
+....
+
+===== loadMCPResource
+
+Load MCP resource definitions from JSON.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/loadMCPResource+`
+|===
+
+request body: JSON array of resource definitions or a single resource definition object.
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Resources loaded successfully"
+  }
+....
+
+===== saveMCPResource
+
+Save MCP resource definitions to configuration file.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/saveMCPResource+`
+|===
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Resources saved successfully",
+    "savedPath": "/path/to/config/file"
+  }
+....
+
+===== dumpMCPResource
+
+Dump MCP resource definitions as JSON for download.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/dumpMCPResource+`
+|===
+
+Response: JSON file download with Content-Disposition header.
+
+==== MCP Service
+
+MCP (Model Context Protocol) Service provides a way to register, manage, and invoke services through the MCP protocol. These services can be used by AI assistants and other clients that support MCP.
+
+===== registerMCPService
+
+Register an MCP service.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/registerMCPService+`
+|===
+
+request body:
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|Attribute |Value
+|name |service name (required)
+
+|apiName |API name (required)
+
+|version |service version (required)
+
+|method |service method, GET/POST (required)
+
+|description |service description (required)
+
+|category |service category (optional)
+
+|capabilities |list of capabilities (optional array)
+
+|use_cases |list of use cases (optional array)
+
+|parameters |list of parameters (optional array of objects with name, type, required, description)
+
+|examples |list of examples (optional array of objects with user_query, parameters)
+|===
+
+Request example:
+
+....
+  {
+    "name": "queryCustomer",
+    "apiName": "queryCustomer",
+    "version": "1.0",
+    "method": "GET",
+    "description": "Query customer information",
+    "category": "database",
+    "capabilities": ["query", "filter"],
+    "use_cases": ["customer lookup", "data analysis"],
+    "parameters": [
+      {
+        "name": "customer_id",
+        "type": "integer",
+        "required": true,
+        "description": "Customer ID to query"
+      }
+    ],
+    "examples": [
+      {
+        "user_query": "Get customer with ID 123",
+        "parameters": {"customer_id": 123}
+      }
+    ]
+  }
+....
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Service registered successfully"
+  }
+....
+
+===== unregisterMCPService
+
+Unregister an MCP service.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/unregisterMCPService+`
+|===
+
+request body:
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|Attribute |Value
+|name |service name (required)
+|===
+
+Request example:
+
+....
+  {
+    "name": "queryCustomer"
+  }
+....
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Service unregistered successfully"
+  }
+....
+
+===== loadMCPService
+
+Load MCP service definitions from JSON.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/loadMCPService+`
+|===
+
+request body: JSON array of service definitions or a single service definition object.
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Services loaded successfully"
+  }
+....
+
+===== saveMCPService
+
+Save MCP service definitions to configuration file.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/saveMCPService+`
+|===
+
+Response example:
+
+....
+Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Services saved successfully",
+    "savedPath": "/path/to/config/file"
+  }
+....
+
+===== dumpMCPService
+
+Dump MCP service definitions as JSON for download.
+
+[cols=",",options="header",]
+|===
+|Attribute |Value
+|Protocol |HTTP
+|Method |POST
+|Path |`+/mcp/dumpMCPService+`
+|===
+
+Response: JSON file download with Content-Disposition header.
+
 ==== SQL REPL Server
 
 SQL REPL Server provides an asynchronous WebSocket interface for executing SQL queries and fetching results in pages.
@@ -946,116 +1582,6 @@ ws.send(JSON.stringify({
 
 *Note:* The examples above assume you handle incoming messages asynchronously. In a real client you would match responses by their `id`.
 
-==== Basic Services
-The following HTTP endpoints provide basic administrative functions, such as backup, file upload/download, log viewing, and status monitoring. These endpoints are available when the Data Services API port (port_x) is enabled.
-
-===== /backup (POST)
-
-Performs a database backup. The backup file is saved in the `backup/` directory with the naming pattern `\{database\}_\{backupTag\}.db`.
-
-.Request body (JSON):
-[source,json]
-----
-{
-  "backupTag": "mybackup"
-}
-----
-
-.Response example (success):
-[source,json]
-----
-{
-  "retCode": 0,
-  "retMsg": "Successful. Backup file has placed to [C:\\Work\\slackerdb\\backup\\mydb_mybackup.db]."
-}
-----
-
-===== /download (GET)
-
-Downloads a file from the server's working directory.
-
-.Query parameters:
-* `filename` (required) – relative path to the file.
-
-.Example:
- GET /download?filename=logs/slackerdb.log
-
-The endpoint supports Range requests for partial downloads.
-
-===== /upload (POST)
-
-Uploads a file to the server's working directory.
-
-.Query parameters:
-* `filename` (required) – target file path.
-
-.Form data:
-* `file` (required) – the file to upload.
-
-.Example using curl:
-[source,bash]
-----
-curl -X POST -F "file=@local.txt" "http://localhost:8080/upload?filename=uploads/remote.txt"
-----
-
-.Response:
-[source,json]
-----
-"uploaded: C:\\Work\\slackerdb\\uploads\\remote.txt"
-----
-
-===== /viewLog (GET)
-
-Retrieves the last N lines of a log file.
-
-.Query parameters:
-* `filename` (required) – path to the log file.
-* `lines` (optional) – number of lines to return (default 100, max 10000).
-
-.Example:
- GET /viewLog?filename=logs/slackerdb.log&lines=50
-
-.Response (JSON array of strings):
-[source,json]
-----
-[
-  "2025-12-04 10:00:00 INFO  Server started",
-  "2025-12-04 10:00:01 INFO  Listening on port 8080"
-]
-----
-
-===== /status (GET)
-
-Returns comprehensive server status information, including server details, database metrics, configuration parameters, usage statistics, installed extensions, and active sessions.
-
-.Example:
- GET /status
-
-.Response (abbreviated):
-[source,json]
-----
-{
-  "server": {
-    "status": "RUNNING",
-    "version": "0.1.9",
-    "build": "2025-12-04 10:00:00.000 UTC",
-    "pid": 12345,
-    "now": "2025-12-04 15:20:00",
-    "bootTime": "2025-12-04 10:00:00",
-    "runTime": "5 hours, 20 minutes, 0 seconds"
-  },
-  "database": {
-    "version": "v1.0.0",
-    "size": "1.2 GB",
-    "memoryUsage": "256 MB",
-    "walSize": "0 B"
-  },
-  "parameters": {},
-  "usage": {},
-  "extensions": [],
-  "sessions": []
-}
-----
 ==== Web-based SQL Console
 
 image::imgs/console.png[Console]
@@ -1248,9 +1774,7 @@ public class MyPlugin extends DBPlugin {
         this.app = getJavalinApp();
 
         // Register a custom HTTP endpoint
-        app.get("/myplugin/hello", ctx -> {
-            ctx.result("Hello from MyPlugin!");
-        });
+        app.get("/myplugin/hello", ctx -> ctx.result("Hello from MyPlugin!"));
 
         // Initialize a database table
         try (var stmt = conn.createStatement()) {

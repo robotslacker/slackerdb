@@ -78,6 +78,7 @@ public class Main {
         System.out.println("  --data_service_schema       Specify predefined data service schema. Default: none.");
         System.out.println("  --data_service_history      Enable/disable API history feature (ON|OFF). Default: OFF.");
         System.out.println("  --mcp-config                Specify MCP configuration file path. Default: empty.");
+        System.out.println("  --mcp-llm-server            Specify MCP LLM server configuration. Format: <service>:<ip>:<port>:<model>. Default: empty.");
 
     }
 
@@ -386,6 +387,10 @@ public class Main {
             if (appOptions.containsKey("mcp-config"))
             {
                 serverConfiguration.setMcpConfig(appOptions.get("mcp-config"));
+            }
+            if (appOptions.containsKey("mcp-llm-server"))
+            {
+                serverConfiguration.setMcpLlmServer(appOptions.get("mcp-llm-server"));
             }
 
             // 初始化日志服务

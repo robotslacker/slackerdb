@@ -52,6 +52,7 @@ public class APIService {
             Context ctx,
             DBServiceDefinition dbServiceDefinition,
             DBDataSourcePool dbDataSourcePool,
+            String dbInstanceName,
             Cache<String, Map<String, Object>> caffeineQueryCache,
             ExpiringMap<String, HashMap<String, String>> expiringMap,
             Logger logger
@@ -167,15 +168,24 @@ public class APIService {
             matcher.appendTail(sb);
             sql = sb.toString();
         }
+
         // 执行数据库查询
         Connection conn = null;
         try {
-            conn = dbDataSourcePool.getConnection();
+            String userSearchPath;
             if (dbServiceDefinition.searchPath != null && !dbServiceDefinition.searchPath.isEmpty()) {
-                try (Statement statement = conn.createStatement()) {
-                    statement.execute("SET search_path = '" + dbServiceDefinition.searchPath + "'");
-                }
+                userSearchPath = dbServiceDefinition.searchPath;
             }
+            else
+            {
+                userSearchPath = dbInstanceName;
+            }
+
+            // 把查询路径指向默认数据库
+            conn = dbDataSourcePool.getConnection();
+            Statement stmt = conn.createStatement();
+            stmt.execute("set search_path = 'memory.duck_catalog," + userSearchPath + "'");
+
             try (PreparedStatement preparedStatement = conn.prepareStatement(sql)) {
                 boolean hasResultSet = preparedStatement.execute();
                 if (hasResultSet) {
@@ -735,7 +745,11 @@ public class APIService {
             String apiVersion = ctx.pathParam("apiVersion");
             if (!registeredDBService.containsKey(("GET#" + apiName + "#" + apiVersion)))
             {
-                ctx.json(Map.of("retCode",404, "regMsg", ctx.path() + " is not registered."));
+                ctx.json(
+                        Map.of(
+                                "retCode",404,
+                                "regMsg", "GET " + ctx.path() + " is not registered.")
+                );
             }
             else {
                 DBServiceDefinition dbServiceDefinition = registeredDBService.get(("GET#" + apiName + "#" + apiVersion));
@@ -743,6 +757,7 @@ public class APIService {
                         ctx,
                         dbServiceDefinition,
                         this.dbInstance.dbDataSourcePool,
+                        this.dbInstance.instanceName,
                         queryResultCache,
                         sessionContextMap,
                         this.logger
@@ -756,7 +771,10 @@ public class APIService {
             String apiName = ctx.pathParam("apiName");
             if (!registeredDBService.containsKey(("POST#" + apiName + "#" + apiVersion)))
             {
-                ctx.json(Map.of("retCode",404, "regMsg", ctx.path() + " is not registered."));
+                ctx.json(
+                        Map.of(
+                                "retCode",404,
+                                "regMsg", "POST " + ctx.path() + " is not registered."));
             }
             else {
                 DBServiceDefinition dbServiceDefinition = registeredDBService.get(("POST#" + apiName + "#" + apiVersion));
@@ -764,6 +782,7 @@ public class APIService {
                         ctx,
                         dbServiceDefinition,
                         this.dbInstance.dbDataSourcePool,
+                        this.dbInstance.instanceName,
                         queryResultCache,
                         sessionContextMap,
                         this.logger

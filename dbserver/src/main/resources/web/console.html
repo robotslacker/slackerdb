@@ -30,6 +30,8 @@
                     <button class="sidebar-btn" data-panel="data-service">Data Service</button>
                     <button class="sidebar-btn" data-panel="mcp-tool">MCP Tool</button>
                     <button class="sidebar-btn" data-panel="mcp-resource">MCP Resource</button>
+                    <button class="sidebar-btn" data-panel="mcp-service">MCP Service</button>
+                    <button class="sidebar-btn" data-panel="ai-chat">AI Chat</button>
                 </div>
                 <div class="sidebar-panel" id="panel-console">
                     <h3>SQL Console</h3>
@@ -43,6 +45,13 @@
                 </div>
                 <div class="sidebar-panel" id="panel-mcp-resource">
                     <h3>MCP Resource Management</h3>
+                </div>
+                <div class="sidebar-panel" id="panel-mcp-service">
+                    <h3>MCP Service Management</h3>
+                </div>
+                <div class="sidebar-panel" id="panel-ai-chat">
+                    <h3>AI Chat</h3>
+                    <p>Chat with AI assistant using WebSocket.</p>
                 </div>
             </div>
         </div>
@@ -154,6 +163,65 @@
                     </div>
                     <div class="refresh-row">
                         <span id="mcpResourceCount">0 resources</span>
+                    </div>
+                </div>
+            </div>
+            <div id="mcp-service-main" style="display: none;">
+                <div class="service-list-container">
+                    <table id="mcpServiceTable">
+                        <thead>
+                            <tr>
+                                <th><label for="selectAllMCPServiceCheckbox"></label><input type="checkbox" id="selectAllMCPServiceCheckbox"></th>
+                                <th>Name</th>
+                                <th>Description</th>
+                                <th>Category</th>
+                                <th>Capabilities</th>
+                                <th>Use Cases</th>
+                                <th>Parameters</th>
+                                <th>Examples</th>
+                            </tr>
+                        </thead>
+                        <tbody id="mcpServiceTableBody">
+                            <!-- Rows will be populated by JavaScript -->
+                        </tbody>
+                    </table>
+                    <div id="mcpServiceListMessage">Loading MCP Services...</div>
+                </div>
+                <div class="data-service-controls">
+                    <div class="button-row">
+                        <button id="loadMCPServiceBtn" class="data-service-btn">Load</button>
+                        <button id="saveMCPServiceBtn" class="data-service-btn">Save</button>
+                        <button id="downloadMCPServiceBtn" class="data-service-btn">Download</button>
+                        <button id="registerMCPServiceBtn" class="data-service-btn">Register</button>
+                        <button id="unregisterMCPServiceBtn" class="data-service-btn">Unregister</button>
+                    </div>
+                    <div class="refresh-row">
+                        <span id="mcpServiceCount">0 services</span>
+                    </div>
+                </div>
+            </div>
+            <div id="ai-chat-main" style="display: none;">
+                <div class="chat-container">
+                    <div class="chat-header">
+                        <h3>AI Chat Assistant</h3>
+                        <div class="chat-status">
+                            <span class="status-indicator disconnected" id="aiChatStatusIndicator"></span>
+                            <span id="aiChatStatusText">Disconnected</span>
+                        </div>
+                    </div>
+                    <div class="chat-messages" id="aiChatMessages">
+                        <div class="message system">
+                            <div class="message-content">Welcome to AI Chat! Connect to start chatting with the AI assistant.</div>
+                            <div class="message-time">Just now</div>
+                        </div>
+                    </div>
+                    <div class="chat-input-area">
+                        <textarea id="aiChatInput" placeholder="Type your message here... (Press Enter to send, Shift+Enter for new line)" rows="3"></textarea>
+                        <div class="chat-controls">
+                            <button id="aiChatConnectBtn" class="chat-btn">Connect</button>
+                            <button id="aiChatDisconnectBtn" class="chat-btn" disabled>Disconnect</button>
+                            <button id="aiChatClearBtn" class="chat-btn">Clear</button>
+                        </div>
                     </div>
                 </div>
             </div>

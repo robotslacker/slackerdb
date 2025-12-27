@@ -3,24 +3,115 @@
     {
       "name": "echo",
       "description": "Echo back the input text",
-      "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } } },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The text to echo back"
+          }
+        },
+        "required": ["text"]
+      },
+      "category": "utility",
       "handler": "builtin:echo"
     },
     {
       "name": "query",
-      "description": "Execute SQL query",
-      "inputSchema": { ... },
+      "description": "Execute SQL query on the database",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sql": {
+            "type": "string",
+            "description": "SQL query to execute"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Query parameters (optional)"
+          }
+        },
+        "required": ["sql"]
+      },
+      "category": "database",
       "handler": "builtin:query"
-    }
+    },
   ],
   "resources": [
     {
       "uri": "file:///docs/readme.txt",
-      "name": "Readme",
-      "description": "Project documentation",
+      "name": "Project Readme",
+      "description": "Project documentation and overview",
       "mimeType": "text/plain",
-      "contents": "Hello from resource",
-      "filePath": "./docs/readme.txt"   // 可选，指向外部文件
+      "contents": "# SlackerDB MCP Server\n\nThis is a Model Context Protocol (MCP) server implementation for SlackerDB.\n\n## Features\n- Tool registration and invocation\n- Resource management\n- Service routing\n- AI chat integration\n\n## Usage\nConfigure tools, resources, and services in this .service file.",
+      "category": "documentation",
+      "filePath": "./docs/readme.txt"
+    },
+  ],
+  "services": [
+    {
+      "name": "database_query_service",
+      "apiName": "database_query_service",
+      "version": "1.0",
+      "method": "GET",
+      "description": "Service for executing database queries with parameter validation",
+      "category": "database",
+      "capabilities": ["query_execution", "result_formatting", "error_handling"],
+      "use_cases": ["data_analysis", "report_generation", "data_validation"],
+      "parameters": [
+        {
+          "name": "sql",
+          "type": "string",
+          "required": true,
+          "description": "SQL query to execute"
+        },
+        {
+          "name": "parameters",
+          "type": "array",
+          "required": false,
+          "description": "Query parameters for prepared statements"
+        },
+        {
+          "name": "timeout",
+          "type": "integer",
+          "required": false,
+          "description": "Query timeout in milliseconds"
+        }
+      ],
+      "examples": [
+        {
+          "user_query": "Get all users from the database",
+          "version": "1.0",
+          "method": "GET",
+          "parameters": {
+            "sql": "SELECT * FROM users",
+            "timeout": 5000
+          }
+        },
+        {
+          "user_query": "Find users by status",
+          "version": "1.0",
+          "method": "GET",
+          "parameters": {
+            "sql": "SELECT * FROM users WHERE status = ?",
+            "parameters": ["active"],
+            "timeout": 3000
+          }
+        }
+      ]
+    },
+  ],
+  "metadata": {
+    "version": "1.0.0",
+    "created": "2025-12-26",
+    "description": "Complete MCP service configuration example for SlackerDB",
+    "author": "SlackerDB Team",
+    "compatibility": {
+      "mcp_protocol": "2024-11-05",
+      "server_version": ">=1.0.0"
     }
-  ]
+  }
 }

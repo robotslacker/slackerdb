@@ -92,6 +92,8 @@ public class ServerConfiguration {
     private final String default_data_service_schema = "";
     // MCP配置路径
     private final String default_mcp_config = "";
+    // MCP LLM服务器配置
+    private final String default_mcp_llm_server = "";
 
     private String   data;
 
@@ -127,6 +129,7 @@ public class ServerConfiguration {
     private long query_result_cache_size;
     private String data_service_schema;
     private String mcp_config;
+    private String mcp_llm_server;
 
     public ServerConfiguration() throws ServerException
     {
@@ -162,6 +165,7 @@ public class ServerConfiguration {
         data_service_schema = default_data_service_schema;
         data_service_history = default_data_service_history;
         mcp_config = default_mcp_config;
+        mcp_llm_server = default_mcp_llm_server;
         data_encrypt = default_data_encrypt;
         plugins_dir = default_plugins_dir;
 
@@ -421,6 +425,13 @@ public class ServerConfiguration {
                         mcp_config = this.default_mcp_config;
                     } else {
                         setMcpConfig(entry.getValue().toString().trim());
+                    }
+                }
+                case "MCP_LLM_SERVER" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        mcp_llm_server = this.default_mcp_llm_server;
+                    } else {
+                        setMcpLlmServer(entry.getValue().toString().trim());
                     }
                 }
                 default ->
@@ -1011,5 +1022,15 @@ public class ServerConfiguration {
     public String getMcpConfig()
     {
         return this.mcp_config;
+    }
+
+    public void setMcpLlmServer(String val)
+    {
+        this.mcp_llm_server = val;
+    }
+
+    public String getMcpLlmServer()
+    {
+        return this.mcp_llm_server;
     }
 }
