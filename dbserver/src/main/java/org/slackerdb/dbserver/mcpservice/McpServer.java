@@ -1,27 +1,27 @@
 package org.slackerdb.dbserver.mcpservice;
 
 import ch.qos.logback.classic.Logger;
-import com.alibaba.fastjson2.TypeReference;
-import com.alibaba.fastjson2.JSONObject;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.*;
 import io.javalin.Javalin;
 import io.javalin.websocket.WsContext;
+import org.eclipse.jetty.websocket.api.exceptions.WebSocketTimeoutException;
 import org.slackerdb.dbserver.server.DBInstance;
 
+import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
+import java.net.SocketException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.channels.ClosedChannelException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 /**
@@ -41,16 +41,11 @@ public class McpServer {
     private final Object saveLock = new Object();
     private final int portX;
     private final String bindHost;
-    
-    // Conversation history management
-    private final Map<String, ConversationSession> conversationSessions = new ConcurrentHashMap<>();
-    private static final int MAX_HISTORY_MESSAGES = 20; // Maximum number of messages to keep in history
-    private static final long SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes session timeout
-    
+
     // WebSocket heartbeat support for keeping connections alive
-    private final Map<io.javalin.websocket.WsContext, Long> activeChatConnections = new ConcurrentHashMap<>();
-    private final java.util.concurrent.ScheduledExecutorService heartbeatExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
-    private final java.util.concurrent.atomic.AtomicBoolean heartbeatStarted = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private final Map<WsContext, Long> activeChatConnections = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
+    private final AtomicBoolean heartbeatStarted = new AtomicBoolean(false);
     
     public McpServer(
             DBInstance dbInstance,
@@ -619,7 +614,7 @@ public class McpServer {
                         JSONObject config = readConfigFile(configFile);
                         config.put("tools", generateToolDefinitionsJsonArray());
                         // keep existing resources if any
-                        String json = JSON.toJSONString(config, com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat);
+                        String json = JSON.toJSONString(config, JSONWriter.Feature.PrettyFormat);
                         Files.write(configFile.toPath(), json.getBytes());
                         logger.info("[MCP] Saved {} tools to {}", tools.size(), configFile.getAbsolutePath());
                     }
@@ -658,7 +653,7 @@ public class McpServer {
                     JSONObject configObj = new JSONObject();
                     configObj.put("tools", generateToolDefinitionsJsonArray());
                     configObj.put("resources", new JSONArray());
-                    String json = JSON.toJSONString(configObj, com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat);
+                    String json = JSON.toJSONString(configObj, JSONWriter.Feature.PrettyFormat);
                     Files.write(configFile.toPath(), json.getBytes());
                     logger.info("[MCP] Created new file and saved {} tools to {}", tools.size(), configFile.getAbsolutePath());
                     ctx.result(JSON.toJSONString(Map.of(
@@ -679,7 +674,7 @@ public class McpServer {
         // Dump MCP Tool definitions as JSON (download)
         this.managementApp.post("/mcp/dumpMCPTool", ctx -> {
             try {
-                String json = JSON.toJSONString(generateToolDefinitionsJsonArray(), com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat);
+                String json = JSON.toJSONString(generateToolDefinitionsJsonArray(), JSONWriter.Feature.PrettyFormat);
                 ctx.header("Content-Type", "application/json");
                 ctx.header("Content-Disposition", "attachment; filename=\"mcp_tools.json\"");
                 ctx.result(json);
@@ -778,7 +773,7 @@ public class McpServer {
                         JSONObject config = readConfigFile(configFile);
                         config.put("resources", generateResourceDefinitionsJsonArray());
                         // keep existing tools if any
-                        String json = JSON.toJSONString(config, com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat);
+                        String json = JSON.toJSONString(config, JSONWriter.Feature.PrettyFormat);
                         Files.write(configFile.toPath(), json.getBytes());
                         logger.info("[MCP] Saved {} resources to {}", resources.size(), configFile.getAbsolutePath());
                     }
@@ -817,7 +812,7 @@ public class McpServer {
                     JSONObject configObj = new JSONObject();
                     configObj.put("tools", new JSONArray());
                     configObj.put("resources", generateResourceDefinitionsJsonArray());
-                    String json = JSON.toJSONString(configObj, com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat);
+                    String json = JSON.toJSONString(configObj, JSONWriter.Feature.PrettyFormat);
                     Files.write(configFile.toPath(), json.getBytes());
                     logger.info("[MCP] Created new file and saved {} resources to {}", resources.size(), configFile.getAbsolutePath());
                     ctx.result(JSON.toJSONString(Map.of(
@@ -838,7 +833,7 @@ public class McpServer {
         // Dump MCP Resource definitions as JSON (dumpMCPSource)
         this.managementApp.post("/mcp/dumpMCPSource", ctx -> {
             try {
-                String json = JSON.toJSONString(generateResourceDefinitionsJsonArray(), com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat);
+                String json = JSON.toJSONString(generateResourceDefinitionsJsonArray(), JSONWriter.Feature.PrettyFormat);
                 ctx.header("Content-Type", "application/json");
                 ctx.header("Content-Disposition", "attachment; filename=\"mcp_resources.json\"");
                 ctx.result(json);
@@ -1132,7 +1127,7 @@ public class McpServer {
                         JSONObject config = readConfigFile(configFile);
                         config.put("services", generateServiceDefinitionsJsonArray());
                         // keep existing tools and resources if any
-                        String json = JSON.toJSONString(config, com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat);
+                        String json = JSON.toJSONString(config, JSONWriter.Feature.PrettyFormat);
                         Files.write(configFile.toPath(), json.getBytes());
                         logger.info("[MCP] Saved {} services to {}", services.size(), configFile.getAbsolutePath());
                     }
@@ -1172,7 +1167,7 @@ public class McpServer {
                     configObj.put("tools", new JSONArray());
                     configObj.put("resources", new JSONArray());
                     configObj.put("services", generateServiceDefinitionsJsonArray());
-                    String json = JSON.toJSONString(configObj, com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat);
+                    String json = JSON.toJSONString(configObj, JSONWriter.Feature.PrettyFormat);
                     Files.write(configFile.toPath(), json.getBytes());
                     logger.info("[MCP] Created new file and saved {} services to {}", services.size(), configFile.getAbsolutePath());
                     ctx.result(JSON.toJSONString(Map.of(
@@ -1237,30 +1232,24 @@ public class McpServer {
                             return;
                         }
                         
-                        String sessionId = ctx.attribute("sessionId");
-                        if (sessionId == null) {
-                            sessionId = UUID.randomUUID().toString();
-                            ctx.attribute("sessionId", sessionId);
-                        }
-                        
                         String message = ctx.message();
                         logger.trace(
-                                "[SERVER][AI CHAT    ] AI Chat received message from session {}: {}",
-                                sessionId, message);
+                                "[SERVER][AI CHAT    ] AI Chat received message : {}", message);
                         
                         // Parse the incoming message
                         JSONObject messageNode = JSON.parseObject(message);
                         String messageType = messageNode.containsKey("type") ? messageNode.getString("type") : "chat";
                         String content = messageNode.containsKey("content") ? messageNode.getString("content") : "";
 
-                        // 对话的消息类型可以是 chat, clear_history, get_history
+                        // 对话的消息类型可以是 chat, clear_history
                         if ("chat".equals(messageType) && !content.trim().isEmpty()) {
                             // 处理会话消息
-                            processChatMessage(ctx, sessionId, content);
+                            processChatMessage(ctx, content);
                         }
                         else if ("clear_history".equals(messageType)) {
                             // 清空历史会话
-                            clearConversationHistory(sessionId);
+                            ctx.attribute("confirmedInfo", null);
+                            ctx.attribute("previousCandidateService", "");
                             ctx.send(
                                     """
                                         {
@@ -1269,18 +1258,6 @@ public class McpServer {
                                         }
                                     """
                             );
-                        }
-                        else if ("get_history".equals(messageType)) {
-                            // 返回之前的历史会话信息
-                            List<Map<String, String>> history = getConversationHistory(sessionId);
-                            ctx.send(
-                                    JSON.toJSONString(
-                                            Map.of(
-
-                                "type", "history",
-                                "history", history,
-                                "sessionId", sessionId
-                            )));
                         } else {
                             ctx.send(
                                     """
@@ -1316,7 +1293,7 @@ public class McpServer {
                     activeChatConnections.remove(ctx);
                     Throwable error = ctx.error();
                     // 检查是否是WebSocket空闲超时错误
-                    if (error instanceof org.eclipse.jetty.websocket.api.exceptions.WebSocketTimeoutException) {
+                    if (error instanceof WebSocketTimeoutException) {
                         // 如果是空闲超时错误，记录为调试信息而不是错误
                         logger.trace("[SERVER][AI CHAT    ] AI Chat WebSocket idle timeout (connection closed due to inactivity): {}", error.getMessage());
                     } else if (isConnectionInterruption(error)) {
@@ -1324,7 +1301,7 @@ public class McpServer {
                         logger.trace("[SERVER][AI CHAT    ] AI Chat WebSocket connection interrupted: {}", error.getMessage());
                     } else {
                         // 其他错误仍然记录为错误
-                        logger.error("[MCP] AI Chat WebSocket error:", error);
+                        logger.error("[SERVER][AI CHAT    ] AI Chat WebSocket error:", error);
                     }
                 });
             });
@@ -1420,8 +1397,6 @@ public class McpServer {
         for (Service service : services.values()) {
             JSONObject serviceObj = new JSONObject();
             serviceObj.put("name", service.name);
-            serviceObj.put("version", service.version);
-            serviceObj.put("method", service.method);
             serviceObj.put("description", service.description);
             if (service.category != null) {
                 serviceObj.put("category", service.category);
@@ -1505,7 +1480,7 @@ public class McpServer {
      * Dump all services as a JSON string.
      */
     private String dumpServicesAsJson() {
-        return JSON.toJSONString(generateServiceDefinitionsJsonArray(), com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat);
+        return JSON.toJSONString(generateServiceDefinitionsJsonArray(), JSONWriter.Feature.PrettyFormat);
     }
 
     /**
@@ -1554,7 +1529,7 @@ public class McpServer {
         if (!root.containsKey("resources")) {
             root.put("resources", new JSONArray());
         }
-        String json = JSON.toJSONString(root, com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat);
+        String json = JSON.toJSONString(root, JSONWriter.Feature.PrettyFormat);
         Files.write(targetFile.toPath(), json.getBytes());
         logger.debug("[MCP] Updated tools in category '{}' to {}", category, targetFile.getAbsolutePath());
     }
@@ -1571,7 +1546,7 @@ public class McpServer {
         if (!root.containsKey("tools")) {
             root.put("tools", new JSONArray());
         }
-        String json = JSON.toJSONString(root, com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat);
+        String json = JSON.toJSONString(root, JSONWriter.Feature.PrettyFormat);
         Files.write(targetFile.toPath(), json.getBytes());
         logger.debug("[MCP] Updated resources in category '{}' to {}", category, targetFile.getAbsolutePath());
     }
@@ -1592,7 +1567,7 @@ public class McpServer {
         if (!root.containsKey("resources")) {
             root.put("resources", new JSONArray());
         }
-        String json = JSON.toJSONString(root, com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat);
+        String json = JSON.toJSONString(root, JSONWriter.Feature.PrettyFormat);
         Files.write(targetFile.toPath(), json.getBytes());
         logger.debug("[MCP] Updated services in category '{}' to {}", category, targetFile.getAbsolutePath());
     }
@@ -1613,7 +1588,7 @@ public class McpServer {
     /**
      * 处理用户会话消息
      */
-    private void processChatMessage(WsContext ctx, String sessionId, String userMessage) {
+    private void processChatMessage(WsContext ctx, String userMessage) {
         CompletableFuture.runAsync(() -> {
             try {
                 // 解析 mcp_llm_server 配置: <service>:<ip>:<port>:<model>
@@ -1633,44 +1608,114 @@ public class McpServer {
                 String port = parts[2];
                 String model = parts[3];
 
-                // 获取用户会话历史
-                List<Map<String, String>> conversationHistory = getConversationHistory(sessionId);
+                // 填写系统提示词和用户提示词
+                JSONObject userPrompt = new JSONObject();
+                userPrompt.put("userQuery", userMessage);
+                Map<String, Object> confirmedInfo = ctx.attribute("confirmedInfo");
+                userPrompt.put("confirmedInfo", Objects.requireNonNullElse(confirmedInfo, ""));
+                String previousCandidateService = ctx.attribute("previousCandidateService");
+                userPrompt.put("previousCandidateService", Objects.requireNonNullElse(previousCandidateService, ""));
 
                 // 大模型调用
                 String llmResponse;
-                if (conversationHistory.isEmpty()) {
-                    // 首次调用
-                    llmResponse = callLlmApi(service, host, port, model, userMessage);
-                } else {
-                    // 考虑上下文以及历史信息
-                    llmResponse = callLlmApiWithHistory(service, host, port, model, userMessage, conversationHistory);
+                JSONObject llmResponseJson;
+
+                llmResponse = callLlmApi(service, host, port, model, generateSystemPrompt(), userPrompt.toJSONString());
+                // 如果回应中包含了serviceName，则记录到Context中
+                llmResponseJson = JSON.parseObject(llmResponse);
+                if (llmResponseJson.containsKey("type") && llmResponseJson.getString("type").equals("error"))
+                {
+                    JSONObject feedbackJsonObj = new JSONObject();
+                    feedbackJsonObj.put("type", "response");
+                    feedbackJsonObj.put("content", llmResponseJson.getString("message"));
+                    feedbackJsonObj.put("timestamp", System.currentTimeMillis());
+                    ctx.send(feedbackJsonObj.toJSONString());
+                    return;
+                }
+                // 判断API是否已经就绪
+                boolean apiServiceReady = true;
+                if (llmResponseJson.containsKey("service_name") && !llmResponseJson.getString("service_name").isEmpty())
+                {
+                    ctx.attribute("previousCandidateService", llmResponseJson.getString("service_name"));
+                }
+                else
+                {
+                    apiServiceReady = false;
+                }
+                if (llmResponseJson.containsKey("parameters"))
+                {
+                    JSONObject llmResponseParameterJson = llmResponseJson.getJSONObject("parameters");
+                    Map<String, String> confirmedInfoFromResponse = new HashMap<>();
+                    for (String key : llmResponseParameterJson.keySet())
+                    {
+                        if (!llmResponseParameterJson.getString(key).isEmpty())
+                        {
+                            confirmedInfoFromResponse.put(key, llmResponseParameterJson.getString(key));
+                        }
+                        else
+                        {
+                            apiServiceReady = false;
+                        }
+                    }
+                    if (!confirmedInfoFromResponse.isEmpty())
+                    {
+                        ctx.attribute("confirmedInfo", confirmedInfoFromResponse);
+                    }
                 }
 
-                // 解析LLM响应，判断决策类型
+                if (!apiServiceReady)
+                {
+                    // 没有收集到足够的信息，要求用户补充信息
+                    String feedback;
+                    // 没有收集到足够的信息，要求用户补充信息
+                    if (llmResponseJson.getString("userLanguage").equalsIgnoreCase("Chinese"))
+                    {
+                        feedback = """
+                                    你可能需要补充信息来进行下一步操作.
+                                
+                                    当前已经确认的消息：
+                                        候选服务： ${service_name}
+                                        已知参数： ${parameters}
+                                """;
+                        feedback = feedback.replace("${service_name}", "\"" + llmResponseJson.getString("service_name") + "\"");
+                        feedback = feedback.replace("${parameters}", llmResponseJson.getString("parameters"));
+                        feedback = feedback.replace("\"\"", "\"缺失，待补充\"");
+                    }
+                    else
+                    {
+                        feedback = """
+                                    You may need to provide additional information to continue ...
+                                
+                                    Currently confirmed message:
+                                        Candidate service: ${service_name}
+                                        parameters： {parameters}
+                                """;
+                        feedback = feedback.replace("${service_name}", "\"" + llmResponseJson.getString("service_name") + "\"");
+                        feedback = feedback.replace("${parameters}", llmResponseJson.getString("parameters"));
+                        feedback = feedback.replace("\"\"", "\"Missing, to be added\"");
+                    }
+                    JSONObject feedbackJsonObj = new JSONObject();
+                    feedbackJsonObj.put("type", "response");
+                    feedbackJsonObj.put("content", feedback);
+                    feedbackJsonObj.put("timestamp", System.currentTimeMillis());
+                    ctx.send(feedbackJsonObj.toJSONString());
+                    return;
+                }
+
+                // 调用API
                 String finalResponse;
-                boolean shouldRecordToHistory = true;
-
                 try {
-                    JSONObject llmResponseJson = JSON.parseObject(llmResponse);
-                    String decision = llmResponseJson.containsKey("decision") ? llmResponseJson.getString("decision") : "";
-                    logger.trace(JSON.toJSONString(llmResponseJson, com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat));
-                    if ("call_service".equals(decision)) {
-                        // 调用服务API
-                        String serviceName = llmResponseJson.containsKey("service_name") ? llmResponseJson.getString("service_name") : "";
-                        String apiName = llmResponseJson.containsKey("api_name") ? llmResponseJson.getString("api_name") : "";
-                        String serviceVersion = llmResponseJson.containsKey("service_version") ? llmResponseJson.getString("service_version") : "";
-                        String serviceMethod = llmResponseJson.containsKey("service_method") ? llmResponseJson.getString("service_method") : "";
-                        JSONObject parametersNode = llmResponseJson.getJSONObject("parameters");
-                        Map<String, Object> parameters = JSON.parseObject(JSON.toJSONString(parametersNode), new TypeReference<>() {
-                        });
+                    // 调用服务API
+                    String serviceName = llmResponseJson.containsKey("service_name") ? llmResponseJson.getString("service_name") : "";
+                    JSONObject parametersNode = llmResponseJson.getJSONObject("parameters");
+                    Map<String, Object> parameters = JSON.parseObject(JSON.toJSONString(parametersNode), new TypeReference<>() {});
 
-                        // 调用服务
-                        logger.trace("[SERVER][AI CHAT    ] Invoking service: {} with parameters: {}", apiName, parameters);
+                    // 调用服务
+                    try {
+                        // 调用指定的API Service: http://<bindHost>:<portX>/api/<apiVersion>/<serviceName>
+                        String serviceResult = callServiceApi(serviceName, parameters);
 
-                        try {
-                            // 调用指定的API Service: http://<bindHost>:<portX>/api/<apiVersion>/<serviceName>
-                            String serviceResult = callServiceApi(apiName, serviceVersion, serviceMethod, parameters);
-
+                        if (llmResponseJson.getBoolean("summary")) {
                             // 根据serviceResult，发送给LLM，要求它进行自然语言的整理
                             try {
                                 finalResponse = summarizeServiceResult(userMessage, serviceResult);
@@ -1678,49 +1723,27 @@ public class McpServer {
                                 logger.warn("[SERVER][AI CHAT    ] Failed to summarize service result, using raw result: {}", e.getMessage());
                                 finalResponse = serviceResult;
                             }
-                        } catch (Exception e) {
-                            logger.error("[SERVER][AI CHAT    ] Failed to call service API: {}",
-                                    e.getMessage(), e);
-                            finalResponse = "Failed to call service '" + serviceName + "': " + e.getMessage();
                         }
-                    } else if ("need_clarification".equals(decision)) {
-                        // 需要澄清，直接返回澄清问题
-                        finalResponse = llmResponseJson.containsKey("direct_answer") ? llmResponseJson.getString("direct_answer") : llmResponse;
-                    } else if ("direct_answer".equals(decision)) {
-                        // 直接回答，不记录后续的setSummarizedHistory
-                        finalResponse = llmResponseJson.containsKey("direct_answer") ? llmResponseJson.getString("direct_answer") : llmResponse;
-
-                        // 不记录后续的setSummarizedHistory
-                        shouldRecordToHistory = false;
-                    } else {
-                        // 未知决策类型，直接返回原始响应
-                        finalResponse = llmResponse;
+                        else
+                        {
+                            finalResponse = serviceResult;
+                        }
+                    } catch (Exception e) {
+                        logger.error("[SERVER][AI CHAT    ] Failed to call service API: {}",
+                                e.getMessage(), e);
+                        finalResponse = "Failed to call service '" + serviceName + "': " + e.getMessage();
                     }
                 } catch (Exception e) {
                     // 如果解析失败，直接返回原始响应
-                    logger.warn("[MCP] Failed to parse LLM response as JSON, using raw response: {}", e.getMessage());
+                    logger.warn("[SERVER][AI CHAT    ] Failed to parse LLM response as JSON, using raw response: {}", e.getMessage());
                     finalResponse = llmResponse;
-                }
-
-                // 将本轮会话信息加入到历史信息中
-                addMessageToHistory(sessionId, "user", userMessage);
-                addMessageToHistory(sessionId, "assistant", finalResponse);
-
-                // 整理每一轮的会话，作为下次会话的上下文
-                if (shouldRecordToHistory) {
-                    String summarizedHistory = summarizeConversationHistory(sessionId, userMessage, finalResponse);
-                    ConversationSession session = conversationSessions.get(sessionId);
-                    if (session != null) {
-                        session.setSummarizedHistory(summarizedHistory);
-                    }
                 }
 
                 // 为用户做出回答
                 String responseJson = JSON.toJSONString(Map.of(
                     "type", "response",
                     "content", finalResponse,
-                    "timestamp", System.currentTimeMillis(),
-                    "sessionId", sessionId
+                    "timestamp", System.currentTimeMillis()
                 ));
                 ctx.send(responseJson);
             } catch (Exception e) {
@@ -1728,7 +1751,7 @@ public class McpServer {
                 Throwable cause = e;
                 boolean isClosedChannel = false;
                 while (cause != null) {
-                    if (cause instanceof java.nio.channels.ClosedChannelException) {
+                    if (cause instanceof ClosedChannelException) {
                         isClosedChannel = true;
                         break;
                     }
@@ -1737,9 +1760,9 @@ public class McpServer {
 
                 if (isClosedChannel) {
                     // Just log at debug level, don't send error to client (connection already closed)
-                    logger.trace("[SERVER][AI CHAT    ] Connection closed while sending response to AI chat for session {}", sessionId);
+                    logger.trace("[SERVER][AI CHAT    ] Connection closed while sending response to AI chat");
                 } else {
-                    logger.error("[SERVER][AI CHAT    ] Failed to process chat message for session {}", sessionId, e);
+                    logger.error("[SERVER][AI CHAT    ] Failed to process chat message.", e);
                     try {
                         ctx.send("{\"type\": \"error\", \"message\": \"Failed to get response from AI: " + e.getMessage() + "\"}");
                     } catch (Exception ignored) {}
@@ -1749,384 +1772,99 @@ public class McpServer {
     }
 
     /**
-     * Generate the system prompt with service information.
+     * LLM系统提示词.
      */
-    private String generateSystemPrompt(String servicesInfo, String userQuery) {
+    private String generateSystemPrompt() {
         String prompt =
                 """
-                        You are a service routing decision engine.
+You are a service candidate selector and parameter extractor.
 
-                        You are given a list of available services ("serviceInfo"). Each service describes:
-                            - its purpose and usage conditions (description),
-                            - the specific actions it can perform (capabilities),
-                            - the situations where it should be used (use_cases),
-                            - service name, service version and service method
-                            - required and optional parameters,
-                            - and example user queries that justify calling the service.
+Role and task:
+- You are given a list of available services ("serviceInfo").
+- Each service includes:
+  - name, version, method
+  - description
+  - capabilities
+  - use_cases
+  - parameters (required / optional)
+  - example user queries
+- Your task is to select the single best candidate service for the user's query and extract parameters as completely as possible.
 
-                        Your task is to analyze the user query and the available services, and decide whether:
-                            - to call a service,
-                            - to ask the user for clarification,
-                            - or to answer directly.
+Rules:
+1. You will receive a User Prompt in JSON format containing:
+   - "userQuery": the latest question or request from the user.
+   - "confirmedInfo": parameters already confirmed in previous interactions. May be empty if no prior confirmed parameters exist. Do NOT modify these values.
+   - "previousCandidateService": the candidate service selected in the previous turn, for reference only. May be empty if no previous candidate exists.
+   - "summaryPreference" (optional): if explicitly false, do NOT include summary; otherwise, summary defaults to true.
 
-                        How to interpret serviceInfo:
-                            - A service should be considered ONLY if the user's intent clearly matches the service description and use_cases.
-                            - Capabilities indicate what the service can do, not what it should always be used for.
-                            - Examples illustrate valid routing scenarios; if the user's query is semantically similar, the service may be applicable.
-                            - Do NOT call a service if the user's request can be answered using general knowledge, reasoning, or conversation.
-                            - Do NOT infer or fabricate missing parameters. If required parameters are missing or ambiguous, request clarification instead.
+2. Respect the user's input:
+   - If the user denies or changes any confirmedInfo or previousCandidateService field, follow the user's input.
+   - If the user explicitly sets "summaryPreference" to false, set summary to false in output.
+   - Do NOT override or assume values in confirmedInfo without explicit user input.
 
-                        Available services:
-                            ${servicesInfo}
-                
-                        User query:
-                            "${userQuery}"
+3. Candidate service selection:
+   - Only one candidate service should be selected.
+   - If the user's intent clearly matches a service in serviceInfo, you MUST select it.
+   - If no service can possibly match the user's intent, leave selectedService empty.
 
-                        Language rule:
-                            - The output language MUST follow the user's input language.
-                            - If the user asks in Chinese, respond in Chinese.
-                            - If the user asks in English, respond in English.
-                            - Do NOT mix languages.
+4. Parameter extraction:
+   - Extract all parameters as completely as possible.
+   - If a parameter cannot be confidently determined, leave it empty.
+   - Do NOT modify confirmedInfo.
 
-                        Decision rules:
-                            1. Determine the user's intent.
-                            2. Decide whether any available service can accurately fulfill this intent.
-                            3. Call a service ONLY if:
-                               - the service clearly matches the intent, and
-                               - all required parameters can be confidently inferred from the user query.
-                            4. If required parameters are missing or ambiguous, request clarification.
-                            5. For greetings, small talk, or general knowledge questions, answer directly without calling any service.
-                
-                        Output format:
-                            You MUST return a single valid JSON object and NOTHING ELSE.
+5. Language:
+   - Follow the user's input language exactly (Chinese input → Chinese output; English input → English output).
+   - Do NOT mix languages.
 
-                        JSON schema:
-                        {
-                          "decision": "call_service | need_clarification | direct_answer",
-                          "direct_answer": "",
-                          "service_name": "",
-                          "api_name" : "",
-                          "service_version": "",
-                          "service_method": "GET",
-                          "parameters": {"parameter1":"value1","parameter2":"value2",...}
-                        }
-                
-                        Field rules:
-                        - If decision = "direct_answer":
-                          - direct_answer MUST be non-empty
-                          - service_name MUST be empty
-                          - api_name MUST be empty
-                          - service_version MUST be empty
-                          - service_method MUST be empty
-                          - parameters MUST be empty
-                        - If decision = "call_service":
-                          - service_name MUST be non-empty
-                          - api_name MUST be non-empty
-                          - service_version MUST be non-empty
-                          - service_method MUST be non-empty
-                          - parameters MUST contain all required parameters
-                          - direct_answer MUST be empty
-                        - If decision = "need_clarification":
-                          - direct_answer MUST contain a clarification question to ask the user
-                          - service_name MUST be empty
-                          - api_name MUST be non-empty
-                          - service_version MUST be empty
-                          - service_version MUST be empty
-                          - parameters MUST be empty
+6. Output:
+   - Return strictly as a single JSON object, no explanations or markdown.
+   - The output MUST include:
+      1. A boolean field "summary" (true or false), following "summaryPreference" from User Prompt.
+      2. A string field "userLanguage", which should be "Chinese" for Chinese input or "English" for English input.
 
-                        Important:
-                        - Do NOT explain your reasoning.
-                        - Do NOT include markdown.
-                        - Do NOT output anything other than the JSON object.
+Available services:
+${servicesInfo}
 
-                """;
-        prompt = prompt.replace("${servicesInfo}", servicesInfo);
-        prompt = prompt.replace("${userQuery}", userQuery);
+User Prompt JSON structure:
+{
+  "userQuery": "...",
+  "confirmedInfo": {...} (may be empty),
+  "previousCandidateService": "..." (may be empty),
+  "summaryPreference": true|false (optional)
+}
+
+Output format (JSON):
+{
+  "service_name": "string_or_empty",
+  "parameters": {
+    "param1": "value1_or_empty",
+    "param2": "value2_or_empty",
+    ...
+  },
+  "summary": true|false,
+  "userLanguage": "Chinese"|"English"
+}
+    """;
+        prompt = prompt.replace("${servicesInfo}", JSON.toJSONString(generateServiceDefinitionsJsonArray(), JSONWriter.Feature.PrettyFormat));
         return prompt;
     }
     
     /**
-     * Generate the system prompt with service information and conversation history context.
-     * This enhanced prompt includes conversation history to provide better context for multi-turn conversations.
+     * 调用大模型服务
      */
-    private String generateSystemPromptWithHistory(List<Map<String, String>> conversationHistory) {
-        // Build structured history context in the required format
-        StringBuilder historyContext = new StringBuilder();
-        
-        if (conversationHistory != null && !conversationHistory.isEmpty()) {
-            // Extract structured information from conversation history
-            List<String> confirmedFacts = new ArrayList<>();
-            List<String> openContext = new ArrayList<>();
-            String currentStatus = "No action has been executed yet.";
-            
-            // Analyze conversation history to extract structured information
-            for (Map<String, String> msg : conversationHistory) {
-                String role = msg.get("role");
-                String content = msg.get("content");
-                
-                if ("user".equals(role)) {
-                    // Extract potential facts from user messages
-                    extractInformationFromUserMessage(content, confirmedFacts, openContext);
-                } else if ("assistant".equals(role)) {
-                    // Extract status from assistant responses
-                    if (content.contains("executed") || content.contains("query") || content.contains("result")) {
-                        currentStatus = "Previous action has been executed. Check the response for details.";
-                    }
-                }
-            }
-            
-            // Build the structured history context
-            historyContext.append("Conversation history context (structured format):\n\n");
-            
-            // Confirmed facts section
-            if (!confirmedFacts.isEmpty()) {
-                historyContext.append("Confirmed facts:\n");
-                for (String fact : confirmedFacts) {
-                    historyContext.append("- ").append(fact).append("\n");
-                }
-                historyContext.append("\n");
-            } else {
-                historyContext.append("Confirmed facts: None confirmed yet.\n\n");
-            }
-            
-            // Open context section
-            if (!openContext.isEmpty()) {
-                historyContext.append("Open context:\n");
-                for (String context : openContext) {
-                    historyContext.append("- ").append(context).append("\n");
-                }
-                historyContext.append("\n");
-            } else {
-                historyContext.append("Open context: No open context identified.\n\n");
-            }
-            
-            // Status section
-            historyContext.append("Current status: ").append(currentStatus).append("\n\n");
-            
-        } else {
-            historyContext.append("Conversation history context (structured format):\n\n");
-            historyContext.append("Confirmed facts: No previous conversation.\n\n");
-            historyContext.append("Open context: No open context.\n\n");
-            historyContext.append("Current status: New conversation started.\n\n");
-        }
-
-        String prompt = """
-            You are a service routing decision engine.
-            
-            Your responsibility is to decide whether to:
-            - call a service,
-            - ask the user for clarification,
-            - or answer directly.
-            
-            You must follow all rules strictly.
-            
-            Global rules:
-            - You MUST output a single valid JSON object and nothing else.
-            - You MUST NOT explain your reasoning.
-            - You MUST NOT include markdown or extra text.
-            - The output language MUST follow the user's latest input language.
-            - Do NOT mix languages.
-            
-            Decision rules:
-            1. Identify the user's intent.
-            2. Determine whether any available service can accurately fulfill the intent.
-            3. Call a service ONLY if:
-               - the service clearly matches the intent, and
-               - all required parameters can be confidently inferred.
-            4. If required parameters are missing or ambiguous, request clarification.
-            5. For greetings, small talk, or general knowledge, answer directly.
-            
-            ────────────────────
-            CONVERSATION HISTORY CONTEXT (READ-ONLY):
-            The following information is provided in a structured format for context.
-            Use it to understand what has been discussed and what needs to be done.
-            
-            ${historyContext}
-            ────────────────────
-            
-            Current task:
-            Based on the user's latest query and the available services,
-            make a decision and produce the JSON output.
-            
-            Important: When analyzing the conversation history context:
-            - "Confirmed facts" are things that have been explicitly stated or agreed upon
-            - "Open context" represents user preferences or intentions that haven't been acted upon
-            - "Current status" indicates whether previous actions have been executed
-            
-            Use this structured context to make better decisions about whether to:
-            - Use confirmed facts as parameters for service calls
-            - Address open context in your response
-            - Check current status to avoid repeating completed actions
-            """;
-        prompt = prompt.replace("${historyContext}", historyContext);
-        return prompt;
-    }
-    
-    /**
-     * Extract structured information from user messages.
-     * This is a simplified implementation that should be enhanced based on actual use cases.
-     */
-    private void extractInformationFromUserMessage(String content, List<String> confirmedFacts, List<String> openContext) {
-        // Simple pattern matching for demonstration
-        // In a real implementation, this would use NLP or more sophisticated parsing
-        
-        // Convert to lowercase for case-insensitive matching
-        String lowerContent = content.toLowerCase();
-        
-        // Look for table names - improved pattern matching
-        // Pattern: "from the X table" or "from X table" or "table X"
-        if (lowerContent.matches(".*from\\s+(?:the\\s+)?(\\w+)\\s+table.*")) {
-            String tableMatch = content.replaceAll("(?i).*from\\s+(?:the\\s+)?(\\w+)\\s+table.*", "$1");
-            if (tableMatch.length() > 1 && !tableMatch.equalsIgnoreCase("the")) {
-                confirmedFacts.add("Table name: " + tableMatch);
-            }
-        } else if (lowerContent.matches(".*table\\s+(\\w+).*")) {
-            String tableMatch = content.replaceAll("(?i).*table\\s+(\\w+).*", "$1");
-            if (tableMatch.length() > 1) {
-                confirmedFacts.add("Table name: " + tableMatch);
-            }
-        }
-        
-        // Look for row limits - improved pattern matching
-        // Pattern: "last X" or "limit X" or "show X" or "get X"
-        if (lowerContent.matches(".*last\\s+(\\d+).*")) {
-            String limitMatch = content.replaceAll("(?i).*last\\s+(\\d+).*", "$1");
-            confirmedFacts.add("Row limit: " + limitMatch);
-        } else if (lowerContent.matches(".*limit\\s+(\\d+).*")) {
-            String limitMatch = content.replaceAll("(?i).*limit\\s+(\\d+).*", "$1");
-            confirmedFacts.add("Row limit: " + limitMatch);
-        } else if (lowerContent.matches(".*show\\s+(\\d+).*")) {
-            String limitMatch = content.replaceAll("(?i).*show\\s+(\\d+).*", "$1");
-            confirmedFacts.add("Row limit: " + limitMatch);
-        } else if (lowerContent.matches(".*get\\s+(\\d+).*")) {
-            String limitMatch = content.replaceAll("(?i).*get\\s+(\\d+).*", "$1");
-            confirmedFacts.add("Row limit: " + limitMatch);
-        }
-        
-        // Look for ordering preferences
-        if (lowerContent.matches(".*order.*by.*(desc|descending).*")) {
-            openContext.add("The user wants the result ordered by time descending");
-        } else if (lowerContent.matches(".*order.*by.*(asc|ascending).*")) {
-            openContext.add("The user wants the result ordered by time ascending");
-        } else if (lowerContent.contains("descending") || lowerContent.contains("latest") ||
-                   lowerContent.contains("recent") || lowerContent.contains("newest")) {
-            openContext.add("The user wants the result ordered by time descending");
-        } else if (lowerContent.contains("ascending") || lowerContent.contains("oldest")) {
-            openContext.add("The user wants the result ordered by time ascending");
-        }
-        
-        // Look for general preferences
-        if (lowerContent.contains("want") && lowerContent.contains("result")) {
-            openContext.add("The user wants to see results");
-        }
-        
-        // If no specific patterns matched, add a generic context
-        if (openContext.isEmpty() && content.length() > 10) {
-            // Extract key phrases for context
-            String[] words = content.split("\\s+");
-            if (words.length > 3) {
-                String intent = String.join(" ", Arrays.copyOfRange(words, 0, Math.min(5, words.length)));
-                openContext.add("User intent: " + intent + (words.length > 5 ? "..." : ""));
-            } else {
-                openContext.add("User intent: " + content);
-            }
-        }
-        
-        // Remove duplicates
-        Set<String> factsSet = new LinkedHashSet<>(confirmedFacts);
-        confirmedFacts.clear();
-        confirmedFacts.addAll(factsSet);
-        
-        Set<String> contextSet = new LinkedHashSet<>(openContext);
-        openContext.clear();
-        openContext.addAll(contextSet);
-    }
-    
-    /**
-     * 根据会话历史来调用大模型服务
-     */
-    private String callLlmApiWithHistory(String service, String host, String port, String model,
-                                         String userMessage, List<Map<String, String>> conversationHistory)
-                                         throws IOException, InterruptedException {
+    private String callLlmApi(
+            String service,
+            String host,
+            String port,
+            String model,
+            String systemPrompt,
+            String userMessage
+    ) throws IOException, InterruptedException {
         // LLM实现, 当前只支持ollama
         if ("ollama".equalsIgnoreCase(service)) {
             // Construct URL
             String url = "http://" + host + ":" + port + "/v1/chat/completions";
             
-            // Generate services info and system prompt
-            String systemPrompt = generateSystemPromptWithHistory(conversationHistory);
-            
-            // Build messages list with system prompt, conversation history, and current user message
-            List<Map<String, String>> messages = new ArrayList<>();
-            
-            // Add system prompt
-            messages.add(Map.of("role", "system", "content", systemPrompt));
-            
-            // Add conversation history (excluding the current user message which will be added separately)
-            for (Map<String, String> historyMsg : conversationHistory) {
-                // Skip the current user message if it's already in history (it will be added at the end)
-                if (!(historyMsg.get("role").equals("user") && historyMsg.get("content").equals(userMessage))) {
-                    messages.add(Map.of("role", historyMsg.get("role"), "content", historyMsg.get("content")));
-                }
-            }
-            
-            // Add current user message
-            messages.add(Map.of("role", "user", "content", userMessage));
-            
-            // Prepare request body
-            Map<String, Object> requestBody = new HashMap<>();
-            requestBody.put("model", model);
-            requestBody.put("messages", messages);
-            requestBody.put("max_tokens", 2000); // Increased for longer responses
-            requestBody.put("temperature", 0.3); // Lower temperature for more deterministic routing decisions
-            
-            String requestBodyJson = JSON.toJSONString(requestBody);
-            
-            // Create HTTP client and request
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(requestBodyJson))
-                .build();
-            
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            
-            if (response.statusCode() == 200) {
-                JSONObject responseJson = JSON.parseObject(response.body());
-                JSONArray choices = responseJson.getJSONArray("choices");
-                if (choices != null && !choices.isEmpty()) {
-                    JSONObject message = choices.getJSONObject(0).getJSONObject("message");
-                    if (message != null && message.containsKey("content")) {
-                        return message.getString("content");
-                    }
-                }
-                return "No response content found in LLM response";
-            } else {
-                throw new IOException("LLM API request failed with status: " + response.statusCode() + ", body: " + response.body());
-            }
-        } else {
-            // For other services, return a placeholder response
-            return "LLM service '" + service + "' is configured but not yet implemented. User message: " + userMessage;
-        }
-    }
-    
-    /**
-     * 调用大模型服务（第一次调用，用户历史不存在时）
-     */
-    private String callLlmApi(String service, String host, String port, String model,
-                              String userMessage) throws IOException, InterruptedException {
-        // LLM实现, 当前只支持ollama
-        if ("ollama".equalsIgnoreCase(service)) {
-            // Construct URL
-            String url = "http://" + host + ":" + port + "/v1/chat/completions";
-            
-            // Generate services info
-            String servicesInfo = JSON.toJSONString(generateServiceDefinitionsJsonArray(), com.alibaba.fastjson2.JSONWriter.Feature.PrettyFormat);
-
-            // Generate system prompt using generateSystemPrompt method
-            String systemPrompt = generateSystemPrompt(servicesInfo, userMessage);
-
             // Build messages list with system prompt and current user message
             List<Map<String, String>> messages = new ArrayList<>();
             
@@ -2140,8 +1878,9 @@ public class McpServer {
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("model", model);
             requestBody.put("messages", messages);
-            requestBody.put("max_tokens", 2000); // Increased for longer responses
-            requestBody.put("temperature", 0.3); // Lower temperature for more deterministic routing decisions
+            requestBody.put("max_tokens", 2000);        // Increased for longer responses
+            requestBody.put("top_p", 1);                // 保证概率分布不被截断，避免模型“放弃生成”
+            requestBody.put("temperature", 0.3);        // 较低的温度有利于更确定性的路径选择
             
             String requestBodyJson = JSON.toJSONString(requestBody);
             
@@ -2154,7 +1893,7 @@ public class McpServer {
                 .build();
             
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            
+
             if (response.statusCode() == 200) {
                 JSONObject responseJson = JSON.parseObject(response.body());
                 JSONArray choices = responseJson.getJSONArray("choices");
@@ -2164,35 +1903,50 @@ public class McpServer {
                         return message.getString("content");
                     }
                 }
-                return "No response content found in LLM response";
+                return """
+                            {
+                            "type": "error",
+                            "message": "No response content found in LLM response"
+                            }
+                        """;
             } else {
                 throw new IOException("LLM API request failed with status: " + response.statusCode() + ", body: " + response.body());
             }
         } else {
             // For other services, return a placeholder response
-            return "LLM service '" + service + "' is configured but not yet implemented. User message: " + userMessage;
+            return """
+                            {
+                            "type": "error",
+                            "message": "LLM service ${service} is configured but not yet implemented. "
+                            }
+                        """.replace("${service}", service);
         }
     }
     
     /**
      * 调用指定的API服务
-     * @param apiName 服务名称
+     * @param serviceName 服务名称
      * @param parameters 服务参数
      * @return 服务调用结果
      */
-    private String callServiceApi(String apiName, String serviceVersion, String serviceMethod,
-                                  Map<String, Object> parameters) throws IOException, InterruptedException {
+    private String callServiceApi(String serviceName, Map<String, Object> parameters) throws IOException, InterruptedException {
+        Service service = this.services.get(serviceName);
+
+        String apiName = service.apiName;
+        String apiVersion = service.version;
+        String apiMethod = service.method;
+
         // 构建基础API URL: http://<bindHost>:<portX>/api/<serviceVersion>/<serviceName>
-        String baseUrl = "http://" + bindHost + ":" + portX + "/api/" + serviceVersion + "/" + apiName;
+        String baseUrl = "http://" + bindHost + ":" + portX + "/api/" + apiVersion + "/" + apiName;
         
-        logger.trace("[SERVER][AI CHAT    ] Calling service API: {} with method: {} and parameters: {}",
-                     baseUrl, serviceMethod, parameters);
+        logger.trace("[SERVER][AI CHAT    ] Calling service API: {} with version: {}, method: {} and parameters: {}",
+                     baseUrl, apiVersion, apiMethod, parameters);
         
         HttpClient client = HttpClient.newHttpClient();
         HttpRequest request;
         
         // 根据serviceMethod决定请求方式
-        if ("GET".equalsIgnoreCase(serviceMethod)) {
+        if ("GET".equalsIgnoreCase(apiMethod)) {
             // GET请求：参数作为路径的一部分
             String urlWithParams = buildUrlWithParameters(baseUrl, parameters);
             request = HttpRequest.newBuilder()
@@ -2264,8 +2018,8 @@ public class McpServer {
                 }
                 
                 // URL编码参数
-                String encodedKey = java.net.URLEncoder.encode(key, java.nio.charset.StandardCharsets.UTF_8);
-                String encodedValue = java.net.URLEncoder.encode(value.toString(), java.nio.charset.StandardCharsets.UTF_8);
+                String encodedKey = URLEncoder.encode(key, StandardCharsets.UTF_8);
+                String encodedValue = URLEncoder.encode(value.toString(), StandardCharsets.UTF_8);
                 urlBuilder.append(encodedKey).append("=").append(encodedValue);
             }
         }
@@ -2275,182 +2029,8 @@ public class McpServer {
     
     public void shutdown() {
         executor.shutdown();
-        // Clean up expired sessions
-        cleanupExpiredSessions();
     }
-    
-    /**
-     * Clean up expired conversation sessions.
-     */
-    private void cleanupExpiredSessions() {
-        long now = System.currentTimeMillis();
-        Iterator<Map.Entry<String, ConversationSession>> it = conversationSessions.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<String, ConversationSession> entry = it.next();
-            if (now - entry.getValue().getLastActivityTime() > SESSION_TIMEOUT_MS) {
-                it.remove();
-                logger.debug("[MCP] Cleaned up expired conversation session: {}", entry.getKey());
-            }
-        }
-    }
-    
-    /**
-     * 创建新的用户会话
-     */
-    private ConversationSession getOrCreateSession(String sessionId) {
-        return conversationSessions.compute(sessionId, (key, existing) -> {
-            if (existing == null || System.currentTimeMillis() - existing.getLastActivityTime() > SESSION_TIMEOUT_MS) {
-                logger.debug("[SERVER][AI CHAT    ] Creating new conversation session: {}", sessionId);
-                return new ConversationSession();
-            }
-            existing.updateActivityTime();
-            return existing;
-        });
-    }
-    
-    /**
-     * 记录消息的回答历史
-     */
-    private void addMessageToHistory(String sessionId, String role, String content) {
-        ConversationSession session = getOrCreateSession(sessionId);
-        session.addMessage(role, content);
-        logger.trace("[SERVER][AI CHAT    ] Added message to session {}: {}: {}", sessionId, role,
-                     content.length() > 50 ? content.substring(0, 50) + "..." : content);
-    }
-    
-    /**
-     * 查询用户会话历史
-     */
-    private List<Map<String, String>> getConversationHistory(String sessionId) {
-        ConversationSession session = conversationSessions.get(sessionId);
-        if (session == null) {
-            return new ArrayList<>();
-        }
-        return session.getMessages();
-    }
-    
-    /**
-     * 清空用户会话历史
-     */
-    private void clearConversationHistory(String sessionId) {
-        conversationSessions.remove(sessionId);
-        logger.trace("[SERVER][AI CHAT    ] Cleared conversation history for session: {}", sessionId);
-    }
-    
-    /**
-     * 总结会话历史
-     * 返回新的历史总结信息
-     */
-    private String summarizeConversationHistory(String sessionId, String latestUserInput, String latestAssistantResponse) throws Exception {
-        ConversationSession session = conversationSessions.get(sessionId);
-        String previousHistoryContext = session.getSummarizedHistory();
-        if (previousHistoryContext == null || previousHistoryContext.trim().isEmpty()) {
-            previousHistoryContext = "No previous history context.";
-        }
 
-        // 构建总结prompt
-        String prompt = """
-                You are a conversation state summarization engine.
-        
-                Your task is to update the conversation history context based on:
-                1. The previous history context
-                2. The latest user input
-                3. The latest assistant response
-        
-                The goal is to produce a concise, factual, and structured history context
-                that can be used safely in future decision-making.
-        
-                ────────────────────
-                Previous history context:
-                ${previousHistoryContext}
-                ────────────────────
-        
-                Latest user input:
-                "${latestUserInput}"
-        
-                Latest assistant response:
-                ${latestAssistantResponse}
-        
-                ────────────────────
-                Rules (CRITICAL):
-                - The history context represents FACTS and STATE, not dialogue.
-                - ONLY include information that is explicitly stated or clearly confirmed.
-                - DO NOT infer or assume execution unless it is explicitly stated as completed.
-                - DO NOT describe intentions, plans, or future actions unless they are still pending.
-                - DO NOT invent results, parameters, or outcomes.
-                - If execution failed, was cancelled, or is unclear, state it explicitly.
-                - If information is ambiguous, omit it rather than guessing.
-        
-                Formatting rules:
-                - Use clear sections such as:
-                  - Confirmed facts
-                  - Completed actions
-                  - Last result summary
-                  - Open context
-                  - Current state
-                - Omit empty sections.
-                - Be concise and avoid repetition.
-                - Do NOT include timestamps, IDs, or conversational phrasing.
-        
-                Output rules:
-                - Output ONLY the updated history context.
-                - Do NOT include explanations, markdown, or extra text.
-                """
-            .replace("${previousHistoryContext}", previousHistoryContext)
-            .replace("${latestUserInput}", latestUserInput)
-            .replace("${latestAssistantResponse}", latestAssistantResponse);
-
-        // 解析大模型服务器配置
-        String[] parts = this.mcpLlmServer.split(":", 4);
-        String service = parts[0];
-        String host = parts[1];
-        String port = parts[2];
-        String model = parts[3];
-
-        if ("ollama".equalsIgnoreCase(service)) {
-            String url = "http://" + host + ":" + port + "/v1/chat/completions";
-
-            // 构建请求
-            List<Map<String, String>> messages = new ArrayList<>();
-            messages.add(Map.of("role", "system", "content", "You are a conversation state summarization engine. Follow the user's instructions precisely."));
-            messages.add(Map.of("role", "user", "content", prompt));
-
-            Map<String, Object> requestBody = new HashMap<>();
-            requestBody.put("model", model);
-            requestBody.put("messages", messages);
-            requestBody.put("max_tokens", 1000);
-            requestBody.put("temperature", 0.1); // 低温度以获得更确定性的总结
-
-            String requestBodyJson = JSON.toJSONString(requestBody);
-
-            // 发送HTTP请求
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBodyJson))
-                    .build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 200) {
-                JSONObject responseJson = JSON.parseObject(response.body());
-                JSONArray choices = responseJson.getJSONArray("choices");
-                if (choices != null && !choices.isEmpty()) {
-                    JSONObject message = choices.getJSONObject(0).getJSONObject("message");
-                    if (message != null && message.containsKey("content")) {
-                        String content = message.getString("content");
-                        content = content.trim();
-                        return content;
-                    }
-                }
-                throw new IOException("[SERVER][AI CHAT    ] Summarization API request failed. unexpected message: " + response.body());
-            } else {
-                throw new IOException("[SERVER][AI CHAT    ] Summarization API request failed with status: " + response.statusCode());
-            }
-        }
-        return previousHistoryContext;
-    }
-    
     /**
      * 启动心跳调度（如果需要）
      */
@@ -2465,10 +2045,10 @@ public class McpServer {
      * 发送心跳ping到所有活动连接
      */
     private void sendHeartbeat() {
-        Iterator<Map.Entry<io.javalin.websocket.WsContext, Long>> it = activeChatConnections.entrySet().iterator();
+        Iterator<Map.Entry<WsContext, Long>> it = activeChatConnections.entrySet().iterator();
         while (it.hasNext()) {
-            Map.Entry<io.javalin.websocket.WsContext, Long> entry = it.next();
-            io.javalin.websocket.WsContext ctx = entry.getKey();
+            Map.Entry<WsContext, Long> entry = it.next();
+            WsContext ctx = entry.getKey();
             try {
                 ctx.sendPing();
             } catch (Exception e) {
@@ -2486,11 +2066,11 @@ public class McpServer {
             return false;
         }
         // 检查异常类型是否为常见的连接中断异常
-        if (error instanceof java.nio.channels.ClosedChannelException || error instanceof java.io.EOFException) {
+        if (error instanceof ClosedChannelException || error instanceof EOFException) {
             return true;
         }
         // 检查 SocketException 且消息包含 closed 或 reset
-        if (error instanceof java.net.SocketException) {
+        if (error instanceof SocketException) {
             String msg = error.getMessage();
             if (msg != null) {
                 msg = msg.toLowerCase();
@@ -2629,49 +2209,4 @@ public class McpServer {
     ) {}
 
     public record ServiceExample(String userQuery, Map<String, Object> parameters) {}
-    
-    /**
-     * Represents a conversation session with message history.
-     */
-    private static class ConversationSession {
-        private final List<Map<String, String>> messages;
-        private String summarizedHistory;
-        private long lastActivityTime;
-        
-        public ConversationSession() {
-            this.messages = new ArrayList<>();
-            this.summarizedHistory = "";
-            this.lastActivityTime = System.currentTimeMillis();
-        }
-        
-        public void addMessage(String role, String content) {
-            // Limit the number of messages to avoid excessive memory usage
-            if (messages.size() >= MAX_HISTORY_MESSAGES) {
-                messages.remove(0); // Remove oldest message
-            }
-            messages.add(Map.of("role", role, "content", content));
-            updateActivityTime();
-        }
-        
-        public List<Map<String, String>> getMessages() {
-            return new ArrayList<>(messages); // Return a copy
-        }
-        
-        public String getSummarizedHistory() {
-            return summarizedHistory;
-        }
-        
-        public void setSummarizedHistory(String summarizedHistory) {
-            this.summarizedHistory = summarizedHistory;
-            updateActivityTime();
-        }
-        
-        public void updateActivityTime() {
-            this.lastActivityTime = System.currentTimeMillis();
-        }
-        
-        public long getLastActivityTime() {
-            return lastActivityTime;
-        }
-    }
 }

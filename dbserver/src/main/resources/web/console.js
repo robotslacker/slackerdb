@@ -169,6 +169,8 @@
                             }
                         }
                         databaseNameEl.textContent = `Database: ${dbName}`;
+                        // Update page title with database name
+                        document.title = `SQL shell - ${dbName}`;
                         // Update Save button state based on data_service_schema parameter
                         if (params) {
                             currentDataServiceSchema = params.dataServiceSchema;
@@ -178,6 +180,8 @@
                     .catch(err => {
                         console.error('Failed to fetch status:', err);
                         databaseNameEl.textContent = 'Database: error';
+                        // Also update title to indicate error
+                        document.title = `SQL shell - Error`;
                     });
             };
 
@@ -2408,52 +2412,91 @@
                     messageEl.textContent = '';
                     services.forEach(service => {
                         const row = document.createElement('tr');
-                        row.dataset.serviceName = service.name;
+                        // MCP Service fields
+                        const serviceName = service.name || '';
+                        const apiName = service.apiName || '';
+                        const serviceVersion = service.version || '';
+                        const method = service.method || '';
+                        const description = service.description || '';
+                        const category = service.category || '';
+                        const capabilities = service.capabilities || [];
+                        const useCases = service.use_cases || [];
+                        const parameters = service.parameters || [];
+                        const examples = service.examples || [];
+                        
+                        row.dataset.serviceName = serviceName;
+                        row.dataset.serviceVersion = serviceVersion;
+                        
                         // Checkbox cell
                         const checkboxCell = document.createElement('td');
                         const checkbox = document.createElement('input');
                         checkbox.type = 'checkbox';
                         checkbox.className = 'mcp-service-checkbox';
-                        checkbox.dataset.serviceName = service.name;
+                        checkbox.dataset.serviceName = serviceName;
+                        checkbox.dataset.serviceVersion = serviceVersion;
                         checkbox.addEventListener('change', (e) => {
                             const checked = e.target.checked;
+                            const serviceKey = `${serviceName}@${serviceVersion}`;
                             if (checked) {
-                                selectedMCPServices.add(service.name);
+                                selectedMCPServices.add(serviceKey);
                             } else {
-                                selectedMCPServices.delete(service.name);
+                                selectedMCPServices.delete(serviceKey);
                             }
                             updateSelectAllMCPServiceCheckbox();
                         });
                         checkboxCell.appendChild(checkbox);
                         row.appendChild(checkboxCell);
-                        // Service Name
+                        
+                        // Name
                         const nameCell = document.createElement('td');
-                        nameCell.textContent = service.name;
+                        nameCell.textContent = serviceName;
                         row.appendChild(nameCell);
+                        
+                        // API Name
+                        const apiNameCell = document.createElement('td');
+                        apiNameCell.textContent = apiName;
+                        row.appendChild(apiNameCell);
+                        
+                        // Version
+                        const versionCell = document.createElement('td');
+                        versionCell.textContent = serviceVersion;
+                        row.appendChild(versionCell);
+                        
+                        // Method
+                        const methodCell = document.createElement('td');
+                        methodCell.textContent = method;
+                        row.appendChild(methodCell);
+                        
                         // Description
                         const descCell = document.createElement('td');
-                        descCell.textContent = service.description || '';
+                        descCell.textContent = description;
                         row.appendChild(descCell);
+                        
                         // Category
                         const categoryCell = document.createElement('td');
-                        categoryCell.textContent = service.category || '';
+                        categoryCell.textContent = category;
                         row.appendChild(categoryCell);
+                        
                         // Capabilities
                         const capabilitiesCell = document.createElement('td');
-                        capabilitiesCell.textContent = service.capabilities ? JSON.stringify(service.capabilities) : '';
+                        capabilitiesCell.textContent = Array.isArray(capabilities) ? capabilities.join(', ') : JSON.stringify(capabilities);
                         row.appendChild(capabilitiesCell);
+                        
                         // Use Cases
                         const useCasesCell = document.createElement('td');
-                        useCasesCell.textContent = service.use_cases ? JSON.stringify(service.use_cases) : '';
+                        useCasesCell.textContent = Array.isArray(useCases) ? useCases.join(', ') : JSON.stringify(useCases);
                         row.appendChild(useCasesCell);
+                        
                         // Parameters
-                        const parametersCell = document.createElement('td');
-                        parametersCell.textContent = service.parameters ? JSON.stringify(service.parameters) : '';
-                        row.appendChild(parametersCell);
+                        const paramsCell = document.createElement('td');
+                        paramsCell.textContent = JSON.stringify(parameters);
+                        row.appendChild(paramsCell);
+                        
                         // Examples
                         const examplesCell = document.createElement('td');
-                        examplesCell.textContent = service.examples ? JSON.stringify(service.examples) : '';
+                        examplesCell.textContent = JSON.stringify(examples);
                         row.appendChild(examplesCell);
+                        
                         tbody.appendChild(row);
                     });
                     countEl.textContent = `${services.length} service(s)`;
@@ -2495,7 +2538,8 @@
             checkboxes.forEach(cb => {
                 cb.checked = checked;
                 if (checked) {
-                    selectedMCPServices.add(cb.dataset.serviceName);
+                    const serviceKey = `${cb.dataset.serviceName}@${cb.dataset.serviceVersion}`;
+                    selectedMCPServices.add(serviceKey);
                 }
             });
         });
@@ -2601,7 +2645,11 @@
                 return;
             }
             const promises = [];
-            selectedMCPServices.forEach(serviceName => {
+            selectedMCPServices.forEach(serviceKey => {
+                // serviceKey is in format "serviceName@serviceVersion"
+                // Extract service name (without version) for unregister
+                // According to McpServer.java, unregister expects just the name field
+                const serviceName = serviceKey.split('@')[0];
                 promises.push(
                     fetch('/mcp/unregisterMCPService', {
                         method: 'POST',
@@ -2648,31 +2696,46 @@
                 <div class="backup-modal-content">
                     <div class="backup-input-group">
                         <label for="mcpServiceName">Service Name *</label>
-                        <input type="text" id="mcpServiceName" placeholder="e.g., weather_service" maxlength="100">
+                        <input type="text" id="mcpServiceName" placeholder="e.g., getUsers" maxlength="100">
+                    </div>
+                    <div class="backup-input-group">
+                        <label for="mcpServiceApiName">API Name *</label>
+                        <input type="text" id="mcpServiceApiName" placeholder="e.g., getUsers" maxlength="100">
+                    </div>
+                    <div class="backup-input-group">
+                        <label for="mcpServiceVersion">Service Version *</label>
+                        <input type="text" id="mcpServiceVersion" placeholder="e.g., v1" maxlength="50">
+                    </div>
+                    <div class="backup-input-group">
+                        <label for="mcpServiceMethod">Method *</label>
+                        <select id="mcpServiceMethod">
+                            <option value="GET">GET</option>
+                            <option value="POST">POST</option>
+                        </select>
                     </div>
                     <div class="backup-input-group">
                         <label for="mcpServiceDescription">Description *</label>
                         <textarea id="mcpServiceDescription" rows="2" placeholder="Description of the service" style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
                     </div>
                     <div class="backup-input-group">
-                        <label for="mcpServiceCategory">Category (optional)</label>
-                        <input type="text" id="mcpServiceCategory" placeholder="e.g., weather" maxlength="100">
+                        <label for="mcpServiceCategory">Category *</label>
+                        <input type="text" id="mcpServiceCategory" placeholder="e.g., analytics" maxlength="100">
                     </div>
                     <div class="backup-input-group">
-                        <label for="mcpServiceCapabilities">Capabilities (JSON array of strings) *</label>
-                        <textarea id="mcpServiceCapabilities" rows="2" placeholder='["获取实时数据", "按条件过滤"]' style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
+                        <label for="mcpServiceCapabilities">Capabilities (JSON array) *</label>
+                        <textarea id="mcpServiceCapabilities" rows="2" placeholder='["query", "data"]' style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
                     </div>
                     <div class="backup-input-group">
-                        <label for="mcpServiceUseCases">Use Cases (JSON array of strings) *</label>
-                        <textarea id="mcpServiceUseCases" rows="2" placeholder='["用户想知道天气情况", "用户需要出行建议"]' style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
+                        <label for="mcpServiceUseCases">Use Cases (JSON array) *</label>
+                        <textarea id="mcpServiceUseCases" rows="2" placeholder='["Data query service", "Analytics"]' style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
                     </div>
                     <div class="backup-input-group">
-                        <label for="mcpServiceParameters">Parameters (JSON array of objects) *</label>
-                        <textarea id="mcpServiceParameters" rows="4" placeholder='[{"name": "city", "type": "string", "required": true, "description": "城市名称"}]' style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
+                        <label for="mcpServiceParameters">Parameters (JSON array, optional)</label>
+                        <textarea id="mcpServiceParameters" rows="3" placeholder='[{"name":"userId","type":"string","required":true,"description":"User ID"}]' style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
                     </div>
                     <div class="backup-input-group">
-                        <label for="mcpServiceExamples">Examples (JSON array of objects) *</label>
-                        <textarea id="mcpServiceExamples" rows="4" placeholder='[{"user_query": "北京的天气如何？", "parameters": {"city": "北京"}}]' style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
+                        <label for="mcpServiceExamples">Examples (JSON array, optional)</label>
+                        <textarea id="mcpServiceExamples" rows="3" placeholder='[{"user_query":"Query getUsers service","parameters":{"userId":"123"}}]' style="width:100%; padding:10px; background:#252525; border:1px solid #444; border-radius:4px; color:#f0f0f0; font-family:'Courier New', monospace; font-size:14px;"></textarea>
                     </div>
                     <div class="backup-status" id="mcpServiceStatus"></div>
                     <div class="backup-actions">
@@ -2707,10 +2770,13 @@
             mcpServiceModalOverlay.classList.add('active');
             // Clear previous inputs
             document.getElementById('mcpServiceName').value = '';
+            document.getElementById('mcpServiceApiName').value = '';
+            document.getElementById('mcpServiceVersion').value = '';
+            document.getElementById('mcpServiceMethod').value = 'GET';
             document.getElementById('mcpServiceDescription').value = '';
             document.getElementById('mcpServiceCategory').value = '';
-            document.getElementById('mcpServiceCapabilities').value = '';
-            document.getElementById('mcpServiceUseCases').value = '';
+            document.getElementById('mcpServiceCapabilities').value = '["query"]';
+            document.getElementById('mcpServiceUseCases').value = '["Data query service"]';
             document.getElementById('mcpServiceParameters').value = '';
             document.getElementById('mcpServiceExamples').value = '';
             mcpServiceStatus.textContent = '';
@@ -2723,6 +2789,9 @@
         // Submit registration
         mcpServiceSubmitBtn.addEventListener('click', () => {
             const name = document.getElementById('mcpServiceName').value.trim();
+            const apiName = document.getElementById('mcpServiceApiName').value.trim();
+            const version = document.getElementById('mcpServiceVersion').value.trim();
+            const method = document.getElementById('mcpServiceMethod').value;
             const description = document.getElementById('mcpServiceDescription').value.trim();
             const category = document.getElementById('mcpServiceCategory').value.trim();
             const capabilitiesStr = document.getElementById('mcpServiceCapabilities').value.trim();
@@ -2730,18 +2799,18 @@
             const parametersStr = document.getElementById('mcpServiceParameters').value.trim();
             const examplesStr = document.getElementById('mcpServiceExamples').value.trim();
 
-            if (!name || !description || !capabilitiesStr || !useCasesStr || !parametersStr || !examplesStr) {
-                mcpServiceStatus.textContent = 'Please fill in required fields (Name, Description, Capabilities, Use Cases, Parameters, Examples).';
+            if (!name || !apiName || !version || !method || !description || !category || !capabilitiesStr || !useCasesStr) {
+                mcpServiceStatus.textContent = 'Please fill in required fields (Name, API Name, Version, Method, Description, Category, Capabilities, Use Cases).';
                 mcpServiceStatus.style.color = '#ff6b6b';
                 return;
             }
 
-            // Validate capabilities JSON (array of strings)
-            let capabilities;
+            // Validate capabilities JSON
+            let capabilities = [];
             try {
                 capabilities = JSON.parse(capabilitiesStr);
-                if (!Array.isArray(capabilities) || !capabilities.every(item => typeof item === 'string')) {
-                    throw new Error('Capabilities must be a JSON array of strings');
+                if (!Array.isArray(capabilities)) {
+                    throw new Error('Capabilities must be a JSON array');
                 }
             } catch (e) {
                 mcpServiceStatus.textContent = 'Invalid capabilities JSON: ' + e.message;
@@ -2749,12 +2818,12 @@
                 return;
             }
 
-            // Validate use_cases JSON (array of strings)
-            let use_cases;
+            // Validate use cases JSON
+            let use_cases = [];
             try {
                 use_cases = JSON.parse(useCasesStr);
-                if (!Array.isArray(use_cases) || !use_cases.every(item => typeof item === 'string')) {
-                    throw new Error('Use Cases must be a JSON array of strings');
+                if (!Array.isArray(use_cases)) {
+                    throw new Error('Use cases must be a JSON array');
                 }
             } catch (e) {
                 mcpServiceStatus.textContent = 'Invalid use cases JSON: ' + e.message;
@@ -2762,37 +2831,44 @@
                 return;
             }
 
-            // Validate parameters JSON (array of objects)
-            let parameters;
-            try {
-                parameters = JSON.parse(parametersStr);
-                if (!Array.isArray(parameters) || !parameters.every(item => typeof item === 'object' && item !== null)) {
-                    throw new Error('Parameters must be a JSON array of objects');
+            // Validate parameters JSON (optional)
+            let parameters = [];
+            if (parametersStr) {
+                try {
+                    parameters = JSON.parse(parametersStr);
+                    if (!Array.isArray(parameters)) {
+                        throw new Error('Parameters must be a JSON array');
+                    }
+                } catch (e) {
+                    mcpServiceStatus.textContent = 'Invalid parameters JSON: ' + e.message;
+                    mcpServiceStatus.style.color = '#ff6b6b';
+                    return;
                 }
-            } catch (e) {
-                mcpServiceStatus.textContent = 'Invalid parameters JSON: ' + e.message;
-                mcpServiceStatus.style.color = '#ff6b6b';
-                return;
             }
 
-            // Validate examples JSON (array of objects)
-            let examples;
-            try {
-                examples = JSON.parse(examplesStr);
-                if (!Array.isArray(examples) || !examples.every(item => typeof item === 'object' && item !== null)) {
-                    throw new Error('Examples must be a JSON array of objects');
+            // Validate examples JSON (optional)
+            let examples = [];
+            if (examplesStr) {
+                try {
+                    examples = JSON.parse(examplesStr);
+                    if (!Array.isArray(examples)) {
+                        throw new Error('Examples must be a JSON array');
+                    }
+                } catch (e) {
+                    mcpServiceStatus.textContent = 'Invalid examples JSON: ' + e.message;
+                    mcpServiceStatus.style.color = '#ff6b6b';
+                    return;
                 }
-            } catch (e) {
-                mcpServiceStatus.textContent = 'Invalid examples JSON: ' + e.message;
-                mcpServiceStatus.style.color = '#ff6b6b';
-                return;
             }
 
-            // Build service definition object
-            const serviceDef = {
+            // Build MCP Service definition object
+            const mcpServiceDef = {
                 name,
+                apiName,
+                version,
+                method,
                 description,
-                category: category || '',
+                category,
                 capabilities,
                 use_cases,
                 parameters,
@@ -2806,7 +2882,7 @@
             fetch('/mcp/registerMCPService', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(serviceDef)
+                body: JSON.stringify(mcpServiceDef)
             })
             .then(response => response.json())
             .then(data => {
@@ -2901,12 +2977,17 @@
 
         // Handle incoming AI Chat messages
         function handleAIChatMessage(data) {
-            if (data.type === 'chat' || data.type === 'response') {
+            if (data.type === 'connected') {
+                addAIChatMessage('system', data.message || 'Connected to AI Chat server.');
+                updateAIChatStatus('Connected', true);
+            } else if (data.type === 'response') {
                 addAIChatMessage('assistant', data.content);
             } else if (data.type === 'error') {
-                addAIChatMessage('error', data.content || 'Unknown error');
-            } else if (data.type === 'status') {
-                updateAIChatStatus(data.content, true);
+                addAIChatMessage('error', data.message || 'Unknown error');
+            } else if (data.type === 'info') {
+                addAIChatMessage('system', data.message || '');
+            } else {
+                console.warn('Unknown AI Chat message type:', data.type);
             }
         }
 
@@ -2986,9 +3067,16 @@
             if (aiChatMessages.length === 0) return;
             
             if (confirm('Clear all chat messages?')) {
+                // Send clear_history message to server
+                if (aiChatConnected && aiChatWs && aiChatWs.readyState === WebSocket.OPEN) {
+                    aiChatWs.send(JSON.stringify({
+                        type: 'clear_history'
+                    }));
+                }
+                // Clear local messages immediately
                 aiChatMessages = [];
                 renderAIChatMessages();
-                addAIChatMessage('system', 'Chat cleared.');
+                addAIChatMessage('system', 'Chat cleared. Sending clear request to server...');
             }
         }
 

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SlackerDB SQL Shell</title>
+    <title>SQL shell - Loading...</title>
     <link rel="stylesheet" href="console.css">
 </head>
 <body>
@@ -173,6 +173,9 @@
                             <tr>
                                 <th><label for="selectAllMCPServiceCheckbox"></label><input type="checkbox" id="selectAllMCPServiceCheckbox"></th>
                                 <th>Name</th>
+                                <th>API Name</th>
+                                <th>Version</th>
+                                <th>Method</th>
                                 <th>Description</th>
                                 <th>Category</th>
                                 <th>Capabilities</th>
@@ -216,7 +219,7 @@
                         </div>
                     </div>
                     <div class="chat-input-area">
-                        <textarea id="aiChatInput" placeholder="Type your message here... (Press Enter to send, Shift+Enter for new line)" rows="3"></textarea>
+                        <label for="aiChatInput"></label><textarea id="aiChatInput" placeholder="Type your message here... (Press Enter to send, Shift+Enter for new line)" rows="3"></textarea>
                         <div class="chat-controls">
                             <button id="aiChatConnectBtn" class="chat-btn">Connect</button>
                             <button id="aiChatDisconnectBtn" class="chat-btn" disabled>Disconnect</button>

@@ -145,7 +145,9 @@
                         <include>**/Sanity01Test.java</include>
                         <include>**/Sanity02Test.java</include>
                         <include>**/Sanity03Test.java</include>
-                        <include>**/InstanceXTest.java</include>
+                        <include>**/InstanceXApiTest.java</include>
+                        <include>**/InstanceXSqlReplTest.java</include>
+                        <include>**/InstanceXBasicServiceTest.java</include>
                         <include>**/MCPTest.java</include>
                         <include>**/MultiDBInstanceTest.java</include>
                         <include>**/DatabaseStabilityTest.java</include>

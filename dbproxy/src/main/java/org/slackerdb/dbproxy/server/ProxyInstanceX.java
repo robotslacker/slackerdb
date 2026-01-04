@@ -62,10 +62,18 @@ public class ProxyInstanceX {
         return originalUri.resolve(location).normalize();
     }
 
-    public static void forwardRequest(Context ctx, String targetBaseUrl) {
+    public static void forwardRequest(Context ctx, String targetBaseUrl, String prefixToRemove) {
         try {
-            // 构建目标URL
-            String targetUrl = targetBaseUrl + ctx.path();
+            // 构建目标URL，去掉匹配的前缀
+            String path = ctx.path();
+            if (prefixToRemove != null && path.startsWith(prefixToRemove)) {
+                path = path.substring(prefixToRemove.length());
+                // 确保路径以/开头
+                if (!path.startsWith("/")) {
+                    path = "/" + path;
+                }
+            }
+            String targetUrl = targetBaseUrl + path;
             URI originalUri = URI.create(targetUrl);
 
             HttpRequest.BodyPublisher bodyPublisher = ctx.body().isEmpty() ?
@@ -159,7 +167,7 @@ public class ProxyInstanceX {
                     String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
                     for (String alias : forwarderPathMappings.keySet()) {
                         if (ctxPathPrefix.equalsIgnoreCase(alias)) {
-                            forwardRequest(ctx, forwarderPathMappings.get(alias));
+                            forwardRequest(ctx, forwarderPathMappings.get(alias), alias);
                             return;
                         }
                     }
@@ -175,7 +183,7 @@ public class ProxyInstanceX {
                     String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
                     for (String alias : forwarderPathMappings.keySet()) {
                         if (ctxPathPrefix.equalsIgnoreCase(alias)) {
-                            forwardRequest(ctx, forwarderPathMappings.get(alias));
+                            forwardRequest(ctx, forwarderPathMappings.get(alias), alias);
                             return;
                         }
                     }
@@ -191,7 +199,7 @@ public class ProxyInstanceX {
                     String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
                     for (String alias : forwarderPathMappings.keySet()) {
                         if (ctxPathPrefix.equalsIgnoreCase(alias)) {
-                            forwardRequest(ctx, forwarderPathMappings.get(alias));
+                            forwardRequest(ctx, forwarderPathMappings.get(alias), alias);
                             return;
                         }
                     }
@@ -207,7 +215,7 @@ public class ProxyInstanceX {
                     String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
                     for (String alias : forwarderPathMappings.keySet()) {
                         if (ctxPathPrefix.equalsIgnoreCase(alias)) {
-                            forwardRequest(ctx, forwarderPathMappings.get(alias));
+                            forwardRequest(ctx, forwarderPathMappings.get(alias), alias);
                             return;
                         }
                     }
@@ -223,7 +231,7 @@ public class ProxyInstanceX {
                     String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
                     for (String alias : forwarderPathMappings.keySet()) {
                         if (ctxPathPrefix.equalsIgnoreCase(alias)) {
-                            forwardRequest(ctx, forwarderPathMappings.get(alias));
+                            forwardRequest(ctx, forwarderPathMappings.get(alias), alias);
                             return;
                         }
                     }
@@ -242,10 +250,6 @@ public class ProxyInstanceX {
             logger.trace("Response: {} {} from {} - Status: {} - Time: {}ms",
                     ctx.method(), ctx.path(), this.getClientIp(ctx), ctx.status(), duration);
         });
-
-        // 定义API服务
-        // API服务处理
-        new APIService(this.proxyInstance, this.managementApp);
 
         // 自定义404假面
         this.managementApp.error(404, ctx -> ctx.html(Files.readString(Path.of(page404Resource.getURI()))));
