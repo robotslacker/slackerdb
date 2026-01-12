@@ -44,7 +44,7 @@ public class PluginExample extends DBPlugin {
      *
      * @param wrapper PF4J plugin wrapper
      */
-    protected PluginExample(PluginWrapper wrapper) {
+    public PluginExample(PluginWrapper wrapper) {
         super(wrapper);
     }
 
@@ -62,6 +62,7 @@ public class PluginExample extends DBPlugin {
      */
     @Override
     protected void onStart() {
+        System.err.println("OK onStart");
         // Example: Obtain plugin resources
         // try {
         //     this.conn = getDbConnection();

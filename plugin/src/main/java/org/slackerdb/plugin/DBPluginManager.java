@@ -29,6 +29,15 @@ public class DBPluginManager extends DefaultPluginManager {
     }
 
     /**
+     * 构造函数。
+     *
+     * @param ctx 插件上下文对象
+     */
+    public DBPluginManager(DBPluginContext ctx) {
+        this.ctx = ctx;
+    }
+
+    /**
      * 获取插件上下文（包可见，供 {@link DBPluginFactory} 使用）。
      *
      * @return 插件上下文对象

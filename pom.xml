@@ -23,7 +23,6 @@
         <module>plugin</module>
         <module>plugin-example</module>
         <module>build</module>
-        <module>plugin-osmon</module>
     </modules>
 
     <dependencies>

@@ -5,6 +5,7 @@ import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.dbserver.server.DBInstance;
 
 import java.sql.*;
+import java.util.Arrays;
 
 public class Sanity03Test {
     @Test
@@ -48,7 +49,10 @@ public class Sanity03Test {
         rs = stmt.executeQuery("select group_concat(database_name)::TEXT from duckdb_databases() order by 1");
         if (rs.next())
         {
-            assert rs.getString(1).equalsIgnoreCase("memory,mem,system,temp");
+            String[] parts = rs.getString(1).split(",");
+            Arrays.sort(parts);
+            String target = String.join(",", parts);
+            assert target.equalsIgnoreCase("mem,memory,system,temp");
         }
         else
         {
@@ -89,7 +93,10 @@ public class Sanity03Test {
         ResultSet rs = stmt.executeQuery("select group_concat(database_name)::TEXT from duckdb_databases() order by 1");
         if (rs.next())
         {
-            assert rs.getString(1).equalsIgnoreCase("memory,mem,system,temp");
+            String[] parts = rs.getString(1).split(",");
+            Arrays.sort(parts);
+            String target = String.join(",", parts);
+            assert target.equalsIgnoreCase("mem,memory,system,temp");
         }
         else
         {

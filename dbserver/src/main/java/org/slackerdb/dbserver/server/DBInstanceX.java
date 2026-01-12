@@ -13,6 +13,7 @@ import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.utils.BoundedQueue;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.dbserver.dataservice.APIService;
+import org.slackerdb.dbserver.dataservice.PluginService;
 import org.slackerdb.dbserver.entity.APIHistoryRecord;
 import org.slackerdb.dbserver.repl.SqlReplServer;
 import org.slackerdb.dbserver.mcpservice.McpServer;
@@ -49,6 +50,7 @@ public class DBInstanceX {
     private final AtomicLong backendApiHistoryId = new AtomicLong(1);
     private final SchedulerService schedulerService;
     private final APIService apiService;
+    private final PluginService pluginService;
     private final McpServer mcpServer;
     public BoundedQueue<APIHistoryRecord> apiHistoryList
             = new BoundedQueue<>(10*1000);
@@ -530,6 +532,9 @@ public class DBInstanceX {
 
         // API服务处理
         this.apiService = new APIService(dbInstance, this.managementApp, dbInstance.logger);
+
+        // Plugin服务处理
+        this.pluginService = new PluginService(dbInstance, this.managementApp, dbInstance.logger);
 
         // 调度服务
         this.schedulerService =

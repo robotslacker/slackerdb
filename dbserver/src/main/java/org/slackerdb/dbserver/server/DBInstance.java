@@ -141,54 +141,6 @@ public class DBInstance {
     class DBInstanceMonitorThread extends Thread
     {
         private static String lastRegisterMessage = "";
-        private final Map<String, Long> lastModifiedMap = new HashMap<>();
-
-        // 检查文件或目录变化
-        private boolean hasChanged(String path) {
-            if (path == null || path.isEmpty()) {
-                return false;
-            }
-            Path filePath = Path.of(path);
-            if (!Files.exists(filePath)) {
-                // 路径不存在，无法监视
-                return false;
-            }
-            long lastModified;
-            try {
-                if (Files.isDirectory(filePath)) {
-                    // 获取目录及其所有子目录中任何文件的最后修改时间
-                    try (var stream = Files.walk(filePath)) {
-                        lastModified = stream
-                                .filter(Files::isRegularFile)
-                                .mapToLong(p -> {
-                                    try {
-                                        return Files.getLastModifiedTime(p).toMillis();
-                                    } catch (IOException e) {
-                                        return 0L;
-                                    }
-                                })
-                                .max()
-                                .orElse(0L);
-                    }
-                } else {
-                    lastModified = Files.getLastModifiedTime(filePath).toMillis();
-                }
-            } catch (IOException e) {
-                logger.warn("[SERVER] Failed to check modification time for {}: {}", path, e.getMessage());
-                return false;
-            }
-            Long previous = lastModifiedMap.get(path);
-            if (previous == null) {
-                // 第一次看到，存储并返回false（无变化）
-                lastModifiedMap.put(path, lastModified);
-                return false;
-            }
-            if (!Objects.equals(previous, lastModified)) {
-                lastModifiedMap.put(path, lastModified);
-                return true;
-            }
-            return false;
-        }
 
         @Override
         public void run()
@@ -1006,19 +958,20 @@ public class DBInstance {
         }
 
         // 加载数据库插件, 但是不要启动
+        DBPluginContext dbPluginContext = new DBPluginContext();
+        dbPluginContext.setDbBackendConn(this.backendSysConnection);
+        dbPluginContext.setLogger(this.logger);
+        if (this.dbInstanceX != null) {
+            dbPluginContext.setJavalin(this.dbInstanceX.getManagementApp());
+        }
+        else
+        {
+            dbPluginContext.setJavalin(null);
+        }
+        logger.info("[SERVER][PLUGIN     ] Plugin manager started ...");
         if (!serverConfiguration.getPlugins_dir().isEmpty() && Path.of(serverConfiguration.getPlugins_dir()).toFile().exists())
         {
             logger.info("[SERVER][PLUGIN     ] Will scan directory [{}] for plugin ...", Path.of(serverConfiguration.getPlugins_dir()));
-            DBPluginContext dbPluginContext = new DBPluginContext();
-            dbPluginContext.setDbBackendConn(this.backendSysConnection);
-            dbPluginContext.setLogger(this.logger);
-            if (this.dbInstanceX != null) {
-                dbPluginContext.setJavalin(this.dbInstanceX.getManagementApp());
-            }
-            else
-            {
-                dbPluginContext.setJavalin(null);
-            }
             this.dbPluginManager = new DBPluginManager(Path.of(serverConfiguration.getPlugins_dir()), dbPluginContext);
 
             dbPluginManager.loadPlugins();
@@ -1031,6 +984,10 @@ public class DBInstance {
                 logger.info("[SERVER][PLUGIN     ] start plugin [{}] ...", dbPluginManager.getPlugins().get(i).getPluginId());
                 dbPluginManager.startPlugin(dbPluginManager.getPlugins().get(i).getPluginId());
             }
+        }
+        else
+        {
+            this.dbPluginManager = new DBPluginManager(dbPluginContext);
         }
 
         // 标记服务已经启动完成
@@ -1179,5 +1136,11 @@ public class DBInstance {
     public void setExclusiveMode(boolean exclusiveMode)
     {
         this.exclusiveMode = exclusiveMode;
+    }
+
+    // 获取插件管理器
+    public PluginManager getPluginManager()
+    {
+        return this.dbPluginManager;
     }
 }

@@ -1758,7 +1758,7 @@ public class MyPlugin extends DBPlugin {
     private Javalin app;
     private Logger logger;
 
-    protected MyPlugin(PluginWrapper wrapper) {
+    public MyPlugin(PluginWrapper wrapper) {
         super(wrapper);
     }
 
@@ -1855,6 +1855,134 @@ If the plugin registered an HTTP endpoint, you can access it at `http://localhos
 ==== Plugin Example
 
 The `plugin‑example` module in the project provides a complete plugin example that demonstrates the basic structure and resource access methods. Developers can refer to this example to get started quickly.
+
+==== Plugin Management API
+
+SlackerDB provides a set of HTTP endpoints for managing plugins at runtime. These endpoints allow you to load, unload, start, stop, and list plugins without restarting the server. All endpoints return JSON responses with a standard format: `{"retCode": 0/-1, "retMsg": "message"}`.
+
+===== /plugin/load (POST)
+
+Loads a plugin from a JAR file in the server's plugin directory.
+
+.Request body (JSON):
+[source,json]
+----
+{
+  "plugid": "myplugin"
+}
+----
+
+* `plugid` – Plugin identifier (must match the JAR filename without the `.jar` extension). The plugin JAR must be located in the server's plugin directory (configured via `plugins_dir` parameter).
+
+.Response example (success):
+[source,json]
+----
+{
+  "retCode": 0,
+  "retMsg": "Plugin loaded successfully"
+}
+----
+
+.Response example (error):
+[source,json]
+----
+{
+  "retCode": -1,
+  "retMsg": "Plugin not found: myplugin"
+}
+----
+
+===== /plugin/unload (POST)
+
+Unloads a previously loaded plugin. The plugin will be stopped first if it is running.
+
+.Request body (JSON):
+[source,json]
+----
+{
+  "plugid": "myplugin"
+}
+----
+
+.Response example (success):
+[source,json]
+----
+{
+  "retCode": 0,
+  "retMsg": "Plugin unloaded successfully"
+}
+----
+
+===== /plugin/start (POST)
+
+Starts a loaded plugin. The plugin's `start()` method will be called, which triggers the plugin's lifecycle hooks (`beforeStart()`, `onStart()`, `afterStart()`).
+
+.Request body (JSON):
+[source,json]
+----
+{
+  "plugid": "myplugin"
+}
+----
+
+.Response example (success):
+[source,json]
+----
+{
+  "retCode": 0,
+  "retMsg": "Plugin started successfully"
+}
+----
+
+===== /plugin/stop (POST)
+
+Stops a running plugin. The plugin's `stop()` method will be called, which triggers the plugin's lifecycle hooks (`beforeStop()`, `onStop()`, `afterStop()`).
+
+.Request body (JSON):
+[source,json]
+----
+{
+  "plugid": "myplugin"
+}
+----
+
+.Response example (success):
+[source,json]
+----
+{
+  "retCode": 0,
+  "retMsg": "Plugin stopped successfully"
+}
+----
+
+===== /plugin/list (GET)
+
+Lists all currently loaded plugins with their details.
+
+.Response example:
+[source,json]
+----
+{
+  "retCode": 0,
+  "retMsg": "Success",
+  "plugins": [
+    {
+      "pluginId": "myplugin",
+      "pluginState": "STARTED",
+      "version": "1.0.0",
+      "description": "My example plugin"
+    },
+    {
+      "pluginId": "anotherplugin",
+      "pluginState": "STOPPED",
+      "version": "2.0.0",
+      "description": "Another plugin"
+    }
+  ]
+}
+----
+
+The `pluginState` field can be one of: `CREATED`, `DISABLED`, `LOADED`, `STARTED`, `STOPPED`, `UNLOADED`.
 
 ==== Notes
 
