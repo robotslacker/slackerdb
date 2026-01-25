@@ -53,10 +53,12 @@ public class ServerConfiguration {
     private final String default_remote_listener = "";
     // 默认不限制内存使用情况
     private final String default_memory_limit;
-    // 默认使用一半的CPU作为计算线程
-    private final int default_threads = (int)(Runtime.getRuntime().availableProcessors() * 0.5);
+    // 默认线程数（在构造函数中基于内存计算）
+    private final int default_threads;
     // 默认数据库可读可写
     private final String default_access_mode = "READ_WRITE";
+    // 默认自动工作负载阈值（用于计算内存限制）
+    private final double default_auto_workload_threshold = 0.8;
 
     // 默认使用全部的CPU作为Netty的后台线程数
     private final int default_max_workers = Runtime.getRuntime().availableProcessors();
@@ -94,6 +96,8 @@ public class ServerConfiguration {
     private final String default_mcp_config = "";
     // MCP LLM服务器配置
     private final String default_mcp_llm_server = "";
+    // MCP LLM密钥配置
+    private final String default_mcp_llm_key = "";
 
     private String   data;
 
@@ -109,6 +113,7 @@ public class ServerConfiguration {
     private String   bind;
     private String   remote_listener;
     private String   memory_limit;
+    private double   auto_workload_threshold;
     private int      threads;
     private String   access_mode;
     private int      max_workers;
@@ -130,6 +135,7 @@ public class ServerConfiguration {
     private String data_service_schema;
     private String mcp_config;
     private String mcp_llm_server;
+    private String mcp_llm_key;
 
     public ServerConfiguration() throws ServerException
     {
@@ -146,7 +152,6 @@ public class ServerConfiguration {
         portX = default_portX;
         bind = default_bind;
         remote_listener = default_remote_listener;
-        threads = default_threads;
         access_mode = default_access_mode;
         max_workers = default_max_workers;
         client_timeout = default_client_timeout;
@@ -166,8 +171,10 @@ public class ServerConfiguration {
         data_service_history = default_data_service_history;
         mcp_config = default_mcp_config;
         mcp_llm_server = default_mcp_llm_server;
+        mcp_llm_key = default_mcp_llm_key;
         data_encrypt = default_data_encrypt;
         plugins_dir = default_plugins_dir;
+        auto_workload_threshold = default_auto_workload_threshold;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -176,11 +183,16 @@ public class ServerConfiguration {
             throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
         }
 
-        // 系统默认内存为系统可用内存的60%
+        // 系统默认内存为系统可用内存的auto_workload_threshold比例
         OperatingSystemMXBean operatingSystemMXBean = (OperatingSystemMXBean)ManagementFactory.getOperatingSystemMXBean();
-        default_memory_limit =
-                (int) ((operatingSystemMXBean.getTotalMemorySize() * 0.6 )/ 1024 / 1024 /1024) + "G";
+        long totalMemoryBytes = operatingSystemMXBean.getTotalMemorySize();
+        int memoryLimitGB = (int) ((totalMemoryBytes * auto_workload_threshold) / 1024 / 1024 / 1024);
+        default_memory_limit = memoryLimitGB + "G";
         memory_limit = default_memory_limit;
+        
+        // 默认线程数为内存限制（GB）除以10的整数，至少为1
+        default_threads = Math.max(1, memoryLimitGB / 10);
+        threads = default_threads;
     }
 
     // 读取参数配置文件
@@ -329,6 +341,13 @@ public class ServerConfiguration {
                         setMemory_limit(entry.getValue().toString().trim());
                     }
                 }
+                case "AUTO_WORKLOAD_THRESHOLD" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        auto_workload_threshold = this.default_auto_workload_threshold;
+                    } else {
+                        setAuto_workload_threshold(entry.getValue().toString().trim());
+                    }
+                }
                 case "INIT_SCRIPT" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         init_script = this.default_init_script;
@@ -432,6 +451,13 @@ public class ServerConfiguration {
                         mcp_llm_server = this.default_mcp_llm_server;
                     } else {
                         setMcpLlmServer(entry.getValue().toString().trim());
+                    }
+                }
+                case "MCP_LLM_KEY" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        mcp_llm_key = this.default_mcp_llm_key;
+                    } else {
+                        setMcpLlmKey(entry.getValue().toString().trim());
                     }
                 }
                 default ->
@@ -1032,5 +1058,44 @@ public class ServerConfiguration {
     public String getMcpLlmServer()
     {
         return this.mcp_llm_server;
+    }
+
+    public double getAuto_workload_threshold()
+    {
+        return auto_workload_threshold;
+    }
+
+    public void setAuto_workload_threshold(double threshold) throws ServerException
+    {
+        if (threshold <= 0.0 || threshold > 1.0)
+        {
+            throw new ServerException(
+                Utils.getMessage("SLACKERDB-00005", "auto_workload_threshold", String.valueOf(threshold))
+            );
+        }
+        auto_workload_threshold = threshold;
+    }
+
+    public void setAuto_workload_threshold(String thresholdStr) throws ServerException
+    {
+        double threshold;
+        try {
+            threshold = Double.parseDouble(thresholdStr);
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                Utils.getMessage("SLACKERDB-00005", "auto_workload_threshold", thresholdStr)
+            );
+        }
+        setAuto_workload_threshold(threshold);
+    }
+
+    public void setMcpLlmKey(String val) {
+        this.mcp_llm_key = val;
+    }
+
+    public String getMcpLlmKey() {
+        return this.mcp_llm_key;
     }
 }

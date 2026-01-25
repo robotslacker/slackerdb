@@ -1,4 +1,4 @@
-package org.slackerdb.dbserver.dataservice;
+package org.slackerdb.dbserver.service;
 
 import ch.qos.logback.classic.Logger;
 import com.alibaba.fastjson2.JSONArray;

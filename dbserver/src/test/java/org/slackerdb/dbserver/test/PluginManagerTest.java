@@ -128,7 +128,7 @@ public class PluginManagerTest {
         
         // 验证响应
         assert retCode == 0 : "Expected retCode 0 but got " + retCode + ", message: " + retMsg;
-        assert retMsg.contains("successfully") || retMsg.contains("成功") : "Unexpected message: " + retMsg;
+        assert retMsg.contains("successfully") : "Unexpected message: " + retMsg;
         
         // 验证插件ID是否返回
         String pluginId = responseObj.getString("pluginId");
@@ -232,7 +232,7 @@ public class PluginManagerTest {
         
         // 验证响应
         assert retCode == 0 : "Expected retCode 0 but got " + retCode + ", message: " + retMsg;
-        assert retMsg.contains("successfully") || retMsg.contains("成功") : "Unexpected message: " + retMsg;
+        assert retMsg.contains("successfully") : "Unexpected message: " + retMsg;
         
         System.out.println("TEST:: Plugin started successfully: " + pluginId);
         
@@ -262,7 +262,7 @@ public class PluginManagerTest {
         
         // 验证响应
         assert retCode == 0 : "Expected retCode 0 but got " + retCode + ", message: " + retMsg;
-        assert retMsg.contains("successfully") || retMsg.contains("成功") : "Unexpected message: " + retMsg;
+        assert retMsg.contains("successfully") : "Unexpected message: " + retMsg;
         
         System.out.println("TEST:: Plugin stopped successfully: " + pluginId);
         
@@ -380,7 +380,7 @@ public class PluginManagerTest {
         
         // 验证响应
         assert retCode == 0 : "Expected retCode 0 but got " + retCode + ", message: " + retMsg;
-        assert retMsg.contains("successfully") || retMsg.contains("成功") : "Unexpected message: " + retMsg;
+        assert retMsg.contains("successfully") : "Unexpected message: " + retMsg;
         
         System.out.println("TEST:: Plugin unloaded successfully: " + pluginId);
         

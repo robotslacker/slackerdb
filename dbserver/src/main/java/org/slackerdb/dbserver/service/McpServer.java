@@ -1,4 +1,4 @@
-package org.slackerdb.dbserver.mcpservice;
+package org.slackerdb.dbserver.service;
 
 import ch.qos.logback.classic.Logger;
 import com.alibaba.fastjson2.*;
@@ -37,6 +37,7 @@ public class McpServer {
     private final Logger logger;
     private final String mcpConfigPath;
     private final String mcpLlmServer;
+    private final String mcpLlmKey;
     private final Javalin managementApp;
     private final Object saveLock = new Object();
     private final int portX;
@@ -56,6 +57,7 @@ public class McpServer {
         this.managementApp = managementApp;
         this.mcpConfigPath = dbInstance.serverConfiguration.getMcpConfig();
         this.mcpLlmServer = dbInstance.serverConfiguration.getMcpLlmServer();
+        this.mcpLlmKey = dbInstance.serverConfiguration.getMcpLlmKey();
         this.portX = dbInstance.serverConfiguration.getPortX();
         this.bindHost = dbInstance.serverConfiguration.getBindHost();
     }
@@ -1860,7 +1862,7 @@ Output format (JSON):
             String systemPrompt,
             String userMessage
     ) throws IOException, InterruptedException {
-        // LLM实现, 当前只支持ollama
+        // LLM实现, 当前支持ollama和openai
         if ("ollama".equalsIgnoreCase(service)) {
             // Construct URL
             String url = "http://" + host + ":" + port + "/v1/chat/completions";
@@ -1879,18 +1881,24 @@ Output format (JSON):
             requestBody.put("model", model);
             requestBody.put("messages", messages);
             requestBody.put("max_tokens", 2000);        // Increased for longer responses
-            requestBody.put("top_p", 1);                // 保证概率分布不被截断，避免模型“放弃生成”
+            requestBody.put("top_p", 1);                // 保证概率分布不被截断，避免模型"放弃生成"
             requestBody.put("temperature", 0.3);        // 较低的温度有利于更确定性的路径选择
             
             String requestBodyJson = JSON.toJSONString(requestBody);
             
             // Create HTTP client and request
             HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(requestBodyJson))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofString(requestBodyJson));
+            
+            // 如果配置了API密钥，添加到请求头
+            if (mcpLlmKey != null && !mcpLlmKey.trim().isEmpty()) {
+                requestBuilder.header("Authorization", "Bearer " + mcpLlmKey.trim());
+            }
+            
+            HttpRequest request = requestBuilder.build();
             
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
@@ -1911,6 +1919,64 @@ Output format (JSON):
                         """;
             } else {
                 throw new IOException("LLM API request failed with status: " + response.statusCode() + ", body: " + response.body());
+            }
+        } else if ("openai".equalsIgnoreCase(service)) {
+            // OpenAI API支持
+            String url = "https://" + host + "/v1/chat/completions";
+            
+            // Build messages list with system prompt and current user message
+            List<Map<String, String>> messages = new ArrayList<>();
+            
+            // Add system prompt
+            messages.add(Map.of("role", "system", "content", systemPrompt));
+            
+            // Add current user message
+            messages.add(Map.of("role", "user", "content", userMessage));
+            
+            // Prepare request body
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("model", model);
+            requestBody.put("messages", messages);
+            requestBody.put("max_tokens", 2000);
+            requestBody.put("temperature", 0.3);
+            
+            String requestBodyJson = JSON.toJSONString(requestBody);
+            
+            // Create HTTP client and request
+            HttpClient client = HttpClient.newHttpClient();
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(requestBodyJson));
+            
+            // OpenAI API需要API密钥
+            if (mcpLlmKey != null && !mcpLlmKey.trim().isEmpty()) {
+                requestBuilder.header("Authorization", "Bearer " + mcpLlmKey.trim());
+            } else {
+                throw new IOException("OpenAI API requires API key but mcp_llm_key is not configured");
+            }
+            
+            HttpRequest request = requestBuilder.build();
+            
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() == 200) {
+                JSONObject responseJson = JSON.parseObject(response.body());
+                JSONArray choices = responseJson.getJSONArray("choices");
+                if (choices != null && !choices.isEmpty()) {
+                    JSONObject message = choices.getJSONObject(0).getJSONObject("message");
+                    if (message != null && message.containsKey("content")) {
+                        return message.getString("content");
+                    }
+                }
+                return """
+                            {
+                            "type": "error",
+                            "message": "No response content found in LLM response"
+                            }
+                        """;
+            } else {
+                throw new IOException("OpenAI API request failed with status: " + response.statusCode() + ", body: " + response.body());
             }
         } else {
             // For other services, return a placeholder response

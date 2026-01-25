@@ -12,11 +12,11 @@ import org.duckdb.DuckDBConnection;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.utils.BoundedQueue;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
-import org.slackerdb.dbserver.dataservice.APIService;
-import org.slackerdb.dbserver.dataservice.PluginService;
+import org.slackerdb.dbserver.service.APIService;
+import org.slackerdb.dbserver.service.PluginService;
 import org.slackerdb.dbserver.entity.APIHistoryRecord;
 import org.slackerdb.dbserver.repl.SqlReplServer;
-import org.slackerdb.dbserver.mcpservice.McpServer;
+import org.slackerdb.dbserver.service.McpServer;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
 
@@ -665,6 +665,7 @@ public class DBInstanceX {
             parameters.put("queryResultCacheSize", org.slackerdb.common.utils.Utils.formatBytes(config.getQuery_result_cache_size()));
             parameters.put("dataServiceSchema", config.getData_service_schema());
             parameters.put("mcpConfig", config.getMcpConfig());
+            parameters.put("mcpLlmKey", config.getMcpLlmKey());
             status.put("parameters", parameters);
 
             // 构建 usage 对象
@@ -694,6 +695,31 @@ public class DBInstanceX {
             rs.close();
             stmt.close();
             status.put("extensions", extensions);
+
+            // 插件列表
+            JSONArray plugins = new JSONArray();
+            org.pf4j.PluginManager pluginManager = this.dbInstance.getPluginManager();
+            if (pluginManager != null) {
+                java.util.List<org.pf4j.PluginWrapper> pluginList = pluginManager.getPlugins();
+                for (org.pf4j.PluginWrapper plugin : pluginList) {
+                    JSONObject pluginInfo = new JSONObject();
+                    pluginInfo.put("id", plugin.getPluginId());
+                    pluginInfo.put("filename", plugin.getPluginPath().getFileName().toString());
+                    pluginInfo.put("filepath", plugin.getPluginPath().toString());
+                    pluginInfo.put("state", plugin.getPluginState().toString());
+                    pluginInfo.put("version", plugin.getDescriptor().getVersion());
+                    pluginInfo.put("description", plugin.getDescriptor().getPluginDescription());
+                    
+                    // 挂载时间 - 从DBPlugin实例获取
+                    String mountTime = "";
+                    if (plugin.getPlugin() instanceof org.slackerdb.plugin.DBPlugin dbPlugin) {
+                        mountTime = dbPlugin.getMountTimeFormatted();
+                    }
+                    pluginInfo.put("mountTime", mountTime);
+                    plugins.add(pluginInfo);
+                }
+            }
+            status.put("plugins", plugins);
 
             // 会话列表
             JSONArray sessions = new JSONArray();

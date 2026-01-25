@@ -231,34 +231,4 @@ public class ProcessUtil {
         Optional<ProcessHandle> ph = ProcessHandle.of(pid);
         return ph.map(ProcessHandle::destroy).orElse(false);
     }
-
-    /**
-     * 示例用法
-     */
-    public static void main(String[] args) throws Exception {
-        System.out.println("=== 进程管理工具示例 ===");
-        
-        // 1. 查找所有 java.exe 进程
-        System.out.println("查找 java.exe 进程...");
-        List<Long> javaPids = findProcessIdsByName("java.exe");
-        System.out.println("找到 " + javaPids.size() + " 个进程: " + javaPids);
-        
-        // 2. 查找包含特定命令行参数的进程
-        System.out.println("查找包含 'myapp.jar' 的进程...");
-        List<Long> appPids = findProcessIdsByCommandLine("myapp.jar");
-        System.out.println("找到 " + appPids.size() + " 个进程: " + appPids);
-        
-        // 3. 终止进程（示例，实际使用时请谨慎）
-        if (!javaPids.isEmpty()) {
-            long pid = javaPids.get(0);
-            System.out.println("尝试终止进程 " + pid + "...");
-            boolean success = killProcess(pid);
-            System.out.println("终止结果: " + (success ? "成功" : "失败"));
-        }
-        
-        // 4. 使用现代 API（Java 9+）
-        System.out.println("使用现代 API 查找进程...");
-        List<Long> modernPids = findProcessIdsByNameModern("java");
-        System.out.println("现代 API 找到 " + modernPids.size() + " 个进程");
-    }
 }

@@ -1403,6 +1403,5 @@ public class Sanity01Test {
         stmt.close();
         pgConn1.close();
     }
-
 }
 

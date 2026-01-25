@@ -69,4 +69,18 @@ public class OSUtil {
             return launchDaemonLinux(command);
         }
     }
+
+    /**
+     * 检查指定路径所在文件系统的剩余空间
+     * @param path 文件路径
+     * @return 剩余空间字节数，如果无法获取则返回-1
+     */
+    public static long getFreeDiskSpace(String path) {
+        try {
+            File file = new File(path);
+            return file.getFreeSpace();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
 }

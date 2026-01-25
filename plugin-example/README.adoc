@@ -1,0 +1,589 @@
+= Slackerdb Plugin Example
+
+This module provides a complete, working example of a Slackerdb plugin. It demonstrates the basic structure, resource access methods, and plugin lifecycle for developers who want to create their own plugins.
+
+== Overview
+
+The plugin-example module contains:
+
+* *PluginExample.java* – The main plugin class that extends `DBPlugin` and implements all lifecycle methods.
+* *SimplePluginRunner.java* – A standalone runner that demonstrates how to execute a plugin without the full PF4J framework.
+* *plugin.properties* – The plugin descriptor file that defines the plugin's metadata.
+* *pom.xml* – Maven configuration with dependencies on `slackerdb-plugin`.
+
+== Plugin Structure
+
+=== PluginExample Class
+
+The `PluginExample` class extends `DBPlugin` and provides implementations for all lifecycle methods:
+
+[source,java]
+----
+package org.slackerdb.pluginExample;
+
+import io.javalin.Javalin;
+import org.pf4j.PluginWrapper;
+import org.slackerdb.plugin.DBPlugin;
+import org.slf4j.Logger;
+
+import java.sql.Connection;
+
+public class PluginExample extends DBPlugin {
+    /** Database connection instance */
+    private Connection conn;
+    /** Javalin web application instance */
+    private Javalin    app = null;
+    /** Logger instance */
+    private Logger     logger = null;
+
+    /**
+     * Constructor, calls parent constructor.
+     *
+     * @param wrapper PF4J plugin wrapper
+     */
+    public PluginExample(PluginWrapper wrapper) {
+        super(wrapper);
+    }
+
+    /**
+     * Core logic when the plugin starts.
+     *
+     * <p>The example demonstrates how to obtain resources available to the plugin:
+     * <ul>
+     *   <li>{@link #getDbConnection()} - Obtain database connection</li>
+     *   <li>{@link #getLogger()} - Obtain logger</li>
+     *   <li>{@link #getJavalinApp()} - Obtain Javalin application instance</li>
+     * </ul>
+     * The current code is commented; developers can uncomment and add business logic as needed.
+     * </p>
+     */
+    @Override
+    protected void onStart() {
+        System.err.println("OK onStart");
+        // Example: Obtain plugin resources
+        // try {
+        //     this.conn = getDbConnection();
+        // } catch (SQLException ignored) {}
+        // this.logger = getLogger();
+        // this.app = getJavalinApp();
+        
+        // Add plugin startup logic here, for example:
+        // - Register Javalin routes
+        // - Initialize database tables
+        // - Start background tasks
+        // - Register event listeners
+    }
+
+    /**
+     * Logic when the plugin stops.
+     * Resources can be released here, connections closed, tasks stopped, etc.
+     */
+    protected void onStop() {
+        // Example: Clean up resources
+        // if (conn != null) {
+        //     try { conn.close(); } catch (SQLException ignored) {}
+        // }
+    }
+
+    /**
+     * Logic when the plugin is deleted.
+     * Permanent cleanup operations can be performed here, such as deleting temporary files, unregistering entries, etc.
+     */
+    protected void onDelete() {
+        // Example: Delete resources created by the plugin
+    }
+
+    // ========== Lifecycle Hook Methods ==========
+
+    /**
+     * Executed before onStart().
+     * Can be used for configuration initialization, environment validation, etc.
+     */
+    protected void beforeStart() {
+        // Example: Check if dependent services are available
+    }
+
+    /**
+     * Executed after onStart().
+     * Can be used for post-startup notifications, status reporting, etc.
+     */
+    protected void afterStart() {
+        // Example: Log successful plugin startup
+    }
+
+    /**
+     * Executed before onStop().
+     * Can be used for saving state, preparing for shutdown, etc.
+     */
+    protected void beforeStop() {
+        // Example: Notify related components about impending shutdown
+    }
+
+    /**
+     * Executed after onStop().
+     * Can be used for final cleanup, resource release confirmation, etc.
+     */
+    protected void afterStop() {
+        // Example: Confirm all resources have been released
+    }
+
+    /**
+     * Executed before onDelete().
+     * Can be used for data backup, delete operation confirmation, etc.
+     */
+    protected void beforeDelete() {
+        // Example: Backup plugin data
+    }
+
+    /**
+     * Executed after onDelete().
+     * Can be used for post-deletion cleanup work.
+     */
+    protected void afterDelete() {
+        // Example: Delete backup temporary files
+    }
+
+    // ========== Standalone Running Support ==========
+
+    /**
+     * Create standalone plugin instance.
+     * This method returns a plugin instance configured with a simulated PluginWrapper, suitable for testing and standalone execution.
+     * Users need to manually set DBPluginContext and call start() method.
+     *
+     * @return Standalone plugin instance
+     * @throws Exception if creation fails
+     */
+    public static PluginExample standAloneInstance() throws Exception {
+        return DBPlugin.Standalone.createInstance(PluginExample.class);
+    }
+}
+----
+
+=== SimplePluginRunner Class
+
+The `SimplePluginRunner` class demonstrates how to run a plugin in standalone mode without the full PF4J framework:
+
+[source,java]
+----
+package org.slackerdb.pluginExample;
+
+import io.javalin.Javalin;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slackerdb.plugin.DBPluginContext;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+
+/**
+ * Simple plugin runner example.
+ * Demonstrates how to directly use plugin classes without relying on PF4J complex mechanisms.
+ * 
+ * <p>This example demonstrates through the following steps:
+ * <ol>
+ *   <li>Create database connection, Javalin instance, and logger</li>
+ *   <li>Create DBPluginContext and inject resources</li>
+ *   <li>Create a simple plugin instance (by extending DBPlugin)</li>
+ *   <li>Manually call plugin lifecycle methods</li>
+ * </ol>
+ * </p>
+ * 
+ * <p>Note: This approach is only suitable for testing and demonstration purposes; actual production environments should use the complete plugin manager.</p>
+ */
+public class SimplePluginRunner {
+    
+    private static final Logger LOG = LoggerFactory.getLogger(SimplePluginRunner.class);
+    
+    public static void main(String[] args) throws Exception {
+        LOG.info("Starting simple plugin runner example...");
+        
+        // 1. Create database connection (using DuckDB in-memory database)
+        Connection conn = createDuckDBConnection();
+        LOG.info("Database connection created successfully");
+        
+        // 2. Create Javalin application instance
+        Javalin javalin = Javalin.create();
+        LOG.info("Javalin application instance created successfully");
+        
+        // 3. Create logger
+        Logger pluginLogger = LoggerFactory.getLogger(PluginExample.class);
+        
+        // 4. Create DBPluginContext and inject resources
+        DBPluginContext ctx = new DBPluginContext();
+        ctx.setDbBackendConn(conn);
+        ctx.setLogger(pluginLogger);
+        ctx.setJavalin(javalin);
+        LOG.info("DBPluginContext created and configured");
+        
+        // 5. Create plugin instance (using standalone support)
+        PluginExample plugin = PluginExample.standAloneInstance();
+        
+        // 6. Inject context
+        plugin.setDBPluginContext(ctx);
+        
+        // 7. Directly call plugin's onStart method (indirectly via start() method)
+        LOG.info("Calling plugin start() method...");
+        plugin.start();
+        LOG.info("Plugin start() method execution completed");
+        
+        // 8. Wait for a while then stop the plugin
+        Thread.sleep(1000);
+        
+        LOG.info("Calling plugin stop() method...");
+        plugin.stop();
+        LOG.info("Plugin stop() method execution completed");
+        
+        // 9. Clean up resources
+        conn.close();
+        LOG.info("Database connection closed");
+        
+        LOG.info("Simple plugin runner example execution completed");
+    }
+    
+    /**
+     * Create DuckDB in-memory database connection.
+     */
+    private static Connection createDuckDBConnection() throws Exception {
+        Connection conn = DriverManager.getConnection("jdbc:duckdb:memory:");
+        // Simple initialization
+        conn.createStatement().execute("CREATE TABLE IF NOT EXISTS demo (id INT, name VARCHAR)");
+        conn.createStatement().execute("INSERT INTO demo VALUES (1, 'test data')");
+        return conn;
+    }
+}
+----
+
+=== Plugin Descriptor File
+
+The `src/main/resources/plugin.properties` file contains the plugin metadata:
+
+[source,properties]
+----
+# Slackerdb plugin configuration file
+# This file defines the basic metadata of the plugin for the PF4J plugin framework.
+
+# Plugin unique identifier, must match the plugin JAR filename (without extension)
+plugin.id=plugin-example
+
+# Fully qualified name of the plugin main class, must extend org.slackerdb.plugin.DBPlugin
+plugin.class=org.slackerdb.pluginExample.PluginExample
+
+# Plugin version number, follows semantic versioning
+plugin.version=1.0.0
+
+# Plugin dependency requirement, * means no specific dependency
+plugin.requires=*
+----
+
+== Building and Packaging
+
+=== Prerequisites
+
+* JDK 17 or higher
+* Maven 3.6+
+
+=== Standard Plugin JAR Packaging
+
+To build the plugin as a standard JAR file that can be deployed to a SlackerDB server:
+
+[source,bash]
+----
+cd plugin-example
+mvn clean package
+----
+
+This command will:
+1. Compile the Java source code
+2. Copy resources (including `plugin.properties` and `README.adoc`)
+3. Create a JAR file named `slackerdb-plugin-example-0.1.9.jar` in the `target` directory
+
+The resulting JAR contains:
+* Compiled Java classes
+* `plugin.properties` descriptor file (from `src/main/resources`)
+* META-INF directory with manifest information
+
+*Note:* The `README.adoc` file is included in the source JAR (`-sources.jar`) but not in the main JAR, as it's documentation intended for developers rather than runtime.
+
+=== Standalone JAR Packaging
+
+To build a standalone JAR that includes all dependencies for independent execution:
+
+[source,bash]
+----
+cd plugin-example
+mvn clean package -Pstandalone
+----
+
+This activates the `standalone` profile defined in `pom.xml`, which:
+1. Changes dependency scope from `provided` to `compile`
+2. Creates an additional JAR file with `-standalone` classifier: `slackerdb-plugin-example-0.1.9-standalone.jar`
+3. Includes all required dependencies (Javalin, DuckDB JDBC, PF4J, logging libraries) in the JAR
+
+The standalone JAR can be executed independently without requiring a SlackerDB server.
+
+=== Building from Parent Project
+
+If you're building from the parent project directory:
+
+[source,bash]
+----
+# Build all modules including plugin-example
+mvn clean package -Dmaven.test.skip=true
+
+# Build only plugin-example module
+mvn clean package -pl plugin-example -am -Dmaven.test.skip=true
+
+# Build plugin-example with standalone profile
+mvn clean package -pl plugin-example -am -Pstandalone -Dmaven.test.skip=true
+----
+
+The compiled JAR files will be placed in `plugin-example/target/` directory.
+
+== Deploying the Plugin
+
+1. Copy the generated JAR file to the SlackerDB server's plugin directory (configured via the `plugins_dir` parameter in the server configuration).
+2. Start or restart the SlackerDB server.
+3. The plugin will be automatically loaded and started. Check the server logs for confirmation.
+
+== Running the Plugin
+
+=== Running in Standalone Mode (Development/Testing)
+
+For testing and development, you can run the plugin in standalone mode using Maven's exec plugin:
+
+[source,bash]
+----
+cd plugin-example
+mvn compile exec:java -Dexec.mainClass="org.slackerdb.pluginExample.SimplePluginRunner"
+----
+
+This command will:
+1. Compile the Java source code
+2. Execute the `SimplePluginRunner` class
+3. Demonstrate how to run the plugin without a full SlackerDB server
+
+The `SimplePluginRunner` class:
+* Creates an in-memory DuckDB database
+* Sets up a Javalin web application
+* Creates a `DBPluginContext` with the necessary resources
+* Instantiates the plugin via `standAloneInstance()`
+* Injects the context and calls the plugin's lifecycle methods
+* Cleans up resources after execution
+
+=== Running the Standalone JAR
+
+If you've built the standalone JAR (with `-Pstandalone` profile), you can execute it directly:
+
+[source,bash]
+----
+cd plugin-example/target
+java -jar slackerdb-plugin-example-0.1.9-standalone.jar
+----
+
+This will execute the `SimplePluginRunner` main class directly from the JAR file.
+
+=== Running with Custom Configuration
+
+To run the plugin with custom database configuration:
+
+[source,java]
+----
+// Create your own runner class similar to SimplePluginRunner
+public class MyPluginRunner {
+    public static void main(String[] args) throws Exception {
+        // Custom database connection (file-based instead of in-memory)
+        Connection conn = DriverManager.getConnection("jdbc:duckdb:/path/to/my.db");
+        
+        // Custom Javalin configuration
+        Javalin javalin = Javalin.create(config -> {
+            config.showJavalinBanner = false;
+            config.http.defaultContentType = "application/json";
+        });
+        
+        // Create and configure DBPluginContext
+        DBPluginContext ctx = new DBPluginContext();
+        ctx.setDbBackendConn(conn);
+        ctx.setLogger(LoggerFactory.getLogger(PluginExample.class));
+        ctx.setJavalin(javalin);
+        
+        // Create and start plugin
+        PluginExample plugin = PluginExample.standAloneInstance();
+        plugin.setDBPluginContext(ctx);
+        plugin.start();
+        
+        // Keep the application running
+        Thread.sleep(Long.MAX_VALUE);
+    }
+}
+----
+
+=== Deploying to SlackerDB Server
+
+To deploy the plugin to a production SlackerDB server:
+
+1. **Build the standard plugin JAR** (without standalone profile):
+   [source,bash]
+   ----
+   mvn clean package
+   ----
+
+2. **Copy the JAR to the server's plugin directory**:
+   * Default plugin directory: `$HOME/.slackerdb/plugins/`
+   * Or directory specified by `plugins_dir` parameter in server configuration
+
+3. **Start or restart the SlackerDB server**:
+   [source,bash]
+   ----
+   java -jar dbserver/target/slackerdb-dbserver-0.1.9-standalone.jar start
+   ----
+
+4. **Verify plugin loading** in server logs:
+   [source]
+   ----
+   [SERVER][PLUGIN     ] Load plugin [plugin-example] ...
+   [SERVER][PLUGIN     ] start plugin [plugin-example] ...
+   ----
+
+5. **Manage the plugin via HTTP API** (if data service API is enabled):
+   * List plugins: `GET http://localhost:8080/plugin/list`
+   * Start plugin: `POST http://localhost:8080/plugin/start` with JSON `{"plugid": "plugin-example"}`
+   * Stop plugin: `POST http://localhost:8080/plugin/stop` with JSON `{"plugid": "plugin-example"}`
+
+=== Plugin Management via HTTP API
+
+When the SlackerDB server is running with data service API enabled (port_x configuration), you can manage plugins via REST API:
+
+.List all plugins:
+[source,bash]
+----
+curl -X GET "http://localhost:8080/plugin/list"
+----
+
+.Load a plugin:
+[source,bash]
+----
+curl -X POST "http://localhost:8080/plugin/load" \
+  -H "Content-Type: application/json" \
+  -d '{"filename": "plugin-example.jar"}'
+----
+
+.Start a plugin:
+[source,bash]
+----
+curl -X POST "http://localhost:8080/plugin/start" \
+  -H "Content-Type: application/json" \
+  -d '{"plugid": "plugin-example"}'
+----
+
+.Stop a plugin:
+[source,bash]
+----
+curl -X POST "http://localhost:8080/plugin/stop" \
+  -H "Content-Type: application/json" \
+  -d '{"plugid": "plugin-example"}'
+----
+
+.Unload a plugin:
+[source,bash]
+----
+curl -X POST "http://localhost:8080/plugin/unload" \
+  -H "Content-Type: application/json" \
+  -d '{"plugid": "plugin-example"}'
+----
+
+== Plugin Lifecycle
+
+The plugin follows the standard PF4J plugin lifecycle with additional Slackerdb-specific hooks:
+
+1. *Load* – Plugin JAR is loaded by the plugin manager
+2. *Create* – Plugin instance is created and `DBPluginContext` is injected
+3. *Start* – `beforeStart()` → `onStart()` → `afterStart()` are called
+4. *Run* – Plugin executes its business logic
+5. *Stop* – `beforeStop()` → `onStop()` → `afterStop()` are called
+6. *Delete* – `beforeDelete()` → `onDelete()` → `afterDelete()` are called
+
+== Available Resources
+
+Plugins have access to the following resources through the `DBPluginContext`:
+
+* *Database Connection* – Obtain via `getDbConnection()` (returns a new connection via `DuckDBConnection.duplicate()`)
+* *Logger* – Obtain via `getLogger()` (configured SLF4J logger)
+* *Javalin Web Application* – Obtain via `getJavalinApp()` (can register HTTP routes and middleware)
+
+== Customizing the Example
+
+To create your own plugin based on this example:
+
+1. *Rename the package and class* – Change `org.slackerdb.pluginExample` to your own package name
+2. *Update plugin.properties* – Modify `plugin.id`, `plugin.class`, and `plugin.version` accordingly
+3. *Implement business logic* – Uncomment the resource acquisition code in `onStart()` and add your custom functionality
+4. *Add dependencies* – Update `pom.xml` with any additional libraries your plugin requires
+5. *Test thoroughly* – Use the standalone mode for quick testing before deploying to a production server
+
+== Plugin Management API
+
+SlackerDB provides HTTP endpoints for managing plugins at runtime. These endpoints allow you to load, unload, start, stop, and list plugins without restarting the server.
+
+=== /plugin/load (POST)
+
+Loads a plugin from a JAR file.
+
+.Request body (JSON):
+[source,json]
+----
+{
+  "filename": "myplugin.jar"
+}
+----
+
+=== /plugin/unload (POST)
+
+Unloads a previously loaded plugin.
+
+.Request body (JSON):
+[source,json]
+----
+{
+  "plugid": "myplugin"
+}
+----
+
+=== /plugin/start (POST)
+
+Starts a loaded plugin.
+
+.Request body (JSON):
+[source,json]
+----
+{
+  "plugid": "myplugin"
+}
+----
+
+=== /plugin/stop (POST)
+
+Stops a running plugin.
+
+.Request body (JSON):
+[source,json]
+----
+{
+  "plugid": "myplugin"
+}
+----
+
+=== /plugin/list (GET)
+
+Lists all currently loaded plugins with their details.
+
+== Notes
+
+1. *Thread Safety* – The plugin instance is a singleton; ensure that methods like `onStart()` are thread-safe
+2. *Resource Management* – Database connections obtained via `getDbConnection()` must be managed by the plugin and closed when the plugin stops
+3. *Dependency Conflicts* – Avoid introducing library versions that conflict with server dependencies; use the `provided` scope for libraries already provided by the server
+4. *Performance Impact* – Plugin execution consumes server resources; avoid performing long-blocking operations in plugins
+
+== See Also
+
+* Parent project README: `../README.adoc`
+* Slackerdb Plugin API documentation: `plugin/src/main/java/org/slackerdb/plugin/`

@@ -6,24 +6,24 @@ import org.slf4j.Logger;
 import java.sql.Connection;
 
 /**
- * 插件上下文类，用于在插件管理器与插件之间传递共享资源。
- * 包含数据库连接、日志记录器和 Javalin Web 应用实例。
+ * Plugin context class for passing shared resources between plugin manager and plugins.
+ * Contains database connection, logger, and Javalin web application instance.
  *
- * <p>该类由插件管理器创建并填充，然后通过 {@link IDBPluginContext#setDBPluginContext(DBPluginContext)}
- * 注入到每个插件实例中。</p>
+ * <p>This class is created and populated by the plugin manager, then injected into each plugin instance
+ * via {@link IDBPluginContext#setDBPluginContext(DBPluginContext)}.</p>
  */
 public class DBPluginContext {
-    /** 后端数据库连接 */
+    /** Backend database connection */
     private Connection dbBackendConn;
-    /** SLF4J 日志记录器 */
+    /** SLF4J logger */
     private Logger logger;
-    /** Javalin Web 应用实例 */
+    /** Javalin web application instance */
     private Javalin javalin;
 
     /**
-     * 设置后端数据库连接。
+     * Set backend database connection.
      *
-     * @param dbBackendConn 数据库连接对象
+     * @param dbBackendConn Database connection object
      */
     public void setDbBackendConn(Connection dbBackendConn)
     {
@@ -31,9 +31,9 @@ public class DBPluginContext {
     }
 
     /**
-     * 获取后端数据库连接。
+     * Get backend database connection.
      *
-     * @return 数据库连接对象
+     * @return Database connection object
      */
     public Connection getDbBackendConn()
     {
@@ -41,9 +41,9 @@ public class DBPluginContext {
     }
 
     /**
-     * 设置日志记录器。
+     * Set logger.
      *
-     * @param logger SLF4J 日志记录器
+     * @param logger SLF4J logger
      */
     public void setLogger(Logger logger)
     {
@@ -51,9 +51,9 @@ public class DBPluginContext {
     }
 
     /**
-     * 获取日志记录器。
+     * Get logger.
      *
-     * @return 配置好的日志记录器
+     * @return Configured logger
      */
     public Logger getLogger()
     {
@@ -61,9 +61,9 @@ public class DBPluginContext {
     }
 
     /**
-     * 设置 Javalin Web 应用实例。
+     * Set Javalin web application instance.
      *
-     * @param javalin Javalin 应用实例
+     * @param javalin Javalin application instance
      */
     public void setJavalin(Javalin javalin)
     {
@@ -71,9 +71,9 @@ public class DBPluginContext {
     }
 
     /**
-     * 获取 Javalin Web 应用实例。
+     * Get Javalin web application instance.
      *
-     * @return Javalin 应用实例
+     * @return Javalin application instance
      */
     public Javalin getJavalin() {
         return javalin;

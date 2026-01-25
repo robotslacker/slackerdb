@@ -14,8 +14,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.sql.Statement;
 import java.sql.SQLException;
 import java.sql.ResultSet;
@@ -240,6 +238,39 @@ public class InstanceXApiTest {
             // Service not found, maybe wrong path or service not loaded
             throw new AssertionError("Service not found or error: " + fullResponse);
         }
+    }
+
+    @Test
+    void testStatusApiWithPluginInfo() throws Exception
+    {
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/status"))
+                .GET()
+                .header("Content-Type", "application/json")
+                .build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+        JSONObject statusResponse = JSONObject.parseObject(response.body());
+        
+        // 检查status响应包含必要的字段
+        assert statusResponse.containsKey("parameters") : "Status response should contain 'parameters' field";
+        assert statusResponse.containsKey("plugins") : "Status response should contain 'plugins' field";
+        
+        JSONObject parameters = statusResponse.getJSONObject("parameters");
+        assert parameters.containsKey("mcpLlmKey") : "Parameters should contain 'mcpLlmKey' field";
+        
+        JSONArray plugins = statusResponse.getJSONArray("plugins");
+        // 插件列表应该是一个数组
+        assert plugins != null : "Plugins should not be null";
+        
+        System.out.println("TEST:: Status API test passed. Plugins count: " + plugins.size());
+        System.out.println("TEST:: mcpLlmKey value: " + parameters.getString("mcpLlmKey"));
+        
+        // 验证mcpLlmKey的值（应该是默认值）
+        String mcpLlmKey = parameters.getString("mcpLlmKey");
+        assert mcpLlmKey != null : "mcpLlmKey should not be null";
+        assert mcpLlmKey.isEmpty() : "mcpLlmKey should be empty string by default";
     }
 
 }

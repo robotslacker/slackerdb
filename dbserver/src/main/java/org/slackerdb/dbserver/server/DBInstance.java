@@ -96,6 +96,11 @@ public class DBInstance {
     // 系统最后活跃时间
     public long lastActiveTime = System.currentTimeMillis();
 
+    // 磁盘检查相关字段
+    private volatile long lastDiskCheckTime = 0;
+    private volatile boolean diskSpaceValid = true; // true表示空间足够
+    private static final long DISK_CHECK_INTERVAL = 120000; // 2分钟，单位毫秒
+
     // 管理端口服务
     public DBInstanceX dbInstanceX = null;
 
@@ -177,6 +182,8 @@ public class DBInstance {
                     }
                 }
 
+                // 检查磁盘空间剩余情况
+                checkDiskSpace();
 
                 // 每10秒钟循环一次
                 try {
@@ -533,9 +540,6 @@ public class DBInstance {
                 dataFilePath = ":memory:";
                 databaseFirstOpened = true;
             } else {
-                if (!new File(serverConfiguration.getData_Dir()).isDirectory()) {
-                    throw new ServerException("Data directory [" + serverConfiguration.getData_Dir() + "] does not exist!");
-                }
                 File dataFile = new File(serverConfiguration.getData_Dir(), instanceName + ".db");
                 if (!dataFile.canRead() && serverConfiguration.getAccess_mode().equalsIgnoreCase("READ_ONLY")) {
                     throw new ServerException("Data [" + dataFile.getAbsolutePath() + "] can't be read!!");
@@ -746,6 +750,19 @@ public class DBInstance {
                 serverConfiguration.getLog_level().levelStr,
                 serverConfiguration.getLog());
 
+        // 禁用OSHI的日志信息
+        ch.qos.logback.classic.Logger oshiLogger;
+        oshiLogger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger("oshi.software.os.windows.WindowsOperatingSystem");
+        oshiLogger.setLevel(ch.qos.logback.classic.Level.OFF);
+        oshiLogger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger("oshi.util.platform.windows.PerfCounterQuery");
+        oshiLogger.setLevel(ch.qos.logback.classic.Level.OFF);
+
+        // 关闭pf4j的日志, 如果不是在trace下
+        Logger pf4jLogger = (Logger) LoggerFactory.getLogger("org.pf4j");
+        if (!this.logger.getLevel().equals(Level.TRACE)) {
+            pf4jLogger.setLevel(Level.OFF);
+        }
+
         // 只有在停止的状态下才能启动
         if (!this.instanceState.equalsIgnoreCase("IDLE"))
         {
@@ -755,6 +772,24 @@ public class DBInstance {
         // 服务器开始启动
         this.instanceState = "STARTING";
         this.bootTime = LocalDateTime.now();
+
+        // 检查文件目录的可用性
+        if (!serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
+            if (!new File(serverConfiguration.getData_Dir()).isDirectory()) {
+                throw new ServerException("Data directory [" + serverConfiguration.getData_Dir() + "] does not exist!");
+            }
+            
+            // 检查文件系统剩余空间，如果少于128MB则拒绝启动
+            long requiredFreeSpace = 128L * 1024 * 1024; // 128MB
+            long freeSpace = OSUtil.getFreeDiskSpace(serverConfiguration.getData_Dir());
+            if (freeSpace < requiredFreeSpace) {
+                String freeSpaceMB = freeSpace >= 0 ? String.format("%.2f", freeSpace / (1024.0 * 1024.0)) : "unknown";
+                throw new ServerException(
+                    "Insufficient disk space on data directory [" + serverConfiguration.getData_Dir() + "]. " +
+                    "Required: 128MB, Available: " + freeSpaceMB + "MB"
+                );
+            }
+        }
 
         // 检查PID文件
         if (!this.serverConfiguration.getPid().isEmpty())
@@ -826,12 +861,6 @@ public class DBInstance {
             throw new ServerException("Init backend connection error. ", sqlException);
         }
         logger.info("[SERVER][STARTUP    ] Instance started successful.");
-
-        // 关闭pf4j的日志, 如果不是在trace下
-        Logger pf4jLogger = (Logger) LoggerFactory.getLogger("org.pf4j");
-        if (!this.logger.getLevel().equals(Level.TRACE)) {
-            pf4jLogger.setLevel(Level.OFF);
-        }
 
         // 打开数据库
         this.attachDatabase(null);
@@ -1027,19 +1056,6 @@ public class DBInstance {
             dbInstanceSQLHistoryThread = null;
         }
 
-        try {
-            // 关闭数据库连接池
-            if (this.dbDataSourcePool != null) {
-                this.dbDataSourcePool.shutdown();
-            }
-
-            // 关闭BackendSysConnection
-            backendSysConnection.close();
-        }
-        catch (SQLException e) {
-            logger.error("[SERVER][STARTUP    ] Close backend connection error. ", e);
-        }
-
         // 停止数据库对外网络服务
         if (protocolServer != null) {
             protocolServer.stop();
@@ -1058,8 +1074,30 @@ public class DBInstance {
             }
         }
 
-        // 数据库强制进行检查点操作
-        forceCheckPoint();
+        // 关闭数据库连接池
+        if (this.dbDataSourcePool != null) {
+            this.dbDataSourcePool.shutdown();
+        }
+
+        try {
+            if (backendSysConnection != null && !backendSysConnection.isClosed() && !backendSysConnection.isReadOnly()) {
+                // 推出前回滚所有事务
+                try { backendSysConnection.rollback();} catch (SQLException ignored) {}
+
+                // 数据库强制进行检查点操作
+                Statement stmt = backendSysConnection.createStatement();
+                stmt.execute("FORCE CHECKPOINT");
+                stmt.close();
+            }
+
+            // 关闭BackendSysConnection
+            if (backendSysConnection != null && !backendSysConnection.isClosed()) {
+                backendSysConnection.close();
+            }
+        }
+        catch (SQLException e) {
+            logger.error("Force checkpoint failed.", e);
+        }
 
         // 删除PID文件
         if (pidRandomAccessFile != null )
@@ -1110,22 +1148,6 @@ public class DBInstance {
         return dbSessions.get(sessionId);
     }
 
-    // 强制执行检查点
-    // 用来在退出时候同步完成所有的WAL文件
-    public void forceCheckPoint()
-    {
-        try {
-            if (backendSysConnection != null && !backendSysConnection.isClosed() && !backendSysConnection.isReadOnly()) {
-                Statement stmt = backendSysConnection.createStatement();
-                stmt.execute("FORCE CHECKPOINT");
-                stmt.close();
-            }
-        }
-        catch (SQLException e) {
-            logger.error("Force checkpoint failed.", e);
-        }
-    }
-
     // 返回程序为独占模式
     public boolean isExclusiveMode()
     {
@@ -1142,5 +1164,36 @@ public class DBInstance {
     public PluginManager getPluginManager()
     {
         return this.dbPluginManager;
+    }
+
+    // 检查磁盘空间，更新状态字段
+    private void checkDiskSpace() {
+        // 如果是内存数据库，无需检查
+        if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
+            diskSpaceValid = true;
+            lastDiskCheckTime = System.currentTimeMillis();
+            return;
+        }
+
+        long currentTime = System.currentTimeMillis();
+
+        // 检查是否需要执行磁盘空间检查
+        if (currentTime - lastDiskCheckTime > DISK_CHECK_INTERVAL) {
+            long requiredFreeSpace = 128L * 1024 * 1024; // 128MB
+            long freeSpace = OSUtil.getFreeDiskSpace(serverConfiguration.getData_Dir());
+            diskSpaceValid = (freeSpace >= requiredFreeSpace);
+            lastDiskCheckTime = currentTime;
+            
+            if (!diskSpaceValid) {
+                String freeSpaceMB = freeSpace >= 0 ? String.format("%.2f", freeSpace / (1024.0 * 1024.0)) : "unknown";
+                logger.warn("[SERVER] Insufficient disk space on data directory [{}]. Required: 128MB, Available: {}MB",
+                        serverConfiguration.getData_Dir(), freeSpaceMB);
+            }
+        }
+    }
+
+    // 获取磁盘空间是否有效
+    public boolean isDiskSpaceValid() {
+        return diskSpaceValid;
     }
 }

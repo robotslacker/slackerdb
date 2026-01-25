@@ -57,6 +57,7 @@ public class Main {
         System.out.println("  --bind              server bind ip address, default is 0.0.0.0");
         System.out.println("  --port              data service listener port. default is random");
         System.out.println("  --portX             management service listener port. default is random");
+        System.out.println("  --auto_workload_threshold   Set auto workload threshold for memory limit calculation. Default: 0.8.");
     }
 
     // 主程序
@@ -281,6 +282,10 @@ public class Main {
             if (appOptions.containsKey("pid"))
             {
                 serverConfiguration.setPid(appOptions.get("pid"));
+            }
+            if (appOptions.containsKey("auto_workload_threshold"))
+            {
+                serverConfiguration.setAuto_workload_threshold(appOptions.get("auto_workload_threshold"));
             }
 
             // 初始化日志服务

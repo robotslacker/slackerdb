@@ -1,4 +1,4 @@
-package org.slackerdb.dbserver.dataservice;
+package org.slackerdb.dbserver.service;
 
 import ch.qos.logback.classic.Logger;
 import com.alibaba.fastjson2.JSONException;
@@ -103,12 +103,12 @@ public class PluginService {
             // 注意：这里无法在加载前检查，因为插件ID来自JAR文件的manifest
             // 加载插件
             String pluginId = pluginManager.loadPlugin(pluginPath);
-            logger.info("[PLUGIN] 插件 {} (文件: {}) 加载成功", pluginId, filename);
+            logger.info("[PLUGIN] Plugin {} (file: {}) loaded successfully", pluginId, filename);
             ctx.json(Map.of("retCode", 0, "retMsg", "Plugin loaded successfully", "pluginId", pluginId));
         } catch (JSONException e) {
             ctx.json(Map.of("retCode", -1, "retMsg", "JSON parsing error: " + e.getMessage()));
         } catch (Exception e) {
-            logger.error("[PLUGIN] 加载插件失败", e);
+            logger.error("[PLUGIN] Failed to load plugin", e);
             ctx.json(Map.of("retCode", -1, "retMsg", "Failed to load plugin: " + e.getMessage()));
         }
     }
@@ -150,12 +150,12 @@ public class PluginService {
 
             // 卸载插件
             pluginManager.unloadPlugin(pluginId);
-            logger.info("[PLUGIN] 插件 {} 卸载成功", pluginId);
+            logger.info("[PLUGIN] Plugin {} unloaded successfully", pluginId);
             ctx.json(Map.of("retCode", 0, "retMsg", "Plugin unloaded successfully"));
         } catch (JSONException e) {
             ctx.json(Map.of("retCode", -1, "retMsg", "JSON parsing error: " + e.getMessage()));
         } catch (Exception e) {
-            logger.error("[PLUGIN] 卸载插件失败", e);
+            logger.error("[PLUGIN] Failed to unload plugin", e);
             ctx.json(Map.of("retCode", -1, "retMsg", "Failed to unload plugin: " + e.getMessage()));
         }
     }
@@ -199,16 +199,16 @@ public class PluginService {
             // 启动插件
             PluginState state = pluginManager.startPlugin(pluginId);
             if (state == PluginState.STARTED) {
-                logger.info("[PLUGIN] 插件 {} 启动成功", pluginId);
+                logger.info("[PLUGIN] Plugin {} started successfully", pluginId);
                 ctx.json(Map.of("retCode", 0, "retMsg", "Plugin started successfully"));
             } else {
-                logger.warn("[PLUGIN] 插件 {} 启动失败，状态: {}", pluginId, state);
+                logger.warn("[PLUGIN] Plugin {} failed to start, state: {}", pluginId, state);
                 ctx.json(Map.of("retCode", -1, "retMsg", "Failed to start plugin, state: " + state));
             }
         } catch (JSONException e) {
             ctx.json(Map.of("retCode", -1, "retMsg", "JSON parsing error: " + e.getMessage()));
         } catch (Exception e) {
-            logger.error("[PLUGIN] 启动插件失败", e);
+            logger.error("[PLUGIN] Failed to start plugin", e);
             ctx.json(Map.of("retCode", -1, "retMsg", "Failed to start plugin: " + e.getMessage()));
         }
     }
@@ -252,16 +252,16 @@ public class PluginService {
             // 停止插件
             PluginState state = pluginManager.stopPlugin(pluginId);
             if (state == PluginState.STOPPED || state == PluginState.DISABLED) {
-                logger.info("[PLUGIN] 插件 {} 停止成功", pluginId);
+                logger.info("[PLUGIN] Plugin {} stopped successfully", pluginId);
                 ctx.json(Map.of("retCode", 0, "retMsg", "Plugin stopped successfully"));
             } else {
-                logger.warn("[PLUGIN] 插件 {} 停止失败，状态: {}", pluginId, state);
+                logger.warn("[PLUGIN] Plugin {} failed to stop, state: {}", pluginId, state);
                 ctx.json(Map.of("retCode", -1, "retMsg", "Failed to stop plugin, state: " + state));
             }
         } catch (JSONException e) {
             ctx.json(Map.of("retCode", -1, "retMsg", "JSON parsing error: " + e.getMessage()));
         } catch (Exception e) {
-            logger.error("[PLUGIN] 停止插件失败", e);
+            logger.error("[PLUGIN] Failed to stop plugin", e);
             ctx.json(Map.of("retCode", -1, "retMsg", "Failed to stop plugin: " + e.getMessage()));
         }
     }
@@ -286,6 +286,16 @@ public class PluginService {
                         info.put("state", plugin.getPluginState().toString());
                         info.put("file", plugin.getPluginPath().toString());
                         info.put("description", plugin.getDescriptor().getPluginDescription());
+                        
+                        // 获取挂载时间（如果插件是DBPlugin实例）
+                        if (plugin.getPlugin() instanceof org.slackerdb.plugin.DBPlugin dbPlugin) {
+                            info.put("mountTime", dbPlugin.getMountTime());
+                            info.put("mountTimeFormatted", dbPlugin.getMountTimeFormatted());
+                        } else {
+                            info.put("mountTime", 0L);
+                            info.put("mountTimeFormatted", "");
+                        }
+                        
                         return info;
                     })
                     .collect(Collectors.toList());
@@ -296,7 +306,7 @@ public class PluginService {
             result.put("plugins", pluginList);
             ctx.json(result);
         } catch (Exception e) {
-            logger.error("[PLUGIN] 列出插件失败", e);
+            logger.error("[PLUGIN] Failed to list plugins", e);
             ctx.json(Map.of("retCode", -1, "retMsg", "Failed to list plugins: " + e.getMessage()));
         }
     }

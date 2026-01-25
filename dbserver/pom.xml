@@ -92,6 +92,12 @@
             <artifactId>expiringmap</artifactId>
             <version>0.5.11</version>
         </dependency>
+        <!-- oshi-core for system information -->
+        <dependency>
+            <groupId>com.github.oshi</groupId>
+            <artifactId>oshi-core</artifactId>
+            <version>6.9.2</version>
+        </dependency>
     </dependencies>
     <build>
         <resources>

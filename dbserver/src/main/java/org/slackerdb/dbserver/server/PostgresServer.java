@@ -14,16 +14,21 @@ import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.AttributeKey;
 import io.netty.util.concurrent.EventExecutor;
 import org.slackerdb.common.exceptions.ServerException;
+import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.request.*;
 import org.slackerdb.common.utils.Utils;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.*;
 import ch.qos.logback.classic.Logger;
+import org.slackerdb.dbserver.message.response.ErrorResponse;
+import org.slackerdb.dbserver.message.response.ParseComplete;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -246,6 +251,24 @@ public class PostgresServer {
                 data = new byte[messageLen - 4];
                 in.readBytes(data);
 
+                // 检查文件系统空间剩余情况，避免在低磁盘下空间下进行工作，进而导致文件损坏
+                // 使用DBInstance的监控线程检查结果，如果磁盘空间不足，发送错误响应
+                if (!dbInstance.isDiskSpaceValid()) {
+                    // 磁盘空间不足，发送错误响应
+                    try (ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream()) {
+                        ErrorResponse errorResponse = new ErrorResponse(dbInstance);
+                        errorResponse.setErrorResponse(
+                                "",
+                                "Insufficient disk space on data directory [" + dbInstance.serverConfiguration.getData_Dir() + "]. Request refused");
+                        errorResponse.process(ctx, null, byteArrayOutputStream);
+                        PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(),
+                                byteArrayOutputStream, dbInstance.logger);
+                    } catch (IOException ioe) {
+                        logger.trace("Internal error when checking free disk space.", ioe);
+                    }
+                }
+
+                // 处理各种消息
                 switch (messageType) {
                     case 'P' -> {
                         ParseRequest parseRequest = new ParseRequest(dbInstance);

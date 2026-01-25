@@ -8,29 +8,35 @@ image::robotslacker.jpg[RobotSlacker]
 This is an agile DuckDB extension that provides Java-based connectivity
 with network access and multiprocess support.
 
-==== What we can do:
+==== What is SlackerDB?
 
-Based on the description, this extension can do following:
+SlackerDB is a powerful, Java‑based extension that transforms DuckDB from a local, single‑process database into a fully networked, multi‑process data service platform. It bridges the gap between DuckDB's exceptional analytical performance and the connectivity requirements of modern applications.
 
-* Enables remote access to DuckDB via TCP/IP from network, instead of
-local connect only restriction.
-* Supports multiprocess access to DuckDB instead of single-process
-restriction.
-* Provides PostgreSQL wire protocol compatibility (JDBC, ODBC, etc.),
-allowing DuckDB to serve as a PostgreSQL database.
-* Offers a dedicated access client, which has:
-[arabic]
-. Advanced features
-. Comprehensive data dictionary access support
-* You can use COPY syntax to import data with high performance, this
-compatible with PG CopyManager.
-* Provides self-managed data services and API.
-* You have multiple ways to connect to this extension:
-** Directly connect to the server with jdbc, odbc, ...
-** Connect through a connection gateway which multiple servers(can on
-different host or different process) are behinds it.
-** Embed the compiled jar package into your own application.
-** Register a data service and access data through REST API.
+===== Capabilities
+
+* *Network‑Enabled DuckDB* – Breaks DuckDB's local‑only limitation by providing full TCP/IP network access, allowing remote clients to connect via standard PostgreSQL wire protocol.
+* *Multi‑Process Support* – Enables concurrent access from multiple processes and applications, overcoming DuckDB's single‑process restriction.
+* *PostgreSQL Protocol Compatibility* – Implements the PostgreSQL wire protocol, making DuckDB accessible through any PostgreSQL‑compatible client (JDBC, ODBC, libpq, psql, etc).
+* *High‑Performance Data Import* – Supports PostgreSQL COPY syntax for bulk data loading with performance comparable to native DuckDB imports.
+* *Dual‑Layer Architecture* – Provides both a direct database server (`dbserver`) and a connection proxy (`dbproxy`) for load balancing and high availability.
+* *Embeddable Design* – Can be embedded directly into Java applications as a library, or run as standalone servers.
+* *Flexible Deployment* – Supports multiple deployment models: standalone server, embedded library.
+* *Plugin System* – Extensible PF4J‑based plugin framework for custom functionality, HTTP endpoints, and integration with external systems.
+* *Data Encryption* – Leverages DuckDB's native encryption for secure data‑at‑rest protection.
+
+===== Data Service Platform
+
+* *RESTful Data APIs* – Exposes database operations through comprehensive REST APIs, enabling integration with web applications, microservices, and serverless architectures.
+* *Self‑Managed Services* – Allows dynamic registration and management of data services at runtime without server restarts.
+* *SQL‑as‑a‑Service* – Transform SQL queries into reusable, parameterized API endpoints with built‑in caching and security controls.
+
+
+===== Use Cases
+
+* *Analytical Application Backends* – Serve as the data engine for BI tools, dashboards, and reporting applications.
+* *Edge Computing* – Lightweight, embeddable database for edge devices and IoT OLAP applications.
+
+SlackerDB combines DuckDB's analytical prowess with network connectivity, making it the ideal solution for modern data‑driven applications that require both high performance and flexible access patterns.
 
 === Usage
 
@@ -106,6 +112,10 @@ temp_dir=
 # Default: $HOME/.duckdb/extensions
 extension_dir=
 
+# Directory for custom plugins
+# Default: None
+plugins_dir=
+
 # Run as background daemon (true/false)
 daemon=
 
@@ -127,6 +137,11 @@ log_level=INFO
 # -1 = disable network interface
 # Default: 0 (disabled)
 port=
+
+# Used to indicate whether data encryption is enabled.
+# If enabled, a key must be provided before accessing the database.
+# default: false
+data_encrypt=false
 
 # Data service API port
 # 0 = random port assignment
@@ -157,12 +172,17 @@ max_connections=
 max_workers=
 
 # Database engine threads
-# Default: 50% of CPU cores
-# Recommendation: 5-10GB RAM per thread
+# Default: memory_limit (GB) / 10 (minimum 1)
+# Recommendation: adjust based on workload
 threads=
 
+# Auto workload threshold for memory limit calculation
+# Value range: >0 and <=1, default: 0.8
+# Used to compute default memory_limit if memory_limit is not set
+auto_workload_threshold=
+
 # Memory usage limit (K/M/G suffix)
-# Default: 60% of available memory
+# Default: 80% of total system memory
 # -1 = unlimited (memory mode only)
 memory_limit=
 
@@ -203,7 +223,12 @@ connection_pool_maximum_lifecycle_time=900000
 # - Set to 0 to disable caching
 query_result_cache_size=
 
-# Data service schema initialization
+# Data service history
+# ON = enable tracking
+# OFF = disable (default)
+data_service_history=
+
+# Data service schema initialization file/path
 # - Accepts:
 #   * JSON file path (single schema)
 #   * Directory path (loads all *.service files)
@@ -217,6 +242,18 @@ data_service_schema=
 #   * Directory path (loads all *.mcp files)
 # Default: empty (no MCP configuration)
 mcp_config=
+
+# MCP LLM server configuration
+# Format: <service>:<ip>:<port>:<model>
+# Example: openai:api.openai.com:443:gpt-4
+# Default: empty (no LLM server configuration)
+mcp_llm_server=
+
+# MCP LLM API key for services that require authentication
+# Required for OpenAI API and optional for other services
+# Example: sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Default: empty (no API key)
+mcp_llm_key=
 ....
 
 ==== Proxy configuration file template
@@ -258,6 +295,21 @@ client_timeout=600
 # Maximum worker threads
 # Default: CPU core count
 max_workers=
+
+# Database engine threads
+# Default: memory_limit (GB) / 10 (minimum 1)
+# Recommendation: adjust based on workload
+threads=
+
+# Auto workload threshold for memory limit calculation
+# Value range: >0 and <=1, default: 0.8
+# Used to compute default memory_limit if memory_limit is not set
+auto_workload_threshold=
+
+# Memory usage limit (K/M/G suffix)
+# Default: 80% of total system memory
+# -1 = unlimited (memory mode only)
+memory_limit=
 
 # System locale
 # Default: OS setting
@@ -1854,7 +1906,204 @@ If the plugin registered an HTTP endpoint, you can access it at `http://localhos
 
 ==== Plugin Example
 
-The `plugin‑example` module in the project provides a complete plugin example that demonstrates the basic structure and resource access methods. Developers can refer to this example to get started quickly.
+The `plugin‑example` module in the project provides a complete, working plugin example that demonstrates the basic structure, resource access methods, and plugin lifecycle. Developers can refer to this example to understand how to create their own plugins.
+
+===== Module Structure
+
+The plugin‑example module contains the following key components:
+
+* *PluginExample.java* – The main plugin class that extends `DBPlugin` and implements all lifecycle methods.
+* *SimplePluginRunner.java* – A standalone runner that demonstrates how to execute a plugin without the full PF4J framework.
+* *plugin.properties* – The plugin descriptor file that defines the plugin's metadata.
+* *pom.xml* – Maven configuration with dependencies on `slackerdb‑plugin`.
+
+===== PluginExample Class Overview
+
+The `PluginExample` class extends `DBPlugin` and provides implementations for all lifecycle methods:
+
+[source,java]
+----
+public class PluginExample extends DBPlugin {
+    private Connection conn;
+    private Javalin    app = null;
+    private Logger     logger = null;
+
+    public PluginExample(PluginWrapper wrapper) {
+        super(wrapper);
+    }
+
+    @Override
+    protected void onStart() {
+        // Example: Obtain plugin resources
+        // try {
+        //     this.conn = getDbConnection();
+        // } catch (SQLException ignored) {}
+        // this.logger = getLogger();
+        // this.app = getJavalinApp();
+        
+        // Add plugin startup logic here
+    }
+
+    protected void onStop() {
+        // Clean up resources
+    }
+
+    protected void onDelete() {
+        // Permanent cleanup operations
+    }
+
+    // Lifecycle hook methods: beforeStart, afterStart, beforeStop, afterStop,
+    // beforeDelete, afterDelete
+
+    // Standalone mode support
+    public static PluginExample standAloneInstance() throws Exception {
+        return DBPlugin.Standalone.createInstance(PluginExample.class);
+    }
+}
+----
+
+===== Key Features Demonstrated
+
+1. *Resource Access* – Shows how to obtain database connections, loggers, and Javalin application instances via `getDbConnection()`, `getLogger()`, and `getJavalinApp()`.
+2. *Lifecycle Management* – Implements all lifecycle methods (`onStart`, `onStop`, `onDelete`) and their corresponding hook methods (`beforeStart`, `afterStart`, etc).
+3. *Standalone Mode* – Includes a `standAloneInstance()` method that enables the plugin to be executed without the PF4J framework (see the "Plugin Standalone Mode" section below).
+4. *Thread Safety* – The plugin instance is a singleton; developers should ensure thread‑safe access to shared resources.
+
+===== Building and Running the Example
+
+1. *Build the plugin*:
++
+[source,bash]
+----
+cd plugin-example
+mvn clean package
+----
++
+The resulting JAR file (`plugin‑example‑0.1.9.jar`) will be placed in the `target` directory.
+
+2. *Deploy to a SlackerDB server*:
+   - Copy the JAR file to the server's plugin directory (configured via `plugins_dir` parameter).
+   - Start the server; the plugin will be loaded automatically.
+   - Check server logs for plugin loading messages.
+
+3. *Run in standalone mode* (for testing):
++
+[source,bash]
+----
+cd plugin-example
+mvn compile exec:java -Dexec.mainClass="org.slackerdb.pluginExample.SimplePluginRunner"
+----
++
+This executes the `SimplePluginRunner` class, which demonstrates how to run the plugin without a full SlackerDB server.
+
+===== Customizing the Example
+
+To create your own plugin based on this example:
+
+1. *Rename the package and class* – Change `org.slackerdb.pluginExample` to your own package name.
+2. *Update plugin.properties* – Modify `plugin.id`, `plugin.class`, and `plugin.version` accordingly.
+3. *Implement business logic* – Uncomment the resource acquisition code in `onStart()` and add your custom functionality.
+4. *Add dependencies* – Update `pom.xml` with any additional libraries your plugin requires.
+5. *Test thoroughly* – Use the standalone mode for quick testing before deploying to a production server.
+
+===== Plugin Descriptor File
+
+The `src/main/resources/plugin.properties` file contains the plugin metadata:
+
+[source,properties]
+----
+plugin.id=plugin-example
+plugin.class=org.slackerdb.pluginExample.PluginExample
+plugin.version=0.1.9
+plugin.requires=*
+----
+
+* `plugin.id` must match the JAR filename (without the `.jar` extension).
+* `plugin.class` must be the fully qualified name of the plugin main class.
+* `plugin.version` follows semantic versioning.
+* `plugin.requires` specifies plugin dependencies (`*` means no specific dependency).
+
+===== Plugin Standalone Mode
+
+In addition to the standard PF4J-based plugin loading mechanism, SlackerDB provides a *standalone mode* that allows plugins to be executed directly without the full PF4J framework. This is useful for testing, debugging, or embedding plugin logic in custom applications.
+
+The standalone mode works by:
+1. Creating a plugin instance via the `standAloneInstance()` method (available in plugins that extend `DBPlugin`)
+2. Manually constructing a `DBPluginContext` with the required resources (database connection, logger, Javalin app)
+3. Injecting the context into the plugin via `setDBPluginContext()`
+4. Calling the plugin's lifecycle methods (`start()`, `stop()`) directly
+
+===== Using the Standalone Mode
+
+The `plugin-example` module includes a `SimplePluginRunner` class that demonstrates how to run a plugin in standalone mode. Here's a simplified version:
+
+[source,java]
+----
+package org.slackerdb.pluginExample;
+
+import io.javalin.Javalin;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slackerdb.plugin.DBPluginContext;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+
+public class SimplePluginRunner {
+    public static void main(String[] args) throws Exception {
+        // 1. Create database connection
+        Connection conn = DriverManager.getConnection("jdbc:duckdb:memory:");
+        
+        // 2. Create Javalin app instance
+        Javalin javalin = Javalin.create();
+        
+        // 3. Create logger
+        Logger pluginLogger = LoggerFactory.getLogger(PluginExample.class);
+        
+        // 4. Create and configure DBPluginContext
+        DBPluginContext ctx = new DBPluginContext();
+        ctx.setDbBackendConn(conn);
+        ctx.setLogger(pluginLogger);
+        ctx.setJavalin(javalin);
+        
+        // 5. Create plugin instance via standalone mode
+        PluginExample plugin = PluginExample.standAloneInstance();
+        
+        // 6. Inject context
+        plugin.setDBPluginContext(ctx);
+        
+        // 7. Start the plugin
+        plugin.start();
+        
+        // 8. (Optional) Wait and then stop
+        Thread.sleep(1000);
+        plugin.stop();
+        
+        // 9. Clean up resources
+        conn.close();
+    }
+}
+----
+
+===== Key Points
+
+* *Resource Management* – In standalone mode, you are responsible for creating and managing all resources (database connection, Javalin instance, logger).
+* *Lifecycle Control* – You control when the plugin starts and stops by calling `start()` and `stop()` directly.
+* *No PF4J Overhead* – The standalone mode bypasses the PF4J plugin manager, making it lightweight and suitable for integration into existing applications.
+* *Testing and Debugging* – This mode is ideal for unit testing plugin logic or debugging plugin behavior without deploying it to a full SlackerDB server.
+
+===== When to Use Standalone Mode
+
+* *Development and Testing* – Quickly test plugin logic during development.
+* *Embedded Scenarios* – Embed plugin functionality in custom applications that don't need the full PF4J framework.
+* *Prototyping* – Experiment with plugin ideas without building complete JAR packages.
+* *CI/CD Pipelines* – Run plugin tests in automated build environments.
+
+===== Limitations
+
+* *No Hot Reload* – Plugins cannot be reloaded dynamically; you must restart the application.
+* *Manual Resource Management* – You must handle resource creation, injection, and cleanup.
+* *No Plugin Manager Features* – Features like dependency resolution, version management, and plugin discovery are not available.
 
 ==== Plugin Management API
 
@@ -1868,18 +2117,19 @@ Loads a plugin from a JAR file in the server's plugin directory.
 [source,json]
 ----
 {
-  "plugid": "myplugin"
+  "filename": "myplugin.jar"
 }
 ----
 
-* `plugid` – Plugin identifier (must match the JAR filename without the `.jar` extension). The plugin JAR must be located in the server's plugin directory (configured via `plugins_dir` parameter).
+* `filename` – Plugin JAR filename (e.g., "myplugin.jar") or full path to the JAR file. If a simple filename is provided, it will be loaded from the server's plugin directory (configured via `plugins_dir` parameter). If a full path is provided, it will be loaded directly from that location.
 
 .Response example (success):
 [source,json]
 ----
 {
   "retCode": 0,
-  "retMsg": "Plugin loaded successfully"
+  "retMsg": "Plugin loaded successfully",
+  "pluginId": "myplugin"
 }
 ----
 
@@ -1888,7 +2138,7 @@ Loads a plugin from a JAR file in the server's plugin directory.
 ----
 {
   "retCode": -1,
-  "retMsg": "Plugin not found: myplugin"
+  "retMsg": "Plugin file does not exist: /path/to/plugins/myplugin.jar"
 }
 ----
 

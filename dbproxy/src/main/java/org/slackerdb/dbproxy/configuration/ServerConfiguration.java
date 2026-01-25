@@ -12,6 +12,8 @@ import java.net.ServerSocket;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import com.sun.management.OperatingSystemMXBean;
+import java.lang.management.ManagementFactory;
 
 public class ServerConfiguration extends Throwable {
     // 设置默认参数
@@ -36,6 +38,12 @@ public class ServerConfiguration extends Throwable {
     private final String default_pid = "";
     // 是否用后台方式启动
     private final boolean defaultDaemonMode = false;
+    // 默认线程数（在构造函数中基于内存计算）
+    private final int default_threads;
+    // 默认内存限制（在构造函数中计算）
+    private final String default_memory_limit;
+    // 默认自动工作负载阈值（用于计算内存限制）
+    private final double default_auto_workload_threshold = 0.8;
 
     private String   log;
     private Level    log_level;
@@ -47,6 +55,9 @@ public class ServerConfiguration extends Throwable {
     private Locale   locale;
     private String   pid;
     private boolean  daemonMode;
+    private String   memory_limit;
+    private double   auto_workload_threshold;
+    private int      threads;
 
     public ServerConfiguration() throws ServerException
     {
@@ -60,7 +71,7 @@ public class ServerConfiguration extends Throwable {
         locale = default_locale;
         pid = default_pid;
         daemonMode = defaultDaemonMode;
-
+        auto_workload_threshold = default_auto_workload_threshold;
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
             port = socket.getLocalPort();
@@ -72,6 +83,17 @@ public class ServerConfiguration extends Throwable {
         } catch (IOException e) {
             throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
         }
+
+        // 系统默认内存为系统可用内存的auto_workload_threshold比例
+        OperatingSystemMXBean operatingSystemMXBean = (OperatingSystemMXBean)ManagementFactory.getOperatingSystemMXBean();
+        long totalMemoryBytes = operatingSystemMXBean.getTotalMemorySize();
+        int memoryLimitGB = (int) ((totalMemoryBytes * auto_workload_threshold) / 1024 / 1024 / 1024);
+        default_memory_limit = memoryLimitGB + "G";
+        memory_limit = default_memory_limit;
+        
+        // 默认线程数为内存限制（GB）除以10的整数，至少为1
+        default_threads = Math.max(1, memoryLimitGB / 10);
+        threads = default_threads;
     }
 
     // 读取参数配置文件
@@ -164,6 +186,27 @@ public class ServerConfiguration extends Throwable {
                         setPid(entry.getValue().toString().trim());
                     }
                 }
+                case "THREADS" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        threads = this.default_threads;
+                    } else {
+                        setThreads(entry.getValue().toString().trim());
+                    }
+                }
+                case "MEMORY_LIMIT" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        memory_limit = this.default_memory_limit;
+                    } else {
+                        setMemory_limit(entry.getValue().toString().trim());
+                    }
+                }
+                case "AUTO_WORKLOAD_THRESHOLD" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        auto_workload_threshold = this.default_auto_workload_threshold;
+                    } else {
+                        setAuto_workload_threshold(entry.getValue().toString().trim());
+                    }
+                }
                 default ->
                         throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));
             }
@@ -195,6 +238,16 @@ public class ServerConfiguration extends Throwable {
     public int getMax_Workers()
     {
         return max_workers;
+    }
+
+    public String getMemory_limit()
+    {
+        return memory_limit;
+    }
+
+    public int getThreads()
+    {
+        return threads;
     }
 
     public Locale getLocale()
@@ -410,6 +463,72 @@ public class ServerConfiguration extends Throwable {
     public void setPid(String pPid)
     {
         pid = pPid;
+    }
+
+    public void setThreads(String pThreads) throws ServerException
+    {
+        try {
+            threads = Integer.parseInt(pThreads);
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "threads", pThreads)
+            );
+        }
+        if (threads <= 0)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "threads", pThreads)
+            );
+        }
+    }
+
+    public void setThreads(int pThreads) throws ServerException
+    {
+        threads = pThreads;
+        if (threads <= 0)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "threads", pThreads)
+            );
+        }
+    }
+
+    public void setMemory_limit(String pMemory_limit)
+    {
+        memory_limit = pMemory_limit;
+    }
+
+    public double getAuto_workload_threshold()
+    {
+        return auto_workload_threshold;
+    }
+
+    public void setAuto_workload_threshold(double threshold) throws ServerException
+    {
+        if (threshold <= 0.0 || threshold > 1.0)
+        {
+            throw new ServerException(
+                Utils.getMessage("SLACKERDB-00005", "auto_workload_threshold", String.valueOf(threshold))
+            );
+        }
+        auto_workload_threshold = threshold;
+    }
+
+    public void setAuto_workload_threshold(String thresholdStr) throws ServerException
+    {
+        double threshold;
+        try {
+            threshold = Double.parseDouble(thresholdStr);
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                Utils.getMessage("SLACKERDB-00005", "auto_workload_threshold", thresholdStr)
+            );
+        }
+        setAuto_workload_threshold(threshold);
     }
 }
 

@@ -8,17 +8,21 @@ import org.slf4j.Logger;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 
 /**
- * 抽象数据库插件基类，继承自 PF4J 的 Plugin 类并实现 IDBPluginContext 接口。
- * 为 Slackerdb 插件提供统一的数据库连接、日志和 Web 框架访问能力。
+ * Abstract database plugin base class, extending PF4J's Plugin class and implementing IDBPluginContext interface.
+ * Provides unified database connection, logging, and web framework access capabilities for Slackerdb plugins.
  *
- * <p>插件生命周期方法（start/stop/delete）被 final 修饰以确保正确的上下文注入和顺序执行，
- * 子类应重写相应的钩子方法（onStart, onStop, onDelete）来实现具体逻辑。</p>
+ * <p>Plugin lifecycle methods (start/stop/delete) are marked as final to ensure proper context injection and execution order.
+ * Subclasses should override corresponding hook methods (onStart, onStop, onDelete) to implement specific logic.</p>
  *
- * <p>插件可以通过 {@link #getDbConnection()} 获取到后端数据库连接，
- * 通过 {@link #getLogger()} 获取日志记录器，
- * 通过 {@link #getJavalinApp()} 获取 Javalin Web 应用实例。</p>
+ * <p>Plugins can obtain backend database connections via {@link #getDbConnection()},
+ * obtain loggers via {@link #getLogger()},
+ * and obtain Javalin web application instances via {@link #getJavalinApp()}.</p>
  *
  * @see IDBPluginContext
  * @see DBPluginContext
@@ -26,15 +30,18 @@ import java.sql.SQLException;
 public abstract class DBPlugin extends Plugin
     implements IDBPluginContext
 {
-    /** 插件上下文对象，包含数据库连接、日志记录器和 Javalin 应用实例 */
+    /** Plugin context object containing database connection, logger, and Javalin application instance */
     private DBPluginContext ctx;
+    
+    /** Plugin mount time (loading time) in milliseconds */
+    private long mountTime = 0L;
 
     /**
-     * 获取数据库连接。
-     * 返回一个与后端数据库的新连接（通过 DuckDBConnection.duplicate() 创建）。
+     * Get database connection.
+     * Returns a new connection to the backend database (created via DuckDBConnection.duplicate()).
      *
-     * @return 数据库连接对象
-     * @throws SQLException 如果获取连接时发生错误
+     * @return Database connection object
+     * @throws SQLException if an error occurs while obtaining the connection
      */
     protected Connection getDbConnection() throws SQLException
     {
@@ -42,9 +49,9 @@ public abstract class DBPlugin extends Plugin
     }
 
     /**
-     * 获取日志记录器。
+     * Get logger.
      *
-     * @return 配置好的 SLF4J 日志记录器
+     * @return Configured SLF4J logger
      */
     protected Logger getLogger()
     {
@@ -52,10 +59,10 @@ public abstract class DBPlugin extends Plugin
     }
 
     /**
-     * 获取 Javalin Web 应用实例。
-     * 插件可以通过此实例注册路由、中间件等。
+     * Get Javalin web application instance.
+     * Plugins can register routes, middleware, etc. through this instance.
      *
-     * @return Javalin 应用实例
+     * @return Javalin application instance
      */
     protected Javalin getJavalinApp()
     {
@@ -63,9 +70,44 @@ public abstract class DBPlugin extends Plugin
     }
 
     /**
-     * 构造函数，调用父类 Plugin 的构造函数。
+     * Set plugin mount time.
+     * This method is called by the plugin manager when the plugin is loaded.
      *
-     * @param wrapper PF4J 插件包装器
+     * @param mountTime Mount time (millisecond timestamp)
+     */
+    public void setMountTime(long mountTime) {
+        this.mountTime = mountTime;
+    }
+
+    /**
+     * Get plugin mount time.
+     *
+     * @return Mount time (millisecond timestamp), returns 0 if not set
+     */
+    public long getMountTime() {
+        return mountTime;
+    }
+
+    /**
+     * Get formatted mount time string.
+     *
+     * @return Formatted mount time string (yyyy-MM-dd HH:mm:ss), returns empty string if not set
+     */
+    public String getMountTimeFormatted() {
+        if (mountTime <= 0) {
+            return "";
+        }
+        LocalDateTime dateTime = LocalDateTime.ofInstant(
+            Instant.ofEpochMilli(mountTime),
+            ZoneId.systemDefault()
+        );
+        return dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+    }
+
+    /**
+     * Constructor, calls parent Plugin constructor.
+     *
+     * @param wrapper PF4J plugin wrapper
      */
     @SuppressWarnings("deprecation")
     protected DBPlugin(PluginWrapper wrapper) {
@@ -73,10 +115,10 @@ public abstract class DBPlugin extends Plugin
     }
 
     /**
-     * 设置插件上下文（由插件管理器调用）。
-     * 此方法在插件实例化后立即被调用，用于注入必需的上下文对象。
+     * Set plugin context (called by plugin manager).
+     * This method is called immediately after plugin instantiation to inject required context objects.
      *
-     * @param ctx 插件上下文对象
+     * @param ctx Plugin context object
      */
     @Override
     public final void setDBPluginContext(DBPluginContext ctx) {
@@ -84,10 +126,10 @@ public abstract class DBPlugin extends Plugin
     }
 
     /**
-     * 启动插件（final 方法）。
-     * 执行顺序：beforeStart() → onStart() → afterStart()。
-     * 如果上下文未注入，抛出 IllegalStateException。
-     * 如果任何步骤抛出异常，包装为 RuntimeException 抛出。
+     * Start plugin (final method).
+     * Execution order: beforeStart() → onStart() → afterStart().
+     * Throws IllegalStateException if context is not injected.
+     * If any step throws an exception, wraps it as RuntimeException and throws.
      */
     @Override
     public final void start() {
@@ -104,9 +146,9 @@ public abstract class DBPlugin extends Plugin
     }
 
     /**
-     * 停止插件（final 方法）。
-     * 执行顺序：beforeStop() → onStop() → afterStop()。
-     * 忽略停止过程中发生的任何异常。
+     * Stop plugin (final method).
+     * Execution order: beforeStop() → onStop() → afterStop().
+     * Ignores any exceptions that occur during the stop process.
      */
     @Override
     public final void stop() {
@@ -118,9 +160,9 @@ public abstract class DBPlugin extends Plugin
     }
 
     /**
-     * 删除插件（final 方法）。
-     * 执行顺序：beforeDelete() → onDelete() → afterDelete()。
-     * 忽略删除过程中发生的任何异常。
+     * Delete plugin (final method).
+     * Execution order: beforeDelete() → onDelete() → afterDelete().
+     * Ignores any exceptions that occur during the delete process.
      */
     @Override
     public final void delete() {
@@ -131,52 +173,93 @@ public abstract class DBPlugin extends Plugin
         } catch (Exception ignored) {}
     }
 
-    // ========== 抽象方法 ==========
+    // ========== Abstract Methods ==========
 
     /**
-     * 插件启动时的核心逻辑，子类必须实现。
+     * Core logic when the plugin starts, must be implemented by subclasses.
      */
     protected abstract void onStart();
 
     /**
-     * 插件停止时的逻辑，子类可选择重写。
+     * Logic when the plugin stops, subclasses can optionally override.
      */
     protected void onStop() {}
 
     /**
-     * 插件删除时的逻辑，子类可选择重写。
+     * Logic when the plugin is deleted, subclasses can optionally override.
      */
     protected void onDelete() {}
 
-    // ========== 生命周期钩子方法 ==========
+    // ========== Lifecycle Hook Methods ==========
 
     /**
-     * 在 onStart() 之前执行，子类可选择重写。
+     * Executed before onStart(), subclasses can optionally override.
      */
     protected void beforeStart() {}
 
     /**
-     * 在 onStart() 之后执行，子类可选择重写。
+     * Executed after onStart(), subclasses can optionally override.
      */
     protected void afterStart() {}
 
     /**
-     * 在 onStop() 之前执行，子类可选择重写。
+     * Executed before onStop(), subclasses can optionally override.
      */
     protected void beforeStop() {}
 
     /**
-     * 在 onStop() 之后执行，子类可选择重写。
+     * Executed after onStop(), subclasses can optionally override.
      */
     protected void afterStop() {}
 
     /**
-     * 在 onDelete() 之前执行，子类可选择重写。
+     * Executed before onDelete(), subclasses can optionally override.
      */
     protected void beforeDelete() {}
 
     /**
-     * 在 onDelete() 之后执行，子类可选择重写。
+     * Executed after onDelete(), subclasses can optionally override.
      */
     protected void afterDelete() {}
+
+    // ========== Standalone Running Support ==========
+
+    /**
+     * Support class for standalone plugin execution.
+     * Provides methods to create plugin instances that do not depend on PF4J plugin manager.
+     */
+    public static class Standalone {
+        /**
+         * Simplified PluginWrapper implementation for standalone running environment.
+         */
+        private static class SimplePluginWrapper extends PluginWrapper {
+            public SimplePluginWrapper() {
+                super(new SimplePluginManager(),
+                      new org.pf4j.DefaultPluginDescriptor("standalone-plugin", "Standalone Plugin", "1.0.0", "", "", "", ""),
+                      java.nio.file.Paths.get("."),
+                      DBPlugin.class.getClassLoader());
+            }
+        }
+
+        /**
+         * Simplified PluginManager implementation, providing only necessary methods.
+         */
+        private static class SimplePluginManager extends org.pf4j.DefaultPluginManager {
+            // Uses default PluginDescriptorFinder
+        }
+
+        /**
+         * Create standalone plugin instance.
+         * This method returns a plugin instance configured with a simulated PluginWrapper, suitable for testing and standalone execution.
+         *
+         * @param pluginClass Class object of the plugin class
+         * @param <T> Plugin type
+         * @return Plugin instance
+         * @throws Exception if creation fails
+         */
+        public static <T extends DBPlugin> T createInstance(Class<T> pluginClass) throws Exception {
+            SimplePluginWrapper wrapper = new SimplePluginWrapper();
+            return pluginClass.getDeclaredConstructor(PluginWrapper.class).newInstance(wrapper);
+        }
+    }
 }

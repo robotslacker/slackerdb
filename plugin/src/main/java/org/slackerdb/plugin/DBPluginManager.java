@@ -4,24 +4,24 @@ import org.pf4j.*;
 import java.nio.file.Path;
 
 /**
- * 自定义插件管理器，继承自 PF4J 的 DefaultPluginManager。
+ * Custom plugin manager, extending PF4J's DefaultPluginManager.
  *
- * <p>负责管理 Slackerdb 插件的加载、启动、停止和卸载。
- * 通过重写 {@link #createPluginFactory()} 方法使用自定义的 {@link DBPluginFactory}，
- * 确保插件创建时能够自动注入 {@link DBPluginContext}。</p>
+ * <p>Responsible for managing Slackerdb plugin loading, starting, stopping, and unloading.
+ * Overrides {@link #createPluginFactory()} method to use custom {@link DBPluginFactory},
+ * ensuring automatic injection of {@link DBPluginContext} when plugins are created.</p>
  *
  * @see DBPluginFactory
  * @see DBPluginContext
  */
 public class DBPluginManager extends DefaultPluginManager {
-    /** 插件上下文对象，将被注入到每个插件中 */
+    /** Plugin context object to be injected into each plugin */
     private final DBPluginContext ctx;
 
     /**
-     * 构造函数。
+     * Constructor.
      *
-     * @param pluginsRoot 插件根目录路径
-     * @param ctx 插件上下文对象
+     * @param pluginsRoot Plugin root directory path
+     * @param ctx Plugin context object
      */
     public DBPluginManager(Path pluginsRoot, DBPluginContext ctx) {
         super(pluginsRoot);
@@ -29,27 +29,28 @@ public class DBPluginManager extends DefaultPluginManager {
     }
 
     /**
-     * 构造函数。
+     * Constructor.
      *
-     * @param ctx 插件上下文对象
+     * @param ctx Plugin context object
      */
     public DBPluginManager(DBPluginContext ctx) {
+        super();
         this.ctx = ctx;
     }
 
     /**
-     * 获取插件上下文（包可见，供 {@link DBPluginFactory} 使用）。
+     * Get plugin context (package-visible, used by {@link DBPluginFactory}).
      *
-     * @return 插件上下文对象
+     * @return Plugin context object
      */
     DBPluginContext getContext() {
         return ctx;
     }
 
     /**
-     * 创建自定义插件工厂。
+     * Create custom plugin factory.
      *
-     * @return 配置好的 {@link DBPluginFactory} 实例
+     * @return Configured {@link DBPluginFactory} instance
      */
     @Override
     protected PluginFactory createPluginFactory() {

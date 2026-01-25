@@ -9,7 +9,7 @@
     </properties>
 
     <groupId>org.robotslacker</groupId>
-    <artifactId>slackerdb-plugin-example</artifactId>
+    <artifactId>slackerdb-plugin-mysqlconnector</artifactId>
     <version>0.1.9</version>
     <packaging>jar</packaging>
 
@@ -49,19 +49,6 @@
             <version>6.6.0</version>
             <scope>provided</scope>
         </dependency>
-        <!-- Jetty modules required for Javalin (version aligned with javalin-bundle 6.6.0) -->
-        <dependency>
-            <groupId>org.eclipse.jetty</groupId>
-            <artifactId>jetty-security</artifactId>
-            <version>11.0.25</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.jetty</groupId>
-            <artifactId>jetty-util</artifactId>
-            <version>11.0.25</version>
-            <scope>provided</scope>
-        </dependency>
 
         <!-- PF4J plugin framework -->
         <dependency>
@@ -76,7 +63,48 @@
             <version>0.1.9</version>
             <scope>provided</scope>
         </dependency>
-    </dependencies>
+
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-embedded</artifactId>
+            <version>3.3.2.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-connector-mysql</artifactId>
+            <version>3.3.2.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-connector-postgres</artifactId>
+            <version>3.3.2.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-api</artifactId>
+            <version>3.3.2.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>com.lmax</groupId>
+            <artifactId>disruptor</artifactId>
+            <version>3.4.4</version>
+        </dependency>
+        
+        <!-- Jetty modules required for Javalin (version aligned with javalin-bundle 6.6.0) -->
+        <dependency>
+            <groupId>org.eclipse.jetty</groupId>
+            <artifactId>jetty-security</artifactId>
+            <version>11.0.25</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.jetty</groupId>
+            <artifactId>jetty-util</artifactId>
+            <version>11.0.25</version>
+            <scope>provided</scope>
+        </dependency>
+        
+        </dependencies>
 
     <build>
         <finalName>${project.artifactId}-${project.version}</finalName>
@@ -156,7 +184,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.6.3</version>
                 <configuration>
-                    <mainClass>org.slackerdb.pluginExample.SimplePluginRunner</mainClass>
+                    <mainClass>org.slackerdb.plugins.mysqlconnector.SimplePluginRunner</mainClass>
                 </configuration>
             </plugin>
         </plugins>
@@ -202,6 +230,18 @@
                     <version>6.6.0</version>
                     <scope>compile</scope>
                 </dependency>
+                <dependency>
+                    <groupId>org.pf4j</groupId>
+                    <artifactId>pf4j</artifactId>
+                    <version>3.13.0</version>
+                    <scope>compile</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.robotslacker</groupId>
+                    <artifactId>slackerdb-plugin</artifactId>
+                    <version>0.1.9</version>
+                    <scope>compile</scope>
+                </dependency>
                 <!-- Jetty modules required for Javalin (version aligned with javalin-bundle 6.6.0) -->
                 <dependency>
                     <groupId>org.eclipse.jetty</groupId>
@@ -213,18 +253,6 @@
                     <groupId>org.eclipse.jetty</groupId>
                     <artifactId>jetty-util</artifactId>
                     <version>11.0.25</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.pf4j</groupId>
-                    <artifactId>pf4j</artifactId>
-                    <version>3.13.0</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.robotslacker</groupId>
-                    <artifactId>slackerdb-plugin</artifactId>
-                    <version>0.1.9</version>
                     <scope>compile</scope>
                 </dependency>
             </dependencies>

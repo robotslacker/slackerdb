@@ -62,6 +62,7 @@ public class Main {
         System.out.println("  --port                      Set data service listener port. Default: random");
         System.out.println("  --portX                     Set management service listener port. Default: none");
         System.out.println("  --memory_limit              Set maximum memory allocation. Format: <value>(K|M|G)");
+        System.out.println("  --auto_workload_threshold   Set auto workload threshold for memory limit calculation. Default: 0.8.");
         System.out.println("  --max_workers               Set maximum concurrent worker processes.");
         System.out.println("  --threads                   Set maximum thread count for server computation layer.");
         System.out.println("  --data                      Specify database name. Default: none");
@@ -363,6 +364,10 @@ public class Main {
             if (appOptions.containsKey("memory_limit"))
             {
                 serverConfiguration.setMemory_limit(appOptions.get("memory_limit"));
+            }
+            if (appOptions.containsKey("auto_workload_threshold"))
+            {
+                serverConfiguration.setAuto_workload_threshold(appOptions.get("auto_workload_threshold"));
             }
             if (appOptions.containsKey("max_workers"))
             {

@@ -1,11 +1,14 @@
-package org.slackerdb.pluginExample;
+package org.slackerdb.plugins.mysqlconnector;
 
+import com.lmax.disruptor.dsl.Disruptor;
 import io.javalin.Javalin;
 import org.pf4j.PluginWrapper;
 import org.slackerdb.plugin.DBPlugin;
 import org.slf4j.Logger;
+import com.lmax.disruptor.util.DaemonThreadFactory;
 
 import java.sql.Connection;
+import java.util.Properties;
 
 /**
  * Plugin example class demonstrating how to write a Slackerdb plugin.
@@ -31,21 +34,30 @@ import java.sql.Connection;
  *
  * @see DBPlugin
  */
-public class PluginExample extends DBPlugin {
+public class DuckdbMysqlConnector extends DBPlugin {
     /** Database connection instance */
     private Connection conn;
-    /** Javalin web application instance */
-    private Javalin    app = null;
     /** Logger instance */
     private Logger     logger = null;
 
+    private SyncEngineManager manager;
     /**
      * Constructor, calls parent constructor.
      *
      * @param wrapper PF4J plugin wrapper
      */
-    public PluginExample(PluginWrapper wrapper) {
+    public DuckdbMysqlConnector(PluginWrapper wrapper) {
         super(wrapper);
+
+        // 1. 初始化 Disruptor (这里先简写，后续根据 Day 2 详细调整)
+        Disruptor<BinlogEvent> disruptor = new Disruptor<>(
+                BinlogEvent::new, 1024, DaemonThreadFactory.INSTANCE);
+        // 这里需要先挂载一个简单的消费逻辑，否则队列无法发布
+        disruptor.handleEventsWith((event, seq, end) -> System.out.println("Queue received: " + event.getValue()));
+        disruptor.start();
+
+        // 2. 初始化引擎管理器
+        manager = new SyncEngineManager(disruptor.getRingBuffer());
     }
 
     /**
@@ -62,14 +74,34 @@ public class PluginExample extends DBPlugin {
      */
     @Override
     protected void onStart() {
-        System.err.println("OK onStart");
+        Javalin    app = this.getJavalinApp();
+
+        app.get("/api/engine/status", ctx -> {
+            ctx.result(manager.isRunning() ? "RUNNING" : "STOPPED");
+        });
+
+        app.post("/api/engine/start", ctx -> {
+            // 这里你可以通过 ctx.bodyAsClass(Properties.class) 或者手动读取参数
+            Properties props = new Properties();
+            // 简单演示：从 body 中获取 key-value
+            ctx.formParamMap().forEach((k, v) -> props.put(k, v.get(0)));
+
+            manager.startEngine(props);
+            ctx.result("Engine start command issued.");
+        });
+
+        app.post("/api/engine/stop", ctx -> {
+            manager.stopEngine();
+            ctx.result("Engine stop command issued.");
+        });
+
         // Example: Obtain plugin resources
         // try {
         //     this.conn = getDbConnection();
         // } catch (SQLException ignored) {}
         // this.logger = getLogger();
         // this.app = getJavalinApp();
-        
+
         // Add plugin startup logic here, for example:
         // - Register Javalin routes
         // - Initialize database tables
@@ -156,7 +188,7 @@ public class PluginExample extends DBPlugin {
      * @return Standalone plugin instance
      * @throws Exception if creation fails
      */
-    public static PluginExample standAloneInstance() throws Exception {
-        return DBPlugin.Standalone.createInstance(PluginExample.class);
+    public static DuckdbMysqlConnector standAloneInstance() throws Exception {
+        return DBPlugin.Standalone.createInstance(DuckdbMysqlConnector.class);
     }
 }

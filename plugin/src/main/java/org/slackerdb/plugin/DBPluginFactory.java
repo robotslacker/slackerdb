@@ -5,35 +5,35 @@ import org.pf4j.Plugin;
 import org.pf4j.PluginWrapper;
 
 /**
- * 自定义插件工厂，用于创建插件实例并注入上下文。
+ * Custom plugin factory for creating plugin instances and injecting context.
  *
- * <p>继承自 PF4J 的 DefaultPluginFactory，在创建插件后，
- * 如果插件实现了 {@link IDBPluginContext} 接口，则自动注入 {@link DBPluginContext}。</p>
+ * <p>Extends PF4J's DefaultPluginFactory, after creating a plugin,
+ * if the plugin implements the {@link IDBPluginContext} interface, automatically injects {@link DBPluginContext}.</p>
  *
  * @see DBPluginManager
  * @see IDBPluginContext
  */
 public class DBPluginFactory extends DefaultPluginFactory {
-    /** 插件管理器引用，用于获取上下文对象 */
+    /** Plugin manager reference for obtaining context object */
     private final DBPluginManager manager;
 
     /**
-     * 构造函数。
+     * Constructor.
      *
-     * @param manager 插件管理器实例
+     * @param manager Plugin manager instance
      */
     public DBPluginFactory(DBPluginManager manager) {
         this.manager = manager;
     }
 
     /**
-     * 创建插件实例并注入上下文。
+     * Create plugin instance and inject context.
      *
-     * <p>首先调用父类方法创建插件实例，然后检查插件是否实现了 {@link IDBPluginContext} 接口，
-     * 如果是，则调用 {@link IDBPluginContext#setDBPluginContext(DBPluginContext)} 注入上下文。</p>
+     * <p>First calls parent method to create plugin instance, then checks if the plugin implements {@link IDBPluginContext} interface,
+     * if yes, calls {@link IDBPluginContext#setDBPluginContext(DBPluginContext)} to inject context.</p>
      *
-     * @param wrapper 插件包装器
-     * @return 创建并注入上下文后的插件实例
+     * @param wrapper Plugin wrapper
+     * @return Created and context-injected plugin instance
      */
     @Override
     public Plugin create(PluginWrapper wrapper) {
@@ -42,6 +42,11 @@ public class DBPluginFactory extends DefaultPluginFactory {
         if (plugin instanceof IDBPluginContext) {
             ((IDBPluginContext) plugin)
                     .setDBPluginContext(manager.getContext());
+            
+            // If it's a DBPlugin instance, set mount time
+            if (plugin instanceof DBPlugin) {
+                ((DBPlugin) plugin).setMountTime(System.currentTimeMillis());
+            }
         }
         return plugin;
     }

@@ -50,6 +50,12 @@
             <artifactId>native-linux-aarch64</artifactId>
             <version>1.17.0</version>
         </dependency>
+        <!-- oshi-core for system information -->
+        <dependency>
+            <groupId>com.github.oshi</groupId>
+            <artifactId>oshi-core</artifactId>
+            <version>6.9.2</version>
+        </dependency>
     </dependencies>
 
     <build>
