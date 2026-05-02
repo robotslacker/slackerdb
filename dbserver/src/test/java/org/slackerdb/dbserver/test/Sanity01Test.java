@@ -14,6 +14,7 @@ import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.dbserver.server.DBInstance;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import org.slackerdb.dbserver.sql.PostgresSQLUtil;
 import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
@@ -1058,7 +1059,7 @@ public class Sanity01Test {
                                 true
                         }
         );
-        byte[] binaryCopyData = DBUtil.convertPGRowToByte(data);
+        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
 
         String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
@@ -1127,7 +1128,7 @@ public class Sanity01Test {
                                 true
                         }
         );
-        byte[] binaryCopyData = DBUtil.convertPGRowToByte(data);
+        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
 
         String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
@@ -1194,7 +1195,7 @@ public class Sanity01Test {
                     };
             data.add(row);
         }
-        byte[] binaryCopyData = DBUtil.convertPGRowToByte(data);
+        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
 
         String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
@@ -1241,7 +1242,7 @@ public class Sanity01Test {
                             };
             data.add(row);
         }
-        byte[] binaryCopyData = DBUtil.convertPGRowToByte(data);
+        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
 
         String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(

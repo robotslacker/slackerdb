@@ -210,7 +210,7 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
 
   @Override
   public boolean nullsAreSortedAtStart() throws SQLException {
-    return false;
+    return true;
   }
 
   @Override
@@ -285,7 +285,7 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
    */
   @Override
   public boolean supportsMixedCaseIdentifiers() throws SQLException {
-    return false;
+    return true;
   }
 
   @Override
@@ -300,7 +300,7 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
 
   @Override
   public boolean storesMixedCaseIdentifiers() throws SQLException {
-    return false;
+    return true;
   }
 
   /**
@@ -364,61 +364,62 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
     }
 
   @Override
-  @SuppressWarnings("deprecation")
   public String getNumericFunctions() throws SQLException {
-    return EscapedFunctions.ABS + ',' + EscapedFunctions.ACOS + ',' + EscapedFunctions.ASIN + ','
-        + EscapedFunctions.ATAN + ',' + EscapedFunctions.ATAN2 + ',' + EscapedFunctions.CEILING
-        + ',' + EscapedFunctions.COS + ',' + EscapedFunctions.COT + ',' + EscapedFunctions.DEGREES
-        + ',' + EscapedFunctions.EXP + ',' + EscapedFunctions.FLOOR + ',' + EscapedFunctions.LOG
-        + ',' + EscapedFunctions.LOG10 + ',' + EscapedFunctions.MOD + ',' + EscapedFunctions.PI
-        + ',' + EscapedFunctions.POWER + ',' + EscapedFunctions.RADIANS + ','
-        + EscapedFunctions.ROUND + ',' + EscapedFunctions.SIGN + ',' + EscapedFunctions.SIN + ','
-        + EscapedFunctions.SQRT + ',' + EscapedFunctions.TAN + ',' + EscapedFunctions.TRUNCATE;
-
+    try (Statement statement = connection.createStatement();
+         ResultSet rs = statement.executeQuery("SELECT DISTINCT function_name FROM duckdb_functions() "
+                                               + "WHERE parameter_types[1] ='DECIMAL'"
+                                               + "OR parameter_types[1] ='DOUBLE'"
+                                               + "OR parameter_types[1] ='SMALLINT'"
+                                               + "OR parameter_types[1] = 'BIGINT'")) {
+        StringBuilder sb = new StringBuilder();
+        while (rs.next()) {
+            sb.append(rs.getString(1));
+            sb.append(',');
+        }
+        return sb.toString();
+    }
   }
 
   @Override
-  @SuppressWarnings("deprecation")
   public String getStringFunctions() throws SQLException {
-    String funcs = EscapedFunctions.ASCII + ',' + EscapedFunctions.CHAR + ','
-        + EscapedFunctions.CONCAT + ',' + EscapedFunctions.LCASE + ',' + EscapedFunctions.LEFT + ','
-        + EscapedFunctions.LENGTH + ',' + EscapedFunctions.LTRIM + ',' + EscapedFunctions.REPEAT
-        + ',' + EscapedFunctions.RTRIM + ',' + EscapedFunctions.SPACE + ','
-        + EscapedFunctions.SUBSTRING + ',' + EscapedFunctions.UCASE;
-
-    // Currently these don't work correctly with parameterized
-    // arguments, so leave them out. They reorder the arguments
-    // when rewriting the query, but no translation layer is provided,
-    // so a setObject(N, obj) will not go to the correct parameter.
-    // ','+EscapedFunctions.INSERT+','+EscapedFunctions.LOCATE+
-    // ','+EscapedFunctions.RIGHT+
-
-    funcs += ',' + EscapedFunctions.REPLACE;
-
-    return funcs;
+    try (Statement statement = connection.createStatement();
+         ResultSet rs = statement.executeQuery(
+             "SELECT DISTINCT function_name FROM duckdb_functions() WHERE parameter_types[1] = 'VARCHAR'")) {
+        StringBuilder sb = new StringBuilder();
+        while (rs.next()) {
+            sb.append(rs.getString(1));
+            sb.append(',');
+        }
+        return sb.toString();
+    }
   }
 
   @Override
-  @SuppressWarnings("deprecation")
   public String getSystemFunctions() throws SQLException {
-    return EscapedFunctions.DATABASE + ',' + EscapedFunctions.IFNULL + ',' + EscapedFunctions.USER;
+    try (Statement statement = connection.createStatement();
+         ResultSet rs = statement.executeQuery(
+             "SELECT DISTINCT function_name FROM duckdb_functions() WHERE length(parameter_types) = 0")) {
+        StringBuilder sb = new StringBuilder();
+        while (rs.next()) {
+            sb.append(rs.getString(1));
+            sb.append(',');
+        }
+        return sb.toString();
+    }
   }
 
   @Override
-  @SuppressWarnings("deprecation")
   public String getTimeDateFunctions() throws SQLException {
-    String timeDateFuncs = EscapedFunctions.CURDATE + ',' + EscapedFunctions.CURTIME + ','
-        + EscapedFunctions.DAYNAME + ',' + EscapedFunctions.DAYOFMONTH + ','
-        + EscapedFunctions.DAYOFWEEK + ',' + EscapedFunctions.DAYOFYEAR + ','
-        + EscapedFunctions.HOUR + ',' + EscapedFunctions.MINUTE + ',' + EscapedFunctions.MONTH + ','
-        + EscapedFunctions.MONTHNAME + ',' + EscapedFunctions.NOW + ',' + EscapedFunctions.QUARTER
-        + ',' + EscapedFunctions.SECOND + ',' + EscapedFunctions.WEEK + ',' + EscapedFunctions.YEAR;
-
-    timeDateFuncs += ',' + EscapedFunctions.TIMESTAMPADD;
-
-    // +','+EscapedFunctions.TIMESTAMPDIFF;
-
-    return timeDateFuncs;
+    try (Statement statement = connection.createStatement();
+         ResultSet rs = statement.executeQuery(
+             "SELECT DISTINCT function_name FROM duckdb_functions() WHERE parameter_types[1] LIKE 'TIME%'")) {
+        StringBuilder sb = new StringBuilder();
+        while (rs.next()) {
+            sb.append(rs.getString(1));
+            sb.append(',');
+        }
+        return sb.toString();
+    }
   }
 
   @Override
@@ -826,12 +827,12 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
    */
   @Override
   public boolean supportsSelectForUpdate() throws SQLException {
-    return true;
+    return false;
   }
 
   @Override
   public boolean supportsStoredProcedures() throws SQLException {
-    return true;
+    return false;
   }
 
   @Override
@@ -1165,8 +1166,15 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
         sb.append("NULL::VARCHAR AS 'TYPE_NAME'").append(TRAILING_COMMA).append(lineSeparator());
         sb.append("NULL::VARCHAR AS 'SELF_REFERENCING_COL_NAME'").append(TRAILING_COMMA).append(lineSeparator());
         sb.append("NULL::VARCHAR AS 'REF_GENERATION'").append(TRAILING_COMMA).append(lineSeparator());
-        sb.append("FROM information_schema.tables").append(lineSeparator());
-        sb.append("WHERE table_name LIKE ? ").append(lineSeparator());
+        sb.append("FROM (select database_name as table_catalog, schema_name as table_schema, table_name, CASE  WHEN "
+                  + "(\"temporary\") THEN ('LOCAL TEMPORARY')  WHEN (\"internal\") THEN 'SYSTEM TABLE' ELSE 'TABLE' "
+                  + "END AS table_type, comment AS TABLE_COMMENT")
+            .append(lineSeparator());
+        sb.append("from  duckdb_tables() x").append(lineSeparator());
+        sb.append("union all select database_name,schema_name, view_name, CASE  WHEN (\"internal\") then 'SYSTEM "
+                  + "VIEW' ELSE 'VIEW' END, comment from duckdb_views() x   ) x")
+            .append(lineSeparator());
+        sb.append("WHERE table_name LIKE ? ESCAPE '\\'").append(lineSeparator());
         boolean hasCatalogParam = appendEqualsQual(sb, "table_catalog", catalog);
         boolean hasSchemaParam = appendLikeQual(sb, "table_schema", schemaPattern);
 
@@ -1256,7 +1264,7 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public ResultSet getTableTypes() throws SQLException {
-        String[] tableTypesArray = new String[] {"BASE TABLE", "LOCAL TEMPORARY", "VIEW"};
+        String[] tableTypesArray = new String[] {"TABLE", "LOCAL TEMPORARY", "VIEW", "SYSTEM VIEW"};
         StringBuilder stringBuilder = new StringBuilder(128);
         boolean first = true;
         for (String tableType : tableTypesArray) {
@@ -1283,8 +1291,8 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
       @Nullable String columnNamePattern) throws SQLException {
     StringBuilder sb = new StringBuilder(QUERY_SB_DEFAULT_CAPACITY);
     sb.append("SELECT").append(lineSeparator());
-    sb.append("table_catalog AS 'TABLE_CAT'").append(TRAILING_COMMA).append(lineSeparator());
-    sb.append("table_schema AS 'TABLE_SCHEM'").append(TRAILING_COMMA).append(lineSeparator());
+    sb.append("database_name AS 'TABLE_CAT'").append(TRAILING_COMMA).append(lineSeparator());
+    sb.append("schema_name AS 'TABLE_SCHEM'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("table_name AS 'TABLE_NAME'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("column_name as 'COLUMN_NAME'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append(makeDataMap("regexp_replace(c.data_type, '\\(.*\\)', '')", "DATA_TYPE"))
@@ -1295,33 +1303,35 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
     sb.append("NULL AS 'BUFFER_LENGTH'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("numeric_scale AS 'DECIMAL_DIGITS'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("10 AS 'NUM_PREC_RADIX'").append(TRAILING_COMMA).append(lineSeparator());
-    sb.append("CASE WHEN is_nullable = 'YES' THEN 1 else 0 END AS 'NULLABLE'")
+    sb.append("CASE WHEN is_nullable = TRUE THEN 1 else 0 END AS 'NULLABLE'")
             .append(TRAILING_COMMA)
             .append(lineSeparator());
-    sb.append("COLUMN_COMMENT as 'REMARKS'").append(TRAILING_COMMA).append(lineSeparator());
+    sb.append("comment as 'REMARKS'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("column_default AS 'COLUMN_DEF'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("NULL AS 'SQL_DATA_TYPE'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("NULL AS 'SQL_DATETIME_SUB'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("NULL AS 'CHAR_OCTET_LENGTH'").append(TRAILING_COMMA).append(lineSeparator());
-    sb.append("ordinal_position AS 'ORDINAL_POSITION'").append(TRAILING_COMMA).append(lineSeparator());
-    sb.append("is_nullable AS 'IS_NULLABLE'").append(TRAILING_COMMA).append(lineSeparator());
+    sb.append("column_index AS 'ORDINAL_POSITION'").append(TRAILING_COMMA).append(lineSeparator());
+    sb.append("CASE WHEN is_nullable = TRUE THEN 'YES' ELSE 'NO' END AS 'IS_NULLABLE'")
+            .append(TRAILING_COMMA)
+            .append(lineSeparator());
     sb.append("NULL AS 'SCOPE_CATALOG'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("NULL AS 'SCOPE_SCHEMA'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("NULL AS 'SCOPE_TABLE'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("NULL AS 'SOURCE_DATA_TYPE'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("'' AS 'IS_AUTOINCREMENT'").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("'' AS 'IS_GENERATEDCOLUMN'").append(TRAILING_COMMA).append(lineSeparator());
-    sb.append("FROM information_schema.columns c").append(lineSeparator());
+    sb.append("FROM duckdb_columns() c").append(lineSeparator());
     sb.append("WHERE TRUE").append(lineSeparator());
-    boolean hasCatalogParam = appendEqualsQual(sb, "table_catalog", catalog);
-    boolean hasSchemaParam = appendLikeQual(sb, "table_schema", schemaPattern);
-    sb.append("AND table_name LIKE ? ").append(lineSeparator());
-    sb.append("AND column_name LIKE ? ").append(lineSeparator());
+    boolean hasCatalogParam = appendEqualsQual(sb, "database_name", catalog);
+    boolean hasSchemaParam = appendLikeQual(sb, "schema_name", schemaPattern);
+    sb.append("AND table_name LIKE ? ESCAPE '\\'").append(lineSeparator());
+    sb.append("AND column_name LIKE ? ESCAPE '\\'").append(lineSeparator());
     sb.append("ORDER BY").append(lineSeparator());
     sb.append("\"TABLE_CAT\"").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("\"TABLE_SCHEM\"").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("\"TABLE_NAME\"").append(TRAILING_COMMA).append(lineSeparator());
-    sb.append("\"ORDINAL_POSITION\"").append(lineSeparator());
+    sb.append("\"column_index\"").append(lineSeparator());
 
     PreparedStatement ps = connection.prepareStatement(sb.toString());
 
@@ -1674,7 +1684,7 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
 
   @Override
   public boolean supportsSavepoints() throws SQLException {
-    return true;
+    return false;
   }
 
   @Override

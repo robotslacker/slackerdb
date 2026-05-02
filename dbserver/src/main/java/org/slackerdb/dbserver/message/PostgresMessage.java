@@ -64,7 +64,7 @@ public abstract class PostgresMessage {
                                      Logger logger)
     {
         byte[] data = out.toByteArray();
-        if (logger.getLevel().levelStr.equals("TRACE")) {
+        if (logger.getLevel() != null && logger.getLevel().levelStr.equals("TRACE")) {
             logger.trace("[SERVER][TX CONTENT ]: {},{}", messageTag, data.length);
             for (String dumpMessage : Utils.bytesToHexList(data)) {
                 logger.trace("[SERVER][TX CONTENT ]: {}", dumpMessage);

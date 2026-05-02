@@ -6,8 +6,6 @@ import com.alibaba.fastjson2.JSONException;
 import com.alibaba.fastjson2.JSONObject;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
-import io.javalin.http.staticfiles.Location;
-import io.javalin.plugin.bundled.CorsPluginConfig;
 import org.duckdb.DuckDBConnection;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.utils.BoundedQueue;
@@ -253,12 +251,18 @@ public class DBInstanceX {
                 .create(config ->
                         {
                             // 不显示Javalin的启动提示信息
-                            config.showJavalinBanner = false;
+                            config.startup.showJavalinBanner = false;
                             // 添加静态文件
-                            config.staticFiles.add("/web", Location.CLASSPATH);
+                            config.staticFiles.add(staticFiles -> {
+                                staticFiles.hostedPath = "/web";
+                                staticFiles.directory = "/web";
+                                staticFiles.location = io.javalin.http.staticfiles.Location.CLASSPATH;
+                            });
                             // 支持跨域
                             config.bundledPlugins.enableCors(
-                                    cors -> cors.addRule(CorsPluginConfig.CorsRule::anyHost));
+                                    cors -> cors.addRule(corsConfig -> {
+                                        corsConfig.anyHost();
+                                    }));
                         }
                 )
                 .start(
@@ -268,10 +272,10 @@ public class DBInstanceX {
 
         // 自定义404界面
         ClassPathResource page404Resource = new ClassPathResource("web/404.html");
-        this.managementApp.error(404, ctx -> ctx.html(Files.readString(Path.of(page404Resource.getURI()))));
+        this.managementApp.unsafe.routes.error(404, ctx -> ctx.html(Files.readString(Path.of(page404Resource.getURI()))));
 
         // 需要在记录器之前添加的过滤器
-        this.managementApp.before(ctx -> {
+        this.managementApp.unsafe.routes.before(ctx -> {
             // 设置请求开始时间作为属性
             ctx.attribute("startTime", System.currentTimeMillis());
             if (!this.dbInstance.serverConfiguration.getAccess_mode().equals("READ_ONLY") &&
@@ -300,7 +304,7 @@ public class DBInstanceX {
         });
 
         // 在请求结束后记录响应信息
-        this.managementApp.after(ctx -> {
+        this.managementApp.unsafe.routes.after(ctx -> {
             Long startTime = ctx.attribute("startTime");
             long duration = -1;
             if (startTime != null) {
@@ -338,7 +342,7 @@ public class DBInstanceX {
                                     null,
                                     affectedRows,
                                     cached,
-                                    ctx.statusCode(),
+                                    ctx.status().getCode(),
                                     null
                             );
                     this.apiHistoryList.offer(apiHistoryRecord);
@@ -348,7 +352,7 @@ public class DBInstanceX {
 
         // 默认页面
         ClassPathResource consoleResource = new ClassPathResource("web/console.html");
-        this.managementApp.get("/" ,
+        this.managementApp.unsafe.routes.get("/" ,
                 ctx -> {
                     ctx.contentType("text/html");
                     ctx.result(Files.readString(Path.of(consoleResource.getURI())));
@@ -368,7 +372,7 @@ public class DBInstanceX {
         }
 
         // 系统数据备份
-        this.managementApp.post("/backup", ctx -> {
+        this.managementApp.unsafe.routes.post("/backup", ctx -> {
             JSONObject bodyObject;
             try {
                 bodyObject = JSONObject.parseObject(ctx.body());
@@ -476,16 +480,16 @@ public class DBInstanceX {
         });
 
         // 文件下载服务
-        this.managementApp.get("/download", FileHandlerHelper::handleFileDownload);
+        this.managementApp.unsafe.routes.get("/download", FileHandlerHelper::handleFileDownload);
 
         // 文件上传服务
-        this.managementApp.post("/upload", FileHandlerHelper::handleFileUpload);
+        this.managementApp.unsafe.routes.post("/upload", FileHandlerHelper::handleFileUpload);
 
         // 查看日志服务
-        this.managementApp.get("/viewLog", FileHandlerHelper::handleFileView);
+        this.managementApp.unsafe.routes.get("/viewLog", FileHandlerHelper::handleFileView);
 
         // 日志文件服务（返回纯文本）
-        this.managementApp.get("/logfile", ctx -> {
+        this.managementApp.unsafe.routes.get("/logfile", ctx -> {
             String logConfig = this.dbInstance.serverConfiguration.getLog();
             // 分割逗号分隔的配置
             String[] parts = logConfig.split(",");
@@ -516,11 +520,11 @@ public class DBInstanceX {
         });
 
         // 状态服务
-        this.managementApp.get("/status", ctx -> ctx.json(getStatusJson()));
+        this.managementApp.unsafe.routes.get("/status", ctx -> ctx.json(getStatusJson()));
 
         // 帮助页面 - 显示 README.html
         ClassPathResource readmeResource = new ClassPathResource("web/README.html");
-        this.managementApp.get("/help", ctx -> {
+        this.managementApp.unsafe.routes.get("/help", ctx -> {
             try {
                 ctx.contentType("text/html; charset=utf-8");
                 ctx.result(Files.readString(Path.of(readmeResource.getURI())));
@@ -541,7 +545,7 @@ public class DBInstanceX {
                 new SchedulerService(dbInstance, this.managementApp, dbInstance.logger);
 
         // 异常处理
-        this.managementApp.exception(Exception.class, (e, ctx) -> {
+        this.managementApp.unsafe.routes.exception(Exception.class, (e, ctx) -> {
             logger.error("Error occurred while processing request: {} {} - {}", ctx.method(), ctx.path(), e.getMessage(), e);
             ctx.status(500).result("Internal Server Error");
         });

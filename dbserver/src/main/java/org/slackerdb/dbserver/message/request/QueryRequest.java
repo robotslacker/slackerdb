@@ -21,20 +21,51 @@ import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.*;
 
+/**
+ * PostgreSQL简单查询请求处理类。
+ * 处理客户端发送的'Q'类型消息（简单查询），执行SQL语句并返回结果。
+ * 支持SELECT、INSERT、UPDATE、DELETE等SQL语句，以及COPY命令。
+ *
+ * <p>查询执行流程：</p>
+ * <ol>
+ *   <li>解析查询消息</li>
+ *   <li>对SQL进行必要的替换处理</li>
+ *   <li>执行SQL语句</li>
+ *   <li>格式化结果集</li>
+ *   <li>通过PostgreSQL协议返回结果</li>
+ * </ol>
+ *
+ * @see PostgresRequest
+ */
 public class QueryRequest  extends PostgresRequest {
     private String      sql = "";
 
+    /**
+     * 构造函数，创建查询请求处理器。
+     *
+     * @param pDbInstance 数据库实例对象
+     */
     public QueryRequest(DBInstance pDbInstance) {
         super(pDbInstance);
     }
 
-    //  Query (F)
-    //    Byte1('Q')
-    //      Identifies the message as a simple query.
-    //    Int32
-    //      Length of message contents in bytes, including self.
-    //    String
-    //      The query string itself.
+    /**
+     * 解码查询请求消息。
+     * 解析PostgreSQL简单查询消息（'Q'类型），提取SQL查询字符串。
+     *
+     * <p>消息格式：</p>
+     * <pre>
+     *   Query (F)
+     *     Byte1('Q')
+     *       Identifies the message as a simple query.
+     *     Int32
+     *       Length of message contents in bytes, including self.
+     *     String
+     *       The query string itself.
+     * </pre>
+     *
+     * @param data 原始消息字节数据
+     */
     @Override
     public void decode(byte[] data) {
         sql = new String(data, StandardCharsets.UTF_8);

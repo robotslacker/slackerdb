@@ -6,7 +6,7 @@ import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
-import io.netty.channel.nio.NioIoHandler;
+import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
@@ -46,13 +46,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
+/**
+ * 数据库实例管理类，负责管理数据库实例的生命周期。
+ * 每个数据库实例对应一个物理或内存数据库，支持多客户端并发访问。
+ *
+ */
 public class DBInstance {
     // 服务器启动模式
     // 是否为独占模式，默认否
-    // 当程序为独占模式的时候，退出端口，意味着程序也将退出
+    // 当程序为独占模式的时候，退出端口的同时程序也将退出
     private boolean exclusiveMode = false;
 
-    // 服务器启动的时间
+    // 记录服务器启动的时间，用作日志显示
     public LocalDateTime bootTime = null;
 
     // 服务器配置参数
@@ -79,22 +84,21 @@ public class DBInstance {
 
     // 实例的状态
     public String instanceState = "IDLE";
-    // 标记数据库是否正在输入密钥
+
+    // 标记数据库是否正在等待输入密钥
     public boolean instanceSuspendForSecretKey = false;
 
     // DuckDB对应的后端长数据库连接
     public Connection backendSysConnection;
-    public String backendConnectString;
-    public Properties backendConnectProperties = new Properties();
+
+    // DuckDB对应的后端数据库连接参数
+    private final Properties backendConnectProperties = new Properties();
 
     // SqlHistoryId 当前SQL历史的主键ID
     public final AtomicLong backendSqlHistoryId = new AtomicLong(1);
 
     // 系统活动的会话数，指保持在DB侧正在执行语句的会话数
     public final  AtomicInteger  activeSessions = new AtomicInteger(0);
-
-    // 系统最后活跃时间
-    public long lastActiveTime = System.currentTimeMillis();
 
     // 磁盘检查相关字段
     private volatile long lastDiskCheckTime = 0;
@@ -135,7 +139,7 @@ public class DBInstance {
     // 为每个连接创建一个会话ID
     private final AtomicInteger maxSessionId = new AtomicInteger(100000);
 
-    // 记录会话列表
+    // 记录连接会话列表
     public final ConcurrentHashMap<Integer, DBSession> dbSessions = new ConcurrentHashMap<>();
 
     // PID进程锁信息
@@ -351,7 +355,7 @@ public class DBInstance {
         }
 
         // 启动Netty客户端
-        EventLoopGroup group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+        EventLoopGroup group = new NioEventLoopGroup(1);
         try {
             Bootstrap client = new Bootstrap();
             client.group(group)
@@ -412,9 +416,6 @@ public class DBInstance {
     // 终止会话
     // 默认回滚所有会话
     public void abortSession(int sessionId) throws SQLException {
-        // 标记最后活跃时间
-        this.lastActiveTime = System.currentTimeMillis();
-
         // 销毁会话保持的数据库信息
         DBSession dbSession = dbSessions.get(sessionId);
         if (dbSession != null) {
@@ -428,9 +429,6 @@ public class DBInstance {
     // 关闭会话
     // closeSession默认提交所有未提交内容
     public void closeSession(int sessionId) throws SQLException {
-        // 标记最后活跃时间
-        this.lastActiveTime = System.currentTimeMillis();
-
         // 销毁会话保持的数据库信息
         DBSession dbSession = dbSessions.get(sessionId);
         if (dbSession != null) {
@@ -466,10 +464,7 @@ public class DBInstance {
         stmt.close();
     }
 
-    // 打开数据库
-    // 1. 挂载数据库
-    // 2. 执行初始化脚本
-    // 3. 复制模板文件
+    // 挂载数据库， 如果数据库的密钥为空，则不对数据库进行加密
     public void attachDatabase(String databaseEncryptKey)
     {
         // 如果数据库开启了加密，但是没有设置环境变量，则不要进行Attach
@@ -507,11 +502,6 @@ public class DBInstance {
                 // 数据库名必须是数字或者字母包括，也包括_和-
                 throw new ServerException("Instance name [" + instanceName + "] is not valid. It is reserved keyword!");
             }
-
-            // 强制约定在程序推出的时候保存检查点
-            stmt = this.backendSysConnection.createStatement();
-            stmt.execute("PRAGMA enable_checkpoint_on_shutdown");
-            stmt.close();
 
             // 处理数据库密钥
             if (serverConfiguration.getDataEncrypt())
@@ -580,14 +570,22 @@ public class DBInstance {
             stmt = backendSysConnection.createStatement();
             if (serverConfiguration.getDataEncrypt())
             {
-                // 尝试加载HTTPFS插件，来提高加密的处理效率
+                // 自动加载HttpFS组件，来提交加密的效率
                 try {
                     stmt.execute("load httpfs");
+                    backendSysConnection.commit();
                 }
-                catch (SQLException ignored) {}
+                catch (SQLException ignored) {
+                    // HttpFS组件加载错误，也不会进行任何干预
+                    logger.warn("[SERVER] Load httpfs extension failed. This will have low performance in data encrypt.");
+                    try
+                    {
+                        this.backendSysConnection.rollback();
+                    }
+                    catch (SQLException ignored2) {}
+                }
                 finally {
                     try {
-                        backendSysConnection.rollback();
                         if (!stmt.isClosed())
                         {
                             stmt.close();
@@ -681,15 +679,6 @@ public class DBInstance {
                 }
                 logger.debug("[SERVER][STARTUP    ] Startup {} script(s) execute completed.", startupScriptFiles.size());
 
-                // 检查模板文件是否存在，如果有问题，直接退出
-                if (this.databaseFirstOpened && !this.serverConfiguration.getTemplate().trim().isEmpty()) {
-                    String templateFileName = this.serverConfiguration.getTemplate().trim();
-                    File templateFile = new File(templateFileName);
-                    if (!templateFile.exists() || !templateFile.canRead()) {
-                        throw new ServerException("Template file [" + templateFile.getAbsolutePath() + "] does not exist or no permission!");
-                    }
-                }
-
                 // 检查模板文件是否存在
                 if (databaseFirstOpened && !serverConfiguration.getTemplate().trim().isEmpty()) {
                     String templateFileName = serverConfiguration.getTemplate().trim();
@@ -715,7 +704,12 @@ public class DBInstance {
         }
     }
 
-    // 构造函数
+    /**
+     * 构造函数，根据服务器配置创建数据库实例。
+     *
+     * @param pServerConfiguration 服务器配置对象，包含数据库连接参数、监听端口等配置信息
+     * @throws ServerException 如果实例名包含非法字符或配置无效
+     */
     public DBInstance(ServerConfiguration pServerConfiguration) throws ServerException
     {
         // 加载数据库的配置信息
@@ -740,7 +734,9 @@ public class DBInstance {
         this.instanceName = instanceName;
     }
 
-    // 根据参数配置文件启动数据库实例
+    /**
+     * 启动数据库实例。
+     */
     public synchronized void start() throws ServerException {
         String instanceName = serverConfiguration.getData();
 
@@ -822,8 +818,8 @@ public class DBInstance {
             }
         }
 
-        // 建立基础数据库连接
-        this.backendConnectString = "jdbc:duckdb:memory:db" + UUID.randomUUID().toString().replace("-","");
+        // DuckDB对应的后端数据库链接字符串
+        String backendConnectString = "jdbc:duckdb:memory:db" + UUID.randomUUID().toString().replace("-", "");
 
         // 默认容许未签名的扩展, 该参数无法启动后设置，只能依赖链接参数传入
         backendConnectProperties.setProperty("allow_unsigned_extensions", "true");
@@ -853,7 +849,7 @@ public class DBInstance {
             // 默认用后台线程来异步清除未完成的内存分配
             stmt.execute("set allocator_background_threads to true");
             // 禁用插件的自动安装机制，减少不必要的外网访问
-            stmt.execute("set autoinstall_known_extensions to true");
+            stmt.execute("set autoinstall_known_extensions to false");
             stmt.close();
         }
         catch (SQLException sqlException)
@@ -938,10 +934,12 @@ public class DBInstance {
         this.instanceState = "MOUNTED";
 
         // 启动PG的协议处理程序
-        if (serverConfiguration.getPort() != -1) {
+        String socketPath = serverConfiguration.getSocket();
+        if (serverConfiguration.getPort() != -1 || (socketPath != null && !socketPath.isEmpty())) {
             protocolServer = new PostgresServer();
             protocolServer.setLogger(logger);
             protocolServer.setBindHostAndPort(serverConfiguration.getBindHost(), serverConfiguration.getPort());
+            protocolServer.setSocketPath(socketPath);
             protocolServer.setServerTimeout(serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout());
             protocolServer.setNioEventThreads(serverConfiguration.getMax_Workers());
             protocolServer.setDBInstance(this);
@@ -955,8 +953,13 @@ public class DBInstance {
                     throw new ServerException("Server terminated due to user cancelled.");
                 }
             }
-            logger.info("[SERVER][STARTUP    ] Instance opened at {}:{} successful.",
-                    serverConfiguration.getBindHost(), serverConfiguration.getPort());
+            if (serverConfiguration.getPort() != -1) {
+                logger.info("[SERVER][STARTUP    ] Instance opened at {}:{} successful.",
+                        serverConfiguration.getBindHost(), serverConfiguration.getPort());
+            }
+            if (socketPath != null && !socketPath.isEmpty()) {
+                logger.info("[SERVER][STARTUP    ] Instance opened UDS at {} successful.", socketPath);
+            }
         }
         else
         {
@@ -1023,7 +1026,22 @@ public class DBInstance {
         this.instanceState = "RUNNING";
     }
 
-    // 停止数据库实例
+    /**
+     * 停止数据库实例。
+     * 该方法执行以下操作：
+     * <ol>
+     *   <li>检查实例状态，如果已经是IDLE状态则直接返回</li>
+     *   <li>设置实例状态为SHUTTING DOWN</li>
+     *   <li>停止管理服务</li>
+     *   <li>停止监控线程</li>
+     *   <li>停止SQL历史记录处理线程</li>
+     *   <li>停止PostgreSQL协议服务器</li>
+     *   <li>关闭数据库连接池</li>
+     *   <li>释放文件锁</li>
+     * </ol>
+     *
+     * @throws ServerException 如果停止过程中发生错误
+     */
     public synchronized void stop() throws ServerException
     {
         if (this.instanceState.equalsIgnoreCase("IDLE"))
@@ -1134,9 +1152,6 @@ public class DBInstance {
     // 初始化一个新的数据库会话
     public int newSession(DBSession dbSession)
     {
-        // 标记最后活跃时间
-        this.lastActiveTime = System.currentTimeMillis();
-
         int currentSessionId = maxSessionId.incrementAndGet();
         dbSessions.put(currentSessionId, dbSession);
         return currentSessionId;

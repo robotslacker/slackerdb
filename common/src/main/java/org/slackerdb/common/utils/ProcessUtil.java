@@ -11,6 +11,15 @@ import java.util.stream.Collectors;
 /**
  * 进程管理工具类，支持在 Windows 和 Linux 上查找和终止进程。
  * 提供了基于进程名、命令行参数等多种查找方式。
+ *
+ * <p>该类封装了操作系统差异，为上层提供统一的进程管理API：</p>
+ * <ul>
+ *   <li>Windows: 使用 {@code tasklist}、{@code wmic}、{@code taskkill} 命令</li>
+ *   <li>Linux: 使用 {@code ps}、{@code kill} 命令</li>
+ *   <li>同时提供基于 Java 9+ ProcessHandle 的现代实现</li>
+ * </ul>
+ *
+ * <p>注意：基于命令的实现可能受限于操作系统权限和环境配置。</p>
  */
 public class ProcessUtil {
 
@@ -86,6 +95,10 @@ public class ProcessUtil {
     }
 
     // Windows 实现
+    /**
+     * Windows平台：根据进程名查找进程ID。
+     * 使用 {@code tasklist /FO CSV /NH} 命令获取进程列表，解析CSV格式输出。
+     */
     private static List<Long> findProcessIdsByNameWindows(String processName) throws IOException, InterruptedException {
         List<Long> pids = new ArrayList<>();
         ProcessBuilder pb = new ProcessBuilder("tasklist", "/FO", "CSV", "/NH");
@@ -113,6 +126,10 @@ public class ProcessUtil {
         return pids;
     }
 
+    /**
+     * Windows平台：根据命令行参数查找进程ID。
+     * 使用 {@code wmic process get processid,commandline} 命令获取进程命令行信息。
+     */
     private static List<Long> findProcessIdsByCommandLineWindows(String commandLineArg) throws IOException, InterruptedException {
         List<Long> pids = new ArrayList<>();
         // 使用 wmic 获取进程命令行
@@ -141,6 +158,10 @@ public class ProcessUtil {
         return pids;
     }
 
+    /**
+     * Windows平台：终止指定进程ID的进程。
+     * 使用 {@code taskkill /F /PID [pid]} 命令强制终止进程。
+     */
     private static boolean killProcessWindows(long pid) throws IOException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder("taskkill", "/F", "/PID", String.valueOf(pid));
         Process process = pb.start();
@@ -149,6 +170,10 @@ public class ProcessUtil {
     }
 
     // Linux 实现
+    /**
+     * Linux平台：根据进程名查找进程ID。
+     * 使用 {@code ps -e -o pid,comm} 命令获取进程列表。
+     */
     private static List<Long> findProcessIdsByNameLinux(String processName) throws IOException, InterruptedException {
         List<Long> pids = new ArrayList<>();
         ProcessBuilder pb = new ProcessBuilder("ps", "-e", "-o", "pid,comm");
@@ -176,6 +201,10 @@ public class ProcessUtil {
         return pids;
     }
 
+    /**
+     * Linux平台：根据命令行参数查找进程ID。
+     * 使用 {@code ps -e -o pid,args} 命令获取进程命令行信息。
+     */
     private static List<Long> findProcessIdsByCommandLineLinux(String commandLineArg) throws IOException, InterruptedException {
         List<Long> pids = new ArrayList<>();
         ProcessBuilder pb = new ProcessBuilder("ps", "-e", "-o", "pid,args");
@@ -203,6 +232,10 @@ public class ProcessUtil {
         return pids;
     }
 
+    /**
+     * Linux平台：终止指定进程ID的进程。
+     * 使用 {@code kill -9 [pid]} 命令强制终止进程。
+     */
     private static boolean killProcessLinux(long pid) throws IOException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder("kill", "-9", String.valueOf(pid));
         Process process = pb.start();

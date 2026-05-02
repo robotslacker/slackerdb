@@ -277,7 +277,7 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
 
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
-            if (logger.getLevel().levelStr.equals("TRACE")) {
+            if (logger.getLevel() != null && logger.getLevel().levelStr.equals("TRACE")) {
                 // 打印发送日志
                 ByteBuf byteBuf = (ByteBuf) msg;
                 byte[] data = new byte[byteBuf.readableBytes()];

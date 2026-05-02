@@ -4,8 +4,6 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
-import io.javalin.http.staticfiles.Location;
-import io.javalin.plugin.bundled.CorsPluginConfig;
 import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
@@ -141,10 +139,16 @@ public class ProxyInstanceX {
                 .create(config->
                         {
                             // 添加静态文件
-                            config.staticFiles.add("/web", Location.CLASSPATH);
+                            config.staticFiles.add(staticFiles -> {
+                                staticFiles.hostedPath = "/web";
+                                staticFiles.directory = "/web";
+                                staticFiles.location = io.javalin.http.staticfiles.Location.CLASSPATH;
+                            });
                             // 支持跨域
                             config.bundledPlugins.enableCors(
-                                    cors -> cors.addRule(CorsPluginConfig.CorsRule::anyHost));
+                                    cors -> cors.addRule(corsConfig -> {
+                                        corsConfig.anyHost();
+                                    }));
                         }
                 )
                 .start(
@@ -153,13 +157,13 @@ public class ProxyInstanceX {
                 );
 
         // 需要在记录器之前添加的过滤器
-        this.managementApp.before(ctx -> {
+        this.managementApp.unsafe.routes.before(ctx -> {
             // 设置请求开始时间作为属性
             ctx.attribute("startTime", System.currentTimeMillis());
         });
 
         // 处理转发请求
-        this.managementApp.get(
+        this.managementApp.unsafe.routes.get(
                 "/*",
                 ctx ->
                 {
@@ -175,7 +179,7 @@ public class ProxyInstanceX {
                     ctx.html(Files.readString(Path.of(page404Resource.getURI())));
                 }
         );
-        this.managementApp.post(
+        this.managementApp.unsafe.routes.post(
                 "/*",
                 ctx ->
                 {
@@ -191,7 +195,7 @@ public class ProxyInstanceX {
                     ctx.html(Files.readString(Path.of(page404Resource.getURI())));
                 }
         );
-        this.managementApp.put(
+        this.managementApp.unsafe.routes.put(
                 "/*",
                 ctx ->
                 {
@@ -207,7 +211,7 @@ public class ProxyInstanceX {
                     ctx.html(Files.readString(Path.of(page404Resource.getURI())));
                 }
         );
-        this.managementApp.delete(
+        this.managementApp.unsafe.routes.delete(
                 "/*",
                 ctx ->
                 {
@@ -223,7 +227,7 @@ public class ProxyInstanceX {
                     ctx.html(Files.readString(Path.of(page404Resource.getURI())));
                 }
         );
-        this.managementApp.patch(
+        this.managementApp.unsafe.routes.patch(
                 "/*",
                 ctx ->
                 {
@@ -241,7 +245,7 @@ public class ProxyInstanceX {
         );
 
         // 在请求结束后记录响应信息
-        this.managementApp.after(ctx -> {
+        this.managementApp.unsafe.routes.after(ctx -> {
             Long startTime = ctx.attribute("startTime");
             long duration = -1;
             if (startTime != null) {
@@ -252,10 +256,10 @@ public class ProxyInstanceX {
         });
 
         // 自定义404假面
-        this.managementApp.error(404, ctx -> ctx.html(Files.readString(Path.of(page404Resource.getURI()))));
+        this.managementApp.unsafe.routes.error(404, ctx -> ctx.html(Files.readString(Path.of(page404Resource.getURI()))));
 
         // 异常处理
-        this.managementApp.exception(Exception.class, (e, ctx) -> {
+        this.managementApp.unsafe.routes.exception(Exception.class, (e, ctx) -> {
             logger.error("Error occurred while processing request: {} {} - {}", ctx.method(), ctx.path(), e.getMessage());
             ctx.status(500).result("Internal Server Error");
         });

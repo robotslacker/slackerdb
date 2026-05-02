@@ -64,7 +64,7 @@ public class McpServer {
 
     public void run() throws Exception {
         // SSE endpoint for MCP protocol
-        this.managementApp.sse("/sse", client -> {
+        this.managementApp.unsafe.routes.sse("/sse", client -> {
             try {
                 Map<String, Object> capabilities = new HashMap<>();
                 // 主流扩展：补充list/describe操作，更符合MCP标准
@@ -121,7 +121,7 @@ public class McpServer {
         });
 
         // JSON-RPC over HTTP endpoint for MCP
-        this.managementApp.post("/jsonrpc", ctx -> {
+        this.managementApp.unsafe.routes.post("/jsonrpc", ctx -> {
             JSONObject request;
             try {
                 request = JSON.parseObject(ctx.body());
@@ -339,7 +339,7 @@ public class McpServer {
         });
 
         // Register MCP Tool endpoint
-        this.managementApp.post("/mcp/registerMCPTool", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/registerMCPTool", ctx -> {
             try {
                 JSONObject body = JSON.parseObject(ctx.body());
                 String name = body.getString("name");
@@ -395,7 +395,7 @@ public class McpServer {
         });
 
         // Unregister MCP Tool endpoint
-        this.managementApp.post("/mcp/unregisterMCPTool", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/unregisterMCPTool", ctx -> {
             try {
                 JSONObject body = JSON.parseObject(ctx.body());
                 String name = body.getString("name");
@@ -428,7 +428,7 @@ public class McpServer {
         });
 
         // Register MCP Resource endpoint
-        this.managementApp.post("/mcp/registerMCPResource", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/registerMCPResource", ctx -> {
             try {
                 JSONObject body = JSON.parseObject(ctx.body());
                 String uri = body.getString("uri");
@@ -494,7 +494,7 @@ public class McpServer {
         });
 
         // Unregister MCP Resource endpoint
-        this.managementApp.post("/mcp/unregisterMCPResource", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/unregisterMCPResource", ctx -> {
             try {
                 JSONObject body = JSON.parseObject(ctx.body());
                 String uri = body.getString("uri");
@@ -527,7 +527,7 @@ public class McpServer {
         });
 
         // Load MCP Tool definitions from JSON
-        this.managementApp.post("/mcp/loadMCPTool", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/loadMCPTool", ctx -> {
             try {
                 Object parsed = JSON.parse(ctx.body());
                 if (parsed instanceof JSONArray bodyArray) {
@@ -600,7 +600,7 @@ public class McpServer {
         });
 
         // Save MCP Tool definitions to file
-        this.managementApp.post("/mcp/saveMCPTool", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/saveMCPTool", ctx -> {
             try {
                 if (mcpConfigPath == null || mcpConfigPath.trim().isEmpty()) {
                     ctx.result(JSON.toJSONString(Map.of(
@@ -674,7 +674,7 @@ public class McpServer {
         });
 
         // Dump MCP Tool definitions as JSON (download)
-        this.managementApp.post("/mcp/dumpMCPTool", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/dumpMCPTool", ctx -> {
             try {
                 String json = JSON.toJSONString(generateToolDefinitionsJsonArray(), JSONWriter.Feature.PrettyFormat);
                 ctx.header("Content-Type", "application/json");
@@ -691,7 +691,7 @@ public class McpServer {
         });
 
         // Load MCP Resource definitions from JSON
-        this.managementApp.post("/mcp/loadMCPResource", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/loadMCPResource", ctx -> {
             try {
                 Object parsed = JSON.parse(ctx.body());
                 if (parsed instanceof JSONArray bodyArray) {
@@ -759,7 +759,7 @@ public class McpServer {
         });
 
         // Save MCP Resource definitions to file (saveMCPSource)
-        this.managementApp.post("/mcp/saveMCPSource", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/saveMCPSource", ctx -> {
             try {
                 if (mcpConfigPath == null || mcpConfigPath.trim().isEmpty()) {
                     ctx.result(JSON.toJSONString(Map.of(
@@ -833,7 +833,7 @@ public class McpServer {
         });
 
         // Dump MCP Resource definitions as JSON (dumpMCPSource)
-        this.managementApp.post("/mcp/dumpMCPSource", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/dumpMCPSource", ctx -> {
             try {
                 String json = JSON.toJSONString(generateResourceDefinitionsJsonArray(), JSONWriter.Feature.PrettyFormat);
                 ctx.header("Content-Type", "application/json");
@@ -850,7 +850,7 @@ public class McpServer {
         });
 
         // Register MCP Service endpoint
-        this.managementApp.post("/mcp/registerMCPService", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/registerMCPService", ctx -> {
             try {
                 JSONObject body = JSON.parseObject(ctx.body());
                 String name = body.getString("name");
@@ -920,7 +920,7 @@ public class McpServer {
         });
 
         // Unregister MCP Service endpoint
-        this.managementApp.post("/mcp/unregisterMCPService", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/unregisterMCPService", ctx -> {
             try {
                 JSONObject body = JSON.parseObject(ctx.body());
                 String name = body.getString("name");
@@ -953,7 +953,7 @@ public class McpServer {
         });
 
         // Load MCP Service definitions from JSON
-        this.managementApp.post("/mcp/loadMCPService", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/loadMCPService", ctx -> {
             try {
                 Object parsed = JSON.parse(ctx.body());
                 if (parsed instanceof JSONArray bodyArray) {
@@ -1113,7 +1113,7 @@ public class McpServer {
         });
 
         // Save MCP Service definitions to file
-        this.managementApp.post("/mcp/saveMCPService", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/saveMCPService", ctx -> {
             try {
                 if (mcpConfigPath == null || mcpConfigPath.trim().isEmpty()) {
                     ctx.result(JSON.toJSONString(Map.of(
@@ -1188,7 +1188,7 @@ public class McpServer {
         });
 
         // Dump MCP Service definitions as JSON (download)
-        this.managementApp.post("/mcp/dumpMCPService", ctx -> {
+        this.managementApp.unsafe.routes.post("/mcp/dumpMCPService", ctx -> {
             try {
                 String json = dumpServicesAsJson();
                 ctx.header("Content-Type", "application/json");
@@ -1209,7 +1209,7 @@ public class McpServer {
             logger.info("[SERVER][AI CHAT    ] Chat server listening on websocket /aichat. ");
             logger.info("[SERVER][AI CHAT    ] Chat llm server: {}", mcpLlmServer);
 
-            this.managementApp.ws("/aichat", ws -> {
+            this.managementApp.unsafe.routes.ws("/aichat", ws -> {
                 ws.onConnect(ctx -> {
                     String sid = UUID.randomUUID().toString();
                     ctx.attribute("sessionId", sid);

@@ -33,11 +33,11 @@ public class PluginService {
         this.dbInstance = dbInstance;
 
         // 注册插件管理路由
-        managementApp.get("/plugin/list", this::handleListPlugins);
-        managementApp.post("/plugin/load", this::handleLoadPlugin);
-        managementApp.post("/plugin/unload", this::handleUnloadPlugin);
-        managementApp.post("/plugin/start", this::handleStartPlugin);
-        managementApp.post("/plugin/stop", this::handleStopPlugin);
+        managementApp.unsafe.routes.get("/plugin/list", this::handleListPlugins);
+        managementApp.unsafe.routes.post("/plugin/load", this::handleLoadPlugin);
+        managementApp.unsafe.routes.post("/plugin/unload", this::handleUnloadPlugin);
+        managementApp.unsafe.routes.post("/plugin/start", this::handleStartPlugin);
+        managementApp.unsafe.routes.post("/plugin/stop", this::handleStopPlugin);
     }
 
     /**

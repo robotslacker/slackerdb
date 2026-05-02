@@ -547,15 +547,10 @@ public class Driver implements java.sql.Driver {
       urlArgs = url.substring(qPos + 1);
     }
 
-    if (!urlServer.startsWith("jdbc:slackerdb:") && !urlServer.startsWith("jdbc:postgresql:") ) {
+    if (!urlServer.startsWith("jdbc:slackerdb:")) {
       return null;
     }
-    if (urlServer.startsWith("jdbc:slackerdb:")) {
-        urlServer = urlServer.substring("jdbc:slackerdb:".length());
-    }
-      if (urlServer.startsWith("jdbc:postgresql:")) {
-          urlServer = urlServer.substring("jdbc:postgresql:".length());
-      }
+    urlServer = urlServer.substring("jdbc:slackerdb:".length());
 
     if ("//".equals(urlServer) || "///".equals(urlServer)) {
       urlServer = "";

@@ -146,7 +146,7 @@ public class Sanity02Test {
         }
         rs.close();
         Collections.sort(schemasInfo);
-        assert schemasInfo.toString().equals("[TABLE_CATALOG: null, TABLE_CATALOG: null, TABLE_SCHEM: schema1, TABLE_SCHEM: schema2]");
+        assert schemasInfo.toString().trim().equals("[TABLE_CATALOG: null, TABLE_CATALOG: null, TABLE_SCHEM: schema1, TABLE_SCHEM: schema2]".trim());
 
         // getTables
         List<String> tablesInfo = new ArrayList<>();

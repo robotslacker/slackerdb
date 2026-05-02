@@ -11,6 +11,7 @@ import org.slackerdb.dbserver.message.response.BindComplete;
 import org.slackerdb.dbserver.message.response.ErrorResponse;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.common.utils.Utils;
+import org.slackerdb.dbserver.sql.PostgresSQLUtil;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -226,7 +227,7 @@ public class BindRequest extends PostgresRequest {
 //                                                NumericDigit *digits;		/* base-NBASE digits */
 //                                            } NumericVar;
 //                                          numeric = sign * (digit0 * NBASE^weight + digit1 * NBASE^(weight - 1) + ... + digitn * NBASE^(weight - ndigits))
-                                            BigDecimal ret = DBUtil.convertPGByteToBigDecimal(bindParameters[i]);
+                                            BigDecimal ret = PostgresSQLUtil.convertPGByteToBigDecimal(bindParameters[i]);
                                             preparedStatement.setBigDecimal(i + 1, ret);
                                         }
                                         case "FLOAT" ->

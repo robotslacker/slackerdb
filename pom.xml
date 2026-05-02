@@ -7,11 +7,12 @@
         <maven.compiler.source>17</maven.compiler.source>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <postgres.version>42.7.2</postgres.version>
+        <spring-boot.version>3.5.14</spring-boot.version>
     </properties>
 
     <groupId>org.robotslacker</groupId>
     <artifactId>slackerdb</artifactId>
-    <version>0.1.9</version>
+    <version>0.2.0</version>
     <packaging>pom</packaging>
 
     <modules>
@@ -22,9 +23,35 @@
         <module>dbproxy</module>
         <module>plugin</module>
         <module>plugin-example</module>
-        <module>plugin-mysqlconnector</module>
+        <module>plugin-dbsyncer</module>
         <module>build</module>
     </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>2.0.16</version>
+            </dependency>
+            <!-- Spring Boot BOM -->
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Netty BOM must come AFTER Spring Boot BOM to take precedence (last wins) -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-bom</artifactId>
+                <version>4.1.132.Final</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <!-- JSON对象解析 -->
@@ -42,7 +69,7 @@
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-core</artifactId>
-            <version>6.2.11</version>
+            <version>6.2.18</version>
         </dependency>
 
         <!-- 日志组件 -->
@@ -72,19 +99,19 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-engine</artifactId>
-            <version>5.10.3</version>
+            <version>5.12.2</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
-            <version>5.10.3</version>
+            <version>5.12.2</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.platform</groupId>
             <artifactId>junit-platform-launcher</artifactId>
-            <version>1.10.3</version>
+            <version>1.12.2</version>
             <scope>test</scope>
         </dependency>
 

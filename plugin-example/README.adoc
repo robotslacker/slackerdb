@@ -295,7 +295,7 @@ mvn clean package
 This command will:
 1. Compile the Java source code
 2. Copy resources (including `plugin.properties` and `README.adoc`)
-3. Create a JAR file named `slackerdb-plugin-example-0.1.9.jar` in the `target` directory
+3. Create a JAR file named `slackerdb-plugin-example-0.2.0.jar` in the `target` directory
 
 The resulting JAR contains:
 * Compiled Java classes
@@ -316,7 +316,7 @@ mvn clean package -Pstandalone
 
 This activates the `standalone` profile defined in `pom.xml`, which:
 1. Changes dependency scope from `provided` to `compile`
-2. Creates an additional JAR file with `-standalone` classifier: `slackerdb-plugin-example-0.1.9-standalone.jar`
+2. Creates an additional JAR file with `-standalone` classifier: `slackerdb-plugin-example-0.2.0-standalone.jar`
 3. Includes all required dependencies (Javalin, DuckDB JDBC, PF4J, logging libraries) in the JAR
 
 The standalone JAR can be executed independently without requiring a SlackerDB server.
@@ -377,7 +377,7 @@ If you've built the standalone JAR (with `-Pstandalone` profile), you can execut
 [source,bash]
 ----
 cd plugin-example/target
-java -jar slackerdb-plugin-example-0.1.9-standalone.jar
+java -jar slackerdb-plugin-example-0.2.0-standalone.jar
 ----
 
 This will execute the `SimplePluginRunner` main class directly from the JAR file.
@@ -434,7 +434,7 @@ To deploy the plugin to a production SlackerDB server:
 3. **Start or restart the SlackerDB server**:
    [source,bash]
    ----
-   java -jar dbserver/target/slackerdb-dbserver-0.1.9-standalone.jar start
+   java -jar dbserver/target/slackerdb-dbserver-0.2.0-standalone.jar start
    ----
 
 4. **Verify plugin loading** in server logs:

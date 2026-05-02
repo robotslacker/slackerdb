@@ -54,9 +54,11 @@ public abstract class PostgresRequest {
 
     public  int getCurrentSessionId(ChannelHandlerContext ctx)
     {
-        if (ctx.channel().hasAttr(AttributeKey.valueOf("SessionId")))
+        AttributeKey<Integer> sessionKey = AttributeKey.valueOf("SessionId");
+        if (ctx.channel().hasAttr(sessionKey))
         {
-            return (int) ctx.channel().attr(AttributeKey.valueOf("SessionId")).get();
+            Integer sessionId = ctx.channel().attr(sessionKey).get();
+            return sessionId != null ? sessionId : 0;
         }
         else
         {

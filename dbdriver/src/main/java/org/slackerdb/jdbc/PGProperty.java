@@ -537,6 +537,14 @@ public enum PGProperty {
       "Puts this connection in read-only mode"),
 
   /**
+   * Parameter for {@link java.sql.Statement#getQueryTimeout()}. A value of {@code 0} means no timeout.
+   */
+  QUERY_TIMEOUT(
+      "queryTimeout",
+      "0",
+      "The timeout value in seconds that the driver will wait for a query to execute."),
+
+  /**
    * Connection parameter to control behavior when
    * {@link Connection#setReadOnly(boolean)} is set to {@code true}.
    */

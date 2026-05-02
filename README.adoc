@@ -59,37 +59,37 @@ SlackerDB combines DuckDB's analytical prowess with network connectivity, making
 ==== Start db server
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.1.9-standalone.jar start
+    java -jar dbserver/target/slackerdb-dbserver-0.2.0-standalone.jar start
 ....
 
 ==== Stop db server
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.1.9-standalone.jar stop
+    java -jar dbserver/target/slackerdb-dbserver-0.2.0-standalone.jar stop
 ....
 
 ==== Check db status
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.1.9-standalone.jar status
+    java -jar dbserver/target/slackerdb-dbserver-0.2.0-standalone.jar status
 ....
 
 ==== Start db proxy
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.9-standalone.jar start
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.0-standalone.jar start
 ....
 
 ==== Stop db proxy
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.9-standalone.jar stop
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.0-standalone.jar stop
 ....
 
 ==== Check proxy status
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.1.9-standalone.jar status
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.0-standalone.jar status
 ....
 
 ==== Server configuration file template
@@ -254,6 +254,12 @@ mcp_llm_server=
 # Example: sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 # Default: empty (no API key)
 mcp_llm_key=
+
+# Unix Domain Socket file path
+# Used for UDS (Unix Domain Socket) connections instead of TCP
+# Default: empty (UDS disabled, use TCP)
+# Note: Only supported on Linux/macOS. Ignored on Windows.
+socket=
 ....
 
 ==== Proxy configuration file template
@@ -368,6 +374,55 @@ Database -> Driver Manager -> New
 *ODBC and Python*
 SlackerDB also supports ODBC and Python connections via the same PostgreSQL wire protocol. Refer to the respective client documentation for setup details.
 
+==== Unix Domain Socket (UDS) Support
+
+SlackerDB supports Unix Domain Socket (UDS) connections for local inter-process communication. UDS provides lower latency and higher throughput compared to TCP loopback connections, making it ideal for local client-server communication on the same machine.
+
+NOTE: UDS is only supported on Linux and macOS. On Windows, the `socket` parameter is ignored and a log message is printed.
+
+===== Server Configuration
+
+You can enable UDS by setting the `socket` parameter in the server configuration file:
+
+....
+# dbserver/conf/dbserver.conf
+socket=/tmp/.s.slackerdb.4309
+....
+
+Alternatively, use the `--socket` command-line parameter:
+
+....
+java -jar dbserver/target/slackerdb-dbserver-0.2.0-standalone.jar start --socket /tmp/.s.slackerdb.4309
+....
+
+When `socket` is configured, the server listens on both the TCP port and the UDS socket simultaneously. Clients can connect via either method.
+
+===== JDBC Connection via UDS
+
+To connect to SlackerDB via UDS using the SlackerDB JDBC driver, use the `jdbc:slackerdb://` protocol with the `socketFactory` and `socketFactoryArg` connection parameters:
+
+....
+// SlackerDB JDBC driver with UDS
+String url = "jdbc:slackerdb:///mem";
+Properties props = new Properties();
+props.setProperty("user", "");
+props.setProperty("password", "");
+props.setProperty("socketFactory",
+        "org.slackerdb.jdbc.UnixDomainSocketFactory");
+props.setProperty("socketFactoryArg", "/tmp/.s.slackerdb.4309");
+
+Connection conn = DriverManager.getConnection(url, props);
+conn.setAutoCommit(false);
+....
+
+The [`UnixDomainSocketFactory`](dbdriver/src/main/java/org/slackerdb/jdbc/UnixDomainSocketFactory.java) is included in the SlackerDB JDBC driver and uses Java's built-in `UnixDomainSocketAddress` API (Java 16+) to establish UDS connections.
+
+Key points:
+* The `socketFactory` parameter must be set to `org.slackerdb.jdbc.UnixDomainSocketFactory`
+* The `socketFactoryArg` parameter specifies the UDS socket file path
+* The `jdbc:slackerdb://` protocol is used (not `jdbc:postgresql://`)
+* The host portion of the URL is ignored when using UDS; use `///database` format
+
 ==== Basic Services
 The following HTTP endpoints provide basic administrative functions, such as backup, file upload/download, log viewing, and status monitoring. These endpoints are available when the Data Services API port (port_x) is enabled.
 
@@ -459,7 +514,7 @@ Returns comprehensive server status information, including server details, datab
 {
   "server": {
     "status": "RUNNING",
-    "version": "0.1.9",
+    "version": "0.2.0",
     "build": "2025-12-04 10:00:00.000 UTC",
     "pid": 12345,
     "now": "2025-12-04 15:20:00",
@@ -1782,7 +1837,7 @@ The plugin project needs to depend on the `slackerdb‑plugin` module. Add the f
 <dependency>
     <groupId>org.slackerdb</groupId>
     <artifactId>slackerdb-plugin</artifactId>
-    <version>0.1.9</version>
+    <version>0.2.0</version>
     <scope>provided</scope>
 </dependency>
 ----
@@ -1979,7 +2034,7 @@ cd plugin-example
 mvn clean package
 ----
 +
-The resulting JAR file (`plugin‑example‑0.1.9.jar`) will be placed in the `target` directory.
+The resulting JAR file (`plugin‑example‑0.2.0.jar`) will be placed in the `target` directory.
 
 2. *Deploy to a SlackerDB server*:
    - Copy the JAR file to the server's plugin directory (configured via `plugins_dir` parameter).
@@ -2014,7 +2069,7 @@ The `src/main/resources/plugin.properties` file contains the plugin metadata:
 ----
 plugin.id=plugin-example
 plugin.class=org.slackerdb.pluginExample.PluginExample
-plugin.version=0.1.9
+plugin.version=0.2.0
 plugin.requires=*
 ----
 

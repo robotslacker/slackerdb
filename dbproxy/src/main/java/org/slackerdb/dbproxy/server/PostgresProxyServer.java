@@ -6,7 +6,7 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.*;
-import io.netty.channel.nio.NioIoHandler;
+import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
@@ -109,7 +109,7 @@ public class PostgresProxyServer {
         void pushMsgObject(List<Object> out, Object obj)
         {
             // 打印所有收到的字节内容（16进制）
-            if (logger.getLevel().levelStr.equals("TRACE")) {
+            if (logger.getLevel() != null && logger.getLevel().levelStr.equals("TRACE")) {
                 if (obj instanceof ProxyRequest proxyRequest)
                 {
                     if (logger.isTraceEnabled()) {
@@ -294,8 +294,8 @@ public class PostgresProxyServer {
         }
 
         // Netty消息处理
-        bossGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
-        workerGroup = new MultiThreadIoEventLoopGroup(nioEventThreads, NioIoHandler.newFactory());
+        bossGroup = new NioEventLoopGroup(1);
+        workerGroup = new NioEventLoopGroup(nioEventThreads);
         try {
             ServerBootstrap bootstrap = new ServerBootstrap();
 

@@ -125,7 +125,7 @@ public class SchedulerService {
         this.scheduleWorker.start();
 
         // setScheduler 设置外部数据源信息
-        this.managementApp.post("/scheduler/setScheduler", ctx -> {
+        this.managementApp.unsafe.routes.post("/scheduler/setScheduler", ctx -> {
             JSONObject bodyObject;
             try {
                 bodyObject = JSONObject.parseObject(ctx.body());
@@ -218,7 +218,7 @@ public class SchedulerService {
         });
 
         // setScheduler 设置外部数据源信息
-        this.managementApp.post("/scheduler/startScheduler", ctx -> {
+        this.managementApp.unsafe.routes.post("/scheduler/startScheduler", ctx -> {
             if (this.status.equalsIgnoreCase("CREATED") || this.status.equalsIgnoreCase("STOPPED") )
             {
                 this.status = "RUNNING";
@@ -231,7 +231,7 @@ public class SchedulerService {
         });
 
         // setScheduler 设置外部数据源信息
-        this.managementApp.post("/scheduler/stopScheduler", ctx -> {
+        this.managementApp.unsafe.routes.post("/scheduler/stopScheduler", ctx -> {
             if (this.status.equalsIgnoreCase("RUNNING")) {
                 this.status = "STOPPING";
                 ctx.json(Map.of("retCode", 0, "retMsg", "successful."));
@@ -243,23 +243,23 @@ public class SchedulerService {
         });
 
         // startJob 启动作业
-        this.managementApp.post("/scheduler/startJob", ctx -> {
+        this.managementApp.unsafe.routes.post("/scheduler/startJob", ctx -> {
         });
 
         // getTasks 获取当前作业情况
-        this.managementApp.get("/scheduler/getTasks", ctx -> {
+        this.managementApp.unsafe.routes.get("/scheduler/getTasks", ctx -> {
         });
 
         // getTaskHistory 获取作业历史情况
-        this.managementApp.get("/scheduler/getTaskHistory", ctx -> {
+        this.managementApp.unsafe.routes.get("/scheduler/getTaskHistory", ctx -> {
         });
 
         // shutdownJob 终止作业
-        this.managementApp.post("/scheduler/shutdownJob", ctx -> {
+        this.managementApp.unsafe.routes.post("/scheduler/shutdownJob", ctx -> {
         });
 
         // abortJob 放弃作业
-        this.managementApp.post("/scheduler/abortJob", ctx -> {
+        this.managementApp.unsafe.routes.post("/scheduler/abortJob", ctx -> {
         });
 
     }

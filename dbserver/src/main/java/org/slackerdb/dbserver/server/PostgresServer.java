@@ -5,9 +5,14 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.*;
-import io.netty.channel.nio.NioIoHandler;
+import io.netty.channel.epoll.Epoll;
+import io.netty.channel.epoll.EpollEventLoopGroup;
+import io.netty.channel.epoll.EpollServerDomainSocketChannel;
+import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.channel.unix.DomainSocketAddress;
+import io.netty.channel.unix.DomainSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
 import io.netty.handler.timeout.IdleStateHandler;
@@ -17,9 +22,11 @@ import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.request.*;
+import org.slackerdb.common.utils.OSUtil;
 import org.slackerdb.common.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -37,6 +44,8 @@ import org.slf4j.LoggerFactory;
 public class PostgresServer {
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
+    private EventLoopGroup udsBossGroup;
+    private EventLoopGroup udsWorkerGroup;
 
     private Logger logger;
     private boolean portReady = false;
@@ -48,6 +57,7 @@ public class PostgresServer {
 
     private String bind;
     private int port;
+    private String socketPath;
     private DBInstance dbInstance;
 
     // 设置日志的句柄
@@ -60,6 +70,11 @@ public class PostgresServer {
     {
         this.bind = pBind;
         this.port = pPort;
+    }
+
+    public void setSocketPath(String pSocketPath)
+    {
+        this.socketPath = pSocketPath;
     }
 
     public void setServerTimeout(long pReaderIdleTime, long pWriterIdleTime, long pAllIdleTime)
@@ -109,6 +124,12 @@ public class PostgresServer {
         if (bossGroup != null) {
             bossGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
         }
+        if (udsWorkerGroup != null) {
+            udsWorkerGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
+        }
+        if (udsBossGroup != null) {
+            udsBossGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
+        }
         logger.info("[SERVER] Server stopped.");
     }
 
@@ -117,7 +138,7 @@ public class PostgresServer {
         void pushMsgObject(List<Object> out, Object obj)
         {
             // 打印所有收到的字节内容（16进制）
-            if (logger.getLevel().levelStr.equals("TRACE")) {
+            if (logger.getLevel() != null && logger.getLevel().levelStr.equals("TRACE")) {
                 PostgresRequest postgresRequest = (PostgresRequest)obj;
                 logger.trace("[SERVER][RX CONTENT ]: {},{}",
                         obj.getClass().getSimpleName(),postgresRequest.encode().length);
@@ -436,39 +457,107 @@ public class PostgresServer {
         }
 
         // Netty消息处理
-        bossGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
-        workerGroup = new MultiThreadIoEventLoopGroup(nioEventThreads, NioIoHandler.newFactory());
+        bossGroup = new NioEventLoopGroup(1);
+        workerGroup = new NioEventLoopGroup(nioEventThreads);
 
         try {
-            ServerBootstrap bootstrap = new ServerBootstrap();
+            // 启动TCP服务（如果端口不为-1）
+            if (port != -1) {
+                ServerBootstrap tcpBootstrap = new ServerBootstrap();
 
-            // 开启Netty服务
-            bootstrap.group(bossGroup, workerGroup)
-                    .channel(NioServerSocketChannel.class)
-                    // 禁用堆外内存的池化以求获得更高的内存使用率
-                    .option(ChannelOption.ALLOCATOR, UnpooledByteBufAllocator.DEFAULT)
-                    // 接收缓冲区大小
-                    .option(ChannelOption.SO_RCVBUF, 65536)
-                    // 允许绑定处于 TIME_WAIT 状态的端口，快速重启服务
-                    .option(ChannelOption.SO_REUSEADDR, true)
-                    // 定义操作系统未完成连接队列的最大长度
-                    .option(ChannelOption.SO_BACKLOG, 1024)
-                    .childHandler(new ChannelInitializer<SocketChannel>() {
-                        @Override
-                        protected void initChannel(SocketChannel ch) {
-                            // 定义超时处理机制
-                            ch.pipeline().addLast(new IdleStateHandler(readerIdleTime, writerIdleTime, allIdleTime,TimeUnit.SECONDS));
-                            // 定义消息处理
-                            ch.pipeline().addLast(new RawMessageDecoder());
-                            ch.pipeline().addLast(new RawMessageEncoder());
-                            // 定义消息处理
-                            ch.pipeline().addLast(new PostgresServerHandler(dbInstance, logger));
-                        }
-                    });
-            ChannelFuture future =
-                    bootstrap.bind(new InetSocketAddress(bind, port)).sync();
-            portReady = true;
-            future.channel().closeFuture().sync();
+                // 开启Netty TCP服务
+                tcpBootstrap.group(bossGroup, workerGroup)
+                        .channel(NioServerSocketChannel.class)
+                        // 禁用堆外内存的池化以求获得更高的内存使用率
+                        .option(ChannelOption.ALLOCATOR, UnpooledByteBufAllocator.DEFAULT)
+                        // 接收缓冲区大小
+                        .option(ChannelOption.SO_RCVBUF, 65536)
+                        // 允许绑定处于 TIME_WAIT 状态的端口，快速重启服务
+                        .option(ChannelOption.SO_REUSEADDR, true)
+                        // 定义操作系统未完成连接队列的最大长度
+                        .option(ChannelOption.SO_BACKLOG, 1024)
+                        .childHandler(new ChannelInitializer<SocketChannel>() {
+                            @Override
+                            protected void initChannel(SocketChannel ch) {
+                                // 定义超时处理机制
+                                ch.pipeline().addLast(new IdleStateHandler(readerIdleTime, writerIdleTime, allIdleTime,TimeUnit.SECONDS));
+                                // 定义消息处理
+                                ch.pipeline().addLast(new RawMessageDecoder());
+                                ch.pipeline().addLast(new RawMessageEncoder());
+                                // 定义消息处理
+                                ch.pipeline().addLast(new PostgresServerHandler(dbInstance, logger));
+                            }
+                        });
+                ChannelFuture tcpFuture =
+                        tcpBootstrap.bind(new InetSocketAddress(bind, port)).sync();
+                portReady = true;
+                logger.info("[SERVER] TCP listener started on {}:{}", bind, port);
+            }
+
+            // 启动UDS服务（如果socketPath不为空）
+            if (socketPath != null && !socketPath.isEmpty()) {
+                // Windows不支持Unix Domain Socket，忽略该参数并记录日志
+                if (OSUtil.isWindows()) {
+                    logger.warn("[SERVER] UDS is not supported on Windows. Socket parameter '{}' will be ignored.", socketPath);
+                } else if (!Epoll.isAvailable()) {
+                    // epoll 不可用时（如 macOS），记录警告并忽略 UDS 参数
+                    logger.warn("[SERVER] UDS is not supported on this platform (epoll not available). Socket parameter '{}' will be ignored.", socketPath);
+                } else {
+                    // 如果socket文件已存在，先删除
+                    File socketFile = new File(socketPath);
+                    if (socketFile.exists()) {
+                        var ignored = socketFile.delete();
+                    }
+
+                    // 确保父目录存在
+                    File socketDir = socketFile.getParentFile();
+                    if (socketDir != null && !socketDir.exists()) {
+                        var ignored = socketDir.mkdirs();
+                    }
+
+                    // UDS 使用独立的 EpollEventLoopGroup（不能与 NioEventLoopGroup 混用）
+                    udsBossGroup = new EpollEventLoopGroup(1);
+                    udsWorkerGroup = new EpollEventLoopGroup(nioEventThreads);
+
+                    ServerBootstrap udsBootstrap = new ServerBootstrap();
+
+                    udsBootstrap.group(udsBossGroup, udsWorkerGroup)
+                            .channel(EpollServerDomainSocketChannel.class)
+                            .option(ChannelOption.ALLOCATOR, UnpooledByteBufAllocator.DEFAULT)
+                            .option(ChannelOption.SO_BACKLOG, 1024)
+                            .childHandler(new ChannelInitializer<DomainSocketChannel>() {
+                                @Override
+                                protected void initChannel(DomainSocketChannel ch) {
+                                    // 定义超时处理机制
+                                    ch.pipeline().addLast(new IdleStateHandler(readerIdleTime, writerIdleTime, allIdleTime,TimeUnit.SECONDS));
+                                    // 定义消息处理
+                                    ch.pipeline().addLast(new RawMessageDecoder());
+                                    ch.pipeline().addLast(new RawMessageEncoder());
+                                    // 定义消息处理
+                                    ch.pipeline().addLast(new PostgresServerHandler(dbInstance, logger));
+                                }
+                            });
+                    ChannelFuture udsFuture =
+                            udsBootstrap.bind(new DomainSocketAddress(socketPath)).sync();
+                    logger.info("[SERVER] UDS listener started on {}", socketPath);
+                }
+            }
+
+            // 等待任意一个Channel关闭（如果没有启动任何服务则直接返回）
+            if (port == -1 && (socketPath == null || socketPath.isEmpty())) {
+                logger.warn("[SERVER] No listener (TCP or UDS) configured. Server will not accept any connections.");
+                return;
+            }
+
+            // 保持主线程运行，直到被中断
+            while (true) {
+                try {
+                    TimeUnit.SECONDS.sleep(1);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         } finally {
             workerGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
             bossGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);

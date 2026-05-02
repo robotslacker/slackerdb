@@ -99,6 +99,9 @@ public class ServerConfiguration {
     // MCP LLM密钥配置
     private final String default_mcp_llm_key = "";
 
+    // 默认的Unix Domain Socket文件路径（空表示不启用UDS）
+    private final String default_socket = "";
+
     private String   data;
 
     private String   data_dir;
@@ -136,6 +139,7 @@ public class ServerConfiguration {
     private String mcp_config;
     private String mcp_llm_server;
     private String mcp_llm_key;
+    private String socket;
 
     public ServerConfiguration() throws ServerException
     {
@@ -175,6 +179,7 @@ public class ServerConfiguration {
         data_encrypt = default_data_encrypt;
         plugins_dir = default_plugins_dir;
         auto_workload_threshold = default_auto_workload_threshold;
+        socket = default_socket;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -458,6 +463,13 @@ public class ServerConfiguration {
                         mcp_llm_key = this.default_mcp_llm_key;
                     } else {
                         setMcpLlmKey(entry.getValue().toString().trim());
+                    }
+                }
+                case "SOCKET" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        socket = this.default_socket;
+                    } else {
+                        setSocket(entry.getValue().toString().trim());
                     }
                 }
                 default ->
@@ -1097,5 +1109,13 @@ public class ServerConfiguration {
 
     public String getMcpLlmKey() {
         return this.mcp_llm_key;
+    }
+
+    public String getSocket() {
+        return socket;
+    }
+
+    public void setSocket(String socket) {
+        this.socket = socket;
     }
 }

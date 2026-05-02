@@ -432,7 +432,7 @@ public class APIService {
         }
 
         // 用户登录
-        managementApp.post("/api/login", ctx -> {
+        managementApp.unsafe.routes.post("/api/login", ctx -> {
             // 保存用户的Token
             String userToken = UUID.randomUUID().toString();
             userToken = Base64.getUrlEncoder()
@@ -443,7 +443,7 @@ public class APIService {
         });
 
         // 用户登出
-        managementApp.post("/api/logout", ctx -> {
+        managementApp.unsafe.routes.post("/api/logout", ctx -> {
             String token = ctx.header("Authorization");
             if ((token == null) || !sessionContextMap.containsKey(token))
             {
@@ -455,7 +455,7 @@ public class APIService {
         });
 
         // 设置用户的会话信息
-        managementApp.post("/api/setContext", ctx -> {
+        managementApp.unsafe.routes.post("/api/setContext", ctx -> {
             String token = ctx.header("Authorization");
             if ((token == null) || !sessionContextMap.containsKey(token))
             {
@@ -474,7 +474,7 @@ public class APIService {
         });
 
         // 设置用户的会话信息
-        managementApp.post("/api/removeContext", ctx -> {
+        managementApp.unsafe.routes.post("/api/removeContext", ctx -> {
             String token = ctx.header("Authorization");
             if ((token == null) || !sessionContextMap.containsKey(token))
             {
@@ -497,7 +497,7 @@ public class APIService {
         });
 
         // 注册服务
-        managementApp.post("/api/registerService", ctx -> {
+        managementApp.unsafe.routes.post("/api/registerService", ctx -> {
             JSONObject bodyObject;
             try {
                 bodyObject = JSONObject.parseObject(ctx.body());
@@ -574,7 +574,7 @@ public class APIService {
         });
 
         // 取消服务注册
-        managementApp.post("/api/unRegisterService", ctx -> {
+        managementApp.unsafe.routes.post("/api/unRegisterService", ctx -> {
             JSONObject bodyObject;
             try {
                 bodyObject = JSONObject.parseObject(ctx.body());
@@ -604,7 +604,7 @@ public class APIService {
         });
 
         // 导出所有的注册信息, 不包含retCode等信息
-        managementApp.get("/api/listRegisteredService",
+        managementApp.unsafe.routes.get("/api/listRegisteredService",
                 ctx->{
                     JSONArray ret = new JSONArray();
                     for (DBServiceDefinition dbServiceDefinition : registeredDBService.values())
@@ -626,7 +626,7 @@ public class APIService {
         );
 
         // 导出注册服务到文件（直接下载）
-        managementApp.post("/api/dumpRegisteredService", ctx -> {
+        managementApp.unsafe.routes.post("/api/dumpRegisteredService", ctx -> {
             try {
                 String json = dumpRegisteredServiceAsJson();
                 ctx.header("Content-Type", "application/json");
@@ -640,7 +640,7 @@ public class APIService {
         });
 
         // 下载注册服务文件（HTTP文件流，类似InstanceX中的download函数）
-        managementApp.post("/api/downloadRegisteredService", ctx -> {
+        managementApp.unsafe.routes.post("/api/downloadRegisteredService", ctx -> {
             try {
                 String json = dumpRegisteredServiceAsJson();
                 // 创建临时文件
@@ -666,7 +666,7 @@ public class APIService {
         });
 
         // 保存注册服务到文件（根据data_service_schema配置）
-        managementApp.post("/api/saveRegisterService", ctx -> {
+        managementApp.unsafe.routes.post("/api/saveRegisterService", ctx -> {
             String schemaPath = this.dbInstance.serverConfiguration.getData_service_schema();
             if (schemaPath == null || schemaPath.trim().isEmpty()) {
                 ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. data_service_schema parameter is not configured."));
@@ -720,7 +720,7 @@ public class APIService {
         });
 
         // 加载注册服务定义（从JSON内容）
-        managementApp.post("/api/loadRegisterService", ctx -> {
+        managementApp.unsafe.routes.post("/api/loadRegisterService", ctx -> {
             String serviceContents = ctx.body();
             if (serviceContents.trim().isEmpty()) {
                 ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. Request body is empty."));
@@ -740,7 +740,7 @@ public class APIService {
         });
 
         // API的GET请求
-        managementApp.get("/api/{apiVersion}/{apiName}", ctx -> {
+        managementApp.unsafe.routes.get("/api/{apiVersion}/{apiName}", ctx -> {
             String apiName = ctx.pathParam("apiName");
             String apiVersion = ctx.pathParam("apiVersion");
             if (!registeredDBService.containsKey(("GET#" + apiName + "#" + apiVersion)))
@@ -766,7 +766,7 @@ public class APIService {
         });
 
         // API的POST请求
-        managementApp.post("/api/{apiVersion}/{apiName}", ctx -> {
+        managementApp.unsafe.routes.post("/api/{apiVersion}/{apiName}", ctx -> {
             String apiVersion = ctx.pathParam("apiVersion");
             String apiName = ctx.pathParam("apiName");
             if (!registeredDBService.containsKey(("POST#" + apiName + "#" + apiVersion)))

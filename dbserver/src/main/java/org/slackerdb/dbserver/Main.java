@@ -80,6 +80,7 @@ public class Main {
         System.out.println("  --data_service_history      Enable/disable API history feature (ON|OFF). Default: OFF.");
         System.out.println("  --mcp-config                Specify MCP configuration file path. Default: empty.");
         System.out.println("  --mcp-llm-server            Specify MCP LLM server configuration. Format: <service>:<ip>:<port>:<model>. Default: empty.");
+        System.out.println("  --socket                    Specify Unix Domain Socket file path for UDS connections. Default: empty (TCP mode).");
 
     }
 
@@ -396,6 +397,10 @@ public class Main {
             if (appOptions.containsKey("mcp-llm-server"))
             {
                 serverConfiguration.setMcpLlmServer(appOptions.get("mcp-llm-server"));
+            }
+            if (appOptions.containsKey("socket"))
+            {
+                serverConfiguration.setSocket(appOptions.get("socket"));
             }
 
             // 初始化日志服务

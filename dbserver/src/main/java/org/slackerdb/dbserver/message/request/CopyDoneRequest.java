@@ -12,6 +12,7 @@ import org.slackerdb.dbserver.message.response.CommandComplete;
 import org.slackerdb.dbserver.message.response.ErrorResponse;
 import org.slackerdb.dbserver.message.response.ReadyForQuery;
 import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.dbserver.sql.PostgresSQLUtil;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -151,7 +152,7 @@ public class CopyDoneRequest extends PostgresRequest {
                     }
                 } // CSV
                 else if (this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat.equalsIgnoreCase("BINARY")) {
-                    List<Object[]> data = DBUtil.convertPGByteToRow(this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.toByteArray());
+                    List<Object[]> data = PostgresSQLUtil.convertPGByteToRow(this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.toByteArray());
                     this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.reset();
                     DuckDBAppender duckDBAppender = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender;
                     List<Integer> copyTableDbColumnMapPos = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
@@ -197,7 +198,7 @@ public class CopyDoneRequest extends PostgresRequest {
                                 else if (columnType.startsWith("DECIMAL"))
                                 {
                                     duckDBAppender.append(
-                                            DBUtil.convertPGByteToBigDecimal((byte[]) cell));
+                                            PostgresSQLUtil.convertPGByteToBigDecimal((byte[]) cell));
                                 }
                                 else if (columnType.equals("TIMESTAMP"))
                                 {

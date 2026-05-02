@@ -38,7 +38,7 @@ public class SqlReplServer {
 
     public void run() throws Exception {
         // 只注册 WebSocket 端点
-        this.managementApp.ws("/sql/ws", ws -> {
+        this.managementApp.unsafe.routes.ws("/sql/ws", ws -> {
             ws.onConnect(ctx -> {
                 activeConnections.put(ctx, System.currentTimeMillis());
                 startHeartbeatIfNeeded();

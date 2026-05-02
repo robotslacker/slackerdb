@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.robotslacker</groupId>
         <artifactId>slackerdb</artifactId>
-        <version>0.1.9</version>
+        <version>0.2.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -27,13 +27,13 @@
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
-            <version>4.2.6.Final</version>
+            <version>4.1.132.Final</version>
         </dependency>
         <!-- javalin 用来实现portX请求-->
         <dependency>
             <groupId>io.javalin</groupId>
             <artifactId>javalin-bundle</artifactId>
-            <version>6.6.0</version>
+            <version>7.2.0</version>
         </dependency>
         <dependency>
             <groupId>com.aayushatharva.brotli4j</groupId>
@@ -55,6 +55,25 @@
             <groupId>com.github.oshi</groupId>
             <artifactId>oshi-core</artifactId>
             <version>6.9.2</version>
+        </dependency>
+
+        <!-- Spring Boot Test (test scope, no embedded web server) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+            <exclusions>
+                <!-- Exclude embedded web server to avoid conflict with Javalin -->
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-tomcat</artifactId>
+                </exclusion>
+                <!-- Exclude JUnit 4 vintage engine since we use JUnit 5 -->
+                <exclusion>
+                    <groupId>org.junit.vintage</groupId>
+                    <artifactId>junit-vintage-engine</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
     </dependencies>
 
@@ -146,6 +165,7 @@
                     <includes>
                         <include>**/ProxyTest.java</include>
                         <include>**/ProxyApiTest.java</include>
+                        <include>**/SpringBootProxyTest.java</include>
                     </includes>
                     <parallel>none</parallel> <!-- Disable parallel execution -->
                     <forkCount>1</forkCount>  <!-- Execute tests in a single process -->

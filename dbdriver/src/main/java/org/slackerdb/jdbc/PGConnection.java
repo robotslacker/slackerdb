@@ -185,6 +185,23 @@ public interface PGConnection {
   int getDefaultFetchSize();
 
   /**
+   * Set the query timeout for statements created from this connection.
+   *
+   * @param seconds new query timeout
+   * @throws SQLException if specified negative <code>seconds</code> parameter
+   * @see Statement#setQueryTimeout(int)
+   */
+  void setQueryTimeout(int seconds) throws SQLException;
+
+  /**
+   * Get the query timeout for statements created from this connection.
+   *
+   * @return current state for query timeout
+   * @see Statement#getQueryTimeout()
+   */
+  int getQueryTimeout();
+
+  /**
    * Return the process ID (PID) of the backend server process handling this connection.
    *
    * @return PID of backend server process.
@@ -338,7 +355,6 @@ public interface PGConnection {
    *  <li><code>standard_conforming_strings</code> - indirectly via {@link #escapeLiteral(String)}</li>
    *  <li>
    *    <code>TimeZone</code> - set from JDK timezone see {@link java.util.TimeZone#getDefault()}
-   *    and {@link java.util.TimeZone#setDefault(TimeZone)}
    *  </li>
    *  <li><code>integer_datetimes</code></li>
    *  <li><code>IntervalStyle</code></li>

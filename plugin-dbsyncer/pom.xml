@@ -9,11 +9,19 @@
     </properties>
 
     <groupId>org.robotslacker</groupId>
-    <artifactId>slackerdb-plugin-mysqlconnector</artifactId>
-    <version>0.1.9</version>
+    <artifactId>slackerdb-plugin-dbsyncer</artifactId>
+    <version>0.2.0</version>
     <packaging>jar</packaging>
 
     <dependencies>
+        <!-- JSON对象解析 -->
+        <dependency>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
+            <version>2.0.47</version>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- Logging components -->
         <dependency>
             <groupId>ch.qos.logback</groupId>
@@ -38,7 +46,7 @@
         <dependency>
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
-            <version>1.4.3.0</version>
+            <version>1.5.2.0</version>
             <scope>provided</scope>
         </dependency>
 
@@ -46,7 +54,7 @@
         <dependency>
             <groupId>io.javalin</groupId>
             <artifactId>javalin-bundle</artifactId>
-            <version>6.6.0</version>
+            <version>7.2.0</version>
             <scope>provided</scope>
         </dependency>
 
@@ -60,7 +68,7 @@
         <dependency>
             <groupId>org.robotslacker</groupId>
             <artifactId>slackerdb-plugin</artifactId>
-            <version>0.1.9</version>
+            <version>0.2.0</version>
             <scope>provided</scope>
         </dependency>
 
@@ -89,22 +97,39 @@
             <artifactId>disruptor</artifactId>
             <version>3.4.4</version>
         </dependency>
-        
-        <!-- Jetty modules required for Javalin (version aligned with javalin-bundle 6.6.0) -->
+        <!-- JSQLParser -->
+        <dependency>
+            <groupId>com.github.jsqlparser</groupId>
+            <artifactId>jsqlparser</artifactId>
+            <version>5.3</version>
+        </dependency>
+        <!-- Test-scoped dependencies -->
         <dependency>
             <groupId>org.eclipse.jetty</groupId>
             <artifactId>jetty-security</artifactId>
             <version>11.0.25</version>
-            <scope>provided</scope>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.eclipse.jetty</groupId>
             <artifactId>jetty-util</artifactId>
             <version>11.0.25</version>
-            <scope>provided</scope>
+            <scope>test</scope>
         </dependency>
-        
-        </dependencies>
+        <!-- JUnit dependencies for testing -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <version>5.10.3</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <version>5.10.3</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 
     <build>
         <finalName>${project.artifactId}-${project.version}</finalName>
@@ -178,112 +203,6 @@
                 </executions>
             </plugin>
             
-            <!-- Plugin configuration for directly running SimplePluginRunner -->
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>3.6.3</version>
-                <configuration>
-                    <mainClass>org.slackerdb.plugins.mysqlconnector.SimplePluginRunner</mainClass>
-                </configuration>
-            </plugin>
         </plugins>
     </build>
-
-    <profiles>
-        <profile>
-            <id>standalone</id>
-            <activation>
-                <property>
-                    <name>standalone</name>
-                </property>
-            </activation>
-            <dependencies>
-                <!-- Override dependency scope to compile for standalone execution -->
-                <dependency>
-                    <groupId>ch.qos.logback</groupId>
-                    <artifactId>logback-core</artifactId>
-                    <version>1.5.19</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>ch.qos.logback</groupId>
-                    <artifactId>logback-classic</artifactId>
-                    <version>1.5.19</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-api</artifactId>
-                    <version>2.0.16</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.duckdb</groupId>
-                    <artifactId>duckdb_jdbc</artifactId>
-                    <version>1.4.3.0</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>io.javalin</groupId>
-                    <artifactId>javalin-bundle</artifactId>
-                    <version>6.6.0</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.pf4j</groupId>
-                    <artifactId>pf4j</artifactId>
-                    <version>3.13.0</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.robotslacker</groupId>
-                    <artifactId>slackerdb-plugin</artifactId>
-                    <version>0.1.9</version>
-                    <scope>compile</scope>
-                </dependency>
-                <!-- Jetty modules required for Javalin (version aligned with javalin-bundle 6.6.0) -->
-                <dependency>
-                    <groupId>org.eclipse.jetty</groupId>
-                    <artifactId>jetty-security</artifactId>
-                    <version>11.0.25</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.eclipse.jetty</groupId>
-                    <artifactId>jetty-util</artifactId>
-                    <version>11.0.25</version>
-                    <scope>compile</scope>
-                </dependency>
-            </dependencies>
-            <build>
-                <plugins>
-                    <!-- Generate jar with standalone classifier -->
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-jar-plugin</artifactId>
-                        <version>3.4.2</version>
-                        <executions>
-                            <execution>
-                                <id>standalone-jar</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>jar</goal>
-                                </goals>
-                                <configuration>
-                                    <classifier>standalone</classifier>
-                                    <archive>
-                                        <manifest>
-                                            <addClasspath>true</addClasspath>
-                                            <classpathPrefix>lib/</classpathPrefix>
-                                        </manifest>
-                                    </archive>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-    </profiles>
 </project>
