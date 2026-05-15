@@ -99,15 +99,17 @@ public class ProxyInstance {
     }
 
     // 根据参数配置文件启动代理实例
-    public synchronized void start() throws ServerException {
+    public synchronized void start(org.slf4j.Logger appLogger) throws ServerException {
         // 设置线程名称好保持日志格式
         Thread.currentThread().setName("PROXY");
 
-        // 初始化日志服务
-        logger = AppLogger.createLogger(
-                "PROXY",
-                serverConfiguration.getLog_level().levelStr,
-                serverConfiguration.getLog());
+        // 使用外部的日志，而不是自己创建日志
+        this.logger = (ch.qos.logback.classic.Logger) appLogger;
+        if (this.logger.getLevel() == null)
+        {
+            this.logger.setLevel(Level.INFO);
+        }
+
         // 只有在停止的状态下才能启动
         if (!this.instanceState.equalsIgnoreCase("IDLE"))
         {
@@ -174,8 +176,6 @@ public class ProxyInstance {
         }
 
         // 如果需要，启动管理端口
-
-        // 如果需要，启动管理端口
         if (serverConfiguration.getPortX() != -1) {
             // 关闭Javalin, 如果不是在trace下
             Logger javalinLogger = (Logger) LoggerFactory.getLogger("io.javalin.Javalin");
@@ -194,6 +194,17 @@ public class ProxyInstance {
         // 标记服务已经启动完成
         this.instanceState = "RUNNING";
         logger.info("[PROXY] Server is running.");
+    }
+
+    public synchronized void start() throws ServerException {
+        // 初始化日志服务
+        Logger appLogger = AppLogger.createLogger(
+                "PROXY",
+                serverConfiguration.getLog_level().levelStr,
+                serverConfiguration.getLog());
+
+        // 启动应用
+        this.start(appLogger);
     }
 
     // 停止代理服务实例

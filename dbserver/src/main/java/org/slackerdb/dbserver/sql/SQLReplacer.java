@@ -30,6 +30,12 @@ public class SQLReplacer {
         }
         SQLReplaceItems.add(
                 new QueryReplacerItem(
+                        "ESCAPE '\\\\'","ESCAPE '\\'",
+                        false, true
+                )
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
                         "format_type(nullif(t.typbasetype, 0), t.typtypmod)","t.typname",
                         false, true
                 )

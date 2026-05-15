@@ -17,8 +17,8 @@ import java.net.http.HttpResponse;
 import java.util.TimeZone;
 
 public class ProxyApiTest {
-    static int proxyPort = 4320;  // 使用固定端口避免冲突
-    static int proxyPortX = 4321; // 管理端口
+    static int proxyPort = 0;  // JDBC端口
+    static int proxyPortX = 0; // 管理端口
     static int dbPort;
     static int dbPortX;
     static ProxyInstance proxyInstance;
@@ -32,11 +32,13 @@ public class ProxyApiTest {
 
             // 启动代理服务，使用固定端口
             ServerConfiguration proxyConfiguration = new ServerConfiguration();
-            proxyConfiguration.setPort(proxyPort);  // 固定端口
-            proxyConfiguration.setPortX(proxyPortX); // 固定管理端口
+            proxyConfiguration.setPort(0);  // 固定端口
+            proxyConfiguration.setPortX(0); // 固定管理端口
             proxyInstance = new ProxyInstance(proxyConfiguration);
             proxyInstance.start();
-            
+            proxyPort = proxyConfiguration.getPort();
+            proxyPortX = proxyConfiguration.getPortX();
+
             // 等待proxy启动完成
             try {
                 Thread.sleep(2000);

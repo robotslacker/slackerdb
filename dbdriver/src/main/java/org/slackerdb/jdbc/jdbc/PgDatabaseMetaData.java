@@ -1174,7 +1174,7 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
         sb.append("union all select database_name,schema_name, view_name, CASE  WHEN (\"internal\") then 'SYSTEM "
                   + "VIEW' ELSE 'VIEW' END, comment from duckdb_views() x   ) x")
             .append(lineSeparator());
-        sb.append("WHERE table_name LIKE ? ESCAPE '\\'").append(lineSeparator());
+        sb.append("WHERE table_name LIKE ? ESCAPE '\\\\'").append(lineSeparator());
         boolean hasCatalogParam = appendEqualsQual(sb, "table_catalog", catalog);
         boolean hasSchemaParam = appendLikeQual(sb, "table_schema", schemaPattern);
 
@@ -1325,8 +1325,8 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
     sb.append("WHERE TRUE").append(lineSeparator());
     boolean hasCatalogParam = appendEqualsQual(sb, "database_name", catalog);
     boolean hasSchemaParam = appendLikeQual(sb, "schema_name", schemaPattern);
-    sb.append("AND table_name LIKE ? ESCAPE '\\'").append(lineSeparator());
-    sb.append("AND column_name LIKE ? ESCAPE '\\'").append(lineSeparator());
+    sb.append("AND table_name LIKE ? ESCAPE '\\\\'").append(lineSeparator());
+    sb.append("AND column_name LIKE ? ESCAPE '\\\\'").append(lineSeparator());
     sb.append("ORDER BY").append(lineSeparator());
     sb.append("\"TABLE_CAT\"").append(TRAILING_COMMA).append(lineSeparator());
     sb.append("\"TABLE_SCHEM\"").append(TRAILING_COMMA).append(lineSeparator());
@@ -1642,7 +1642,7 @@ public class PgDatabaseMetaData implements DatabaseMetaData {
       sb.append("WHERE TRUE").append(lineSeparator());
       boolean hasCatalogParam = appendEqualsQual(sb, "database_name", catalog);
       boolean hasSchemaParam = appendLikeQual(sb, "schema_name", schemaPattern);
-      sb.append("AND function_name LIKE ? ESCAPE '\\'").append(lineSeparator());
+      sb.append("AND function_name LIKE ? ESCAPE '\\\\'").append(lineSeparator());
       sb.append("ORDER BY").append(lineSeparator());
       sb.append("\"FUNCTION_CAT\"").append(TRAILING_COMMA).append(lineSeparator());
       sb.append("\"FUNCTION_SCHEM\"").append(TRAILING_COMMA).append(lineSeparator());

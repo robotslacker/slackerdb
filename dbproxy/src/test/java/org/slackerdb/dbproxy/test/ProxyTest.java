@@ -17,7 +17,7 @@ public class ProxyTest {
     private static DBInstance dbInstance1;
     private static DBInstance dbInstance2;
 
-    private static final int proxyPort = 4310;
+    private static int proxyPort = 0;
 
     @BeforeAll
     static void initAll() throws ServerException {
@@ -27,9 +27,10 @@ public class ProxyTest {
         // 启动代理服务
         org.slackerdb.dbproxy.configuration.ServerConfiguration proxyConfiguration =
                 new org.slackerdb.dbproxy.configuration.ServerConfiguration();
-        proxyConfiguration.setPort(proxyPort);
+        proxyConfiguration.setPort(0);
         proxyInstance = new ProxyInstance(proxyConfiguration);
         proxyInstance.start();
+        proxyPort = proxyConfiguration.getPort();
 
         // 等待Netty进程就绪
         while (!proxyInstance.instanceState.equalsIgnoreCase("RUNNING")) {

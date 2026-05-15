@@ -52,9 +52,6 @@ public class UdsTest {
     /** 数据库实例 */
     private static DBInstance dbInstance;
 
-    /** 数据库端口（用于 fallback 验证） */
-    private static int dbPort;
-
     @BeforeAll
     static void initAll() throws ServerException {
         // Windows 不支持 UDS，直接跳过
@@ -79,9 +76,8 @@ public class UdsTest {
         serverConfiguration.setLog_level("INFO");
         serverConfiguration.setSqlHistory("OFF");
         serverConfiguration.setSocket(SOCKET_PATH); // 设置 UDS socket 路径
-        dbPort = serverConfiguration.getPort();
 
-        logger.info("UDS Test - DB port: {}, socket path: {}", dbPort, SOCKET_PATH);
+        logger.info("UDS Test - socket path: {}", SOCKET_PATH);
 
         // 初始化数据库
         dbInstance = new DBInstance(serverConfiguration);
@@ -128,8 +124,6 @@ public class UdsTest {
         Properties props = new Properties();
         props.setProperty("user", "");
         props.setProperty("password", "");
-        props.setProperty("socketFactory",
-                "org.slackerdb.jdbc.UnixDomainSocketFactory");
         props.setProperty("socketFactoryArg", SOCKET_PATH);
 
         Connection conn = DriverManager.getConnection(url, props);

@@ -3,7 +3,7 @@ package org.slackerdb.common.logger;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.LoggerContext;
-import ch.qos.logback.classic.PatternLayout;
+import ch.qos.logback.classic.encoder.PatternLayoutEncoder;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.Appender;
 import ch.qos.logback.core.ConsoleAppender;
@@ -50,11 +50,11 @@ public class AppLogger {
                 ConsoleAppender<ILoggingEvent> consoleAppender = new ConsoleAppender<>();
                 consoleAppender.setContext(context);
                 consoleAppender.setName("CONSOLE");
-                PatternLayout consoleLayout = new PatternLayout();
-                consoleLayout.setPattern("%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n");
-                consoleLayout.setContext(context);
-                consoleLayout.start();
-                consoleAppender.setLayout(consoleLayout);
+                PatternLayoutEncoder consoleEncoder = new PatternLayoutEncoder();
+                consoleEncoder.setPattern("%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n");
+                consoleEncoder.setContext(context);
+                consoleEncoder.start();
+                consoleAppender.setEncoder(consoleEncoder);
                 consoleAppender.start();
                 rootLogger.addAppender(consoleAppender);
             }
@@ -66,11 +66,11 @@ public class AppLogger {
                 fileAppender.setName("FILE");
                 fileAppender.setFile(log.trim()); // 指定输出文件
                 fileAppender.setAppend(true);
-                PatternLayout fileLayout = new PatternLayout();
-                fileLayout.setPattern("%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n");
-                fileLayout.setContext(context);
-                fileLayout.start();
-                fileAppender.setLayout(fileLayout);
+                PatternLayoutEncoder fileEncoder = new PatternLayoutEncoder();
+                fileEncoder.setPattern("%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n");
+                fileEncoder.setContext(context);
+                fileEncoder.start();
+                fileAppender.setEncoder(fileEncoder);
                 fileAppender.start();
                 rootLogger.addAppender(fileAppender);
             }

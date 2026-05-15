@@ -23,7 +23,16 @@ import javax.net.ssl.SSLSocketFactory;
 public class SocketFactoryFactory {
 
   /**
+   * The default Unix Domain Socket factory class name.
+   */
+  private static final String UNIX_DOMAIN_SOCKET_FACTORY_CLASS_NAME =
+      "org.slackerdb.jdbc.UnixDomainSocketFactory";
+
+  /**
    * Instantiates {@link SocketFactory} based on the {@link PGProperty#SOCKET_FACTORY}.
+   *
+   * <p>If {@code socketFactory} is not explicitly set but {@code socketFactoryArg} is provided,
+   * the {@link org.slackerdb.jdbc.UnixDomainSocketFactory} is used by default.
    *
    * @param info connection properties
    * @return socket factory
@@ -32,12 +41,20 @@ public class SocketFactoryFactory {
   public static SocketFactory getSocketFactory(Properties info) throws PSQLException {
     // Socket factory
     String socketFactoryClassName = PGProperty.SOCKET_FACTORY.getOrDefault(info);
+    String socketFactoryArg = PGProperty.SOCKET_FACTORY_ARG.getOrDefault(info);
+
+    // If socketFactory is not explicitly set but socketFactoryArg is provided,
+    // automatically default to UnixDomainSocketFactory
+    if (socketFactoryClassName == null && socketFactoryArg != null && !socketFactoryArg.isEmpty()) {
+      socketFactoryClassName = UNIX_DOMAIN_SOCKET_FACTORY_CLASS_NAME;
+    }
+
     if (socketFactoryClassName == null) {
       return SocketFactory.getDefault();
     }
     try {
       return ObjectFactory.instantiate(SocketFactory.class, socketFactoryClassName, info, true,
-          PGProperty.SOCKET_FACTORY_ARG.getOrDefault(info));
+          socketFactoryArg);
     } catch (Exception e) {
       throw new PSQLException(
           GT.tr("The SocketFactory class provided {0} could not be instantiated.",

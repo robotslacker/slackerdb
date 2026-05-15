@@ -734,17 +734,15 @@ public class DBInstance {
         this.instanceName = instanceName;
     }
 
-    /**
-     * 启动数据库实例。
-     */
-    public synchronized void start() throws ServerException {
+    public synchronized void start(org.slf4j.Logger appLogger) throws ServerException {
         String instanceName = serverConfiguration.getData();
 
-        // 初始化日志服务
-        logger = AppLogger.createLogger(
-                serverConfiguration.getData(),
-                serverConfiguration.getLog_level().levelStr,
-                serverConfiguration.getLog());
+        // 使用外部的日志，而不是自己创建日志
+        this.logger = (ch.qos.logback.classic.Logger) appLogger;
+        if (this.logger.getLevel() == null)
+        {
+            this.logger.setLevel(Level.INFO);
+        }
 
         // 禁用OSHI的日志信息
         ch.qos.logback.classic.Logger oshiLogger;
@@ -774,15 +772,15 @@ public class DBInstance {
             if (!new File(serverConfiguration.getData_Dir()).isDirectory()) {
                 throw new ServerException("Data directory [" + serverConfiguration.getData_Dir() + "] does not exist!");
             }
-            
+
             // 检查文件系统剩余空间，如果少于128MB则拒绝启动
             long requiredFreeSpace = 128L * 1024 * 1024; // 128MB
             long freeSpace = OSUtil.getFreeDiskSpace(serverConfiguration.getData_Dir());
             if (freeSpace < requiredFreeSpace) {
                 String freeSpaceMB = freeSpace >= 0 ? String.format("%.2f", freeSpace / (1024.0 * 1024.0)) : "unknown";
                 throw new ServerException(
-                    "Insufficient disk space on data directory [" + serverConfiguration.getData_Dir() + "]. " +
-                    "Required: 128MB, Available: " + freeSpaceMB + "MB"
+                        "Insufficient disk space on data directory [" + serverConfiguration.getData_Dir() + "]. " +
+                                "Required: 128MB, Available: " + freeSpaceMB + "MB"
                 );
             }
         }
@@ -1024,6 +1022,20 @@ public class DBInstance {
 
         // 标记服务已经启动完成
         this.instanceState = "RUNNING";
+    }
+
+    /**
+     * 启动数据库实例。
+     */
+    public synchronized void start() throws ServerException {
+        // 初始化日志服务
+        Logger appLogger = AppLogger.createLogger(
+                serverConfiguration.getData(),
+                serverConfiguration.getLog_level().levelStr,
+                serverConfiguration.getLog());
+
+        // 启动应用
+        this.start(appLogger);
     }
 
     /**

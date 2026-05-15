@@ -56,8 +56,30 @@ public class ClientTest {
     }
 
     @Test
+    void testMetaData() throws  SQLException {
+        String connectURL = "jdbc:slackerdb://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.getMetaData().getCatalogs();
+
+        pgConn1.getMetaData().getSchemas();
+
+        pgConn1.getMetaData().getTables(null,null,null,null);
+
+        pgConn1.getMetaData().getColumns(null, null, null, null);
+
+        pgConn1.getMetaData().getFunctions(null, null, null);
+
+        pgConn1.getMetaData().getProcedures(null, null, null);
+
+        pgConn1.getMetaData().getDriverName();
+
+    }
+
+    @Test
     void testSlackerDriverConnection() throws SQLException {
-        Logger.getLogger("org.postgresql.Driver").setLevel(Level.FINE);
         String connectURL = "jdbc:slackerdb://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");

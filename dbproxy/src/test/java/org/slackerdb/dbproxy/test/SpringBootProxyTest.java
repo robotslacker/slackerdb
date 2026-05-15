@@ -24,12 +24,10 @@ import java.util.TimeZone;
 
 /**
  * SpringBootTest for DBProxy.
- *
  * Uses webEnvironment = NONE to avoid starting Spring Boot's embedded web server,
  * which would conflict with Javalin (used by ProxyInstance/DBInstance for HTTP serving).
  * The ProxyInstance and DBInstance are started manually in @BeforeAll, same as the
  * existing ProxyApiTest.
- *
  * Auto-configuration exclusions:
  * - DataSourceAutoConfiguration: we manage our own DuckDB connection via DBInstance
  * - SqlInitializationAutoConfiguration: we handle schema creation manually
@@ -43,8 +41,8 @@ import java.util.TimeZone;
 @Configuration
 public class SpringBootProxyTest {
 
-    static int proxyPort = 4322;   // 使用固定端口，避免与 ProxyApiTest 冲突
-    static int proxyPortX = 4323;  // 管理端口
+    static int proxyPort = 0;   // 使用固定端口，避免与 ProxyApiTest 冲突
+    static int proxyPortX = 0;  // 管理端口
     static int dbPort;
     static int dbPortX;
     static ProxyInstance proxyInstance;
@@ -58,10 +56,12 @@ public class SpringBootProxyTest {
 
             // 启动代理服务，使用固定端口
             ServerConfiguration proxyConfiguration = new ServerConfiguration();
-            proxyConfiguration.setPort(proxyPort);
-            proxyConfiguration.setPortX(proxyPortX);
+            proxyConfiguration.setPort(0);
+            proxyConfiguration.setPortX(0);
             proxyInstance = new ProxyInstance(proxyConfiguration);
             proxyInstance.start();
+            proxyPort = proxyConfiguration.getPort();
+            proxyPortX = proxyConfiguration.getPortX();
 
             // 等待proxy启动完成
             try {
