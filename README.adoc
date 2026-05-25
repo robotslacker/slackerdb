@@ -59,37 +59,37 @@ SlackerDB combines DuckDB's analytical prowess with network connectivity, making
 ==== Start db server
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.2.0-standalone.jar start
+    java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar start
 ....
 
 ==== Stop db server
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.2.0-standalone.jar stop
+    java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar stop
 ....
 
 ==== Check db status
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.2.0-standalone.jar status
+    java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar status
 ....
 
 ==== Start db proxy
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.2.0-standalone.jar start
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.1-standalone.jar start
 ....
 
 ==== Stop db proxy
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.2.0-standalone.jar stop
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.1-standalone.jar stop
 ....
 
 ==== Check proxy status
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.2.0-standalone.jar status
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.1-standalone.jar status
 ....
 
 ==== Server configuration file template
@@ -392,7 +392,7 @@ socket=/tmp/.s.slackerdb.4309
 Alternatively, use the `--socket` command-line parameter:
 
 ....
-java -jar dbserver/target/slackerdb-dbserver-0.2.0-standalone.jar start --socket /tmp/.s.slackerdb.4309
+java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar start --socket /tmp/.s.slackerdb.4309
 ....
 
 When `socket` is configured, the server listens on both the TCP port and the UDS socket simultaneously. Clients can connect via either method.
@@ -514,7 +514,7 @@ Returns comprehensive server status information, including server details, datab
 {
   "server": {
     "status": "RUNNING",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "build": "2025-12-04 10:00:00.000 UTC",
     "pid": 12345,
     "now": "2025-12-04 15:20:00",
@@ -1837,7 +1837,7 @@ The plugin project needs to depend on the `slackerdb‑plugin` module. Add the f
 <dependency>
     <groupId>org.slackerdb</groupId>
     <artifactId>slackerdb-plugin</artifactId>
-    <version>0.2.0</version>
+    <version>0.2.1</version>
     <scope>provided</scope>
 </dependency>
 ----
@@ -2034,7 +2034,7 @@ cd plugin-example
 mvn clean package
 ----
 +
-The resulting JAR file (`plugin‑example‑0.2.0.jar`) will be placed in the `target` directory.
+The resulting JAR file (`plugin‑example‑0.2.1.jar`) will be placed in the `target` directory.
 
 2. *Deploy to a SlackerDB server*:
    - Copy the JAR file to the server's plugin directory (configured via `plugins_dir` parameter).
@@ -2069,7 +2069,7 @@ The `src/main/resources/plugin.properties` file contains the plugin metadata:
 ----
 plugin.id=plugin-example
 plugin.class=org.slackerdb.pluginExample.PluginExample
-plugin.version=0.2.0
+plugin.version=0.2.1
 plugin.requires=*
 ----
 
@@ -2105,7 +2105,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 
 public class SimplePluginRunner {
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         // 1. Create database connection
         Connection conn = DriverManager.getConnection("jdbc:duckdb:memory:");
         

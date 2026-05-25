@@ -195,8 +195,11 @@ public class ClassUtil {
     public static Object invokeMethod(Class<?> clazz, String methodName, Object[] parameters)
     {
         try {
-            // 查找方法
-            Method invokeMethod = clazz.getMethod(methodName);
+            // 根据参数类型查找方法
+            Class<?>[] parameterTypes = parameters != null
+                    ? Arrays.stream(parameters).map(Object::getClass).toArray(Class<?>[]::new)
+                    : new Class<?>[0];
+            Method invokeMethod = clazz.getMethod(methodName, parameterTypes);
             // 创建实例
             Object instance = clazz.getDeclaredConstructor().newInstance();
             // 调用方法

@@ -18,8 +18,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.TimeZone;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 public class ClientTest {
     static int dbPort = 4309;
@@ -129,7 +127,6 @@ public class ClientTest {
         assert schemasInfo.toString().equals("[TABLE_CATALOG: memory, TABLE_CATALOG: memory, TABLE_CATALOG: memory, TABLE_CATALOG: memory, TABLE_CATALOG: memory, TABLE_CATALOG: newdb1, TABLE_CATALOG: newdb1, TABLE_CATALOG: newdb1, TABLE_CATALOG: newdb2, TABLE_CATALOG: newdb2, TABLE_CATALOG: newdb2, TABLE_CATALOG: system, TABLE_CATALOG: system, TABLE_CATALOG: system, TABLE_CATALOG: temp, TABLE_SCHEM: duck_catalog, TABLE_SCHEM: information_schema, TABLE_SCHEM: main, TABLE_SCHEM: main, TABLE_SCHEM: main, TABLE_SCHEM: main, TABLE_SCHEM: main, TABLE_SCHEM: pg_catalog, TABLE_SCHEM: schema1, TABLE_SCHEM: schema2, TABLE_SCHEM: schema3, TABLE_SCHEM: schema4, TABLE_SCHEM: schema5, TABLE_SCHEM: schema6, TABLE_SCHEM: sysaux]");
 
         // getTables
-        List<String> tablesInfo = new ArrayList<>();
         pgConn1.createStatement().execute("USE memory.schema5");
         rs = pgConn1.getMetaData().getTables("memory", "%", "%", new String[]{"BASE TABLE"});
         JSONArray tableDefines = new JSONArray();

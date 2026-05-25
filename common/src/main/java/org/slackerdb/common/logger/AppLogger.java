@@ -5,12 +5,9 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.encoder.PatternLayoutEncoder;
 import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.Appender;
 import ch.qos.logback.core.ConsoleAppender;
 import ch.qos.logback.core.FileAppender;
 import org.slf4j.LoggerFactory;
-
-import java.util.Iterator;
 
 public class AppLogger {
     public static Logger createLogger(String loggerName, String pLogLevel, String pLogsStr)
@@ -31,19 +28,11 @@ public class AppLogger {
         String[] logs = pLogsStr.split(",");
 
         LoggerContext context = (LoggerContext) LoggerFactory.getILoggerFactory();
-        Logger rootLogger = context.getLogger(Logger.ROOT_LOGGER_NAME);
 
-        // 清除默认配置
-        rootLogger.detachAndStopAllAppenders();
+        // 清除当前 logger 上已有的所有 appender，避免重复调用 createLogger 时叠加 appender 导致日志重复
+        logger.detachAndStopAllAppenders();
 
-        Iterator<Appender<ILoggingEvent>> iterator = logger.iteratorForAppenders();
-        while (iterator.hasNext()) {
-            Appender<ILoggingEvent> appender = iterator.next();
-            if (appender.getClass().getSimpleName().equals("AsyncAppender")) {
-                logger.detachAppender(appender);
-            }
-        }
-
+        // 将 appender 添加到当前 logger 而非 root，避免影响上层应用
         for (String log : logs) {
             // 控制台输出配置
             if (log.trim().equalsIgnoreCase("CONSOLE")) {
@@ -56,7 +45,7 @@ public class AppLogger {
                 consoleEncoder.start();
                 consoleAppender.setEncoder(consoleEncoder);
                 consoleAppender.start();
-                rootLogger.addAppender(consoleAppender);
+                logger.addAppender(consoleAppender);
             }
             else
             {
@@ -72,16 +61,19 @@ public class AppLogger {
                 fileEncoder.start();
                 fileAppender.setEncoder(fileEncoder);
                 fileAppender.start();
-                rootLogger.addAppender(fileAppender);
+                logger.addAppender(fileAppender);
             }
         }
+
+        // 阻止当前 logger 的日志向上传播到 root，避免重复输出
+        logger.setAdditive(false);
 
         if (log_level != null)
         {
             logger.setLevel(log_level);
         }
         else {
-            logger.warn("[LOGGER] Invalid log level parameter [{0}]. Fallback to INFO.");
+            logger.warn("[LOGGER] Invalid log level parameter. Fallback to INFO.");
             logger.setLevel(Level.INFO);
         }
 

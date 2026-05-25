@@ -40,7 +40,7 @@ public class PluginManagerTest {
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
 
         // 检查插件示例jar文件是否存在
-        pluginExampleJarPath = Paths.get("C:/temp/slackerdb-plugin-example-0.2.0.jar");
+        pluginExampleJarPath = Paths.get("C:/temp/slackerdb-plugin-example-0.2.1.jar");
 
         // 修改默认的db启动端口
         ServerConfiguration serverConfiguration = new ServerConfiguration();
