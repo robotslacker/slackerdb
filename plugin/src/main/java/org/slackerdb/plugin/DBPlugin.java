@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.Map;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -35,6 +36,9 @@ public abstract class DBPlugin extends Plugin
     
     /** Plugin mount time (loading time) in milliseconds */
     private long mountTime = 0L;
+
+    /** Plugin ID, stored from wrapper to avoid using deprecated wrapper field */
+    private final String pluginId;
 
     /**
      * Get database connection.
@@ -67,6 +71,35 @@ public abstract class DBPlugin extends Plugin
     protected Javalin getJavalinApp()
     {
         return ctx.getJavalin();
+    }
+
+    /**
+     * Get all plugin-specific properties from dbserver configuration.
+     * Properties are passed via dbserver configuration file or command line
+     * with the format: <code><pluginId>.<paramName></code>.
+     * This method returns only the properties for this plugin (with the plugin ID prefix stripped).
+     *
+     * @return Map of properties for this plugin, key is paramName, value is paramValue
+     */
+    protected Map<String, String> getPluginProperties()
+    {
+        return ctx.getPluginProperties(this.pluginId);
+    }
+
+    /**
+     * Get a specific plugin property from dbserver configuration.
+     * Properties are passed via dbserver configuration file or command line
+     * with the format: <code><pluginId>.<paramName></code>.
+     *
+     * <p>Example: If dbserver config has <code>scheduler.home=/path/to/home</code>,
+     * calling <code>getPluginProperty("home")</code> in the scheduler plugin returns "/path/to/home".</p>
+     *
+     * @param paramName The parameter name (without plugin ID prefix)
+     * @return The parameter value, or null if not found
+     */
+    protected String getPluginProperty(String paramName)
+    {
+        return ctx.getPluginProperty(this.pluginId, paramName);
     }
 
     /**
@@ -112,6 +145,7 @@ public abstract class DBPlugin extends Plugin
     @SuppressWarnings("deprecation")
     protected DBPlugin(PluginWrapper wrapper) {
         super(wrapper);
+        this.pluginId = wrapper.getPluginId();
     }
 
     /**

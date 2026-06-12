@@ -1,7 +1,6 @@
 package org.slackerdb.dbserver.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
-import org.slackerdb.common.utils.DBUtil;
 import org.slackerdb.dbserver.entity.ParsedStatement;
 import org.slackerdb.dbserver.entity.PostgresTypeOids;
 import org.slackerdb.dbserver.entity.SQLHistoryRecord;

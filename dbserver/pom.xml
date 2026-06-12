@@ -186,6 +186,7 @@
                         <include>**/DatabaseStabilityWSTest.java</include>
                         <include>**/SpringBootDBTest.java</include>
                         <include>**/UdsTest.java</include>
+                        <include>**/DBDataSourcePoolTest.java</include>
                     </includes>
                     <parallel>none</parallel> <!-- Disable parallel execution -->
                     <forkCount>1</forkCount>  <!-- Execute tests in a single process -->

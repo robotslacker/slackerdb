@@ -4,7 +4,6 @@ import io.netty.channel.ChannelHandlerContext;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVRecord;
 import org.duckdb.DuckDBAppender;
-import org.slackerdb.common.utils.DBUtil;
 import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.PostgresMessage;
@@ -158,7 +157,8 @@ public class CopyDoneRequest extends PostgresRequest {
                     List<Integer> copyTableDbColumnMapPos = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos;
                     for (Object[] row : data) {
                         duckDBAppender.beginRow();
-                        for (Integer nPos : copyTableDbColumnMapPos) {
+                        for (int i=0; i<copyTableDbColumnMapPos.size(); i++) {
+                            int nPos = copyTableDbColumnMapPos.get(i);
                             if (nPos == -1) {
                                 duckDBAppender.appendDefault();
                             } else
@@ -166,20 +166,59 @@ public class CopyDoneRequest extends PostgresRequest {
                                 // 数据内容
                                 Object cell = row[nPos];
 
-                                // 数据类型
-                                String columnType = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnType.get(nPos);
-
+                                // 获取DB的数据类型
+                                String columnType = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnType.get(i);
+                                String columnName = this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnName.get(i);
                                 if (cell == null)
                                 {
                                     duckDBAppender.appendNull();
                                 }
                                 else if (columnType.equals("SMALLINT")) {
+                                    // SMALLINT 期望 2 字节数据
+                                    if (((byte[]) cell).length != 2) {
+                                        ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                                        errorResponse.setErrorResponse("SLACKER-0099",
+                                                "Binary Copy data type mismatch: Column [" + columnName + "], column type is " + columnType +
+                                                ", but data length is " + ((byte[]) cell).length + " bytes (expected 2 bytes).");
+                                        errorResponse.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+                                        ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                                        readyForQuery.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+                                        return;
+                                    }
                                     duckDBAppender.append(Utils.bytesToInt16((byte[]) cell));
                                 }
                                 else if (columnType.equals("INTEGER")) {
+                                    // INTEGER 期望 4 字节数据
+                                    if (((byte[]) cell).length != 4) {
+                                        ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                                        errorResponse.setErrorResponse("SLACKER-0099",
+                                                "Binary Copy data type mismatch: Column [" + columnName + "], column type is " + columnType +
+                                                ", but data length is " + ((byte[]) cell).length + " bytes (expected 4 bytes).");
+                                        errorResponse.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+                                        ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                                        readyForQuery.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+                                        return;
+                                    }
                                     duckDBAppender.append(Utils.bytesToInt32((byte[]) cell));
                                 }
                                 else if (columnType.equals("BIGINT")) {
+                                    // BIGINT 期望 8 字节数据
+                                    if (((byte[]) cell).length != 8) {
+                                        ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                                        errorResponse.setErrorResponse("SLACKER-0099",
+                                                "Binary Copy data type mismatch: Column [" + columnName + "], column type is " + columnType +
+                                                ", but data length is " + ((byte[]) cell).length + " bytes (expected 8 bytes).");
+                                        errorResponse.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+                                        ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                                        readyForQuery.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+                                        return;
+                                    }
                                     duckDBAppender.append(BigInteger.valueOf(Utils.bytesToInt64((byte[]) cell)).longValue());
                                 }
                                 else if (columnType.equals("VARCHAR"))
@@ -189,10 +228,36 @@ public class CopyDoneRequest extends PostgresRequest {
                                 }
                                 else if (columnType.equals("FLOAT"))
                                 {
+                                    // FLOAT 期望 4 字节数据
+                                    if (((byte[]) cell).length != 4) {
+                                        ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                                        errorResponse.setErrorResponse("SLACKER-0099",
+                                                "Binary Copy data type mismatch: Column [" + columnName + "], column type is " + columnType +
+                                                ", but data length is " + ((byte[]) cell).length + " bytes (expected 4 bytes).");
+                                        errorResponse.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+                                        ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                                        readyForQuery.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+                                        return;
+                                    }
                                     duckDBAppender.append(Utils.byteToFloat((byte [])cell));
                                 }
                                 else if (columnType.equals("DOUBLE"))
                                 {
+                                    // DOUBLE 期望 8 字节数据
+                                    if (((byte[]) cell).length != 8) {
+                                        ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                                        errorResponse.setErrorResponse("SLACKER-0099",
+                                                "Binary Copy data type mismatch: Column [" + columnName + "], column type is " + columnType +
+                                                ", but data length is " + ((byte[]) cell).length + " bytes (expected 8 bytes).");
+                                        errorResponse.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+                                        ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                                        readyForQuery.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+                                        return;
+                                    }
                                     duckDBAppender.append(Utils.byteToDouble((byte [])cell));
                                 }
                                 else if (columnType.startsWith("DECIMAL"))
@@ -202,11 +267,37 @@ public class CopyDoneRequest extends PostgresRequest {
                                 }
                                 else if (columnType.equals("TIMESTAMP"))
                                 {
+                                    // TIMESTAMP 期望 8 字节数据
+                                    if (((byte[]) cell).length != 8) {
+                                        ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                                        errorResponse.setErrorResponse("SLACKER-0099",
+                                                "Binary Copy data type mismatch: Column [" + columnName + "], column type is " + columnType +
+                                                ", but data length is " + ((byte[]) cell).length + " bytes (expected 8 bytes).");
+                                        errorResponse.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+                                        ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                                        readyForQuery.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+                                        return;
+                                    }
                                     long epochMilli = Utils.bytesToInt64((byte[]) cell) / 1000;
                                     duckDBAppender.append(Instant.ofEpochMilli(epochMilli).atZone(ZoneId.of("UTC")).toLocalDateTime());
                                 }
                                 else if (columnType.equals("BOOLEAN"))
                                 {
+                                    // BOOLEAN 期望 1 字节数据
+                                    if (((byte[]) cell).length != 1) {
+                                        ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                                        errorResponse.setErrorResponse("SLACKER-0099",
+                                                "Binary Copy data type mismatch: Column [" + columnName + "], column type is " + columnType +
+                                                ", but data length is " + ((byte[]) cell).length + " bytes (expected 1 byte).");
+                                        errorResponse.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+                                        ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                                        readyForQuery.process(ctx, request, out);
+                                        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+                                        return;
+                                    }
                                     duckDBAppender.append(((byte[]) cell)[0] == 0x01);
                                 }
                                 else

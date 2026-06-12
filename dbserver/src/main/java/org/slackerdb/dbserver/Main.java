@@ -81,6 +81,8 @@ public class Main {
         System.out.println("  --mcp-config                Specify MCP configuration file path. Default: empty.");
         System.out.println("  --mcp-llm-server            Specify MCP LLM server configuration. Format: <service>:<ip>:<port>:<model>. Default: empty.");
         System.out.println("  --socket                    Specify Unix Domain Socket file path for UDS connections. Default: empty (TCP mode).");
+        System.out.println("  --quack_addr                Specify Quack remote server address. Format: IP:PORT. Default: none.");
+        System.out.println("  --<pluginId>.<param>         Specify plugin-specific parameters. Example: --scheduler.home=someDir");
 
     }
 
@@ -401,6 +403,20 @@ public class Main {
             if (appOptions.containsKey("socket"))
             {
                 serverConfiguration.setSocket(appOptions.get("socket"));
+            }
+            if (appOptions.containsKey("quack_addr"))
+            {
+                serverConfiguration.setQuackAddr(appOptions.get("quack_addr"));
+            }
+
+            // 处理插件自定义参数（格式为 <pluginId>.<paramName>）
+            for (Map.Entry<String, String> entry : appOptions.entrySet()) {
+                String key = entry.getKey();
+                int dotIndex = key.indexOf('.');
+                if (dotIndex > 0 && dotIndex < key.length() - 1) {
+                    // 这是一个插件参数，记录到ServerConfiguration的pluginProperties中
+                    serverConfiguration.setPluginProperty(key, entry.getValue());
+                }
             }
 
             // 初始化日志服务

@@ -8,7 +8,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,8 +44,9 @@ public class DBSession {
     // 上次由于不完整而没有复制的Copy剩余命令
     public ByteArrayOutputStream copyLastRemained = new ByteArrayOutputStream();
 
-    // Binary模式进行Copy的时候需要知道目标表结构
-    public List<String> copyTableDbColumnType = new ArrayList<>();
+    // Binary模式进行Copy的时候需要知道目标表结构, 包括列字段名称，列字段类型
+    public List<String> copyTableDbColumnType = null;
+    public List<String> copyTableDbColumnName = null;
 
     // 当前执行任务的语句
     public String executingSQL = "";

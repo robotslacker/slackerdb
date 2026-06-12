@@ -12,14 +12,25 @@ import java.time.format.DateTimeFormatter;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import io.javalin.http.Context;
 import io.javalin.http.UploadedFile;
 
 public class FileHandlerHelper {
-    // 服务根目录（放你要下载的文件）
-    private static final Path BASE_DIR = Path.of(".").toAbsolutePath().normalize();
+    // ============================================================
+    // 安全加固：将下载、上传、查看限制在专用的隔离目录中
+    // ============================================================
+
+    // 下载基础目录（只能下载此目录下的文件）
+    private static final Path DOWNLOAD_BASE_DIR = Path.of("./downloads").toAbsolutePath().normalize();
+
+    // 上传基础目录（只能上传到此目录下）
+    private static final Path UPLOAD_BASE_DIR = Path.of("./uploads").toAbsolutePath().normalize();
+
+    // 查看基础目录（只能查看此目录下的文件，如日志）
+    private static final Path VIEW_BASE_DIR = Path.of("./logs").toAbsolutePath().normalize();
 
     // lines 参数的最大允许值，防止滥用
     private static final int MAX_LINES = 10000;
@@ -27,8 +38,97 @@ public class FileHandlerHelper {
     // 每次 transferTo 的最大传输字节，避免单次调用受实现限制（如 2GB）
     private static final long TRANSFER_CHUNK_SIZE = 8L * 1024 * 1024; // 8MB
 
+    // 禁止的文件名（Windows 设备名等）
+    private static final Set<String> WINDOWS_DEVICE_NAMES = Set.of(
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    );
+
     // Range header 解析： bytes=start-end
     private static final Pattern RANGE_PATTERN = Pattern.compile("bytes=(\\d*)-(\\d*)");
+
+    // 文件名中禁止的字符（Windows 上）
+    private static final Pattern INVALID_FILENAME_CHARS = Pattern.compile("[\\\\/:*?\"<>|]");
+
+    /**
+     * 安全校验文件名，防止路径穿越攻击。
+     *
+     * @param filename 用户传入的文件名
+     * @param baseDir  允许访问的基础目录
+     * @return 解析后的安全路径
+     * @throws SecurityException 如果路径不安全
+     */
+    private static Path resolveSafePath(String filename, Path baseDir) throws SecurityException {
+        if (filename == null || filename.isBlank()) {
+            throw new SecurityException("Filename is empty");
+        }
+
+        // 检查是否包含路径穿越字符
+        if (filename.contains("..")) {
+            throw new SecurityException("Path traversal detected: '..' is not allowed");
+        }
+
+        // 检查是否包含空字符（null byte injection）
+        if (filename.contains("\0")) {
+            throw new SecurityException("Null byte injection detected");
+        }
+
+        // 检查 Windows 备用数据流
+        if (filename.contains(":") && !filename.contains(":/") && !filename.startsWith("http")) {
+            // 允许 Windows 盘符如 C:/，但禁止备用数据流如 file.txt:stream
+            if (filename.matches(".*:[^/\\\\].*")) {
+                throw new SecurityException("Alternate data stream detected");
+            }
+        }
+
+        // 检查文件名是否包含路径分隔符（不允许使用绝对路径或跨目录访问）
+        // 注意：我们允许子目录，但必须经过 normalize 验证
+        Path resolved = baseDir.resolve(filename).normalize();
+
+        // 关键检查：解析后的路径必须以 baseDir 开头
+        if (!resolved.startsWith(baseDir)) {
+            throw new SecurityException("Path traversal detected: resolved path is outside base directory");
+        }
+
+        // 额外检查：确保 resolved 不是 baseDir 本身（防止访问目录本身）
+        if (resolved.equals(baseDir)) {
+            throw new SecurityException("Access to base directory itself is not allowed");
+        }
+
+        // 检查 Windows 设备名
+        String fileNameOnly = resolved.getFileName().toString();
+        String nameWithoutExt = fileNameOnly.contains(".") ?
+            fileNameOnly.substring(0, fileNameOnly.lastIndexOf('.')) : fileNameOnly;
+        if (WINDOWS_DEVICE_NAMES.contains(nameWithoutExt.toUpperCase())) {
+            throw new SecurityException("Windows device name is not allowed");
+        }
+
+        return resolved;
+    }
+
+    /**
+     * 对文件名进行安全处理，移除或替换危险字符
+     */
+    private static String sanitizeFileName(String filename) {
+        // 只保留文件名部分（去掉路径）
+        String cleanName = Path.of(filename).getFileName().toString();
+        // 替换危险字符为下划线
+        cleanName = INVALID_FILENAME_CHARS.matcher(cleanName).replaceAll("_");
+        // 去除首尾空格和点
+        cleanName = cleanName.trim();
+        while (cleanName.startsWith(".")) {
+            cleanName = cleanName.substring(1);
+        }
+        while (cleanName.endsWith(".")) {
+            cleanName = cleanName.substring(0, cleanName.length() - 1);
+        }
+        // 如果处理后为空，使用默认名
+        if (cleanName.isEmpty()) {
+            cleanName = "unnamed_file";
+        }
+        return cleanName;
+    }
 
     // 提供文件下载服务
     public static void handleFileDownload(Context ctx) throws IOException {
@@ -39,11 +139,19 @@ public class FileHandlerHelper {
             ctx.result("Missing filename parameter for download.");
             return;
         }
-        Path filePath = BASE_DIR.resolve(filename).normalize();
 
-        // 防止目录穿越
-        if (!filePath.startsWith(BASE_DIR) || !Files.exists(filePath) || !Files.isRegularFile(filePath)) {
-            ctx.status(404).result("Download error. File [" + filePath + "] does not exist or not a plain file.");
+        // 安全解析路径
+        Path filePath;
+        try {
+            filePath = resolveSafePath(filename, DOWNLOAD_BASE_DIR);
+        } catch (SecurityException e) {
+            ctx.status(403).result("Download denied: " + e.getMessage());
+            return;
+        }
+
+        // 检查文件是否存在且为普通文件
+        if (!Files.exists(filePath) || !Files.isRegularFile(filePath)) {
+            ctx.status(404).result("Download error. File does not exist or is not a plain file.");
             return;
         }
 
@@ -66,7 +174,7 @@ public class FileHandlerHelper {
             ctx.status(200);
             ctx.header("Content-Type", contentType);
             ctx.header("Content-Length", String.valueOf(fileLength));
-            ctx.header("Content-Disposition", "attachment; filename=\"" + encodeFileName(filename) + "\"");
+            ctx.header("Content-Disposition", "attachment; filename=\"" + encodeFileName(filePath.getFileName().toString()) + "\"");
             // 写出全文件
             try (RandomAccessFile raf = new RandomAccessFile(filePath.toFile(), "r");
                  FileChannel fc = raf.getChannel()) {
@@ -123,7 +231,7 @@ public class FileHandlerHelper {
         ctx.header("Content-Type", contentType);
         ctx.header("Content-Length", String.valueOf(contentLength));
         ctx.header("Content-Range", "bytes " + start + "-" + end + "/" + fileLength);
-        ctx.header("Content-Disposition", "attachment; filename=\"" + encodeFileName(filename) + "\"");
+        ctx.header("Content-Disposition", "attachment; filename=\"" + encodeFileName(filePath.getFileName().toString()) + "\"");
 
         try (RandomAccessFile raf = new RandomAccessFile(filePath.toFile(), "r");
              FileChannel fc = raf.getChannel())
@@ -144,16 +252,19 @@ public class FileHandlerHelper {
 
         UploadedFile file = ctx.uploadedFile("file");
         if (file == null) {
-            ctx.status(400).result("missing file field");
+            ctx.status(400).result("Missing file field");
             return;
         }
 
-        // 允许子目录，但必须相对 UPLOAD_DIR
-        Path target = BASE_DIR.resolve(targetName).normalize();
+        // 对文件名进行安全处理
+        String safeFilename = sanitizeFileName(targetName);
 
-        // 确认路径安全：仍然落在 UPLOAD_DIR 下
-        if (!target.startsWith(BASE_DIR)) {
-            ctx.status(403).result("access denied");
+        // 安全解析路径
+        Path target;
+        try {
+            target = resolveSafePath(safeFilename, UPLOAD_BASE_DIR);
+        } catch (SecurityException e) {
+            ctx.status(403).result("Upload denied: " + e.getMessage());
             return;
         }
 
@@ -220,20 +331,23 @@ public class FileHandlerHelper {
             return;
         }
 
-        Integer linesParam = ctx.queryParamAsClass("lines", Integer.class).getOrDefault(100);
+        int linesParam = ctx.queryParamAsClass("lines", Integer.class).getOrDefault(100);
         if (linesParam <= 0) {
             ctx.status(400).result("lines must be positive");
             return;
         }
         int lines = Math.min(linesParam, MAX_LINES);
 
+        // 安全解析路径
+        Path filePath;
         try {
-            Path filePath = BASE_DIR.resolve(filename).normalize();
-            // 防止目录穿越
-            if (!filePath.startsWith(BASE_DIR)) {
-                ctx.status(403).result("access denied");
-                return;
-            }
+            filePath = resolveSafePath(filename, VIEW_BASE_DIR);
+        } catch (SecurityException e) {
+            ctx.status(403).result("View denied: " + e.getMessage());
+            return;
+        }
+
+        try {
             File file = filePath.toFile();
             if (!file.exists() || !file.isFile()) {
                 ctx.status(404).result("file not found");

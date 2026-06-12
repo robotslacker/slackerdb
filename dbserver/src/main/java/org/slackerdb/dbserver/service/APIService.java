@@ -171,6 +171,7 @@ public class APIService {
 
         // 执行数据库查询
         Connection conn = null;
+        Statement stmt = null;
         try {
             String userSearchPath;
             if (dbServiceDefinition.searchPath != null && !dbServiceDefinition.searchPath.isEmpty()) {
@@ -183,8 +184,10 @@ public class APIService {
 
             // 把查询路径指向默认数据库
             conn = dbDataSourcePool.getConnection();
-            Statement stmt = conn.createStatement();
+            stmt = conn.createStatement();
             stmt.execute("set search_path = 'memory.duck_catalog," + userSearchPath + "'");
+            stmt.close();
+            stmt = null;
 
             try (PreparedStatement preparedStatement = conn.prepareStatement(sql)) {
                 boolean hasResultSet = preparedStatement.execute();
@@ -257,6 +260,12 @@ public class APIService {
                             "cached", false
                     )
             );
+        } finally {
+            if (stmt != null) {
+                try {
+                    stmt.close();
+                } catch (SQLException ignored) {}
+            }
         }
     }
 

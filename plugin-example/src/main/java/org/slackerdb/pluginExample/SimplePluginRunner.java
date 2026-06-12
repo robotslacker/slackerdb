@@ -7,6 +7,7 @@ import org.slackerdb.plugin.DBPluginContext;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.util.Map;
 
 /**
  * Simple plugin runner example.
@@ -46,7 +47,12 @@ public class SimplePluginRunner {
         ctx.setDbBackendConn(conn);
         ctx.setLogger(pluginLogger);
         ctx.setJavalin(javalin);
-        LOG.info("DBPluginContext created and configured");
+        // Set plugin properties (simulating dbserver configuration)
+        ctx.setPluginProperties(Map.of(
+            "pluginexample.home", "/path/to/example/home",
+            "pluginexample.timeout", "30"
+        ));
+        LOG.info("DBPluginContext created and configured with plugin properties");
         
         // 5. Create plugin instance (using standalone support)
         PluginExample plugin = PluginExample.standAloneInstance();

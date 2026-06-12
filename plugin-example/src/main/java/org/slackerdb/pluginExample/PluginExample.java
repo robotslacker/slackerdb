@@ -6,6 +6,7 @@ import org.slackerdb.plugin.DBPlugin;
 import org.slf4j.Logger;
 
 import java.sql.Connection;
+import java.util.Map;
 
 /**
  * Plugin example class demonstrating how to write a Slackerdb plugin.
@@ -18,7 +19,16 @@ import java.sql.Connection;
  *   <li>Obtain database connection, logger, and Javalin app instance on startup (example code is commented)</li>
  *   <li>Implements complete lifecycle methods (onStart, onStop, onDelete)</li>
  *   <li>Demonstrates how to override before/after hook methods</li>
+ *   <li>Demonstrates how to receive plugin-specific properties from dbserver configuration</li>
  * </ul>
+ * </p>
+ *
+ * <p>Plugin properties can be passed via dbserver configuration file or command line:
+ * <ul>
+ *   <li>Configuration file: <code>pluginexample.home=someDir</code></li>
+ *   <li>Command line: <code>--pluginexample.home=someDir</code></li>
+ * </ul>
+ * The plugin can access these properties via {@link #getPluginProperties()} or {@link #getPluginProperty(String)}.
  * </p>
  *
  * <p>Usage steps:
@@ -56,8 +66,9 @@ public class PluginExample extends DBPlugin {
      *   <li>{@link #getDbConnection()} - Obtain database connection</li>
      *   <li>{@link #getLogger()} - Obtain logger</li>
      *   <li>{@link #getJavalinApp()} - Obtain Javalin application instance</li>
+     *   <li>{@link #getPluginProperties()} - Obtain all plugin properties from dbserver</li>
+     *   <li>{@link #getPluginProperty(String)} - Obtain a specific plugin property</li>
      * </ul>
-     * The current code is commented; developers can uncomment and add business logic as needed.
      * </p>
      */
     @Override
@@ -69,12 +80,73 @@ public class PluginExample extends DBPlugin {
         // } catch (SQLException ignored) {}
         // this.logger = getLogger();
         // this.app = getJavalinApp();
-        
+
+        // Example: Read plugin-specific properties from dbserver configuration
+        // Properties can be set in dbserver configuration file:
+        //   pluginexample.home=someDir
+        // Or via command line:
+        //   --pluginexample.home=someDir
+        // String homeDir = getPluginProperty("home");
+        // if (homeDir != null) {
+        //     System.err.println("PluginExample home directory: " + homeDir);
+        // }
+
         // Add plugin startup logic here, for example:
         // - Register Javalin routes
         // - Initialize database tables
         // - Start background tasks
         // - Register event listeners
+    }
+
+    /**
+     * Get all properties for this plugin from dbserver configuration.
+     * Properties are passed via dbserver configuration file or command line
+     * with the format: <code><pluginId>.<paramName></code>.
+     *
+     * <p>This method automatically filters by this plugin's pluginId,
+     * so only properties prefixed with "pluginexample." are returned,
+     * with the prefix stripped. For example, if the config has
+     * <code>pluginexample.home=/path</code>, this returns {"home" -> "/path"}.</p>
+     *
+     * @return Map of properties for this plugin, key is paramName, value is paramValue
+     */
+    @Override
+    protected Map<String, String> getPluginProperties() {
+        // Calls DBPlugin.getPluginProperties() which internally calls
+        // ctx.getPluginProperties(getPluginId()) to filter by pluginId
+        return super.getPluginProperties();
+    }
+
+    /**
+     * Get a specific property for this plugin from dbserver configuration.
+     * Properties are passed via dbserver configuration file or command line
+     * with the format: <code><pluginId>.<paramName></code>.
+     *
+     * <p>This method automatically filters by this plugin's pluginId,
+     * so only the property prefixed with "pluginexample." is matched.
+     * For example, <code>getPluginProperty("home")</code> matches
+     * <code>pluginexample.home</code> in the configuration.</p>
+     *
+     * <p>Example usage:
+     * <pre>
+     * // In dbserver config file:
+     * pluginexample.home=/path/to/home
+     * // In plugin code:
+     * String home = getPluginProperty("home");
+     * if (home != null) {
+     *     logger.info("PluginExample home directory: {}", home);
+     * }
+     * </pre>
+     * </p>
+     *
+     * @param paramName The parameter name (without plugin ID prefix)
+     * @return The parameter value, or null if not found
+     */
+    @Override
+    protected String getPluginProperty(String paramName) {
+        // Calls DBPlugin.getPluginProperty(paramName) which internally calls
+        // ctx.getPluginProperty(getPluginId(), paramName) to filter by pluginId
+        return super.getPluginProperty(paramName);
     }
 
     /**

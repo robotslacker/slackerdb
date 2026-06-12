@@ -172,6 +172,10 @@ public class AdminClientRequest  extends PostgresRequest {
                         .append(Utils.formatBytes(this.dbInstance.serverConfiguration.getQuery_result_cache_size())).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Data_Service_Schema:")).append(this.dbInstance.serverConfiguration.getData_service_schema()).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  MCP_Config:")).append(this.dbInstance.serverConfiguration.getMcpConfig()).append("\n");
+                feedBackMsg.append(String.format("%-20s", "  Auto_Workload_Threshold:"))
+                        .append(this.dbInstance.serverConfiguration.getAuto_workload_threshold()).append("\n");
+                feedBackMsg.append(String.format("%-20s", "  Plugin_Properties:"))
+                        .append(this.dbInstance.serverConfiguration.getPluginProperties()).append("\n");
 
                 // 显示数据库基本信息
                 feedBackMsg.append("SERVER USAGE: \n");

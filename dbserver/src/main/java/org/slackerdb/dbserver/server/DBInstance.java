@@ -469,6 +469,8 @@ public class DBInstance {
     {
         // 如果数据库开启了加密，但是没有设置环境变量，则不要进行Attach
         // 如果指定了Data，则需要Attach到指定的数据库上
+        Statement stmt = null;
+        ResultSet rs = null;
         try {
             // 虚构一些PG的数据字典，以满足后续各种工具对数据字典的查找
             SlackerCatalog.createFakeCatalog(this, backendSysConnection);
@@ -479,7 +481,6 @@ public class DBInstance {
 
             // 校验数据库参数
             String instanceName = this.serverConfiguration.getData();
-            Statement stmt;
             if (instanceName.isEmpty())
             {
                 // 没有数据库名，则不需要Attach操作，直接跳过
@@ -597,6 +598,7 @@ public class DBInstance {
             stmt = backendSysConnection.createStatement();
             stmt.execute(attachString + " " + attachOptions);
             stmt.close();
+            stmt = null;
             if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
                 if (this.serverConfiguration.getDataEncrypt())
                 {
@@ -689,11 +691,12 @@ public class DBInstance {
                     logger.info("[SERVER][STARTUP    ] Copy template database [{}] in ...", templateFile.getAbsolutePath());
                     stmt = backendSysConnection.createStatement();
                     stmt.execute("ATTACH '" + templateFile.getAbsolutePath() + "' AS _imp_db (READ_ONLY)");
-                    ResultSet rs = stmt.executeQuery("SELECT current_catalog()");
+                    rs = stmt.executeQuery("SELECT current_catalog()");
                     rs.next();
                     stmt.execute("COPY FROM DATABASE _imp_db TO " + rs.getString(1));
                     stmt.execute("DETACH DATABASE _imp_db");
                     stmt.close();
+                    stmt = null;
                     logger.info("[SERVER][STARTUP    ] Copy template database completed.");
                 }
             }
@@ -701,6 +704,17 @@ public class DBInstance {
         catch (SQLException | IOException exception)
         {
             throw new ServerException("Init backend connection error. Attach failed.", exception);
+        } finally {
+            if (rs != null) {
+                try {
+                    rs.close();
+                } catch (SQLException ignored) {}
+            }
+            if (stmt != null) {
+                try {
+                    stmt.close();
+                } catch (SQLException ignored) {}
+            }
         }
     }
 
@@ -848,6 +862,21 @@ public class DBInstance {
             stmt.execute("set allocator_background_threads to true");
             // 禁用插件的自动安装机制，减少不必要的外网访问
             stmt.execute("set autoinstall_known_extensions to false");
+            // 程序关闭的时候确保进行WAL回收
+            stmt.execute("PRAGMA enable_checkpoint_on_shutdown");
+            // 如果启用了quack，则打开quack
+            if (serverConfiguration.getQuackAddr() != null)
+            {
+                logger.info("[SERVER] Enable quack remote server on {}.", serverConfiguration.getQuackAddr());
+                ResultSet rs =
+                        stmt.executeQuery("CALL quack_serve('quack:" + serverConfiguration.getQuackAddr() + "', allow_other_hostname => true);");
+                if (rs.next())
+                {
+                    String authToken = rs.getString("auth_token");
+                    logger.info("[SERVER] Quack auth token [{}].", authToken);
+                }
+                rs.close();
+            }
             stmt.close();
         }
         catch (SQLException sqlException)
@@ -991,6 +1020,7 @@ public class DBInstance {
         DBPluginContext dbPluginContext = new DBPluginContext();
         dbPluginContext.setDbBackendConn(this.backendSysConnection);
         dbPluginContext.setLogger(this.logger);
+        dbPluginContext.setPluginProperties(serverConfiguration.getPluginProperties());
         if (this.dbInstanceX != null) {
             dbPluginContext.setJavalin(this.dbInstanceX.getManagementApp());
         }
@@ -999,16 +1029,12 @@ public class DBInstance {
             dbPluginContext.setJavalin(null);
         }
         logger.info("[SERVER][PLUGIN     ] Plugin manager started ...");
-        if (!serverConfiguration.getPlugins_dir().isEmpty() && Path.of(serverConfiguration.getPlugins_dir()).toFile().exists())
+        if (!serverConfiguration.getPlugins_dir().isEmpty() && Path.of(serverConfiguration.getPlugins_dir()).toFile().isDirectory())
         {
             logger.info("[SERVER][PLUGIN     ] Will scan directory [{}] for plugin ...", Path.of(serverConfiguration.getPlugins_dir()));
             this.dbPluginManager = new DBPluginManager(Path.of(serverConfiguration.getPlugins_dir()), dbPluginContext);
 
             dbPluginManager.loadPlugins();
-            for (int i=0; i< dbPluginManager.getPlugins().size(); i++)
-            {
-                logger.info("[SERVER][PLUGIN     ] Load plugin [{}] ...", dbPluginManager.getPlugins().get(i).getPluginId());
-            }
             for (int i=0; i< dbPluginManager.getPlugins().size(); i++)
             {
                 logger.info("[SERVER][PLUGIN     ] start plugin [{}] ...", dbPluginManager.getPlugins().get(i).getPluginId());
@@ -1111,11 +1137,17 @@ public class DBInstance {
 
         try {
             if (backendSysConnection != null && !backendSysConnection.isClosed() && !backendSysConnection.isReadOnly()) {
-                // 推出前回滚所有事务
+                // 退出前回滚所有事务
                 try { backendSysConnection.rollback();} catch (SQLException ignored) {}
 
-                // 数据库强制进行检查点操作
                 Statement stmt = backendSysConnection.createStatement();
+
+                // 如果quack服务在运行，需要停止
+                if (serverConfiguration.getQuackAddr() != null)
+                {
+                    stmt.execute("CALL quack_stop('quack:" + serverConfiguration.getQuackAddr() + "')");
+                }
+                // 数据库强制进行检查点操作
                 stmt.execute("FORCE CHECKPOINT");
                 stmt.close();
             }

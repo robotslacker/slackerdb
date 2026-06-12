@@ -6,6 +6,7 @@ import com.alibaba.fastjson2.JSONException;
 import com.alibaba.fastjson2.JSONObject;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
+import io.javalin.plugin.bundled.CorsPluginConfig;
 import org.duckdb.DuckDBConnection;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.utils.BoundedQueue;
@@ -46,7 +47,6 @@ public class DBInstanceX {
     private final Connection backendSysConnection;
     private final DBInstance dbInstance;
     private final AtomicLong backendApiHistoryId = new AtomicLong(1);
-    private final SchedulerService schedulerService;
     private final APIService apiService;
     private final PluginService pluginService;
     private final McpServer mcpServer;
@@ -260,9 +260,7 @@ public class DBInstanceX {
                             });
                             // 支持跨域
                             config.bundledPlugins.enableCors(
-                                    cors -> cors.addRule(corsConfig -> {
-                                        corsConfig.anyHost();
-                                    }));
+                                    cors -> cors.addRule(CorsPluginConfig.CorsRule::anyHost));
                         }
                 )
                 .start(
@@ -540,10 +538,6 @@ public class DBInstanceX {
         // Plugin服务处理
         this.pluginService = new PluginService(dbInstance, this.managementApp, dbInstance.logger);
 
-        // 调度服务
-        this.schedulerService =
-                new SchedulerService(dbInstance, this.managementApp, dbInstance.logger);
-
         // 异常处理
         this.managementApp.unsafe.routes.exception(Exception.class, (e, ctx) -> {
             logger.error("Error occurred while processing request: {} {} - {}", ctx.method(), ctx.path(), e.getMessage(), e);
@@ -561,6 +555,8 @@ public class DBInstanceX {
     private JSONObject getStatusJson() {
         JSONObject status = new JSONObject();
         Connection conn = null;
+        Statement stmt = null;
+        ResultSet rs = null;
         try {
             conn = ((org.duckdb.DuckDBConnection) this.backendSysConnection).duplicate();
 
@@ -571,8 +567,8 @@ public class DBInstanceX {
             String memory_usage = "";
             String wal_size = "";
             String database_version = "";
-            Statement stmt = conn.createStatement();
-            ResultSet rs = stmt.executeQuery(
+            stmt = conn.createStatement();
+            rs = stmt.executeQuery(
                     "select  version() as version,* " +
                             "from    pragma_database_size() " +
                             "where   database_name = current_database()");
@@ -582,8 +578,6 @@ public class DBInstanceX {
                 database_version = rs.getString("version");
                 wal_size = rs.getString("wal_size");
             }
-            rs.close();
-            stmt.close();
 
             // 从资源信息中读取系统的版本号
             String version, localBuildDate;
@@ -748,6 +742,16 @@ public class DBInstanceX {
             status.put("error", "Failed to get database info: " + se.getMessage());
         } finally {
             try {
+                if (rs != null && !rs.isClosed()) {
+                    rs.close();
+                }
+            } catch (SQLException ignored) {}
+            try {
+                if (stmt != null && !stmt.isClosed()) {
+                    stmt.close();
+                }
+            } catch (SQLException ignored) {}
+            try {
                 if (conn != null && !conn.isClosed()) {
                     conn.close();
                 }
@@ -760,9 +764,6 @@ public class DBInstanceX {
     {
         // 关闭服务器
         this.managementApp.stop();
-
-        // 关闭调度作业
-        this.schedulerService.stop();
 
         // 关闭API历史记录
         if (this.dbInstanceXAPIHistoryThread != null && this.dbInstanceXAPIHistoryThread.isAlive())

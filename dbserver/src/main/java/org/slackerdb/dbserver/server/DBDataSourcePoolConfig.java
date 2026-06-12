@@ -1,5 +1,6 @@
 package org.slackerdb.dbserver.server;
 
+import java.sql.Driver;
 import java.util.Properties;
 
 public class DBDataSourcePoolConfig {
@@ -11,6 +12,7 @@ public class DBDataSourcePoolConfig {
     private int maximumLifeCycleTime;
     private boolean autoCommit = true;
     private long connectionAcquireTimeoutMs = 30_000L;
+    private Driver driver;
 
     public String getJdbcURL()
     {
@@ -79,5 +81,12 @@ public class DBDataSourcePoolConfig {
     public void setConnectionAcquireTimeoutMs(long connectionAcquireTimeoutMs) {
         this.connectionAcquireTimeoutMs = connectionAcquireTimeoutMs;
     }
-}
 
+    public Driver getDriver() {
+        return driver;
+    }
+
+    public void setDriver(Driver driver) {
+        this.driver = driver;
+    }
+}

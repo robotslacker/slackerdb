@@ -33,7 +33,14 @@ public class McpServer {
     private final Map<String, Tool> tools = new ConcurrentHashMap<>();
     private final Map<String, Resource> resources = new ConcurrentHashMap<>();
     private final Map<String, Service> services = new ConcurrentHashMap<>();
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ExecutorService executor = new ThreadPoolExecutor(
+            4,                          // corePoolSize
+            32,                         // maximumPoolSize
+            60L,                        // keepAliveTime
+            TimeUnit.SECONDS,           // keepAliveTime unit
+            new LinkedBlockingQueue<>(1000),  // workQueue with bounded capacity
+            new ThreadPoolExecutor.CallerRunsPolicy()  // rejection policy
+    );
     private final Logger logger;
     private final String mcpConfigPath;
     private final String mcpLlmServer;

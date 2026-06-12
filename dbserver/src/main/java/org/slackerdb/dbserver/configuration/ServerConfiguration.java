@@ -8,6 +8,7 @@ import java.io.InputStream;
 import com.sun.management.OperatingSystemMXBean;
 import java.lang.management.ManagementFactory;
 import java.net.ServerSocket;
+import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
@@ -102,6 +103,9 @@ public class ServerConfiguration {
     // 默认的Unix Domain Socket文件路径（空表示不启用UDS）
     private final String default_socket = "";
 
+    // Quack remote server addr（空表示不启用Quack）
+    private final String default_quack_addr = null;
+
     private String   data;
 
     private String   data_dir;
@@ -140,6 +144,10 @@ public class ServerConfiguration {
     private String mcp_llm_server;
     private String mcp_llm_key;
     private String socket;
+    private String quack_addr;
+
+    // 插件自定义参数，格式为 <pluginId>.<paramName>
+    private final Map<String, String> pluginProperties = new HashMap<>();
 
     public ServerConfiguration() throws ServerException
     {
@@ -180,6 +188,7 @@ public class ServerConfiguration {
         plugins_dir = default_plugins_dir;
         auto_workload_threshold = default_auto_workload_threshold;
         socket = default_socket;
+        quack_addr = default_quack_addr;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -472,13 +481,62 @@ public class ServerConfiguration {
                         setSocket(entry.getValue().toString().trim());
                     }
                 }
-                default ->
+                case "QUACK_ADDR" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        quack_addr = this.default_quack_addr;
+                    } else {
+                        setQuackAddr(entry.getValue().toString().trim());
+                    }
+                }
+                default -> {
+                    // 检查是否为插件参数，格式为 <pluginId>.<paramName>
+                    String key = entry.getKey().toString();
+                    int dotIndex = key.indexOf('.');
+                    if (dotIndex > 0 && dotIndex < key.length() - 1) {
+                        // 这是一个插件参数，记录到pluginProperties中
+                        pluginProperties.put(key, entry.getValue().toString().trim());
+                    } else {
                         throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));
+                    }
+                }
             }
         }
 
         // 替换log中可能包含的data信息
         this.log = this.log.replace("${data}", this.data);
+    }
+
+    /**
+     * 获取插件自定义参数
+     * @return 插件参数Map，key为"<pluginId>.<paramName>"格式
+     */
+    public Map<String, String> getPluginProperties() {
+        return pluginProperties;
+    }
+
+    /**
+     * 获取指定插件的所有参数
+     * @param pluginId 插件ID
+     * @return 该插件的参数Map，key为参数名，value为参数值
+     */
+    public Map<String, String> getPluginProperties(String pluginId) {
+        Map<String, String> result = new HashMap<>();
+        String prefix = pluginId + ".";
+        for (Map.Entry<String, String> entry : pluginProperties.entrySet()) {
+            if (entry.getKey().startsWith(prefix)) {
+                result.put(entry.getKey().substring(prefix.length()), entry.getValue());
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 设置单个插件参数
+     * @param key 参数key，格式为"<pluginId>.<paramName>"
+     * @param value 参数值
+     */
+    public void setPluginProperty(String key, String value) {
+        this.pluginProperties.put(key, value);
     }
 
     public void setConnection_pool_maximum_idle(int connection_pool_maximum_idle) {
@@ -1117,5 +1175,13 @@ public class ServerConfiguration {
 
     public void setSocket(String socket) {
         this.socket = socket;
+    }
+
+    public String getQuackAddr() {
+        return quack_addr;
+    }
+
+    public void setQuackAddr(String quack_addr) {
+        this.quack_addr = quack_addr;
     }
 }

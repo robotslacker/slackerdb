@@ -7,7 +7,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
-import org.slackerdb.common.utils.DBUtil;
 import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
@@ -1048,13 +1047,13 @@ public class Sanity01Test {
         List<Object[]> data = List.of(
                 new Object[]
                         {
-                                1, "Alice", 25.5, new BigDecimal("12345.6789"),
+                                1L, "Alice", 25.5, new BigDecimal("12345.6789"),
                                 Timestamp.from(LocalDateTime.parse(timeStr1, formatter).atZone(ZoneId.of("UTC")).toInstant()),
                                 true
                         },
                 new Object[]
                         {
-                                2, "Bob", 30.8, new BigDecimal("98765.4321"),
+                                2L, "Bob", 30.8, new BigDecimal("98765.4321"),
                                 Timestamp.from(LocalDateTime.parse(timeStr2, formatter).atZone(ZoneId.of("UTC")).toInstant()),
                                 true
                         }
@@ -1117,13 +1116,13 @@ public class Sanity01Test {
         List<Object[]> data = List.of(
                 new Object[]
                         {
-                                1, "Alice", 25.5, new BigDecimal("12345.6789"),
+                                1L, "Alice", 25.5, new BigDecimal("12345.6789"),
                                 Timestamp.from(LocalDateTime.parse(timeStr1, formatter).atZone(ZoneId.of("UTC")).toInstant()),
                                 true
                         },
                 new Object[]
                         {
-                                2, "Bob", 30.8, new BigDecimal("98765.4321"),
+                                2L, "Bob", 30.8, new BigDecimal("98765.4321"),
                                 Timestamp.from(LocalDateTime.parse(timeStr2, formatter).atZone(ZoneId.of("UTC")).toInstant()),
                                 true
                         }
@@ -1204,7 +1203,7 @@ public class Sanity01Test {
 
         String sql = """
             CREATE OR REPLACE TABLE test_binary_copy3 (
-                id BIGINT PRIMARY KEY,
+                id INT PRIMARY KEY,
                 name VARCHAR(50),
                 age DOUBLE PRECISION,
                 salary NUMERIC(10,4),
@@ -1251,7 +1250,7 @@ public class Sanity01Test {
 
         String sql = """
             CREATE OR REPLACE TABLE test_binary_copy4 (
-                id BIGINT PRIMARY KEY,
+                id INT PRIMARY KEY,
                 name VARCHAR(50),
                 age   SMALLINT,
                 title VARCHAR
@@ -1272,6 +1271,96 @@ public class Sanity01Test {
             assert rs.getInt(2 ) == 49995000;
             assert rs.getInt(3 ) == -10000;
             assert rs.getString(4).equals("中国");
+        }
+        pgConn1.close();
+    }
+
+    @Test
+    void testBinaryCopy5() throws Exception
+    {
+        List<Object[]> data = List.of(
+                new Object[]
+                        {
+                                1L
+                        },
+                new Object[]
+                        {
+                                2L
+                        }
+        );
+        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
+
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        boolean errorCaugt = false;
+        String sql = """
+            CREATE OR REPLACE TABLE test_binary_copy5 (
+                id INT
+            )
+            """;
+        pgConn1.createStatement().execute(sql);
+
+        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
+        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
+            try {
+                copyManager.copyIn("COPY test_binary_copy5(id)  FROM STDIN WITH (FORMAT BINARY)", binaryStream);
+            } catch (SQLException sqlException)
+            {
+                errorCaugt = true;
+                assert sqlException.getMessage().contains("data type mismatch");
+            }
+        }
+        pgConn1.close();
+
+        // 确认找到了错误
+        assert errorCaugt;
+    }
+
+    @Test
+    void testBinaryCopy6() throws Exception
+    {
+        List<Object[]> data = new ArrayList<>();
+        for (int i=0; i<10000;i++)
+        {
+            // 传输内容要超过65K
+            Object[] row =
+                    new Object[]
+                            {
+                                    "1", (long)i, "SEND", "DD", "DD", "DD"
+                            };
+            data.add(row);
+        }
+        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
+
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = """
+            CREATE OR REPLACE TABLE test_binary_copy6 (
+                id BIGINT,
+                create_time TIMESTAMP default CURRENT_TIMESTAMP,
+                CNT VARCHAR,
+                EVENT_TYPE VARCHAR,
+                SRC_TABLE_UNIQUE_ID VARCHAR,
+                TIME VARCHAR
+            )
+            """;
+        pgConn1.createStatement().execute(sql);
+
+        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
+        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
+            copyManager.copyIn("COPY test_binary_copy6(CNT, ID, EVENT_TYPE, SRC_TABLE_UNIQUE_ID, START_TIME, TIME)  FROM STDIN WITH (FORMAT BINARY)", binaryStream);
+        }
+
+        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT COUNT(*), SUM(ID) FROM test_binary_copy6")) {
+            rs.next();
+            assert rs.getInt(1) == 10000;
+            assert rs.getInt(2) == 49995000;
         }
         pgConn1.close();
     }
