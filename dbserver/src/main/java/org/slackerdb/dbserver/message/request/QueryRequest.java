@@ -308,10 +308,12 @@ public class QueryRequest  extends PostgresRequest {
                     dataRow.setColumns(null);
 
                     nAffectedRows ++;
-                    // 发送并刷新返回消息
-                    PostgresMessage.writeAndFlush(ctx, DataRow.class.getSimpleName(), out, this.dbInstance.logger);
+                    // 批量写入数据行（仅 write，不 flush），减少 TCP 系统调用
+                    PostgresMessage.write(ctx, DataRow.class.getSimpleName(), out, this.dbInstance.logger);
                 }
                 rs.close();
+                // 批量刷新所有缓存的数据行，一次性发送到客户端
+                ctx.flush();
             }
             else
             {

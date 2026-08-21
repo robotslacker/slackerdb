@@ -7,12 +7,12 @@ package org.slackerdb.jdbc.xml;
 
 import org.xml.sax.SAXException;
 import org.xml.sax.XMLReader;
-import org.xml.sax.helpers.XMLReaderFactory;
 
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.parsers.SAXParserFactory;
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLOutputFactory;
 import javax.xml.transform.TransformerFactory;
@@ -74,13 +74,17 @@ public class DefaultPGXmlFactoryFactory implements PGXmlFactoryFactory {
 
   @Override
   public XMLReader createXMLReader() throws SAXException {
-    XMLReader factory = XMLReaderFactory.createXMLReader();
-    setFeatureQuietly(factory, "http://apache.org/xml/features/disallow-doctype-decl", true);
-    setFeatureQuietly(factory, "http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-    setFeatureQuietly(factory, "http://xml.org/sax/features/external-general-entities", false);
-    setFeatureQuietly(factory, "http://xml.org/sax/features/external-parameter-entities", false);
-    factory.setErrorHandler(NullErrorHandler.INSTANCE);
-    return factory;
+    try {
+      XMLReader factory = SAXParserFactory.newInstance().newSAXParser().getXMLReader();
+      setFeatureQuietly(factory, "http://apache.org/xml/features/disallow-doctype-decl", true);
+      setFeatureQuietly(factory, "http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+      setFeatureQuietly(factory, "http://xml.org/sax/features/external-general-entities", false);
+      setFeatureQuietly(factory, "http://xml.org/sax/features/external-parameter-entities", false);
+      factory.setErrorHandler(NullErrorHandler.INSTANCE);
+      return factory;
+    } catch (ParserConfigurationException e) {
+      throw new SAXException(e);
+    }
   }
 
   private static void setFeatureQuietly(Object factory, String name, boolean value) {

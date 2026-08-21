@@ -7,11 +7,11 @@ package org.slackerdb.jdbc.xml;
 
 import org.xml.sax.SAXException;
 import org.xml.sax.XMLReader;
-import org.xml.sax.helpers.XMLReaderFactory;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.parsers.SAXParserFactory;
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLOutputFactory;
 import javax.xml.transform.TransformerFactory;
@@ -52,6 +52,10 @@ public class LegacyInsecurePGXmlFactoryFactory implements PGXmlFactoryFactory {
 
   @Override
   public XMLReader createXMLReader() throws SAXException {
-    return XMLReaderFactory.createXMLReader();
+    try {
+      return SAXParserFactory.newInstance().newSAXParser().getXMLReader();
+    } catch (ParserConfigurationException e) {
+      throw new SAXException(e);
+    }
   }
 }

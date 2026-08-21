@@ -60,7 +60,7 @@ public class ClassUtil {
                 new URLClassLoader(
                         new URL[]
                                 {
-                                        new URL("jar:file:" + packageFile.getAbsolutePath() + "!/BOOT-INF/classes/")
+                                        URI.create("jar:file:" + packageFile.getAbsolutePath() + "!/BOOT-INF/classes/").toURL()
                                 },
                         null
                 );

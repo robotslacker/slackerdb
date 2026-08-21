@@ -18,6 +18,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.net.MalformedURLException;
+import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.logging.Level;
@@ -91,9 +92,9 @@ public class PgPassParser {
   private InputStream openInputStream(String resourceName) throws IOException {
 
     try {
-      URL url = new URL(resourceName);
+      URL url = URI.create(resourceName).toURL();
       return url.openStream();
-    } catch ( MalformedURLException ex ) {
+    } catch ( IllegalArgumentException ex ) {
       // try file
       File file = new File(resourceName);
       return new FileInputStream(file);

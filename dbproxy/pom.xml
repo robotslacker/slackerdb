@@ -96,12 +96,10 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-deploy-plugin</artifactId>
-                <version>3.1.2</version>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
-                <version>3.2.1</version>
                 <executions>
                     <execution>
                         <id>attach-sources</id>
@@ -114,7 +112,6 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-resources-plugin</artifactId>
-                <version>3.3.1</version>
                 <executions>
                     <execution>
                         <id>generate-version-properties</id>
@@ -141,7 +138,6 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <version>3.3.7</version>
                 <executions>
                     <execution>
                         <id>repackage-standalone</id>
@@ -160,8 +156,8 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.2.5</version>
                 <configuration>
+                    <argLine>--add-opens java.base/java.lang=ALL-UNNAMED -XX:+EnableDynamicAgentLoading -Djdk.instrument.traceUsage=false</argLine>
                     <includes>
                         <include>**/ProxyTest.java</include>
                         <include>**/ProxyApiTest.java</include>

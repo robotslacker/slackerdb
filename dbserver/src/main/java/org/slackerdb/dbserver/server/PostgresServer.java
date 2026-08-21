@@ -19,23 +19,18 @@ import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.AttributeKey;
 import io.netty.util.concurrent.EventExecutor;
 import org.slackerdb.common.exceptions.ServerException;
-import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.request.*;
 import org.slackerdb.common.utils.OSUtil;
 import org.slackerdb.common.utils.Utils;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.*;
 import ch.qos.logback.classic.Logger;
-import org.slackerdb.dbserver.message.response.ErrorResponse;
-import org.slackerdb.dbserver.message.response.ParseComplete;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -272,23 +267,6 @@ public class PostgresServer {
                 data = new byte[messageLen - 4];
                 in.readBytes(data);
 
-                // 检查文件系统空间剩余情况，避免在低磁盘下空间下进行工作，进而导致文件损坏
-                // 使用DBInstance的监控线程检查结果，如果磁盘空间不足，发送错误响应
-                if (!dbInstance.isDiskSpaceValid()) {
-                    // 磁盘空间不足，发送错误响应
-                    try (ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream()) {
-                        ErrorResponse errorResponse = new ErrorResponse(dbInstance);
-                        errorResponse.setErrorResponse(
-                                "",
-                                "Insufficient disk space on data directory [" + dbInstance.serverConfiguration.getData_Dir() + "]. Request refused");
-                        errorResponse.process(ctx, null, byteArrayOutputStream);
-                        PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(),
-                                byteArrayOutputStream, dbInstance.logger);
-                    } catch (IOException ioe) {
-                        logger.trace("Internal error when checking free disk space.", ioe);
-                    }
-                }
-
                 // 处理各种消息
                 switch (messageType) {
                     case 'P' -> {
@@ -476,6 +454,13 @@ public class PostgresServer {
                         .option(ChannelOption.SO_REUSEADDR, true)
                         // 定义操作系统未完成连接队列的最大长度
                         .option(ChannelOption.SO_BACKLOG, 1024)
+                        // 每个客户端连接禁用Nagle算法（PostgreSQL协议标准要求，避免小请求延迟累积）
+                        .childOption(ChannelOption.TCP_NODELAY, true)
+                        // 启用TCP KeepAlive，配合IdleStateHandler保持连接稳定
+                        .childOption(ChannelOption.SO_KEEPALIVE, true)
+                        // 扩大客户端连接的收发缓冲区，承载大结果集并减少TCP分片
+                        .childOption(ChannelOption.SO_RCVBUF, 262144)
+                        .childOption(ChannelOption.SO_SNDBUF, 262144)
                         .childHandler(new ChannelInitializer<SocketChannel>() {
                             @Override
                             protected void initChannel(SocketChannel ch) {
@@ -488,8 +473,7 @@ public class PostgresServer {
                                 ch.pipeline().addLast(new PostgresServerHandler(dbInstance, logger));
                             }
                         });
-                ChannelFuture tcpFuture =
-                        tcpBootstrap.bind(new InetSocketAddress(bind, port)).sync();
+                var ignored = tcpBootstrap.bind(new InetSocketAddress(bind, port)).sync();
                 portReady = true;
                 logger.info("[SERVER] TCP listener started on {}:{}", bind, port);
             }
@@ -537,8 +521,7 @@ public class PostgresServer {
                                     ch.pipeline().addLast(new PostgresServerHandler(dbInstance, logger));
                                 }
                             });
-                    ChannelFuture udsFuture =
-                            udsBootstrap.bind(new DomainSocketAddress(socketPath)).sync();
+                    var ignored = udsBootstrap.bind(new DomainSocketAddress(socketPath)).sync();
                     logger.info("[SERVER] UDS listener started on {}", socketPath);
                 }
             }

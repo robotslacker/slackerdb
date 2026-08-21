@@ -13,20 +13,13 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
+        <hop.version>2.17.0</hop.version>
     </properties>
 
-    <artifactId>slackerdb-plugin-dbsyncer</artifactId>
+    <artifactId>slackerdb-plugin-scheduler</artifactId>
     <packaging>jar</packaging>
 
     <dependencies>
-        <!-- JSON对象解析 -->
-        <dependency>
-            <groupId>com.alibaba.fastjson2</groupId>
-            <artifactId>fastjson2</artifactId>
-            <version>2.0.47</version>
-            <scope>provided</scope>
-        </dependency>
-
         <!-- Logging components -->
         <dependency>
             <groupId>ch.qos.logback</groupId>
@@ -55,12 +48,11 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- Javalin -->
+        <!-- Javalin (compile scope so tests can use it) -->
         <dependency>
             <groupId>io.javalin</groupId>
             <artifactId>javalin-bundle</artifactId>
             <version>7.2.2</version>
-            <scope>provided</scope>
         </dependency>
 
         <!-- PF4J plugin framework -->
@@ -77,62 +69,52 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- Quartz scheduler -->
         <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-embedded</artifactId>
-            <version>3.3.2.Final</version>
+            <groupId>org.quartz-scheduler</groupId>
+            <artifactId>quartz</artifactId>
+            <version>2.5.0</version>
         </dependency>
+
+        <!-- FastJSON -->
         <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-connector-mysql</artifactId>
-            <version>3.3.2.Final</version>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
+            <version>2.0.61</version>
         </dependency>
+
+        <!-- Lombok -->
         <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-connector-postgres</artifactId>
-            <version>3.3.2.Final</version>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.36</version>
+            <scope>provided</scope>
         </dependency>
+
+        <!-- Apache Hop Core -->
         <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-api</artifactId>
-            <version>3.3.2.Final</version>
+            <groupId>org.apache.hop</groupId>
+            <artifactId>hop-core</artifactId>
+            <version>${hop.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-nop</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
+
+        <!-- Apache Hop Engine (包含 Pipeline/Workflow 执行引擎) -->
         <dependency>
-            <groupId>com.lmax</groupId>
-            <artifactId>disruptor</artifactId>
-            <version>3.4.4</version>
-        </dependency>
-        <!-- JSQLParser -->
-        <dependency>
-            <groupId>com.github.jsqlparser</groupId>
-            <artifactId>jsqlparser</artifactId>
-            <version>5.3</version>
-        </dependency>
-        <!-- Test-scoped dependencies -->
-        <dependency>
-            <groupId>org.eclipse.jetty</groupId>
-            <artifactId>jetty-security</artifactId>
-            <version>11.0.25</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.jetty</groupId>
-            <artifactId>jetty-util</artifactId>
-            <version>11.0.25</version>
-            <scope>test</scope>
-        </dependency>
-        <!-- JUnit dependencies for testing -->
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter-engine</artifactId>
-            <version>5.10.3</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter-api</artifactId>
-            <version>5.10.3</version>
-            <scope>test</scope>
+            <groupId>org.apache.hop</groupId>
+            <artifactId>hop-engine</artifactId>
+            <version>${hop.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-nop</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
     </dependencies>
 
@@ -147,7 +129,6 @@
             </resource>
         </resources>
         <plugins>
-            <!-- Plugin must include plugin.properties -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -159,6 +140,13 @@
                         <arg>-Xlint:all</arg>
                     </compilerArgs>
                     <showWarnings>true</showWarnings>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>1.18.36</version>
+                        </path>
+                    </annotationProcessorPaths>
                 </configuration>
             </plugin>
             <plugin>
@@ -168,8 +156,6 @@
                     <encoding>UTF-8</encoding>
                 </configuration>
             </plugin>
-
-            <!-- PF4J official recommended approach: jar + MANIFEST.MF -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
@@ -203,7 +189,6 @@
                     </execution>
                 </executions>
             </plugin>
-            
         </plugins>
     </build>
 </project>

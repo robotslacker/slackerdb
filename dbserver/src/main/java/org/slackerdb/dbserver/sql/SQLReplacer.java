@@ -6,6 +6,7 @@ import org.slackerdb.common.utils.LRUCache;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -14,6 +15,24 @@ public class SQLReplacer {
 
     // 定义一个队列，对于相同的SQL不重复进行替换，来提高处理效率
     private static final LRUCache lruCache = new LRUCache();
+
+    // 预编译的正则Pattern缓存，避免在每次SQL替换时重复创建Pattern
+    private static final ConcurrentHashMap<String, Pattern> compiledRegexPatternCache = new ConcurrentHashMap<>();
+
+    // 预编译的字面量替换Pattern缓存，避免在每次SQL替换时重复创建Pattern
+    private static final ConcurrentHashMap<String, Pattern> compiledSamplePatternCache = new ConcurrentHashMap<>();
+
+    // 获取预编译的正则Pattern，相同规则只编译一次
+    private static Pattern getCompiledRegexPattern(String find) {
+        return compiledRegexPatternCache.computeIfAbsent(find,
+                k -> Pattern.compile(k, Pattern.DOTALL | Pattern.CASE_INSENSITIVE));
+    }
+
+    // 获取预编译的字面量替换Pattern，相同规则只编译一次
+    private static Pattern getCompiledSamplePattern(String find) {
+        return compiledSamplePatternCache.computeIfAbsent(find,
+                k -> Pattern.compile("(?i)" + Pattern.quote(k)));
+    }
 
     // 加载替换规则，部分SQL在PG的通讯协议下需要进行替换，以保证PG协议的正常
     public static void load(DBInstance dbInstance)
@@ -284,15 +303,17 @@ public class SQLReplacer {
             for (QueryReplacerItem item : SQLReplaceItems) {
                 if (item.sampleReplace())
                 {
-                    String regex = "(?i)" + Pattern.quote(item.toFind());
-                    newSql = newSql.replaceAll(regex, item.toReplace());
+                    // 使用预编译的Pattern，避免每次替换都重复编译正则
+                    Pattern samplePattern = getCompiledSamplePattern(item.toFind());
+                    newSql = samplePattern.matcher(newSql).replaceAll(item.toReplace());
                     continue;
                 }
                 var find = item.toFind().replaceAll("\r\n", "\n").trim();
                 var repl = item.toReplace().replaceAll("\r\n", "\n").trim();
                 if (item.regex())
                 {
-                    Pattern pattern = Pattern.compile(find, Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+                    // 使用预编译的Pattern，避免每次替换都重复编译正则
+                    Pattern pattern = getCompiledRegexPattern(find);
                     Matcher matcher = pattern.matcher(newSql);
                     if (matcher.matches())
                     {
@@ -320,7 +341,7 @@ public class SQLReplacer {
             }
         }
 
-        // 过滤以 -- 开头的字符串‌
+        // 过滤以 -- 开头的字符串
         replacedSQL = String.join("\n", sqlItems);
         lruCache.put(sql, replacedSQL);
         if (!sql.equals(replacedSQL))

@@ -75,4 +75,26 @@ public abstract class PostgresMessage {
         ctx.writeAndFlush(byteBuffer);
         out.reset();
     }
+
+    /**
+     * 仅写入缓冲区但不刷新，用于批量发送多个消息时减少 TCP 系统调用。
+     * 调用者需要在合适的时机（如一批消息写完后）手动调用 ctx.flush()。
+     */
+    public static void write(ChannelHandlerContext ctx,
+                             String messageTag,
+                             ByteArrayOutputStream out,
+                             Logger logger)
+    {
+        byte[] data = out.toByteArray();
+        if (logger.getLevel() != null && logger.getLevel().levelStr.equals("TRACE")) {
+            logger.trace("[SERVER][TX CONTENT ]: {},{}", messageTag, data.length);
+            for (String dumpMessage : Utils.bytesToHexList(data)) {
+                logger.trace("[SERVER][TX CONTENT ]: {}", dumpMessage);
+            }
+        }
+
+        ByteBuffer byteBuffer = ByteBuffer.wrap(data);
+        ctx.write(byteBuffer);
+        out.reset();
+    }
 }
