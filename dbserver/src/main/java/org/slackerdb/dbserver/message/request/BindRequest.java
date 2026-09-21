@@ -161,9 +161,16 @@ public class BindRequest extends PostgresRequest {
                     PostgresMessage.writeAndFlush(ctx, BindComplete.class.getSimpleName(), out, this.dbInstance.logger);
                     out.close();
 
-                    // 空语句，也要送回去一个空的Port信息
+                    // 空语句，也要送回去一个空的Port信息。
+                    // 注意：这里必须存一个"空语句"对象而不是 null —— parsedStatements 是
+                    // ConcurrentHashMap，不接受 null 值（存 null 会抛 NPE）。
+                    // 下游对"空语句"的判定本来就是看 preparedStatement == null，
+                    // 因此这里与原来的 null 语义一致。
+                    ParsedStatement emptyPortal = new ParsedStatement();
+                    emptyPortal.sql = "";
+                    emptyPortal.preparedStatement = null;
                     this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
-                            "Portal" + "-" + portalName, null);
+                            "Portal" + "-" + portalName, emptyPortal);
 
                     break tryBlock;
                 }

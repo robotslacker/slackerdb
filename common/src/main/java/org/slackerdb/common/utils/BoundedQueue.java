@@ -2,35 +2,46 @@ package org.slackerdb.common.utils;
 
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * 线程安全、有最大容量限制的FIFO队列
- * 使用LinkedBlockingQueue实现，提供阻塞插入和非阻塞取出
+ * 线程安全、有最大容量限制的 FIFO 队列。
+ *
+ * <p>与标准 {@link BlockingQueue} 的关键差异：<b>入队永不阻塞</b>。队列已满时直接丢弃元素并计数。</p>
+ *
+ * <p>之所以不使用阻塞式入队：本队列的生产者运行在 Netty EventLoop 等关键线程上
+ * （SQL/API 历史记录的入队点见 {@code ExecuteRequest}、{@code ParseRequest}、{@code BindRequest}），
+ * 而历史记录本身是"可丢失"的审计数据。一旦消费端跟不上、或者消费线程已经异常退出，
+ * 阻塞式入队会把业务线程永久挂住，进而导致整个服务停止响应。
+ * 丢弃 + 计数则是一种可观测、可告警的降级行为。</p>
+ *
  * @param <T> 队列中元素的类型
  */
 public class BoundedQueue<T> {
     private final BlockingQueue<T> queue;
+
+    // 累计尝试入队的元素数量
+    private final AtomicLong offeredTotal = new AtomicLong(0);
+    // 累计因队列已满而被丢弃的元素数量
+    private final AtomicLong droppedTotal = new AtomicLong(0);
 
     public BoundedQueue(int capacity) {
         this.queue = new LinkedBlockingQueue<>(capacity);
     }
 
     /**
-     * 将元素插入队列，如果队列已满则阻塞直到有空间可用
-     * 如果线程在等待时被中断，会恢复中断状态并继续等待
+     * 非阻塞入队：队列已满时丢弃该元素并累加丢弃计数，绝不阻塞调用线程。
+     *
      * @param item 要插入的元素
+     * @return {@code true} 表示入队成功；{@code false} 表示队列已满，该元素已被丢弃
      */
-    public void offer(T item) {
-        while (true) {
-            try {
-                queue.put(item);
-                break; // 成功插入，退出循环
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt(); // 恢复中断状态
-                // 继续重试，直到成功插入
-                // 原来的实现忽略中断并继续等待，这里保持相同行为
-            }
+    public boolean offer(T item) {
+        offeredTotal.incrementAndGet();
+        if (queue.offer(item)) {
+            return true;
         }
+        droppedTotal.incrementAndGet();
+        return false;
     }
 
     /**
@@ -55,5 +66,19 @@ public class BoundedQueue<T> {
      */
     public boolean isEmpty() {
         return queue.isEmpty();
+    }
+
+    /**
+     * 累计尝试入队的元素数量（含被丢弃的部分）。
+     */
+    public long getOfferedTotal() {
+        return offeredTotal.get();
+    }
+
+    /**
+     * 累计因队列已满而被丢弃的元素数量。该值持续增长说明消费端已经跟不上生产速度。
+     */
+    public long getDroppedTotal() {
+        return droppedTotal.get();
     }
 }

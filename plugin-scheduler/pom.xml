@@ -87,7 +87,7 @@
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
-            <version>1.18.36</version>
+            <version>1.18.48</version>
             <scope>provided</scope>
         </dependency>
 
@@ -144,7 +144,7 @@
                         <path>
                             <groupId>org.projectlombok</groupId>
                             <artifactId>lombok</artifactId>
-                            <version>1.18.36</version>
+                            <version>1.18.48</version>
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
@@ -166,6 +166,24 @@
                             <classpathPrefix>lib/</classpathPrefix>
                         </manifest>
                     </archive>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!--
+                        SchedulerCrontabTester / SchedulerRunOnceTester 是带 main() 的独立端到端
+                        (End-to-End) 程序：它们会真实启动 Javalin + Quartz 并通过 HTTP 驱动调度、
+                        执行 shell 脚本，还各自占用固定端口，不适合放进 mvn test。
+                        这里显式排除它们（并保留 surefire 默认的 *Test 命名约定），
+                        以免将来误以为本模块的测试被 mvn test 覆盖，实际却被静默跳过。
+                        需要手工执行时请直接运行上述两个类的 main()。
+                    -->
+                    <excludes>
+                        <exclude>**/SchedulerCrontabTester.java</exclude>
+                        <exclude>**/SchedulerRunOnceTester.java</exclude>
+                    </excludes>
                 </configuration>
             </plugin>
             <plugin>

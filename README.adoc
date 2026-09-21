@@ -171,6 +171,17 @@ max_connections=
 # Default: CPU core count
 max_workers=
 
+# Business processing threads (executes SQL off the Netty I/O threads)
+# Default: -1 = follow max_connections (one business thread per session)
+#   0 = disabled (run SQL on the I/O threads; a slow query will block other
+#       connections sharing the same I/O thread)
+#  >0 = explicit thread count
+# Note: connections sharing one business thread still queue behind each other.
+# The number of connections affected by a slow query is about
+# (connections / business_threads - 1), so keep this close to the number of
+# concurrently active sessions.
+business_threads=
+
 # Database engine threads
 # Default: memory_limit (GB) / 10 (minimum 1)
 # Recommendation: adjust based on workload
@@ -301,6 +312,11 @@ client_timeout=600
 # Maximum worker threads
 # Default: CPU core count
 max_workers=
+
+# Business processing threads (executes SQL off the Netty I/O threads)
+# Default: -1 = follow max_connections (one business thread per session)
+#   0 = disabled (run SQL on the I/O threads); >0 = explicit thread count
+business_threads=
 
 # Database engine threads
 # Default: memory_limit (GB) / 10 (minimum 1)

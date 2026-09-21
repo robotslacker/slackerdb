@@ -77,13 +77,28 @@ public abstract class PostgresMessage {
     }
 
     /**
-     * 仅写入缓冲区但不刷新，用于批量发送多个消息时减少 TCP 系统调用。
-     * 调用者需要在合适的时机（如一批消息写完后）手动调用 ctx.flush()。
+     * 批量发送结果集数据行时的刷出阈值（单位：字节）。
+     *
+     * <p>结果集行循环里不再逐行 flush，而是累计写入量达到该阈值后再调用一次
+     * {@link ChannelHandlerContext#flush()}。这样可以同时避免两个问题：</p>
+     * <ul>
+     *   <li>逐行 flush：每一行都触发一次 TCP 写系统调用（配合 TCP_NODELAY 就是一行一个网络包）；</li>
+     *   <li>完全不 flush：整个结果集都堆在 Netty 出站缓冲区里，大结果集会撑爆内存。</li>
+     * </ul>
      */
-    public static void write(ChannelHandlerContext ctx,
-                             String messageTag,
-                             ByteArrayOutputStream out,
-                             Logger logger)
+    public static final int FLUSH_THRESHOLD_BYTES = 64 * 1024;
+
+    /**
+     * 仅写入缓冲区但不刷新，用于批量发送多个消息时减少 TCP 系统调用。
+     * 调用者需要在合适的时机（累计字节数达到 {@link #FLUSH_THRESHOLD_BYTES} 时，
+     * 以及整批消息写完时）手动调用 {@code ctx.flush()}。
+     *
+     * @return 本次实际写入的字节数，调用者用它累计待刷出的数据量。
+     */
+    public static int write(ChannelHandlerContext ctx,
+                            String messageTag,
+                            ByteArrayOutputStream out,
+                            Logger logger)
     {
         byte[] data = out.toByteArray();
         if (logger.getLevel() != null && logger.getLevel().levelStr.equals("TRACE")) {
@@ -96,5 +111,6 @@ public abstract class PostgresMessage {
         ByteBuffer byteBuffer = ByteBuffer.wrap(data);
         ctx.write(byteBuffer);
         out.reset();
+        return data.length;
     }
 }

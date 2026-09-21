@@ -1,14 +1,11 @@
 package org.slackerdb.dbserver.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
-import org.slackerdb.dbserver.entity.ParsedStatement;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.BackendKeyData;
 import org.slackerdb.dbserver.server.DBInstance;
-import org.slackerdb.dbserver.server.DBSession;
 import org.slackerdb.common.utils.Utils;
 
-import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 
@@ -51,18 +48,11 @@ public class CancelRequest  extends PostgresRequest {
 
         if (this.dbInstance.getSession(processId) != null)
         {
-            DBSession dbSession = this.dbInstance.getSession(processId);
-            for (String portalName : dbSession.parsedStatements.keySet()) {
-                ParsedStatement parsedStatement = dbSession.parsedStatements.get(portalName);
-                if (parsedStatement.preparedStatement != null) {
-                    try {
-                        if (!parsedStatement.preparedStatement.isClosed()) {
-                            parsedStatement.preparedStatement.cancel();
-                        }
-                    }
-                    catch (SQLException ignored) {}
-                }
-            }
+            // 取消目标会话正在执行的语句。
+            // 注意：这是**跨线程**操作（取消请求走的是新建连接，与目标会话不在同一个线程上），
+            // 所以不能在这里直接遍历目标会话的 parsedStatements —— 统一交给 DBSession
+            // 提供的方法，由它保证并发安全。
+            this.dbInstance.getSession(processId).cancelRunningStatements();
         }
 
         // 取消会话的开始时间，以及业务类型

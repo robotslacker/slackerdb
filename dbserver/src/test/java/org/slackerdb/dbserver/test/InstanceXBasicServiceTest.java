@@ -295,4 +295,30 @@ public class InstanceXBasicServiceTest {
         // 清理临时文件
         Files.deleteIfExists(tempInputFile);
     }
+
+    /**
+     * H8：/status 需要暴露历史落库的可观测性指标，否则"历史线程已静默退出"这类故障无法被发现。
+     */
+    @Test
+    void testStatusExposesHistoryObservabilityFields() throws Exception {
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest statusRequest = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/status"))
+                .GET()
+                .build();
+        HttpResponse<String> response = client.send(statusRequest, HttpResponse.BodyHandlers.ofString());
+        assert response.statusCode() == 200;
+
+        JSONObject status = JSONObject.parseObject(response.body());
+        JSONObject usage = status.getJSONObject("usage");
+        assert usage != null : "usage section is missing in /status";
+        assert usage.containsKey("droppedSqlHistory");
+        assert usage.containsKey("droppedApiHistory");
+        assert usage.containsKey("sqlHistoryThreadAlive");
+        assert usage.containsKey("apiHistoryThreadAlive");
+        assert usage.getLongValue("droppedSqlHistory") >= 0;
+        assert usage.getLongValue("droppedApiHistory") >= 0;
+        // 本用例开启了 data_service_history，API 历史消费线程应当存活
+        assert usage.getBooleanValue("apiHistoryThreadAlive") : "API history consumer thread should be alive";
+    }
 }

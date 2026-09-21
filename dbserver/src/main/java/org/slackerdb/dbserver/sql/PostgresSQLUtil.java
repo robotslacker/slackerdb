@@ -1,8 +1,5 @@
 package org.slackerdb.dbserver.sql;
 
-import org.slackerdb.common.utils.Utils;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.BufferUnderflowException;
@@ -11,6 +8,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class PostgresSQLUtil {
@@ -145,57 +143,94 @@ public class PostgresSQLUtil {
         return buffer.array();
     }
 
+    /** PG BINARY COPY 文件头：11字节签名 + 4字节标志位 + 4字节头部扩展区长度（共19字节）。 */
+    private static final byte[] COPY_BINARY_HEADER = new byte[]{
+            0x50, 0x47, 0x43, 0x4F, 0x50, 0x59, 0x0A, (byte) 0xFF, 0x0D, 0x0A, 0x00,
+            0, 0, 0, 0, // Flags
+            0, 0, 0, 0  // Header extension area
+    };
+
+    /** 单行 BINARY COPY 的固定开销估算值：列数(2B) + 每列长度(4B) 按 4 字节计。 */
+    private static final int COPY_ROW_FIXED_BYTES = 4;
+
+    /**
+     * 预估 BINARY COPY 字节流的大小，用于一次性预分配输出缓冲区。
+     * <p>
+     * 仅作容量提示：字符串按 {@code length()} 近似（CJK 等多字节字符会被低估），
+     * 估算偏小只会触发缓冲区的一次扩容，不影响输出内容。
+     * </p>
+     */
+    private static int estimateCopySize(List<Object[]> data) {
+        long size = COPY_BINARY_HEADER.length;
+        for (Object[] row : data) {
+            size += 2L + (long) row.length * COPY_ROW_FIXED_BYTES;
+            for (Object value : row) {
+                if (value instanceof String) {
+                    size += ((String) value).length();
+                } else if (value instanceof byte[]) {
+                    size += ((byte[]) value).length;
+                } else if (value instanceof BigDecimal) {
+                    // 长度不定，取一个经验值
+                    size += 32L;
+                } else if (value != null) {
+                    size += 8L;
+                }
+            }
+        }
+        return (int) Math.min(size, (long) Integer.MAX_VALUE - 8);
+    }
+
     // 生成 BINARY COPY 格式的列数据
-    public static byte[] convertPGRowToByte(List<Object[]> data) throws IOException {
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
+    public static byte[] convertPGRowToByte(List<Object[]> data)
+    {
+        // 预分配输出缓冲区
+        CopyBuffer output = new CopyBuffer(estimateCopySize(data));
 
         // 写入 PostgresSQL BINARY COPY 头
-        output.write(new byte[]{0x50, 0x47, 0x43, 0x4F, 0x50, 0x59, 0x0A, (byte) 0xFF, 0x0D, 0x0A, 0x00});
-        output.write(Utils.int32ToBytes(0)); // Flags
-        output.write(Utils.int32ToBytes(0)); // Header extension area
+        output.writeBytes(COPY_BINARY_HEADER, 0, COPY_BINARY_HEADER.length);
 
         // **写入数据**
         for (Object[] row : data) {
-            output.write(Utils.int16ToBytes((short) row.length)); // 列数
+            output.writeShort((short) row.length); // 列数
 
             for (Object value : row) {
                 if (value == null) {
-                    output.write(Utils.int32ToBytes(-1)); // NULL
+                    output.writeInt(-1); // NULL
                 } else if (value instanceof Short) {
-                    output.write(Utils.int32ToBytes(2)); // 长度
-                    output.write(Utils.int16ToBytes((Short) value));
+                    output.writeInt(2); // 长度
+                    output.writeShort((Short) value);
                 } else if (value instanceof Integer) {
-                    output.write(Utils.int32ToBytes(4)); // 长度
-                    output.write(Utils.int32ToBytes((Integer) value));
+                    output.writeInt(4); // 长度
+                    output.writeInt((Integer) value);
                 } else if (value instanceof String) {
                     byte[] strBytes = ((String) value).getBytes(StandardCharsets.UTF_8);
-                    output.write(Utils.int32ToBytes(strBytes.length));
-                    output.write(strBytes);
+                    output.writeInt(strBytes.length);
+                    output.writeBytes(strBytes, 0, strBytes.length);
                 } else if (value instanceof Double) {
-                    output.write(Utils.int32ToBytes(8));
-                    output.write(Utils.doubleToBytes((Double) value));
+                    output.writeInt(8);
+                    output.writeDouble((Double) value);
                 } else if (value instanceof BigDecimal) {
                     byte[] decimalBytes = convertPGBigDecimalToByte((BigDecimal) value);
-                    output.write(Utils.int32ToBytes(decimalBytes.length));
-                    output.write(decimalBytes);
+                    output.writeInt(decimalBytes.length);
+                    output.writeBytes(decimalBytes, 0, decimalBytes.length);
                 } else if (value instanceof Timestamp) {
-                    output.write(Utils.int32ToBytes(8));
-                    output.write(Utils.int64ToBytes(((Timestamp) value).getTime() * 1000));
+                    output.writeInt(8);
+                    output.writeLong(((Timestamp) value).getTime() * 1000);
                 } else if (value instanceof Boolean) {
-                    output.write(Utils.int32ToBytes(1));
-                    output.write((Boolean) value ? new byte[]{0x01} : new byte[]{0x00});
-                } else if (value instanceof byte[]) {
-                    output.write(Utils.int32ToBytes(((byte[]) value).length));
-                    output.write((byte[])value);
+                    output.writeInt(1);
+                    output.writeByte((Boolean) value ? 0x01 : 0x00);
+                } else if (value instanceof byte[] bytes) {
+                    output.writeInt(bytes.length);
+                    output.writeBytes(bytes, 0, bytes.length);
                 } else if (value instanceof Long) {
-                    output.write(Utils.int32ToBytes(8));
-                    output.write(Utils.int64ToBytes((Long) value));
+                    output.writeInt(8);
+                    output.writeLong((Long) value);
                 } else if (value instanceof java.sql.Date) {
-                    output.write(Utils.int32ToBytes(8));
-                    output.write(Utils.int64ToBytes(((java.sql.Date) value).getTime() * 1000));
+                    output.writeInt(8);
+                    output.writeLong(((java.sql.Date) value).getTime() * 1000);
                 } else if (value instanceof java.util.Date) {
-                    output.write(Utils.int32ToBytes(8));
-                    output.write(Utils.int64ToBytes(((java.util.Date) value).getTime() * 1000));
+                    output.writeInt(8);
+                    output.writeLong(((java.util.Date) value).getTime() * 1000);
                 } else {
                     throw new IllegalArgumentException("Unsupported type: " + value.getClass().getSimpleName());
                 }
@@ -203,26 +238,39 @@ public class PostgresSQLUtil {
         }
 
         // 写入 COPY 结束标志
-        output.write(Utils.int16ToBytes((short) -1));
+        output.writeShort((short) -1);
 
         return output.toByteArray();
     }
 
-    public static List<Object[]> convertPGByteToRow(byte[] buf) throws BufferUnderflowException
+    /**
+     * 把 PG BINARY COPY 字节流解析成行数据。
+     * <p>
+     * 数据流不完整时(缺少固定头、行数据被截断、缺少行尾的 -1 结束标志等)抛出带明确说明的
+     * {@link IllegalArgumentException}，便于上层回给客户端可读的错误信息，
+     * 而不是让裸的 {@link BufferUnderflowException} 逃逸出去。
+     * </p>
+     */
+    public static List<Object[]> convertPGByteToRow(byte[] buf)
     {
         // 返回的结果中并不可能知道数据类型，需要根据目标表的数据结构进行隐式插入
         List<Object[]> ret = new ArrayList<>();
         ByteBuffer buffer = ByteBuffer.wrap(buf);
 
-        // 记录最后一次成功读取的记录位置
-        if (buffer.remaining() >= 19) {
-            // 前19个字节为PG的固定格式信息，包括文件头和标志位
-            buffer.position(buffer.position() + 19);
-        } else {
-            // 处理字节不足的情况
-            throw new BufferUnderflowException();
+        // 前19个字节为PG的固定格式信息，包括文件头和标志位
+        if (buffer.remaining() < 19) {
+            throw new IllegalArgumentException("invalid binary COPY data: stream truncated in header ("
+                    + buffer.remaining() + " bytes available, 19 bytes expected)");
         }
+        buffer.position(buffer.position() + 19);
+
+        long rowIndex = 0;
         while (true) {
+            // 行头：2字节列数
+            if (buffer.remaining() < 2) {
+                throw new IllegalArgumentException("invalid binary COPY data: stream truncated at row " + rowIndex
+                        + " (missing column count, " + buffer.remaining() + " bytes left)");
+            }
             short colCount = buffer.getShort();
             if (colCount == -1) {
                 // 读取到COPY的末尾，退出
@@ -231,17 +279,105 @@ public class PostgresSQLUtil {
             Object[] rows = new Object[colCount];
             for (int i = 0; i < colCount; i++) {
                 // 每个列都是一个长度和内容构建
+                if (buffer.remaining() < 4) {
+                    throw new IllegalArgumentException("invalid binary COPY data: stream truncated at row " + rowIndex
+                            + " column " + i + " (missing column length, " + buffer.remaining() + " bytes left)");
+                }
                 int colLength = buffer.getInt();
                 if (colLength == -1) {
                     rows[i] = null;
                 } else {
+                    if (colLength < 0 || buffer.remaining() < colLength) {
+                        throw new IllegalArgumentException("invalid binary COPY data: stream truncated at row " + rowIndex
+                                + " column " + i + " (need " + colLength + " bytes, but only "
+                                + buffer.remaining() + " bytes left)");
+                    }
                     byte[] cellValue = new byte[colLength];
                     buffer.get(cellValue);
                     rows[i] = cellValue;
                 }
             }
             ret.add(rows);
+            rowIndex++;
         }
         return ret;
+    }
+
+    /**
+     * BINARY COPY 专用的轻量字节缓冲。
+     * <p>
+     * 与 {@code ByteArrayOutputStream} 的区别：可一次性预分配容量，并按大端序直接写入基本类型，
+     * 从而避免逐列创建临时 {@code byte[]}（原实现每列至少 {@code new} 一个小数组）
+     * 以及反复整块扩容拷贝。输出的字节序列与原先的编码方式完全一致。
+     * </p>
+     */
+    private static final class CopyBuffer {
+        private byte[] buf;
+        private int pos;
+
+        CopyBuffer(int initialCapacity) {
+            this.buf = new byte[Math.max(64, initialCapacity)];
+        }
+
+        private void ensure(int extra) {
+            int need = pos + extra;
+            if (need > buf.length) {
+                int newCapacity = buf.length;
+                while (newCapacity < need) {
+                    newCapacity = newCapacity << 1;
+                    if (newCapacity <= 0) {
+                        // 溢出保护：直接取所需容量
+                        newCapacity = need;
+                        break;
+                    }
+                }
+                buf = Arrays.copyOf(buf, newCapacity);
+            }
+        }
+
+        void writeByte(int value) {
+            ensure(1);
+            buf[pos++] = (byte) value;
+        }
+
+        void writeShort(short value) {
+            ensure(2);
+            buf[pos++] = (byte) (value >>> 8);
+            buf[pos++] = (byte) value;
+        }
+
+        void writeInt(int value) {
+            ensure(4);
+            buf[pos++] = (byte) (value >>> 24);
+            buf[pos++] = (byte) (value >>> 16);
+            buf[pos++] = (byte) (value >>> 8);
+            buf[pos++] = (byte) value;
+        }
+
+        void writeLong(long value) {
+            ensure(8);
+            buf[pos++] = (byte) (value >>> 56);
+            buf[pos++] = (byte) (value >>> 48);
+            buf[pos++] = (byte) (value >>> 40);
+            buf[pos++] = (byte) (value >>> 32);
+            buf[pos++] = (byte) (value >>> 24);
+            buf[pos++] = (byte) (value >>> 16);
+            buf[pos++] = (byte) (value >>> 8);
+            buf[pos++] = (byte) value;
+        }
+
+        void writeDouble(double value) {
+            writeLong(Double.doubleToLongBits(value));
+        }
+
+        void writeBytes(byte[] src, int off, int len) {
+            ensure(len);
+            System.arraycopy(src, off, buf, pos, len);
+            pos += len;
+        }
+
+        byte[] toByteArray() {
+            return pos == buf.length ? buf : Arrays.copyOf(buf, pos);
+        }
     }
 }

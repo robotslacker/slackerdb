@@ -62,14 +62,19 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
         dbSession.connectedTime = LocalDateTime.now();
         dbSession.status = "connected";
         dbSession.clientAddress = remoteAddressStr;
+        // 绑定连接：让 CancelRequest / KILL SESSION 能从别的线程安全地关闭本会话。
+        // 必须在 newSession()（把会话发布到 dbSessions）之前完成，保证发布时字段已就绪。
+        dbSession.channel = ctx.channel();
 
         // 将SessionId信息记录到CTX中
         int sessionId = dbInstance.newSession(dbSession);
         ctx.channel().attr(AttributeKey.valueOf("SessionId")).set(sessionId);
 
-        // 设置线程名称，并打印调试信息
-        Thread.currentThread().setName("Session-" + sessionId);
-        logger.trace("[SERVER][PG PROTOCOL]: Accepted connection from {}", remoteAddressStr);
+        // 注意：这里**不能**再去 Thread.currentThread().setName("Session-" + sessionId)。
+        // 启用业务线程组后，channelRegistered 跑在业务线程上，而一个业务线程会被多个连接复用，
+        // 重命名会把共享线程的名字改来改去（日志里的 [%thread] 反而更有误导性）。
+        // 需要在日志里定位会话时，请直接打印 sessionId。
+        logger.trace("[SERVER][PG PROTOCOL]: Accepted connection from {} (session {})", remoteAddressStr, sessionId);
 
         // 传递消息
         super.channelRegistered(ctx);

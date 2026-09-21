@@ -57,12 +57,6 @@
             <artifactId>netty-all</artifactId>
             <version>4.1.132.Final</version>
         </dependency>
-        <!-- CSV解析 -->
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-csv</artifactId>
-            <version>1.11.0</version>
-        </dependency>
         <!-- 数据库连接池 -->
         <dependency>
             <groupId>com.zaxxer</groupId>
@@ -170,21 +164,30 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <argLine>--add-opens java.base/java.lang=ALL-UNNAMED -XX:+EnableDynamicAgentLoading -Djdk.instrument.traceUsage=false</argLine>
+                    <!--
+                        随用随加的显式清单极易漏登记（历史上 CopyFailureAtomicityTest、
+                        CopyCsvSemanticsTest、SqlReplacerCacheTest 以及 Sanity01~03Test、
+                        ClientTest、HistoryQueueTest、PluginManagerTest、RowEncoderTest、
+                        SessionConcurrencyTest、SqlReplacerGoldenTest、BusinessExecutorTest、
+                        PlSqlTest、sql/CopyCsvReaderTest 都因此被 mvn test 静默跳过）。
+                        这里改为按命名约定自动纳入：所有以 Test 结尾的测试类都会被 mvn test 执行，
+                        新增测试只要遵守 *Test.java 命名即可自动生效，无需再改 pom。
+                    -->
                     <includes>
-                        <include>**/Sanity01Test.java</include>
-                        <include>**/Sanity02Test.java</include>
-                        <include>**/Sanity03Test.java</include>
-                        <include>**/InstanceXApiTest.java</include>
-                        <include>**/InstanceXSqlReplTest.java</include>
-                        <include>**/InstanceXBasicServiceTest.java</include>
-                        <include>**/MCPTest.java</include>
-                        <include>**/MultiDBInstanceTest.java</include>
-                        <include>**/DatabaseStabilityTest.java</include>
-                        <include>**/DatabaseStabilityWSTest.java</include>
-                        <include>**/SpringBootDBTest.java</include>
-                        <include>**/UdsTest.java</include>
-                        <include>**/DBDataSourcePoolTest.java</include>
+                        <include>**/*Test.java</include>
                     </includes>
+                    <excludes>
+                        <!--
+                            以下测试不适合放进 mvn test 的自动化套件，故永久排除：
+                            1) TPCDS：TPCDSTest 依赖外部 TPCDS 数据集且耗时极长，TpcdsSQL 只是它的
+                               SQL 语料库（非测试类），两者都需要手工单独执行。
+                            2) End-to-End：CustomerEndToEndTest 属于端到端用例，依赖完整外部环境，
+                               不纳入常规自动化执行。
+                        -->
+                        <exclude>**/TPCDSTest.java</exclude>
+                        <exclude>**/TpcdsSQL.java</exclude>
+                        <exclude>**/CustomerEndToEndTest.java</exclude>
+                    </excludes>
                     <parallel>none</parallel> <!-- Disable parallel execution -->
                     <forkCount>1</forkCount>  <!-- Execute tests in a single process -->
                     <reuseForks>false</reuseForks>

@@ -3,7 +3,6 @@ package org.slackerdb.dbserver.server;
 import ch.qos.logback.classic.Level;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.*;
 import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
@@ -17,7 +16,10 @@ import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.AttributeKey;
+import io.netty.util.concurrent.DefaultEventExecutorGroup;
+import io.netty.util.concurrent.DefaultThreadFactory;
 import io.netty.util.concurrent.EventExecutor;
+import io.netty.util.concurrent.EventExecutorGroup;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.request.*;
@@ -41,6 +43,8 @@ public class PostgresServer {
     private EventLoopGroup workerGroup;
     private EventLoopGroup udsBossGroup;
     private EventLoopGroup udsWorkerGroup;
+    // 业务处理线程组。为 null 时业务处理跑在 I/O 线程上（旧行为，见 businessThreads=0）
+    private EventExecutorGroup businessGroup;
 
     private Logger logger;
     private boolean portReady = false;
@@ -49,6 +53,7 @@ public class PostgresServer {
     long writerIdleTime;
     long allIdleTime;
     int nioEventThreads;
+    int businessThreads;
 
     private String bind;
     private int port;
@@ -82,6 +87,31 @@ public class PostgresServer {
     public void setNioEventThreads(int pNioEventThreads)
     {
         this.nioEventThreads = pNioEventThreads;
+    }
+
+    /**
+     * 设置业务处理线程数。&lt;= 0 表示不使用业务线程组（业务处理跑在 I/O 线程上，即旧行为）。
+     */
+    public void setBusinessThreads(int pBusinessThreads)
+    {
+        this.businessThreads = pBusinessThreads;
+    }
+
+    /**
+     * 把 PostgresServerHandler 挂到业务线程组上（如果启用了的话）。
+     *
+     * <p>Netty 会为每个 channel 从这个组里固定分配一个 executor，因此
+     * <b>同一连接内的消息仍然串行有序</b>（这也是不自己做排队的原因），
+     * 而 I/O 线程不再被 JDBC 阻塞。注意副作用：分到同一个 executor 的连接之间仍会互相排队，
+     * 被拖累的连接数约为 (连接数 / 业务线程数 - 1)，因此业务线程数应取到与并发会话数同量级。</p>
+     */
+    private void addBusinessHandler(ChannelPipeline pipeline)
+    {
+        if (businessGroup != null) {
+            pipeline.addLast(businessGroup, new PostgresServerHandler(dbInstance, logger));
+        } else {
+            pipeline.addLast(new PostgresServerHandler(dbInstance, logger));
+        }
     }
 
     public void setDBInstance(DBInstance pDbInstance)
@@ -124,6 +154,10 @@ public class PostgresServer {
         }
         if (udsBossGroup != null) {
             udsBossGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
+        }
+        // 先停 I/O 再停业务组：避免"业务组已经在关闭、I/O 还在往里派任务"导致任务被拒绝
+        if (businessGroup != null) {
+            businessGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS);
         }
         logger.info("[SERVER] Server stopped.");
     }
@@ -438,6 +472,18 @@ public class PostgresServer {
         bossGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup(nioEventThreads);
 
+        // 业务处理线程组：把 JDBC 调用从 I/O 线程上摘下来。
+        // Netty 的线程是首次派发任务时才真正创建，因此实际线程数约等于并发连接数，而非配置值。
+        // 另外 Netty 会关闭这些线程上的 FastThreadLocal，无需额外维护。
+        if (businessThreads > 0) {
+            businessGroup = new DefaultEventExecutorGroup(businessThreads, new DefaultThreadFactory("pg-biz"));
+            logger.info("[SERVER] Business executor enabled with {} threads. " +
+                    "Connection requests will be processed off the I/O threads.", businessThreads);
+        } else {
+            businessGroup = null;
+            logger.info("[SERVER] Business executor disabled. Connection requests run on I/O threads.");
+        }
+
         try {
             // 启动TCP服务（如果端口不为-1）
             if (port != -1) {
@@ -446,8 +492,13 @@ public class PostgresServer {
                 // 开启Netty TCP服务
                 tcpBootstrap.group(bossGroup, workerGroup)
                         .channel(NioServerSocketChannel.class)
-                        // 禁用堆外内存的池化以求获得更高的内存使用率
-                        .option(ChannelOption.ALLOCATOR, UnpooledByteBufAllocator.DEFAULT)
+                        // 这里**不要**用 option(ChannelOption.ALLOCATOR, ...)：option() 只作用于监听 socket，
+                        // 对 accept 出来的客户端连接无效（客户端连接的选项必须用 childOption）。
+                        // 历史上这里写的是 option(ALLOCATOR, UnpooledByteBufAllocator.DEFAULT)，声称"禁用池化以
+                        // 提高内存使用率"，但它既没作用到连接上，对监听 socket 也没有意义（监听 socket 不承载数据缓冲），
+                        // 只会让人误以为连接用的是非池化分配器。
+                        // 客户端连接实际使用 Netty 默认的 ByteBufAllocator.DEFAULT，在 Netty 4.1 上即池化的
+                        // PooledByteBufAllocator —— 对"按 64KB 阈值批量刷出 + 大结果集"的场景这是更合适的选择。
                         // 接收缓冲区大小
                         .option(ChannelOption.SO_RCVBUF, 65536)
                         // 允许绑定处于 TIME_WAIT 状态的端口，快速重启服务
@@ -469,8 +520,8 @@ public class PostgresServer {
                                 // 定义消息处理
                                 ch.pipeline().addLast(new RawMessageDecoder());
                                 ch.pipeline().addLast(new RawMessageEncoder());
-                                // 定义消息处理
-                                ch.pipeline().addLast(new PostgresServerHandler(dbInstance, logger));
+                                // 定义消息处理（业务处理挂在业务线程组上）
+                                addBusinessHandler(ch.pipeline());
                             }
                         });
                 var ignored = tcpBootstrap.bind(new InetSocketAddress(bind, port)).sync();
@@ -507,7 +558,8 @@ public class PostgresServer {
 
                     udsBootstrap.group(udsBossGroup, udsWorkerGroup)
                             .channel(EpollServerDomainSocketChannel.class)
-                            .option(ChannelOption.ALLOCATOR, UnpooledByteBufAllocator.DEFAULT)
+                            // 同 TCP：不在此处设置 ALLOCATOR。option() 只作用于监听 socket，
+                            // 客户端连接的分配器由 childOption 决定，未设置时即 Netty 默认的池化分配器。
                             .option(ChannelOption.SO_BACKLOG, 1024)
                             .childHandler(new ChannelInitializer<DomainSocketChannel>() {
                                 @Override
@@ -517,8 +569,8 @@ public class PostgresServer {
                                     // 定义消息处理
                                     ch.pipeline().addLast(new RawMessageDecoder());
                                     ch.pipeline().addLast(new RawMessageEncoder());
-                                    // 定义消息处理
-                                    ch.pipeline().addLast(new PostgresServerHandler(dbInstance, logger));
+                                    // 定义消息处理（业务处理挂在业务线程组上）
+                                    addBusinessHandler(ch.pipeline());
                                 }
                             });
                     var ignored = udsBootstrap.bind(new DomainSocketAddress(socketPath)).sync();

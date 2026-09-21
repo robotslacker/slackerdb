@@ -4,12 +4,10 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import io.netty.channel.ChannelHandlerContext;
 import org.duckdb.DuckDBConnection;
-import org.slackerdb.dbserver.entity.Column;
-import org.slackerdb.dbserver.entity.Field;
-import org.slackerdb.dbserver.entity.PostgresTypeOids;
 import org.slackerdb.dbserver.message.PostgresRequest;
-import org.slackerdb.dbserver.message.response.*;
 import org.slackerdb.dbserver.message.PostgresMessage;
+import org.slackerdb.dbserver.message.response.*;
+import org.slackerdb.dbserver.sql.RowEncoder;
 import org.slackerdb.dbserver.sql.SQLReplacer;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.dbserver.sql.antlr.CopyVisitor;
@@ -73,24 +71,6 @@ public class QueryRequest  extends PostgresRequest {
         super.decode(data);
     }
 
-    private List<Column> processRow(ResultSet rs, ResultSetMetaData rsmd) throws SQLException
-    {
-        List<Column> columns = new ArrayList<>();
-        for (int i = 1; i <= rsmd.getColumnCount(); i++) {
-            Column column = new Column();
-            if (rs.getObject(i) == null) {
-                column.columnLength = -1;
-            } else
-            {
-                byte[] columnBytes = rs.getString(i).getBytes(StandardCharsets.UTF_8);
-                column.columnLength = columnBytes.length;
-                column.columnValue = columnBytes;
-            }
-            columns.add(column);
-        }
-        return columns;
-    }
-
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         // 记录会话的开始时间，以及业务类型
@@ -116,6 +96,7 @@ public class QueryRequest  extends PostgresRequest {
                             "SLACKER-0099",
                             "Feature not supported. Only support COPY .. FROM STDIN");
                     errorResponse.setErrorSeverity("ERROR");
+                    errorResponse.process(ctx, request, out);
 
                     // 发送并刷新返回消息
                     PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
@@ -166,6 +147,7 @@ public class QueryRequest  extends PostgresRequest {
                             "SLACKER-0099",
                             "Feature not supported. Only support FORMAT CSV|BINARY");
                     errorResponse.setErrorSeverity("ERROR");
+                    errorResponse.process(ctx, request, out);
 
                     // 发送并刷新返回消息
                     PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
@@ -181,9 +163,6 @@ public class QueryRequest  extends PostgresRequest {
                 }
 
                 DuckDBConnection conn = (DuckDBConnection) this.dbInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat = copyTableFormat;
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = conn.createAppender(targetSchemaName, targetTableName);
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.reset();
 
                 // 获取表名的实际表名，DUCK并不支持部分字段的Appender操作。所以要追加列表中不存在的相关信息
                 List<Integer> copyTableDbColumnMapPos = new ArrayList<>();
@@ -215,14 +194,91 @@ public class QueryRequest  extends PostgresRequest {
                 rs.close();
                 ps.close();
 
+                // 校验COPY语句中指定的列必须存在于目标表中，并且不能被重复指定(与PostgreSQL的行为保持一致)。
+                // 如果不做校验，那么不存在的列会被静默忽略，客户端无法感知到数据导入出现了错误。
+                if (columnsJson != null && !columnsJson.isEmpty())
+                {
+                    Set<String> tableColumnNames = new HashSet<>();
+                    for (String dbColumnName : copyTableDbColumnName) {
+                        tableColumnNames.add(dbColumnName.toUpperCase());
+                    }
+
+                    Set<String> parsedColumnNames = new HashSet<>();
+                    String   columnErrorMessage = null;
+                    for (Object o : columnsJson) {
+                        String copyColumnName = o.toString().trim();
+                        if (!tableColumnNames.contains(copyColumnName.toUpperCase())) {
+                            // 例如: column "EVENT_TYPE" of relation "test_binary_copy7" does not exist
+                            columnErrorMessage = "column \"" + copyColumnName + "\" of relation \"" +
+                                    targetTableName + "\" does not exist";
+                            break;
+                        }
+                        if (!parsedColumnNames.add(copyColumnName.toUpperCase())) {
+                            // 例如: column "ID" specified more than once
+                            columnErrorMessage = "column \"" + copyColumnName + "\" specified more than once";
+                            break;
+                        }
+                    }
+
+                    if (columnErrorMessage != null)
+                    {
+                        ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                        errorResponse.setErrorResponse("SLACKER-0099", columnErrorMessage);
+                        errorResponse.setErrorSeverity("ERROR");
+                        errorResponse.process(ctx, request, out);
+
+                        // 发送并刷新返回消息
+                        PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+                        // 发送ReadyForQuery
+                        ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
+                        readyForQuery.process(ctx, request, out);
+
+                        // 发送并刷新返回消息
+                        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+
+                        return;
+                    }
+                }
+
                 // 将解析信息记录到Session会话中
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat = copyTableFormat;
+
+                // 防御：上一个 COPY 若没有正常收尾（客户端没发 CopyDone 就直接发了别的语句），
+                // 这里先丢弃它的未提交数据并回滚自己开的事务。否则遗留的 Appender 会泄漏，
+                // 且下面的 BEGIN 会在已有事务中再次开启事务而报错。
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).discardUncommittedCopy();
+
+                // 用服务端自己的显式事务包裹本次 COPY。
+                // 原因：DuckDBAppender 在事务之外 close() 会立刻提交，只要后续某一行出错，
+                // 已经 append 的行就成了"半截数据"（PG 语义下失败的 COPY 应当整体不生效）。
+                // 放进显式事务后失败可整体 ROLLBACK；注意 JDBC 的 setAutoCommit(false)+rollback()
+                // 对 appender 无效，必须走显式 BEGIN/COMMIT/ROLLBACK。
+                // 客户端已经处于事务块中时不另开事务：数据留在客户端事务里，由客户端自行提交/回滚。
+                if (!this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction) {
+                    try (Statement beginStatement = conn.createStatement()) {
+                        beginStatement.execute("BEGIN TRANSACTION");
+                    }
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyOwnTransaction = true;
+                }
+
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = conn.createAppender(targetSchemaName, targetTableName);
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.reset();
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos = copyTableDbColumnMapPos;
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnType = copyTableDbColumnType;
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnName = copyTableDbColumnName;
+                // 记录COPY数据中每行的字段数量(没有指定列的时候，就是目标表的列数量)
+                if (targetColumnMap.isEmpty()) {
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyColumnCount = copyTableDbColumnName.size();
+                }
+                else
+                {
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyColumnCount = columnsJson.size();
+                }
 
                 // 发送CopyInResponse
                 CopyInResponse copyInResponse = new CopyInResponse(this.dbInstance);
-                copyInResponse.copyColumnCount = (short) targetColumnMap.size();
+                copyInResponse.copyColumnCount = (short) this.dbInstance.getSession(getCurrentSessionId(ctx)).copyColumnCount;
                 copyInResponse.process(ctx, request, out);
 
                 // 发送并刷新返回消息
@@ -272,26 +328,13 @@ public class QueryRequest  extends PostgresRequest {
                 }
             }
             if (isResultSet) {
-                List<Field> fields = new ArrayList<>();
+                ResultSet rs = preparedStatement.getResultSet();
 
-                // 获取返回的结构信息
-                ResultSetMetaData resultSetMetaData = preparedStatement.getMetaData();
-                for (int i = 1; i <= resultSetMetaData.getColumnCount(); i++) {
-                    String columnTypeName = resultSetMetaData.getColumnTypeName(i);
-                    Field field = new Field();
-                    field.name = resultSetMetaData.getColumnName(i);
-                    field.objectIdOfTable = 0;
-                    field.attributeNumberOfColumn = 0;
-                    field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(columnTypeName);
-                    field.dataTypeSize = (short) 2147483647;
-                    field.dataTypeModifier = -1;
-                    // 一律文本返回
-                    field.formatCode = 0;
-                    fields.add(field);
-                }
+                // 列级元数据只解析一次；simple query 路径一律文本返回（binaryAllowed = false）
+                RowEncoder encoder = new RowEncoder(rs.getMetaData(), false, this.dbInstance.logger);
 
                 RowDescription rowDescription = new RowDescription(this.dbInstance);
-                rowDescription.setFields(fields);
+                rowDescription.setFields(encoder.describe());
                 rowDescription.process(ctx, request, out);
                 rowDescription.setFields(null);
 
@@ -299,20 +342,25 @@ public class QueryRequest  extends PostgresRequest {
                 PostgresMessage.writeAndFlush(ctx, RowDescription.class.getSimpleName(), out, this.dbInstance.logger);
 
                 DataRow dataRow = new DataRow(this.dbInstance);
-                ResultSet rs = preparedStatement.getResultSet();
-                ResultSetMetaData rsmd = rs.getMetaData();
+                // 累计尚未刷出的数据行字节数，达到阈值后再 flush
+                int pendingBytes = 0;
                 while (rs.next()) {
                     // 绑定列的信息
-                    dataRow.setColumns(processRow(rs, rsmd));
+                    dataRow.setColumns(encoder.encode(rs));
                     dataRow.process(ctx, request, out);
                     dataRow.setColumns(null);
 
                     nAffectedRows ++;
-                    // 批量写入数据行（仅 write，不 flush），减少 TCP 系统调用
-                    PostgresMessage.write(ctx, DataRow.class.getSimpleName(), out, this.dbInstance.logger);
+                    // 批量写入数据行（仅 write，不 flush），累计达到阈值后再一次性刷出，
+                    // 避免整个结果集都堆在 Netty 出站缓冲区里
+                    pendingBytes += PostgresMessage.write(ctx, DataRow.class.getSimpleName(), out, this.dbInstance.logger);
+                    if (pendingBytes >= PostgresMessage.FLUSH_THRESHOLD_BYTES) {
+                        ctx.flush();
+                        pendingBytes = 0;
+                    }
                 }
                 rs.close();
-                // 批量刷新所有缓存的数据行，一次性发送到客户端
+                // 刷出剩余尚未发送的数据行
                 ctx.flush();
             }
             else

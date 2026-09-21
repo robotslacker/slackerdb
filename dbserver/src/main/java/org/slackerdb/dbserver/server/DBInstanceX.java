@@ -51,7 +51,7 @@ public class DBInstanceX {
     private final PluginService pluginService;
     private final McpServer mcpServer;
     public BoundedQueue<APIHistoryRecord> apiHistoryList
-            = new BoundedQueue<>(10*1000);
+            = new BoundedQueue<>(DBInstance.HISTORY_QUEUE_CAPACITY);
 
     private String getClientIp(Context ctx) {
         String xff = ctx.header("X-Forwarded-For");
@@ -63,6 +63,9 @@ public class DBInstanceX {
     // SQL历史记录线程
     class DBInstanceXAPIHistoryThread extends Thread
     {
+        // 上一次告警时记录的丢弃数量，用于避免重复刷屏
+        private long lastReportedDropped = 0;
+
         @Override
         public void run()
         {
@@ -85,82 +88,150 @@ public class DBInstanceX {
                             ErrorMsg = ?
                     WHERE ID = ?
                     """;
-            PreparedStatement historyInsertStmt;
-            PreparedStatement historyUpdateStmt;
-            try {
-                Connection apiHistoryConn = ((DuckDBConnection) backendSysConnection).duplicate();
-                apiHistoryConn.setAutoCommit(false);
+
+            // 外层循环：任何一次写入异常都不允许让消费线程退出。
+            // 否则队列永远不会被排空，生产者会持续丢弃记录
+            // （改造前 offer 是阻塞的，会直接把 Jetty/业务线程挂住）。
+            while (!isInterrupted()) {
+                Connection apiHistoryConn = null;
+                PreparedStatement historyInsertStmt = null;
+                PreparedStatement historyUpdateStmt = null;
                 int nProcessedRows = 0;
-                historyInsertStmt = apiHistoryConn.prepareStatement(historyInsertSQL);
-                historyUpdateStmt = apiHistoryConn.prepareStatement(historyUpdateSQL);
-                while (!isInterrupted()) {
-                    while (!apiHistoryList.isEmpty() && !isInterrupted()) {
-                        APIHistoryRecord apiHistoryRecord = apiHistoryList.poll();
-                        if (apiHistoryRecord.type().equalsIgnoreCase("INSERT")) {
-                            historyInsertStmt.setLong(1, apiHistoryRecord.ID());
-                            historyInsertStmt.setLong(2, apiHistoryRecord.ServerID());
-                            historyInsertStmt.setString(3, apiHistoryRecord.ClientIP());
-                            historyInsertStmt.setString(4, apiHistoryRecord.Method());
-                            historyInsertStmt.setString(5, apiHistoryRecord.Path());
-                            historyInsertStmt.setString(6, apiHistoryRecord.RequestHeader());
-                            historyInsertStmt.setString(7, apiHistoryRecord.RequestBody());
-                            if (apiHistoryRecord.StartTime() != null) {
-                                historyInsertStmt.setTimestamp(8, Timestamp.valueOf(apiHistoryRecord.StartTime()));
+
+                try {
+                    apiHistoryConn = ((DuckDBConnection) backendSysConnection).duplicate();
+                    apiHistoryConn.setAutoCommit(false);
+                    historyInsertStmt = apiHistoryConn.prepareStatement(historyInsertSQL);
+                    historyUpdateStmt = apiHistoryConn.prepareStatement(historyUpdateSQL);
+
+                    while (!isInterrupted()) {
+                        while (!apiHistoryList.isEmpty() && !isInterrupted()) {
+                            APIHistoryRecord apiHistoryRecord = apiHistoryList.poll();
+                            if (apiHistoryRecord == null) {
+                                // 极小概率下被其他消费者取走，直接跳过，避免空指针
+                                continue;
                             }
-                            else
-                            {
-                                historyInsertStmt.setTimestamp(8, null);
+                            if (apiHistoryRecord.type().equalsIgnoreCase("INSERT")) {
+                                historyInsertStmt.setLong(1, apiHistoryRecord.ID());
+                                historyInsertStmt.setLong(2, apiHistoryRecord.ServerID());
+                                historyInsertStmt.setString(3, apiHistoryRecord.ClientIP());
+                                historyInsertStmt.setString(4, apiHistoryRecord.Method());
+                                historyInsertStmt.setString(5, apiHistoryRecord.Path());
+                                historyInsertStmt.setString(6, apiHistoryRecord.RequestHeader());
+                                historyInsertStmt.setString(7, apiHistoryRecord.RequestBody());
+                                if (apiHistoryRecord.StartTime() != null) {
+                                    historyInsertStmt.setTimestamp(8, Timestamp.valueOf(apiHistoryRecord.StartTime()));
+                                }
+                                else
+                                {
+                                    historyInsertStmt.setTimestamp(8, null);
+                                }
+                                if (apiHistoryRecord.EndTime() != null) {
+                                    historyInsertStmt.setTimestamp(9, Timestamp.valueOf(apiHistoryRecord.EndTime()));
+                                }
+                                else
+                                {
+                                    historyInsertStmt.setTimestamp(9, null);
+                                }
+                                historyInsertStmt.setLong(10, apiHistoryRecord.AffectedRows());
+                                historyInsertStmt.setBoolean(11, apiHistoryRecord.Cached());
+                                historyInsertStmt.setInt(12, apiHistoryRecord.RetCode());
+                                historyInsertStmt.setString(13, apiHistoryRecord.ErrorMsg());
+                                historyInsertStmt.execute();
+                                nProcessedRows = nProcessedRows + 1;
+                            } else if (apiHistoryRecord.type().equalsIgnoreCase("UPDATE")) {
+                                if (apiHistoryRecord.EndTime() != null) {
+                                    historyUpdateStmt.setTimestamp(1, Timestamp.valueOf(apiHistoryRecord.EndTime()));
+                                }
+                                else
+                                {
+                                    historyUpdateStmt.setTimestamp(1, null);
+                                }
+                                historyUpdateStmt.setInt(2, apiHistoryRecord.RetCode());
+                                historyUpdateStmt.setLong(3, apiHistoryRecord.AffectedRows());
+                                historyUpdateStmt.setBoolean(4, apiHistoryRecord.Cached());
+                                historyUpdateStmt.setString(5, apiHistoryRecord.ErrorMsg());
+                                historyUpdateStmt.setLong(6, apiHistoryRecord.ID());
+                                historyUpdateStmt.execute();
+                                nProcessedRows = nProcessedRows + 1;
                             }
-                            if (apiHistoryRecord.EndTime() != null) {
-                                historyInsertStmt.setTimestamp(9, Timestamp.valueOf(apiHistoryRecord.EndTime()));
+                            if (nProcessedRows % 1000 == 0) {
+                                apiHistoryConn.commit();
+                                nProcessedRows = 0;
                             }
-                            else
-                            {
-                                historyInsertStmt.setTimestamp(9, null);
-                            }
-                            historyInsertStmt.setLong(10, apiHistoryRecord.AffectedRows());
-                            historyInsertStmt.setBoolean(11, apiHistoryRecord.Cached());
-                            historyInsertStmt.setInt(12, apiHistoryRecord.RetCode());
-                            historyInsertStmt.setString(13, apiHistoryRecord.ErrorMsg());
-                            historyInsertStmt.execute();
-                            nProcessedRows = nProcessedRows + 1;
-                        } else if (apiHistoryRecord.type().equalsIgnoreCase("UPDATE")) {
-                            if (apiHistoryRecord.EndTime() != null) {
-                                historyUpdateStmt.setTimestamp(1, Timestamp.valueOf(apiHistoryRecord.EndTime()));
-                            }
-                            else
-                            {
-                                historyUpdateStmt.setTimestamp(1, null);
-                            }
-                            historyUpdateStmt.setInt(2, apiHistoryRecord.RetCode());
-                            historyUpdateStmt.setLong(3, apiHistoryRecord.AffectedRows());
-                            historyUpdateStmt.setBoolean(4, apiHistoryRecord.Cached());
-                            historyUpdateStmt.setString(5, apiHistoryRecord.ErrorMsg());
-                            historyUpdateStmt.setLong(6, apiHistoryRecord.ID());
-                            historyUpdateStmt.execute();
-                            nProcessedRows = nProcessedRows + 1;
                         }
-                        if (nProcessedRows % 1000 == 0) {
+                        if (nProcessedRows != 0)
+                        {
                             apiHistoryConn.commit();
                             nProcessedRows = 0;
                         }
-                    }
-                    if (nProcessedRows != 0)
-                    {
-                        apiHistoryConn.commit();
-                        nProcessedRows = 0;
-                    }
-                    try {
-                        TimeUnit.SECONDS.sleep(1);
-                    }
-                    catch (InterruptedException ignored) {
-                        return;
+                        reportDroppedRecords();
+                        try {
+                            TimeUnit.SECONDS.sleep(1);
+                        }
+                        catch (InterruptedException ignored) {
+                            return;
+                        }
                     }
                 }
+                catch (SQLException | RuntimeException historyException)
+                {
+                    // 单次失败不能让消费线程退出，否则队列永远不会被排空
+                    logger.error("[APIHistory] Save api history failed. Will reconnect and retry.", historyException);
+                    rollbackQuietly(apiHistoryConn);
+                    nProcessedRows = 0;
+                }
+                finally {
+                    closeQuietly(historyInsertStmt);
+                    closeQuietly(historyUpdateStmt);
+                    closeQuietly(apiHistoryConn);
+                }
+
+                if (isInterrupted()) {
+                    return;
+                }
+
+                // 退避，避免后端持续失败时空转刷日志
+                try {
+                    TimeUnit.SECONDS.sleep(5);
+                }
+                catch (InterruptedException ignored) {
+                    return;
+                }
             }
-            catch (SQLException sqlException)
-            {
-                logger.error("[APIHistory] Save api history failed.", sqlException);
+        }
+
+        /**
+         * 队列满导致历史记录被丢弃时给出可观测的告警（每个排空周期最多一条，避免刷屏）。
+         */
+        private void reportDroppedRecords() {
+            long dropped = apiHistoryList.getDroppedTotal();
+            if (dropped > lastReportedDropped) {
+                logger.warn("[APIHistory] History queue is full. {} record(s) dropped so far (queue capacity = {}).",
+                        dropped, DBInstance.HISTORY_QUEUE_CAPACITY);
+                lastReportedDropped = dropped;
+            }
+        }
+
+        private void rollbackQuietly(Connection connection) {
+            if (connection == null) {
+                return;
+            }
+            try {
+                connection.rollback();
+            }
+            catch (SQLException ignored) {
+            }
+        }
+
+        private void closeQuietly(AutoCloseable closeable) {
+            if (closeable == null) {
+                return;
+            }
+            try {
+                closeable.close();
+            }
+            catch (Exception ignored) {
             }
         }
     }
@@ -242,6 +313,8 @@ public class DBInstanceX {
             // 开启后台异步线程，用来同步SQL历史
             if (dbInstanceXAPIHistoryThread == null) {
                 dbInstanceXAPIHistoryThread = new DBInstanceXAPIHistoryThread();
+                // 守护线程：消费端即使卡住也不能阻止 JVM 退出（必须在 start() 之前设置）
+                dbInstanceXAPIHistoryThread.setDaemon(true);
                 dbInstanceXAPIHistoryThread.start();
             }
         }
@@ -674,6 +747,13 @@ public class DBInstanceX {
             usage.put("activeSessions", this.dbInstance.activeSessions);
             usage.put("activeChannels", this.dbInstance.getRegisteredConnectionsCount());
             usage.put("queuedSqlHistory", this.dbInstance.sqlHistoryList.size());
+            // 历史落库的可观测性：dropped* 持续增长说明消费端跟不上（或已失败），
+            // *_HistoryThreadAlive 为 false 说明历史已完全停止落库
+            usage.put("droppedSqlHistory", this.dbInstance.sqlHistoryList.getDroppedTotal());
+            usage.put("droppedApiHistory", this.apiHistoryList.getDroppedTotal());
+            usage.put("sqlHistoryThreadAlive", this.dbInstance.isSqlHistoryThreadAlive());
+            usage.put("apiHistoryThreadAlive",
+                    this.dbInstanceXAPIHistoryThread != null && this.dbInstanceXAPIHistoryThread.isAlive());
 
             OperatingSystemMXBean osBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
             usage.put("cpuLoad", String.format("%.2f%%", osBean.getProcessCpuLoad() * 100));
@@ -722,7 +802,11 @@ public class DBInstanceX {
             // 会话列表
             JSONArray sessions = new JSONArray();
             for (Integer sessionId : this.dbInstance.dbSessions.keySet()) {
+                // 会话可能在遍历过程中被关闭并从 dbSessions 摘除（keySet 是弱一致视图），必须判空
                 org.slackerdb.dbserver.server.DBSession dbSession = this.dbInstance.getSession(sessionId);
+                if (dbSession == null) {
+                    continue;
+                }
                 JSONObject session = new JSONObject();
                 session.put("id", sessionId);
                 session.put("connectedTime", dbSession.connectedTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
@@ -765,10 +849,11 @@ public class DBInstanceX {
         // 关闭服务器
         this.managementApp.stop();
 
-        // 关闭API历史记录
-        if (this.dbInstanceXAPIHistoryThread != null && this.dbInstanceXAPIHistoryThread.isAlive())
+        // 关闭API历史记录：中断并等待消费线程退出，确保收尾提交有机会完成
+        if (this.dbInstanceXAPIHistoryThread != null)
         {
-            this.dbInstanceXAPIHistoryThread.interrupt();
+            this.dbInstance.interruptAndJoin(this.dbInstanceXAPIHistoryThread, 10, "Session-APIHistory");
+            this.dbInstanceXAPIHistoryThread = null;
         }
 
         // 关闭API服务

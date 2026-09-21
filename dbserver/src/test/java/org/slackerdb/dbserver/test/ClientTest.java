@@ -111,7 +111,10 @@ public class ClientTest {
         }
         rs.close();
         Collections.sort(catalogsInfo);
-        assert catalogsInfo.toString().equals("[TABLE_CAT: memory, TABLE_CAT: newdb1, TABLE_CAT: newdb2, TABLE_CAT: system, TABLE_CAT: temp]");
+        // 驱动通过 information_schema.schemata 的 catalog_name 枚举目录，因此除了 DuckDB 自身的
+        // system/temp 之外，还包括连接库 mem 以及 ATTACH 上去的 newdb1/newdb2。
+        assert catalogsInfo.toString().equals("[TABLE_CAT: mem, TABLE_CAT: memory, TABLE_CAT: newdb1, TABLE_CAT: newdb2, TABLE_CAT: system, TABLE_CAT: temp]")
+                : "getCatalogs 实际返回：" + catalogsInfo;
 
         // getSchemas
         List<String> schemasInfo = new ArrayList<>();
@@ -124,11 +127,16 @@ public class ClientTest {
         }
         rs.close();
         Collections.sort(schemasInfo);
-        assert schemasInfo.toString().equals("[TABLE_CATALOG: memory, TABLE_CATALOG: memory, TABLE_CATALOG: memory, TABLE_CATALOG: memory, TABLE_CATALOG: memory, TABLE_CATALOG: newdb1, TABLE_CATALOG: newdb1, TABLE_CATALOG: newdb1, TABLE_CATALOG: newdb2, TABLE_CATALOG: newdb2, TABLE_CATALOG: newdb2, TABLE_CATALOG: system, TABLE_CATALOG: system, TABLE_CATALOG: system, TABLE_CATALOG: temp, TABLE_SCHEM: duck_catalog, TABLE_SCHEM: information_schema, TABLE_SCHEM: main, TABLE_SCHEM: main, TABLE_SCHEM: main, TABLE_SCHEM: main, TABLE_SCHEM: main, TABLE_SCHEM: pg_catalog, TABLE_SCHEM: schema1, TABLE_SCHEM: schema2, TABLE_SCHEM: schema3, TABLE_SCHEM: schema4, TABLE_SCHEM: schema5, TABLE_SCHEM: schema6, TABLE_SCHEM: sysaux]");
+        // 每个 catalog 下的 main schema 都会出现一次，另外还有 DuckDB 的 duck_catalog/pg_catalog/
+        // information_schema，以及用例创建的 schema1~schema6。
+        assert schemasInfo.toString().equals("[TABLE_CATALOG: mem, TABLE_CATALOG: memory, TABLE_CATALOG: memory, TABLE_CATALOG: memory, TABLE_CATALOG: memory, TABLE_CATALOG: memory, TABLE_CATALOG: newdb1, TABLE_CATALOG: newdb1, TABLE_CATALOG: newdb1, TABLE_CATALOG: newdb2, TABLE_CATALOG: newdb2, TABLE_CATALOG: newdb2, TABLE_CATALOG: system, TABLE_CATALOG: system, TABLE_CATALOG: system, TABLE_CATALOG: temp, TABLE_SCHEM: duck_catalog, TABLE_SCHEM: information_schema, TABLE_SCHEM: main, TABLE_SCHEM: main, TABLE_SCHEM: main, TABLE_SCHEM: main, TABLE_SCHEM: main, TABLE_SCHEM: main, TABLE_SCHEM: pg_catalog, TABLE_SCHEM: schema1, TABLE_SCHEM: schema2, TABLE_SCHEM: schema3, TABLE_SCHEM: schema4, TABLE_SCHEM: schema5, TABLE_SCHEM: schema6, TABLE_SCHEM: sysaux]")
+                : "getSchemas 实际返回：" + schemasInfo;
 
         // getTables
+        // 注意：驱动把 DuckDB 的表类型映射为 TABLE/VIEW/SYSTEM TABLE/LOCAL TEMPORARY，
+        // 并不认识 JDBC 的 "BASE TABLE"，传入该过滤条件会得到空集合，因此这里不限制类型。
         pgConn1.createStatement().execute("USE memory.schema5");
-        rs = pgConn1.getMetaData().getTables("memory", "%", "%", new String[]{"BASE TABLE"});
+        rs = pgConn1.getMetaData().getTables("memory", "%", "%", null);
         JSONArray tableDefines = new JSONArray();
         while (rs.next()) {
             if (rs.getString("TABLE_SCHEM").equalsIgnoreCase("duck_catalog")) {
@@ -142,8 +150,8 @@ public class ClientTest {
         }
         rs.close();
         assert tableDefines.toJSONString(JSONWriter.Feature.MapSortField).trim().equals("""
-                [{"TABLE_CAT":"memory","TABLE_SCHEM":"schema5","TABLE_NAME":"tab1","TABLE_TYPE":"BASE TABLE"},{"TABLE_CAT":"memory","TABLE_SCHEM":"sysaux","TABLE_NAME":"SQL_HISTORY","TABLE_TYPE":"BASE TABLE"}]
-                """.trim());
+                [{"TABLE_CAT":"memory","TABLE_SCHEM":"schema5","TABLE_NAME":"tab1","TABLE_TYPE":"TABLE"},{"TABLE_CAT":"memory","TABLE_SCHEM":"sysaux","TABLE_NAME":"SQL_HISTORY","TABLE_TYPE":"TABLE"}]
+                """.trim()) : "getTables 实际返回：" + tableDefines;
 
         // getColumns
         JSONArray columnDefines = new JSONArray();

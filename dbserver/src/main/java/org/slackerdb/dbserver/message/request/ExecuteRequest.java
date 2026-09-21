@@ -5,6 +5,7 @@ import org.slackerdb.dbserver.entity.*;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.*;
+import org.slackerdb.dbserver.sql.RowEncoder;
 import org.slackerdb.plsql.ParseSQLException;
 import org.slackerdb.plsql.PlSqlVisitor;
 import org.slackerdb.dbserver.server.DBInstance;
@@ -14,13 +15,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.*;
-import java.text.SimpleDateFormat;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -54,105 +49,6 @@ public class ExecuteRequest extends PostgresRequest {
         maximumRowsReturned = Utils.bytesToInt32(part);
 
         super.decode(data);
-    }
-
-    private List<Column> processRow(ResultSet rs, ResultSetMetaData rsmd) throws SQLException
-    {
-        List<Column> columns = new ArrayList<>();
-        for (int i = 1; i <= rsmd.getColumnCount(); i++) {
-            Column column = new Column();
-            if (rs.getObject(i) == null) {
-                column.columnLength = -1;
-            } else
-            {
-                String columnTypeName = rsmd.getColumnTypeName(i);
-                // 这里的写入结果要对应RowDescription中的类型, field.formatCode
-                switch (columnTypeName.toUpperCase()) {
-                    case "TINYINT", "SMALLINT" -> {
-                        column.columnLength = 2;
-                        column.columnValue = Utils.int16ToBytes(rs.getShort(i));
-                    }
-                    case "INTEGER" -> {
-                        column.columnLength = 4;
-                        column.columnValue = Utils.int32ToBytes(rs.getInt(i));
-                    }
-                    case "BIGINT" -> {
-                        column.columnLength = 8;
-                        column.columnValue = Utils.int64ToBytes(rs.getLong(i));
-                    }
-                    case "VARCHAR", "INTERVAL" -> {
-                        byte[] columnBytes = rs.getString(i).getBytes(StandardCharsets.UTF_8);
-                        column.columnLength = columnBytes.length;
-                        column.columnValue = columnBytes;
-                    }
-                    case "DATE" -> {
-                        column.columnLength = 4;
-                        long timeInterval =
-                                ChronoUnit.DAYS.between(LocalDate.of(2000, 1, 1), rs.getDate(i).toLocalDate());
-                        column.columnValue = Utils.int32ToBytes((int) timeInterval);
-                    }
-                    case "BOOLEAN" -> {
-                        column.columnLength = 1;
-                        if (rs.getBoolean(i)) {
-                            column.columnValue = new byte[]{(byte) 0x01};
-                        } else {
-                            column.columnValue = new byte[]{(byte) 0x00};
-                        }
-                    }
-                    case "FLOAT" -> {
-                        column.columnLength = 4;
-                        column.columnValue = Utils.int32ToBytes(Float.floatToIntBits(rs.getFloat(i)));
-                    }
-                    case "DOUBLE" -> {
-                        column.columnLength = 8;
-                        column.columnValue = Utils.int64ToBytes(Double.doubleToLongBits(rs.getDouble(i)));
-                    }
-                    case "TIMESTAMP" -> {
-                        column.columnLength = 23;
-                        column.columnValue =
-                                new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
-                                        .format(rs.getTimestamp(i)).getBytes(StandardCharsets.UTF_8);
-                    }
-                    case "TIME" -> {
-                        column.columnLength = 8;
-                        column.columnValue = rs.getTime(i).toLocalTime().toString().getBytes(StandardCharsets.US_ASCII);
-                    }
-                    case "TIMESTAMP WITH TIME ZONE" -> {
-                        ZonedDateTime zonedDateTime = rs.getTimestamp(i).toInstant().atZone(ZoneId.systemDefault());
-                        String formattedTime = zonedDateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSx"));
-                        column.columnLength = formattedTime.length();
-                        column.columnValue = formattedTime.getBytes(StandardCharsets.US_ASCII);
-                    }
-                    case "BIT" -> {
-                        column.columnLength = rs.getString(i).length();
-                        column.columnValue = rs.getString(i).getBytes();
-                    }
-                    case "UINTEGER", "HUGEINT", "UBIGINT" -> {
-                        byte[] columnBytes = rs.getString(i).getBytes(StandardCharsets.US_ASCII);
-                        column.columnLength = columnBytes.length;
-                        column.columnValue = columnBytes;
-                    }
-                    default -> {
-                        if (columnTypeName.toUpperCase().startsWith("DECIMAL")) {
-                            // DECIMAL 应该是二进制格式，但是目前分析二进制格式的结果总是不对
-                            // 所有这里用字符串进行返回
-                            String bigDecimal = rs.getBigDecimal(i).toPlainString();
-
-                            // 获取整数部分和小数部分
-                            column.columnLength = bigDecimal.length();
-                            column.columnValue = bigDecimal.getBytes(StandardCharsets.US_ASCII);
-                        } else {
-                            // 不认识的字段类型, 告警后按照字符串来处理
-                            this.dbInstance.logger.warn("Not implemented column type: {}", columnTypeName);
-                            column.columnValue = rs.getString(i).getBytes(StandardCharsets.UTF_8);
-                            column.columnLength = column.columnValue.length;
-                        }
-                    }
-                }
-            }
-            columns.add(column);
-        }
-        return columns;
     }
 
     public long insertSqlHistory(ChannelHandlerContext ctx)
@@ -313,21 +209,31 @@ public class ExecuteRequest extends PostgresRequest {
 
                 ResultSet rs = parsedStatement.resultSet;
                 DataRow dataRow = new DataRow(this.dbInstance);
-                ResultSetMetaData rsmd = rs.getMetaData();
+                // Portal 续取：RowDescription 之前已经发过，这里只需要一个行编码器。
+                // 列级元数据只解析一次，行循环里不再重复做类型判断与格式化器构造。
+                RowEncoder encoder = new RowEncoder(rs.getMetaData(), true, this.dbInstance.logger);
 
                 int rowsReturned = 0;
+                // 累计尚未刷出的数据行字节数，达到阈值后再 flush
+                int pendingBytes = 0;
                 while (rs.next()) {
                     // 绑定列的信息
-                    dataRow.setColumns(processRow(rs, rsmd));
+                    dataRow.setColumns(encoder.encode(rs));
                     dataRow.process(ctx, request, out);
                     dataRow.setColumns(null);
 
-                    // 发送并刷新返回消息
-                    PostgresMessage.writeAndFlush(ctx, DataRow.class.getSimpleName(), out, this.dbInstance.logger);
+                    // 批量写入数据行（仅 write，不 flush），累计达到阈值后再一次性刷出。
+                    // 既避免逐行 flush 带来的每行一次 TCP 系统调用，也避免整个结果集堆在出站缓冲区。
+                    pendingBytes += PostgresMessage.write(ctx, DataRow.class.getSimpleName(), out, this.dbInstance.logger);
+                    if (pendingBytes >= PostgresMessage.FLUSH_THRESHOLD_BYTES) {
+                        ctx.flush();
+                        pendingBytes = 0;
+                    }
 
                     rowsReturned = rowsReturned + 1;
                     if (maximumRowsReturned != 0 && rowsReturned >= maximumRowsReturned) {
                         // 如果要求分批返回，则不再继续，分批返回
+                        // writeAndFlush 会把上面尚未刷出的数据行一并送出
                         PortalSuspended portalSuspended = new PortalSuspended(this.dbInstance);
                         portalSuspended.process(ctx, request, out);
                         PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out, this.dbInstance.logger);
@@ -341,7 +247,8 @@ public class ExecuteRequest extends PostgresRequest {
                         break tryBlock;
                     }
                 }
-                // 所有的记录查询完毕
+                // 所有记录写入完毕，刷出剩余尚未发送的数据行
+                ctx.flush();
                 rs.close();
                 nRowsAffected = parsedStatement.nRowsAffected + rowsReturned;
             }
@@ -372,42 +279,21 @@ public class ExecuteRequest extends PostgresRequest {
                     // 处理有结果集的情况
                     DataRow dataRow = new DataRow(this.dbInstance);
 
+                    ResultSet rs = parsedStatement.preparedStatement.getResultSet();
+                    parsedStatement.resultSet = rs;
+
+                    // 列级元数据只解析一次：类型码、formatCode、RowDescription 字段都由它统一产出，
+                    // 行循环里不再做 getColumnTypeName / toUpperCase / 格式化器构造等重复工作。
+                    ResultSetMetaData rsmd = rs.getMetaData();
+                    RowEncoder encoder = new RowEncoder(rsmd, true, this.dbInstance.logger);
+
                     // 之前发送过describeRequest，需要返回RowDescription
                     if (describeRequestExist) {
                         // 每个describeRequest， 对应一个返回
                         this.dbInstance.getSession(getCurrentSessionId(ctx)).hasDescribeRequest = false;
 
-                        List<Field> fields = new ArrayList<>();
-
-                        // 获取返回的结构信息
-                        ResultSetMetaData resultSetMetaData = parsedStatement.preparedStatement.getMetaData();
-                        for (int i = 1; i <= resultSetMetaData.getColumnCount(); i++) {
-                            String columnTypeName = resultSetMetaData.getColumnTypeName(i);
-                            Field field = new Field();
-                            field.name = resultSetMetaData.getColumnName(i);
-                            field.objectIdOfTable = 0;
-                            field.attributeNumberOfColumn = 0;
-                            field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(columnTypeName);
-
-                            if (field.dataTypeId == -1 )
-                            {
-                                this.dbInstance.logger.error("executeSQL: {}" , executeSQL);
-                            }
-                            field.dataTypeSize = (short) 2147483647;
-                            field.dataTypeModifier = -1;
-                            switch (columnTypeName) {
-                                case "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "DATE", "BOOLEAN", "FLOAT", "DOUBLE" ->
-                                    // 这些数据类型都是二进制类型返回
-                                    field.formatCode = 1;
-                                default ->
-                                    // 不认识的类型一律文本返回
-                                    field.formatCode = 0;
-                            }
-                            fields.add(field);
-                        }
-
                         RowDescription rowDescription = new RowDescription(this.dbInstance);
-                        rowDescription.setFields(fields);
+                        rowDescription.setFields(encoder.describe());
                         rowDescription.process(ctx, request, out);
                         rowDescription.setFields(null);
 
@@ -415,22 +301,26 @@ public class ExecuteRequest extends PostgresRequest {
                         PostgresMessage.writeAndFlush(ctx, RowDescription.class.getSimpleName(), out, this.dbInstance.logger);
                     }
 
-                    ResultSet rs = parsedStatement.preparedStatement.getResultSet();
-                    parsedStatement.resultSet = rs;
-
-                    ResultSetMetaData rsmd = rs.getMetaData();
+                    // 累计尚未刷出的数据行字节数，达到阈值后再 flush
+                    int pendingBytes = 0;
                     while (rs.next()) {
                         // 绑定列的信息
-                        dataRow.setColumns(processRow(rs, rsmd));
+                        dataRow.setColumns(encoder.encode(rs));
                         dataRow.process(ctx, request, out);
                         dataRow.setColumns(null);
 
-                        // 发送并刷新返回消息
-                        PostgresMessage.writeAndFlush(ctx, DataRow.class.getSimpleName(), out, this.dbInstance.logger);
+                        // 批量写入数据行（仅 write，不 flush），累计达到阈值后再一次性刷出。
+                        // 既避免逐行 flush 带来的每行一次 TCP 系统调用，也避免整个结果集堆在出站缓冲区。
+                        pendingBytes += PostgresMessage.write(ctx, DataRow.class.getSimpleName(), out, this.dbInstance.logger);
+                        if (pendingBytes >= PostgresMessage.FLUSH_THRESHOLD_BYTES) {
+                            ctx.flush();
+                            pendingBytes = 0;
+                        }
 
                         rowsReturned = rowsReturned + 1;
                         if (maximumRowsReturned != 0 && rowsReturned >= maximumRowsReturned) {
                             // 如果要求分批返回，则不再继续，分批返回
+                            // writeAndFlush 会把上面尚未刷出的数据行一并送出
                             PortalSuspended portalSuspended = new PortalSuspended(this.dbInstance);
                             portalSuspended.process(ctx, request, out);
                             PostgresMessage.writeAndFlush(ctx, PortalSuspended.class.getSimpleName(), out, this.dbInstance.logger);
@@ -446,6 +336,8 @@ public class ExecuteRequest extends PostgresRequest {
                             break tryBlock;
                         }
                     }
+                    // 所有记录写入完毕，刷出剩余尚未发送的数据行
+                    ctx.flush();
                     rs.close();
                     nRowsAffected = parsedStatement.nRowsAffected + rowsReturned;
                 }

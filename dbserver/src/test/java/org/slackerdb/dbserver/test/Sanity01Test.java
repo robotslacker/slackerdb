@@ -29,6 +29,8 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
 import java.util.TimeZone;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class Sanity01Test {
     static int dbPort=4309;
@@ -832,6 +834,152 @@ public class Sanity01Test {
         assert nRows == expectedResult;
     }
 
+    // 客户端以0字节的COPY数据流执行COPY ... FROM STDIN时(驱动只发送CopyDone，不发送任何CopyData)，
+    // 服务端也必须关闭Appender并回应CommandComplete，否则驱动无法确认COPY结束(copyIn返回-1)。
+    @Test
+    void testEmptyCopy() throws SQLException, IOException {
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        pgConn1.createStatement().execute("create or replace table testEmptyCopy(id int, first_name varchar(20), last_name varchar(20))");
+
+        // 使用BaseConnection以便于进行COPY操作
+        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
+
+        // 执行COPY FROM STDIN操作(0字节数据流)
+        String copySql = "COPY testEmptyCopy FROM STDIN WITH (FORMAT csv)";
+        long nCopiedRows = copyManager.copyIn(copySql, new StringReader(""));
+
+        PreparedStatement pstmt = pgConn1.prepareStatement("select count(*) FROM testEmptyCopy");
+        ResultSet rs = pstmt.executeQuery();
+        rs.next();
+        int nRows = rs.getInt(1);
+        rs.close();
+        pstmt.close();
+        pgConn1.close();
+
+        assert nCopiedRows == 0;
+        assert nRows == 0;
+    }
+
+    // COPY语句中指定的列顺序与表定义的列顺序不一致时(包括完全逆序、部分列、乱序)，
+    // 数据必须按 COPY 语句中列的顺序被解释，并写入对应的目标列。
+    @Test
+    void testCopyReorderedColumnCsv() throws SQLException, IOException {
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
+
+        // 1) 完全逆序: COPY(score, first_name, id) vs 表(id, first_name, score)
+        pgConn1.createStatement().execute(
+                "create or replace table testCopyOrderCsv(id int, first_name varchar(20), score double)");
+        long n1 = copyManager.copyIn(
+                "COPY testCopyOrderCsv (score, first_name, id) FROM STDIN WITH (FORMAT csv)",
+                new StringReader("9.5,John,1\n"));
+        PreparedStatement ps1 = pgConn1.prepareStatement("select id, first_name, score from testCopyOrderCsv");
+        ResultSet rs1 = ps1.executeQuery();
+        boolean row1 = false;
+        while (rs1.next()) {
+            assert rs1.getInt("id") == 1;
+            assert rs1.getString("first_name").equals("John");
+            assert rs1.getDouble("score") == 9.5;
+            row1 = true;
+        }
+        rs1.close();
+        ps1.close();
+
+        // 2) 部分列 + 顺序不一致: 只指定 (first_name, id)，score 走默认值
+        pgConn1.createStatement().execute(
+                "create or replace table testCopyOrderCsv2(id int, first_name varchar(20), score double default 7.5)");
+        long n2 = copyManager.copyIn(
+                "COPY testCopyOrderCsv2 (first_name, id) FROM STDIN WITH (FORMAT csv)",
+                new StringReader("Ann,3\n"));
+        PreparedStatement ps2 = pgConn1.prepareStatement("select id, first_name, score from testCopyOrderCsv2");
+        ResultSet rs2 = ps2.executeQuery();
+        boolean row2 = false;
+        while (rs2.next()) {
+            assert rs2.getInt("id") == 3;
+            assert rs2.getString("first_name").equals("Ann");
+            assert rs2.getDouble("score") == 7.5;
+            row2 = true;
+        }
+        rs2.close();
+        ps2.close();
+        pgConn1.close();
+
+        assert n1 == 1;
+        assert n2 == 1;
+        assert row1;
+        assert row2;
+    }
+
+    /**
+     * 构造一段 PG BINARY COPY 数据: 19字节固定头 + 一行(1列 INTEGER) [+ 可选的行尾 -1 结束标志]。
+     */
+    private static byte[] buildBinaryCopyPayload(boolean withTrailer) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        // 11字节签名 + 4字节标志位 + 4字节头部扩展区长度
+        out.writeBytes(new byte[]{0x50, 0x47, 0x43, 0x4F, 0x50, 0x59, 0x0A, (byte) 0xFF, 0x0D, 0x0A, 0x00,
+                0, 0, 0, 0, 0, 0, 0, 0});
+        out.write(0); out.write(1);                             // 列数 = 1
+        out.write(0); out.write(0); out.write(0); out.write(4); // 列长度 = 4
+        out.write(0); out.write(0); out.write(0); out.write(1); // 值 = 1
+        if (withTrailer) {
+            out.write(0xFF); out.write(0xFF);                   // (short)-1
+        }
+        return out.toByteArray();
+    }
+
+    // BINARY COPY 数据流不完整时(缺少行尾的 -1 结束标志)，服务端必须回明确错误，
+    // 而不是让 BufferUnderflowException 逃逸到Netty(那样客户端会永久挂起且会话不可再用)。
+    @Test
+    void testBinaryCopyTruncatedStream() throws Exception {
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+        // 兜底: 万一回归(服务端不响应)，客户端在60秒后报错而不是把整个测试挂死
+        ExecutorService timeoutExecutor = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "copy-truncated-timeout");
+            t.setDaemon(true);
+            return t;
+        });
+        pgConn1.setNetworkTimeout(timeoutExecutor, 60000);
+
+        pgConn1.createStatement().execute("create or replace table test_truncated_copy(id integer)");
+
+        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
+        boolean errorCaught = false;
+        try (InputStream binaryStream = new ByteArrayInputStream(buildBinaryCopyPayload(false))) {
+            try {
+                copyManager.copyIn("COPY test_truncated_copy (id) FROM STDIN WITH (FORMAT BINARY)", binaryStream);
+            } catch (SQLException sqlException) {
+                errorCaught = true;
+                assert sqlException.getMessage().contains("invalid binary COPY data");
+                assert sqlException.getMessage().contains("truncated");
+            }
+        }
+
+        // 出错之后同一条连接必须仍然可用
+        PreparedStatement pstmt = pgConn1.prepareStatement("select count(*) from test_truncated_copy");
+        ResultSet rs = pstmt.executeQuery();
+        rs.next();
+        int nRows = rs.getInt(1);
+        rs.close();
+        pstmt.close();
+        pgConn1.close();
+        timeoutExecutor.shutdownNow();
+
+        assert errorCaught;
+        // 不完整的数据流不应该写入任何数据
+        assert nRows == 0;
+    }
+
     @Test
     void testSetTimeStamp() throws SQLException
     {
@@ -1329,7 +1477,7 @@ public class Sanity01Test {
             Object[] row =
                     new Object[]
                             {
-                                    "1", (long)i, "SEND", "DD", "DD", "DD"
+                                    "1", (long)i, "SEND", "DD", "DD"
                             };
             data.add(row);
         }
@@ -1354,7 +1502,8 @@ public class Sanity01Test {
 
         CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
         try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
-            copyManager.copyIn("COPY test_binary_copy6(CNT, ID, EVENT_TYPE, SRC_TABLE_UNIQUE_ID, START_TIME, TIME)  FROM STDIN WITH (FORMAT BINARY)", binaryStream);
+            // 只指定部分列，没有指定的列(create_time)使用默认值
+            copyManager.copyIn("COPY test_binary_copy6(CNT, ID, EVENT_TYPE, SRC_TABLE_UNIQUE_ID, TIME)  FROM STDIN WITH (FORMAT BINARY)", binaryStream);
         }
 
         try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT COUNT(*), SUM(ID) FROM test_binary_copy6")) {
@@ -1362,6 +1511,66 @@ public class Sanity01Test {
             assert rs.getInt(1) == 10000;
             assert rs.getInt(2) == 49995000;
         }
+        pgConn1.close();
+    }
+
+
+    @Test
+    void testBinaryCopy7() throws Exception
+    {
+        List<Object[]> data = new ArrayList<>();
+        for (int i=0; i<2;i++)
+        {
+            // 传输内容要超过65K
+            Object[] row =
+                    new Object[]
+                            {
+                                    "1", (long)i, "SEND", "DD", "DD", "DD"
+                            };
+            data.add(row);
+        }
+        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
+
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = """
+            CREATE OR REPLACE TABLE test_binary_copy7 (
+                id BIGINT,
+                create_time TIMESTAMP default CURRENT_TIMESTAMP,
+                CNT VARCHAR,
+                SRC_TABLE_UNIQUE_ID VARCHAR,
+                TIME VARCHAR
+            )
+            """;
+        pgConn1.createStatement().execute(sql);
+
+        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
+        boolean errorCaught = false;
+        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
+            try {
+                // test_binary_copy7中根本没有EVENT_TYPE字段，这里应该报错
+                copyManager.copyIn("COPY test_binary_copy7(CNT, ID, EVENT_TYPE, SRC_TABLE_UNIQUE_ID, START_TIME, TIME)  FROM STDIN WITH (FORMAT BINARY)", binaryStream);
+            }
+            catch (SQLException sqlException)
+            {
+                errorCaught = true;
+                assert sqlException.getMessage().toLowerCase().contains("event_type");
+                assert sqlException.getMessage().contains("does not exist");
+            }
+        }
+
+        // 确认找到了错误
+        assert errorCaught;
+
+        // 因为列不存在，所以整个Copy应该被拒绝，表中不应该有任何数据
+        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM test_binary_copy7")) {
+            rs.next();
+            assert rs.getInt(1) == 0;
+        }
+
         pgConn1.close();
     }
 
@@ -1467,7 +1676,6 @@ public class Sanity01Test {
         pgConn1.close();
     }
 
-
     @Test
     void testCurrentSchema() throws Exception {
         String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem?currentSchema=main";
@@ -1491,6 +1699,156 @@ public class Sanity01Test {
         }
         rs.close();
         stmt.close();
+        pgConn1.close();
+    }
+
+    @Test
+    void testTime() throws Exception {
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem?currentSchema=main";
+        Connection pgConn1 = DriverManager.getConnection(
+                connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        String sql = """
+                create or replace table testTime(id int, col1 time);
+                insert into testTime values(1, '02:14:34');
+            """;
+        Statement stmt = pgConn1.createStatement();
+        stmt.execute(sql);
+        stmt.close();
+        pgConn1.commit();
+        sql = "Select id, COL1 from testTime";
+        stmt = pgConn1.createStatement();
+        ResultSet rs = stmt.executeQuery(sql);
+        if (rs.next())
+        {
+            assert rs.getInt(1) == 1;
+            assert rs.getTime(2).toString().equalsIgnoreCase("02:14:34");
+        }
+        else
+        {
+            assert false;
+        }
+        rs.close();
+        stmt.close();
+        pgConn1.close();
+    }
+
+    /**
+     * 结果集批量刷出（H1）回归测试。
+     *
+     * <p>构造一个编码后远大于 {@code PostgresMessage.FLUSH_THRESHOLD_BYTES}(64KB) 的结果集，
+     * 使得数据行的发送过程必然跨越多次 flush。用于验证：</p>
+     * <ul>
+     *   <li>扩展协议路径（PreparedStatement）在一次 Execute 内多次 flush 时，行数与内容都完整正确；</li>
+     *   <li>简单查询路径（Statement，逐行 write + 阈值 flush）同样完整；</li>
+     *   <li>Portal 分批（setFetchSize）路径在 flush 与 PortalSuspended 混用时不丢行、不串行。</li>
+     * </ul>
+     */
+    @Test
+    void testLargeResultSetBatchedFlush() throws SQLException {
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        // 2000 行 x 约 60 字节 name，加上协议头，编码后总量约 150KB 以上，必然多次跨越 64KB 阈值
+        final int rowCount = 2000;
+        final String pad = "0123456789".repeat(6);
+        Statement stmt = pgConn1.createStatement();
+        stmt.execute("CREATE OR REPLACE TABLE testBatchedFlush (id INTEGER, name VARCHAR)");
+        stmt.close();
+
+        PreparedStatement insertStmt = pgConn1.prepareStatement(
+                "INSERT INTO testBatchedFlush (id, name) VALUES (?, ?)");
+        for (int i = 1; i <= rowCount; i++) {
+            insertStmt.setInt(1, i);
+            insertStmt.setString(2, i + "-" + pad);
+            insertStmt.addBatch();
+        }
+        insertStmt.executeBatch();
+        insertStmt.close();
+        pgConn1.commit();
+
+        // 1) 扩展协议：一次 Execute 返回全部行，期间会多次 flush
+        PreparedStatement pStmt = pgConn1.prepareStatement("SELECT id, name FROM testBatchedFlush ORDER BY id");
+        ResultSet rs = pStmt.executeQuery();
+        int seen = 0;
+        while (rs.next()) {
+            seen = seen + 1;
+            assert rs.getInt(1) == seen;
+            assert rs.getString(2).equals(seen + "-" + pad);
+        }
+        assert seen == rowCount;
+        rs.close();
+        pStmt.close();
+
+        // 2) 简单查询路径：逐行 write + 阈值 flush
+        stmt = pgConn1.createStatement();
+        rs = stmt.executeQuery("SELECT id, name FROM testBatchedFlush ORDER BY id");
+        seen = 0;
+        while (rs.next()) {
+            seen = seen + 1;
+            assert rs.getInt(1) == seen;
+            assert rs.getString(2).equals(seen + "-" + pad);
+        }
+        assert seen == rowCount;
+        rs.close();
+        stmt.close();
+
+        // 3) Portal 分批路径：每次只取 7 行，会在 flush 阈值与 PortalSuspended 之间交替
+        pStmt = pgConn1.prepareStatement("SELECT id, name FROM testBatchedFlush ORDER BY id");
+        pStmt.setFetchSize(7);
+        rs = pStmt.executeQuery();
+        seen = 0;
+        while (rs.next()) {
+            seen = seen + 1;
+            assert rs.getInt(1) == seen;
+            assert rs.getString(2).equals(seen + "-" + pad);
+        }
+        assert seen == rowCount;
+        rs.close();
+        pStmt.close();
+
+        stmt = pgConn1.createStatement();
+        stmt.execute("DROP TABLE testBatchedFlush");
+        stmt.close();
+        pgConn1.commit();
+        pgConn1.close();
+    }
+
+    /**
+     * 空结果集与单行结果集在批量刷出改造后仍应正常收尾（CommandComplete / ReadyForQuery 不丢）。
+     */
+    @Test
+    void testEmptyAndSingleRowResultSet() throws SQLException {
+        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
+        Connection pgConn1 = DriverManager.getConnection(connectURL, "", "");
+        pgConn1.setAutoCommit(false);
+
+        // 空结果集
+        PreparedStatement pStmt = pgConn1.prepareStatement("SELECT x FROM (SELECT 42 AS x) t WHERE x = 0");
+        ResultSet rs = pStmt.executeQuery();
+        assert !rs.next();
+        rs.close();
+        pStmt.close();
+
+        // 单行结果集
+        pStmt = pgConn1.prepareStatement("SELECT x FROM (SELECT 42 AS x) t");
+        rs = pStmt.executeQuery();
+        assert rs.next();
+        assert rs.getInt(1) == 42;
+        assert !rs.next();
+        rs.close();
+        pStmt.close();
+
+        // 空结果集之后连接仍然可用（验证 CommandComplete/ReadyForQuery 已正确刷出）
+        pStmt = pgConn1.prepareStatement("SELECT x FROM (SELECT 7 AS x) t");
+        rs = pStmt.executeQuery();
+        assert rs.next();
+        assert rs.getInt(1) == 7;
+        rs.close();
+        pStmt.close();
+
         pgConn1.close();
     }
 }

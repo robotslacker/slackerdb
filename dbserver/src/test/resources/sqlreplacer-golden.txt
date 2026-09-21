@@ -1,0 +1,153 @@
+SELECT 1	SELECT 1
+select 1	select 1
+SHOW transaction_read_only	SHOW transaction_read_only
+show transaction_read_only	show transaction_read_only
+BEGIN	BEGIN
+COMMIT	COMMIT
+SET extra_float_digits = 3	
+SET application_name = 'DBeaver'	
+set session characteristics as transaction read only	
+SET DateStyle = 'ISO, MDY'	
+SET IntervalStyle = 'postgres'	
+set search_path = "$user", public	set search_path = '$user,public'
+set search_path = public	set search_path = 'public'
+SELECT * FROM t /* comment */ WHERE a = 1	SELECT * FROM t  WHERE a = 1
+SELECT * FROM t -- trailing\nWHERE a = 1	SELECT * FROM t \nWHERE a = 1
+SELECT 'a;b' AS x; SELECT 2	SELECT 'a;b' AS x\nSELECT 2
+INSERT INTO orders (id, name) VALUES (1, 'a')	INSERT INTO orders (id, name) VALUES (1, 'a')
+UPDATE orders SET name = 'b' WHERE id = 1	UPDATE orders SET name = 'b' WHERE id = 1
+SELECT array_upper(a, 1) FROM t	SELECT array_length(a, 1) FROM t
+SELECT * FROM pg_catalog.pg_type	SELECT * FROM memory.duck_catalog.pg_type
+SELECT typinput='pg_catalog.array_in' FROM pg_catalog.pg_type	SELECT false FROM memory.duck_catalog.pg_type
+SELECT pg_catalog.pg_get_expr(x) FROM t	SELECT null FROM t
+SELECT count(*) FROM pg_catalog.pg_event_trigger	
+SELECT * FROM pg_catalog.pg_roles	SELECT * FROM memory.duck_catalog.pg_roles
+SELECT * FROM pg_catalog.pg_shdescription	SELECT * FROM memory.duck_catalog.pg_shdescription
+SELECT * FROM pg_catalog.pg_namespace	SELECT * FROM memory.duck_catalog.pg_namespace
+SELECT * FROM pg_catalog.pg_proc	SELECT * FROM memory.duck_catalog.pg_proc
+SELECT * FROM pg_catalog.pg_database	SELECT * FROM memory.duck_catalog.pg_database
+SELECT * FROM pg_catalog.pg_extension	SELECT * FROM memory.duck_catalog.pg_extension
+SELECT * FROM pg_catalog.pg_inherits	SELECT * FROM memory.duck_catalog.pg_inherits
+SELECT pg_catalog.pg_total_relation_size('t')	SELECT memory.duck_catalog.pg_total_relation_size('t')
+SELECT pg_catalog.pg_relation_size('t')	SELECT memory.duck_catalog.pg_relation_size('t')
+SELECT format_type(nullif(t.typbasetype, 0), t.typtypmod) FROM t	SELECT t.typname FROM t
+SELECT * FROM pg_stat_activity	SELECT * FROM pg_stat_activity
+SELECT * FROM information_schema.tables WHERE table_name = 'x'	SELECT * FROM information_schema.tables WHERE table_name = 'x'
+SELECT n.nspname, c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind = 'r'	SELECT n.nspname, c.relname FROM pg_catalog.pg_class c JOIN memory.duck_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind = 'r'
+SELECT a.attname, format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attnum > 0	SELECT a.attname, format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attnum > 0
+SELECT * FROM pg_catalog.pg_type WHERE typname = 'int4' ORDER BY oid	SELECT * FROM memory.duck_catalog.pg_type WHERE typname = 'int4' ORDER BY oid
+EXPLAIN SELECT 1	EXPLAIN SELECT 1
+SELECT 1; 	SELECT 1
+  	
+	
+/* only comment */	
+SELECT * FROM PG_CATALOG.PG_TYPE	SELECT * FROM memory.duck_catalog.pg_type
+select * from Pg_Catalog.Pg_Roles where 1 = 1	select * from memory.duck_catalog.pg_roles where 1 = 1
+SET EXTRA_FLOAT_DIGITS = 3	
+Show Transaction_Isolation	select 'read committed' as transaction_isolation
+SELECT ARRAY_UPPER(a, 1) FROM t	SELECT array_length(a, 1) FROM t
+SELECT * FROM pg_catalog.pg_type WHERE typname = 'INT4'	SELECT * FROM memory.duck_catalog.pg_type WHERE typname = 'INT4'
+SELECT 1; /* c */ SELECT * FROM pg_catalog.pg_roles; -- tail\nSELECT 2	SELECT 1\nSELECT * FROM memory.duck_catalog.pg_roles\nSELECT 2
+SET application_name='x'; SELECT * FROM pg_catalog.pg_proc	\nSELECT * FROM memory.duck_catalog.pg_proc
+ESCAPE '\\\\'	ESCAPE ''
+SELECT * FROM tbl_x WHERE col_y = 'ESCAPE '\\\\''	SELECT * FROM tbl_x WHERE col_y = 'ESCAPE '''
+SELECT * FROM tbl_x WHERE col_y LIKE 'ESCAPE '\\\\'%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'ESCAPE ''%' ORDER BY 1
+format_type(nullif(t.typbasetype, 0), t.typtypmod)	t.typname
+SELECT * FROM tbl_x WHERE col_y = 'format_type(nullif(t.typbasetype, 0), t.typtypmod)'	SELECT * FROM tbl_x WHERE col_y = 't.typname'
+SELECT * FROM tbl_x WHERE col_y LIKE 'format_type(nullif(t.typbasetype, 0), t.typtypmod)%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 't.typname%' ORDER BY 1
+pg_catalog.pg_roles	memory.duck_catalog.pg_roles
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_roles'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_roles'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_roles%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_roles%' ORDER BY 1
+pg_catalog.pg_shdescription	memory.duck_catalog.pg_shdescription
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_shdescription'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_shdescription'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_shdescription%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_shdescription%' ORDER BY 1
+pg_catalog.pg_namespace	memory.duck_catalog.pg_namespace
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_namespace'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_namespace'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_namespace%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_namespace%' ORDER BY 1
+pg_catalog.pg_proc	memory.duck_catalog.pg_proc
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_proc'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_proc'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_proc%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_proc%' ORDER BY 1
+pg_catalog.pg_type	memory.duck_catalog.pg_type
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_type'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_type'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_type%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_type%' ORDER BY 1
+array_upper	array_length
+SELECT * FROM tbl_x WHERE col_y = 'array_upper'	SELECT * FROM tbl_x WHERE col_y = 'array_length'
+SELECT * FROM tbl_x WHERE col_y LIKE 'array_upper%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'array_length%' ORDER BY 1
+typinput='pg_catalog.array_in'	false
+SELECT * FROM tbl_x WHERE col_y = 'typinput='pg_catalog.array_in''	SELECT * FROM tbl_x WHERE col_y = 'false'
+SELECT * FROM tbl_x WHERE col_y LIKE 'typinput='pg_catalog.array_in'%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'false%' ORDER BY 1
+pg_catalog.pg_database	memory.duck_catalog.pg_database
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_database'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_database'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_database%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_database%' ORDER BY 1
+pg_catalog.pg_extension	memory.duck_catalog.pg_extension
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_extension'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_extension'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_extension%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_extension%' ORDER BY 1
+pg_catalog.pg_total_relation_size	memory.duck_catalog.pg_total_relation_size
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_total_relation_size'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_total_relation_size'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_total_relation_size%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_total_relation_size%' ORDER BY 1
+pg_catalog.pg_relation_size	memory.duck_catalog.pg_relation_size
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_relation_size'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_relation_size'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_relation_size%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_relation_size%' ORDER BY 1
+pg_catalog.pg_extension	memory.duck_catalog.pg_extension
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_extension'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_extension'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_extension%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_extension%' ORDER BY 1
+pg_catalog.pg_inherits	memory.duck_catalog.pg_inherits
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_inherits'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_inherits'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_inherits%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_inherits%' ORDER BY 1
+set\\s+application_name.*	set\\s+application_name.*
+SELECT * FROM tbl_x WHERE col_y = 'set\\s+application_name.*'	SELECT * FROM tbl_x WHERE col_y = 'set\\s+application_name.*'
+SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+application_name.*%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+application_name.*%' ORDER BY 1
+set\\s+session\\s+character.*	set\\s+session\\s+character.*
+SELECT * FROM tbl_x WHERE col_y = 'set\\s+session\\s+character.*'	SELECT * FROM tbl_x WHERE col_y = 'set\\s+session\\s+character.*'
+SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+session\\s+character.*%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+session\\s+character.*%' ORDER BY 1
+set\\s+extra_float_digits.*	set\\s+extra_float_digits.*
+SELECT * FROM tbl_x WHERE col_y = 'set\\s+extra_float_digits.*'	SELECT * FROM tbl_x WHERE col_y = 'set\\s+extra_float_digits.*'
+SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+extra_float_digits.*%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+extra_float_digits.*%' ORDER BY 1
+set\\s+DateStyle.*	set\\s+DateStyle.*
+SELECT * FROM tbl_x WHERE col_y = 'set\\s+DateStyle.*'	SELECT * FROM tbl_x WHERE col_y = 'set\\s+DateStyle.*'
+SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+DateStyle.*%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+DateStyle.*%' ORDER BY 1
+set\\s+IntervalStyle.*	set\\s+IntervalStyle.*
+SELECT * FROM tbl_x WHERE col_y = 'set\\s+IntervalStyle.*'	SELECT * FROM tbl_x WHERE col_y = 'set\\s+IntervalStyle.*'
+SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+IntervalStyle.*%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+IntervalStyle.*%' ORDER BY 1
+set\\s+client_min_messages.*	set\\s+client_min_messages.*
+SELECT * FROM tbl_x WHERE col_y = 'set\\s+client_min_messages.*'	SELECT * FROM tbl_x WHERE col_y = 'set\\s+client_min_messages.*'
+SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+client_min_messages.*%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+client_min_messages.*%' ORDER BY 1
+START\\s+TRANSACTION.*	START\\s+TRANSACTION.*
+SELECT * FROM tbl_x WHERE col_y = 'START\\s+TRANSACTION.*'	SELECT * FROM tbl_x WHERE col_y = 'START\\s+TRANSACTION.*'
+SELECT * FROM tbl_x WHERE col_y LIKE 'START\\s+TRANSACTION.*%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'START\\s+TRANSACTION.*%' ORDER BY 1
+set\\s+client_encoding.*	set\\s+client_encoding.*
+SELECT * FROM tbl_x WHERE col_y = 'set\\s+client_encoding.*'	SELECT * FROM tbl_x WHERE col_y = 'set\\s+client_encoding.*'
+SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+client_encoding.*%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+client_encoding.*%' ORDER BY 1
+set\\s+search_path\\s*=\\s*(.*)	set\\s+search_path\\s*=\\s*(.*)
+SELECT * FROM tbl_x WHERE col_y = 'set\\s+search_path\\s*=\\s*(.*)'	SELECT * FROM tbl_x WHERE col_y = 'set\\s+search_path\\s*=\\s*(.*)'
+SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+search_path\\s*=\\s*(.*)%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+search_path\\s*=\\s*(.*)%' ORDER BY 1
+::regclass	
+SELECT * FROM tbl_x WHERE col_y = '::regclass'	SELECT * FROM tbl_x WHERE col_y = ''
+SELECT * FROM tbl_x WHERE col_y LIKE '::regclass%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE '%' ORDER BY 1
+::regproc	
+SELECT * FROM tbl_x WHERE col_y = '::regproc'	SELECT * FROM tbl_x WHERE col_y = ''
+SELECT * FROM tbl_x WHERE col_y LIKE '::regproc%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE '%' ORDER BY 1
+SHOW search_path	SELECT current_setting('search_path') as search_path
+SELECT * FROM tbl_x WHERE col_y = 'SHOW search_path'	SELECT * FROM tbl_x WHERE col_y = 'SELECT current_setting('search_path') as search_path'
+SELECT * FROM tbl_x WHERE col_y LIKE 'SHOW search_path%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'SELECT current_setting('search_path') as search_path%' ORDER BY 1
+show transaction isolation level	select 'read committed' as transaction_isolation
+SELECT * FROM tbl_x WHERE col_y = 'show transaction isolation level'	SELECT * FROM tbl_x WHERE col_y = 'select 'read committed' as transaction_isolation'
+SELECT * FROM tbl_x WHERE col_y LIKE 'show transaction isolation level%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'select 'read committed' as transaction_isolation%' ORDER BY 1
+show transaction_isolation	select 'read committed' as transaction_isolation
+SELECT * FROM tbl_x WHERE col_y = 'show transaction_isolation'	SELECT * FROM tbl_x WHERE col_y = 'select 'read committed' as transaction_isolation'
+SELECT * FROM tbl_x WHERE col_y LIKE 'show transaction_isolation%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'select 'read committed' as transaction_isolation%' ORDER BY 1
+SHOW datestyle	SELECT 'ISO, MDY' as DateStyle
+SELECT * FROM tbl_x WHERE col_y = 'SHOW datestyle'	SELECT * FROM tbl_x WHERE col_y = 'SELECT 'ISO, MDY' as DateStyle'
+SELECT * FROM tbl_x WHERE col_y LIKE 'SHOW datestyle%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'SELECT 'ISO, MDY' as DateStyle%' ORDER BY 1
+.*pg_catalog.pg_get_keywords.*	
+SELECT * FROM tbl_x WHERE col_y = '.*pg_catalog.pg_get_keywords.*'	
+SELECT * FROM tbl_x WHERE col_y LIKE '.*pg_catalog.pg_get_keywords.*%' ORDER BY 1	
+(.*)pg_catalog.pg_get_partkeydef\\(c\\.oid\\)(.*)	(.*)pg_catalog.pg_get_partkeydef\\(c\\.oid\\)(.*)
+SELECT * FROM tbl_x WHERE col_y = '(.*)pg_catalog.pg_get_partkeydef\\(c\\.oid\\)(.*)'	SELECT * FROM tbl_x WHERE col_y = '(.*)pg_catalog.pg_get_partkeydef\\(c\\.oid\\)(.*)'
+SELECT * FROM tbl_x WHERE col_y LIKE '(.*)pg_catalog.pg_get_partkeydef\\(c\\.oid\\)(.*)%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE '(.*)pg_catalog.pg_get_partkeydef\\(c\\.oid\\)(.*)%' ORDER BY 1
+(.*)pg_catalog.pg_get_expr\\(.*?\\)(.*)	(.*)pg_catalog.pg_get_expr\\(.*?\\)(.*)
+SELECT * FROM tbl_x WHERE col_y = '(.*)pg_catalog.pg_get_expr\\(.*?\\)(.*)'	SELECT * FROM tbl_x WHERE col_y = '(.*)pg_catalog.pg_get_expr\\(.*?\\)(.*)'
+SELECT * FROM tbl_x WHERE col_y LIKE '(.*)pg_catalog.pg_get_expr\\(.*?\\)(.*)%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE '(.*)pg_catalog.pg_get_expr\\(.*?\\)(.*)%' ORDER BY 1
+.*pg_catalog.pg_event_trigger.*	
+SELECT * FROM tbl_x WHERE col_y = '.*pg_catalog.pg_event_trigger.*'	
+SELECT * FROM tbl_x WHERE col_y LIKE '.*pg_catalog.pg_event_trigger.*%' ORDER BY 1	

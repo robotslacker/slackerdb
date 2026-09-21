@@ -207,7 +207,12 @@ public class AdminClientRequest  extends PostgresRequest {
                 feedBackMsg.append("SERVER SESSIONS: \n");
                 feedBackMsg.append("  Total ").append(this.dbInstance.dbSessions.size()).append(" clients connected.\n");
                 for (Integer sessionId : this.dbInstance.dbSessions.keySet()) {
+                    // 会话可能在遍历过程中被关闭并从 dbSessions 摘除（keySet 是弱一致视图），
+                    // 因此这里必须判空，否则会 NPE。
                     DBSession dbSession = this.dbInstance.getSession(sessionId);
+                    if (dbSession == null) {
+                        continue;
+                    }
                     feedBackMsg.append("    ").append("Session ID: ").append(sessionId).append("\n");
                     feedBackMsg.append("    ").append(" Connected: ").append(dbSession.connectedTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
                     feedBackMsg.append("    ").append(" Client IP: ").append(dbSession.clientAddress).append("\n");
@@ -256,22 +261,10 @@ public class AdminClientRequest  extends PostgresRequest {
                 targetSessionId = Integer.parseInt(targetSessionIdStr);
             }
             catch (NumberFormatException ignored) {}
-            if (this.dbInstance.dbSessions.containsKey(targetSessionId))
+            if (this.dbInstance.killSession(targetSessionId))
             {
                 this.dbInstance.logger.info("[KILL SESSION] Will kill session [{}] ...", targetSessionIdStr);
                 feedBackMsg.append("[KILL SESSION] Will kill session [").append(targetSessionIdStr).append("] ...");
-                try
-                {
-                    if (this.dbInstance.dbSessions.get(targetSessionId).executingPreparedStatement != null) {
-                        this.dbInstance.dbSessions.get(targetSessionId).executingPreparedStatement.cancel();
-                    }
-                }
-                catch (SQLException ignored) {}
-                try
-                {
-                    this.dbInstance.dbSessions.get(targetSessionId).abortSession();
-                }
-                catch (SQLException ignored) {}
                 this.dbInstance.logger.info("[KILL SESSION] Session [{}] has been killed.", targetSessionIdStr);
                 feedBackMsg.append("[KILL SESSION] Session [").append(targetSessionIdStr).append("] has been killed.");
             }

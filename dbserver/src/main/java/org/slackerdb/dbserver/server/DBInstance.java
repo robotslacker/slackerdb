@@ -75,9 +75,12 @@ public class DBInstance {
     // DuckDB的数据库连接池
     public DBDataSourcePool dbDataSourcePool = null;
 
+    // SQL/API 历史记录队列的容量
+    public static final int HISTORY_QUEUE_CAPACITY = 10 * 1000;
+
     // SQL历史记录并不会直接操作，而是会放到队列中，由其他线程来完成处理
     public BoundedQueue<SQLHistoryRecord>  sqlHistoryList
-            = new BoundedQueue<>(10*1000);
+            = new BoundedQueue<>(HISTORY_QUEUE_CAPACITY);
 
     // 资源文件，记录各种消息，以及日后可能的翻译信息
     public final ResourceBundle resourceBundle;
@@ -205,6 +208,9 @@ public class DBInstance {
     // SQL历史记录线程
     class DBInstanceSQLHistoryThread extends Thread
     {
+        // 上一次告警时记录的丢弃数量，用于避免重复刷屏
+        private long lastReportedDropped = 0;
+
         @Override
         public void run()
         {
@@ -225,80 +231,151 @@ public class DBInstance {
                             ErrorMsg = ?
                     WHERE ID = ?
                     """;
-            PreparedStatement historyInsertStmt;
-            PreparedStatement historyUpdateStmt;
-            try {
-                Connection sqlHistoryConn = ((DuckDBConnection) backendSysConnection).duplicate();
-                sqlHistoryConn.createStatement().execute("use memory");
-                sqlHistoryConn.setAutoCommit(false);
+
+            // 外层循环：任何一次写入异常都不允许让消费线程退出。
+            // 历史写入失败（磁盘满、DuckDB 写冲突、sysaux.SQL_HISTORY 被外部改动等）时，
+            // 记录日志、丢弃当前这批、退避后重建连接继续消费。
+            // 注意：如果这里因为异常而退出线程，队列将永远不再被排空，
+            // 生产者会在队列满之后持续丢数据（改造前是阻塞 —— 整个服务挂死）。
+            while (!isInterrupted()) {
+                Connection sqlHistoryConn = null;
+                PreparedStatement historyInsertStmt = null;
+                PreparedStatement historyUpdateStmt = null;
                 int nProcessedRows = 0;
-                historyInsertStmt = sqlHistoryConn.prepareStatement(historyInsertSQL);
-                historyUpdateStmt = sqlHistoryConn.prepareStatement(historyUpdateSQL);
-                while (!isInterrupted()) {
-                    while (!sqlHistoryList.isEmpty() && !isInterrupted()) {
-                        SQLHistoryRecord sqlHistoryRecord = sqlHistoryList.poll();
-                        if (sqlHistoryRecord.type().equalsIgnoreCase("INSERT")) {
-                            historyInsertStmt.setLong(1, sqlHistoryRecord.ID());
-                            historyInsertStmt.setLong(2, sqlHistoryRecord.ServerID());
-                            historyInsertStmt.setLong(3, sqlHistoryRecord.SessionId());
-                            historyInsertStmt.setString(4, sqlHistoryRecord.ClientIP());
-                            historyInsertStmt.setString(5, sqlHistoryRecord.SQL());
-                            historyInsertStmt.setLong(6, sqlHistoryRecord.SqlId());
-                            if (sqlHistoryRecord.StartTime() != null) {
-                                historyInsertStmt.setTimestamp(7, Timestamp.valueOf(sqlHistoryRecord.StartTime()));
+
+                try {
+                    sqlHistoryConn = ((DuckDBConnection) backendSysConnection).duplicate();
+                    sqlHistoryConn.createStatement().execute("use memory");
+                    sqlHistoryConn.setAutoCommit(false);
+                    historyInsertStmt = sqlHistoryConn.prepareStatement(historyInsertSQL);
+                    historyUpdateStmt = sqlHistoryConn.prepareStatement(historyUpdateSQL);
+
+                    while (!isInterrupted()) {
+                        while (!sqlHistoryList.isEmpty() && !isInterrupted()) {
+                            SQLHistoryRecord sqlHistoryRecord = sqlHistoryList.poll();
+                            if (sqlHistoryRecord == null) {
+                                // 极小概率下被其他消费者取走，直接跳过，避免空指针
+                                continue;
                             }
-                            else
-                            {
-                                historyInsertStmt.setTimestamp(7, null);
+                            if (sqlHistoryRecord.type().equalsIgnoreCase("INSERT")) {
+                                historyInsertStmt.setLong(1, sqlHistoryRecord.ID());
+                                historyInsertStmt.setLong(2, sqlHistoryRecord.ServerID());
+                                historyInsertStmt.setLong(3, sqlHistoryRecord.SessionId());
+                                historyInsertStmt.setString(4, sqlHistoryRecord.ClientIP());
+                                historyInsertStmt.setString(5, sqlHistoryRecord.SQL());
+                                historyInsertStmt.setLong(6, sqlHistoryRecord.SqlId());
+                                if (sqlHistoryRecord.StartTime() != null) {
+                                    historyInsertStmt.setTimestamp(7, Timestamp.valueOf(sqlHistoryRecord.StartTime()));
+                                }
+                                else
+                                {
+                                    historyInsertStmt.setTimestamp(7, null);
+                                }
+                                if (sqlHistoryRecord.EndTime() != null) {
+                                    historyInsertStmt.setTimestamp(8, Timestamp.valueOf(sqlHistoryRecord.EndTime()));
+                                }
+                                else
+                                {
+                                    historyInsertStmt.setTimestamp(8, null);
+                                }
+                                historyInsertStmt.setInt(9, sqlHistoryRecord.SQLCode());
+                                historyInsertStmt.setLong(10, sqlHistoryRecord.AffectedRows());
+                                historyInsertStmt.setString(11, sqlHistoryRecord.ErrorMsg());
+                                historyInsertStmt.execute();
+                                nProcessedRows = nProcessedRows + 1;
+                            } else if (sqlHistoryRecord.type().equalsIgnoreCase("UPDATE")) {
+                                if (sqlHistoryRecord.EndTime() != null) {
+                                    historyUpdateStmt.setTimestamp(1, Timestamp.valueOf(sqlHistoryRecord.EndTime()));
+                                }
+                                else
+                                {
+                                    historyUpdateStmt.setTimestamp(1, null);
+                                }
+                                historyUpdateStmt.setInt(2, sqlHistoryRecord.SQLCode());
+                                historyUpdateStmt.setLong(3, sqlHistoryRecord.AffectedRows());
+                                historyUpdateStmt.setString(4, sqlHistoryRecord.ErrorMsg());
+                                historyUpdateStmt.setLong(5, sqlHistoryRecord.ID());
+                                historyUpdateStmt.execute();
+                                nProcessedRows = nProcessedRows + 1;
                             }
-                            if (sqlHistoryRecord.EndTime() != null) {
-                                historyInsertStmt.setTimestamp(8, Timestamp.valueOf(sqlHistoryRecord.EndTime()));
+                            if (nProcessedRows % 1000 == 0) {
+                                sqlHistoryConn.commit();
+                                nProcessedRows = 0;
                             }
-                            else
-                            {
-                                historyInsertStmt.setTimestamp(8, null);
-                            }
-                            historyInsertStmt.setInt(9, sqlHistoryRecord.SQLCode());
-                            historyInsertStmt.setLong(10, sqlHistoryRecord.AffectedRows());
-                            historyInsertStmt.setString(11, sqlHistoryRecord.ErrorMsg());
-                            historyInsertStmt.execute();
-                            nProcessedRows = nProcessedRows + 1;
-                        } else if (sqlHistoryRecord.type().equalsIgnoreCase("UPDATE")) {
-                            if (sqlHistoryRecord.EndTime() != null) {
-                                historyUpdateStmt.setTimestamp(1, Timestamp.valueOf(sqlHistoryRecord.EndTime()));
-                            }
-                            else
-                            {
-                                historyUpdateStmt.setTimestamp(1, null);
-                            }
-                            historyUpdateStmt.setInt(2, sqlHistoryRecord.SQLCode());
-                            historyUpdateStmt.setLong(3, sqlHistoryRecord.AffectedRows());
-                            historyUpdateStmt.setString(4, sqlHistoryRecord.ErrorMsg());
-                            historyUpdateStmt.setLong(5, sqlHistoryRecord.ID());
-                            historyUpdateStmt.execute();
-                            nProcessedRows = nProcessedRows + 1;
                         }
-                        if (nProcessedRows % 1000 == 0) {
+                        if (nProcessedRows != 0)
+                        {
                             sqlHistoryConn.commit();
                             nProcessedRows = 0;
                         }
-                    }
-                    if (nProcessedRows != 0)
-                    {
-                        sqlHistoryConn.commit();
-                        nProcessedRows = 0;
-                    }
-                    try {
-                        TimeUnit.SECONDS.sleep(1);
-                    }
-                    catch (InterruptedException ignored) {
-                        return;
+                        reportDroppedRecords();
+                        try {
+                            TimeUnit.SECONDS.sleep(1);
+                        }
+                        catch (InterruptedException ignored) {
+                            return;
+                        }
                     }
                 }
+                catch (SQLException | RuntimeException historyException)
+                {
+                    // 单次失败不能让消费线程退出，否则队列永远不会被排空
+                    logger.error("[SQLHistory] Save sql history failed. Will reconnect and retry.", historyException);
+                    rollbackQuietly(sqlHistoryConn);
+                    nProcessedRows = 0;
+                }
+                finally {
+                    closeQuietly(historyInsertStmt);
+                    closeQuietly(historyUpdateStmt);
+                    closeQuietly(sqlHistoryConn);
+                }
+
+                if (isInterrupted()) {
+                    return;
+                }
+
+                // 退避，避免后端持续失败时空转刷日志
+                try {
+                    TimeUnit.SECONDS.sleep(5);
+                }
+                catch (InterruptedException ignored) {
+                    return;
+                }
             }
-            catch (SQLException sqlException)
-            {
-                logger.error("[SQLHistory] Save sql history failed.", sqlException);
+        }
+
+        /**
+         * 队列满导致历史记录被丢弃时给出可观测的告警（每个排空周期最多一条，避免刷屏）。
+         */
+        private void reportDroppedRecords() {
+            long dropped = sqlHistoryList.getDroppedTotal();
+            if (dropped > lastReportedDropped) {
+                logger.warn("[SQLHistory] History queue is full. {} record(s) dropped so far (queue capacity = {}). " +
+                                "The consumer is slower than the producers, or it had failed earlier.",
+                        dropped, HISTORY_QUEUE_CAPACITY);
+                lastReportedDropped = dropped;
+            }
+        }
+
+        private void rollbackQuietly(Connection connection) {
+            if (connection == null) {
+                return;
+            }
+            try {
+                connection.rollback();
+            }
+            catch (SQLException ignored) {
+            }
+        }
+
+        private void closeQuietly(AutoCloseable closeable) {
+            if (closeable == null) {
+                return;
+            }
+            try {
+                closeable.close();
+            }
+            catch (Exception ignored) {
             }
         }
     }
@@ -437,6 +514,30 @@ public class DBInstance {
             // 关闭会话
             dbSession.closeSession();
         }
+    }
+
+    /**
+     * 终止指定会话（供管理端 KILL SESSION 使用），可从任意线程调用。
+     *
+     * <p>这里刻意<b>不</b>直接调用目标会话的 {@code abortSession()}——那会从当前线程去改另一个会话的
+     * 连接、语句以及 {@code parsedStatements}，与目标会话自己的线程竞争；而且它既不会把会话从
+     * {@code dbSessions} 中摘除，也不会断开客户端，会留下一个"僵尸会话"：它的物理连接已被归还
+     * 连接池，但会话仍在册，后续查询会用到已被别的会话占用的连接。</p>
+     *
+     * <p>正确做法分两步：先取消它正在执行的语句（打断阻塞中的查询），再关闭它的连接。
+     * 关闭会在目标会话自己的线程上触发 {@code channelInactive -> abortSession()}，
+     * 由那条线程完成"摘除注册 + 回滚 + 释放连接"。</p>
+     *
+     * @return {@code true} 表示会话存在且已发出终止请求
+     */
+    public boolean killSession(int sessionId) {
+        DBSession dbSession = dbSessions.get(sessionId);
+        if (dbSession == null) {
+            return false;
+        }
+        dbSession.cancelRunningStatements();
+        dbSession.closeChannel();
+        return true;
     }
 
     // 执行指定的脚本
@@ -949,6 +1050,8 @@ public class DBInstance {
                 if (dbInstanceSQLHistoryThread == null)
                 {
                     dbInstanceSQLHistoryThread = new DBInstanceSQLHistoryThread();
+                    // 守护线程：消费端即使卡住也不能阻止 JVM 退出（必须在 start() 之前设置）
+                    dbInstanceSQLHistoryThread.setDaemon(true);
                     dbInstanceSQLHistoryThread.start();
                 }
             }
@@ -969,6 +1072,7 @@ public class DBInstance {
             protocolServer.setSocketPath(socketPath);
             protocolServer.setServerTimeout(serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout(), serverConfiguration.getClient_timeout());
             protocolServer.setNioEventThreads(serverConfiguration.getMax_Workers());
+            protocolServer.setBusinessThreads(serverConfiguration.resolveBusiness_threads());
             protocolServer.setDBInstance(this);
             protocolServer.start();
             while (!protocolServer.isPortReady()) {
@@ -1099,16 +1203,12 @@ public class DBInstance {
 
         // 关闭监控线程
         if (dbInstanceMonitorThread != null) {
-            if (dbInstanceMonitorThread.isAlive()) {
-                dbInstanceMonitorThread.interrupt();
-            }
+            interruptAndJoin(dbInstanceMonitorThread, 10, "Session-Mon");
             dbInstanceMonitorThread = null;
         }
         // 关闭SQLHistory的后台进程
         if (dbInstanceSQLHistoryThread != null) {
-            if (dbInstanceSQLHistoryThread.isAlive()) {
-                dbInstanceSQLHistoryThread.interrupt();
-            }
+            interruptAndJoin(dbInstanceSQLHistoryThread, 10, "Session-SQLHistory");
             dbInstanceSQLHistoryThread = null;
         }
 
@@ -1191,6 +1291,50 @@ public class DBInstance {
             return 0;
         }
         return this.protocolServer.getRegisteredConnectionsCount();
+    }
+
+    /**
+     * SQL 历史消费线程是否存活。
+     * 为 false 表示历史记录已不再落库（生产者会在队列满之后持续丢弃记录），
+     * 用于运维侧观测，见 /status 的 usage.sqlHistoryThreadAlive。
+     */
+    public boolean isSqlHistoryThreadAlive()
+    {
+        return this.dbInstanceSQLHistoryThread != null && this.dbInstanceSQLHistoryThread.isAlive();
+    }
+
+    /**
+     * 中断后台线程并等待其退出（最多等待 timeoutSeconds 秒），仍在运行则记录告警后继续。
+     * 这样既能尽快回收资源，又不会因为某个后台线程卡住而让 stop() 永久阻塞。
+     *
+     * @param thread         目标线程，允许为 null
+     * @param timeoutSeconds 最长等待时间（秒）
+     * @param threadRole     线程角色描述，仅用于日志
+     */
+    void interruptAndJoin(Thread thread, long timeoutSeconds, String threadRole)
+    {
+        if (thread == null || !thread.isAlive()) {
+            return;
+        }
+        thread.interrupt();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        while (thread.isAlive()) {
+            try {
+                thread.join(100);
+            }
+            catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (System.nanoTime() >= deadline) {
+                // 只告警不阻塞：后台线程为守护线程，不会阻止进程退出
+                if (this.logger != null) {
+                    this.logger.warn("[SERVER] {} thread did not terminate within {} seconds, proceeding anyway.",
+                            threadRole, timeoutSeconds);
+                }
+                return;
+            }
+        }
     }
 
     // 初始化一个新的数据库会话
