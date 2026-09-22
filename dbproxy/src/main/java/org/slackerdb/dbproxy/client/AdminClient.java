@@ -106,23 +106,27 @@ public class AdminClient {
             ChannelFuture future =
                     client.connect(serverConfiguration.getBindHost(), serverConfiguration.getPort()).sync();
 
-            // 发送消息头，并等待回应标志
-            ByteBuf buffer = Unpooled.wrappedBuffer(AdminClientRequest.AdminClientRequestHeader);
-            future.channel().writeAndFlush(buffer).sync();
-
             // 拼接消息正文
             StringBuilder message = new StringBuilder();
             for (Map.Entry<String, String> entry : appOptions.entrySet()) {
                 message.append("--").append(entry.getKey()).append(" ").append(entry.getValue()).append(" ");
             }
 
-            // 发送消息正文
+            // 发送 8 字节管理握手头 + '!' 命令帧。
+            //
+            // 关键：这两段**必须一次性写出**（同一个 ByteBuf / 同一次 flush）。
+            // 代理侧的解码器只在"首 8 字节恰好是管理头且后面还没有数据"时才把它当作握手头；
+            // 如果分两次 write，操作系统可能把它们合并到同一个 TCP 段，解码器面对
+            // "8 字节头 + 5 字节命令头" 就会按 StartupMessage 解析（长度域 0x01010101 > 1024），
+            // 直接关连接——表现为 REGISTER 注册**间歇性丢失**，进而代理报
+            // "Database [alias] does not exist!"。
             byte[] msg = (command + " " + message).getBytes(StandardCharsets.UTF_8);
-            buffer = Unpooled.buffer().capacity(5+msg.length);
-            buffer.writeByte('!');
-            buffer.writeInt(4 + msg.length);
-            buffer.writeBytes(msg);
-            future.channel().writeAndFlush(buffer).sync();
+            ByteBuf frame = Unpooled.buffer(AdminClientRequest.AdminClientRequestHeader.length + 5 + msg.length);
+            frame.writeBytes(AdminClientRequest.AdminClientRequestHeader);
+            frame.writeByte('!');
+            frame.writeInt(4 + msg.length);
+            frame.writeBytes(msg);
+            future.channel().writeAndFlush(frame).sync();
 
             // Wait until the connection is closed.
             future.channel().closeFuture().sync();

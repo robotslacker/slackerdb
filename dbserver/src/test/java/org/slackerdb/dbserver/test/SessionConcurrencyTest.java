@@ -13,6 +13,7 @@ import org.slackerdb.dbserver.server.DBSession;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 import java.util.TimeZone;
@@ -176,10 +177,16 @@ public class SessionConcurrencyTest {
     /**
      * 端到端走一遍 CancelRequest 路径（pgjdbc 的 cancelQuery 会在新连接上发送 CancelRequest），
      * 确认跨线程取消不会破坏服务端，且后续连接照常可用。
+     *
+     * <p><b>注意本用例的定位</b>：它验证的是"并发取消下的线程安全"，<b>不</b>验证"取消是否真的
+     * 生效"——后者由 {@link CancelRequestTest} 用可观测的长查询负责。
+     * 这里刻意不再无差别吞掉所有 SQLException：只放行"目标语句被取消"这一类异常，
+     * 其他 SQLException（连接被误关、协议错误等）一律计入失败，否则会再次掩盖故障。</p>
      */
     @Test
     void cancelRequestThroughProtocolKeepsServerHealthy() throws Exception {
         final int connections = 6;
+        final int baselineSessions = dbInstance.dbSessions.size();
         final List<Connection> conns = new CopyOnWriteArrayList<>();
         try {
             for (int i = 0; i < connections; i++) {
@@ -211,10 +218,12 @@ public class SessionConcurrencyTest {
                             }
                         }
                     } catch (Throwable e) {
-                        // 取消与查询竞争时客户端可能收到取消/连接错误，属预期；只记录致命错误
-                        if (!(e instanceof java.sql.SQLException)) {
-                            failures.add(e);
+                        // 取消与查询竞争时，目标语句被取消属于预期结果；
+                        // 其余 SQLException 说明出了真问题（连接被误关、协议错误等），必须上报。
+                        if (e instanceof SQLException && isCancellation((SQLException) e)) {
+                            return;
                         }
+                        failures.add(e);
                     }
                 });
             }
@@ -222,7 +231,7 @@ public class SessionConcurrencyTest {
             start.countDown();
             for (Thread w : workers) { w.join(60_000); }
 
-            assert failures.isEmpty() : "并发取消过程中出现非 SQL 异常：" + failures.get(0);
+            assert failures.isEmpty() : "并发取消过程中出现非取消类异常：" + failures.get(0);
 
             // 服务端仍然健康
             try (Connection fresh = connect();
@@ -236,5 +245,24 @@ public class SessionConcurrencyTest {
                 try { c.close(); } catch (Exception ignored) { }
             }
         }
+
+        // 取消连接都是临时会话，处理完必须全部摘除（不残留僵尸会话）
+        long deadline = System.currentTimeMillis() + 15_000;
+        while (System.currentTimeMillis() < deadline && dbInstance.dbSessions.size() > baselineSessions) {
+            Thread.sleep(50);
+        }
+        assert dbInstance.dbSessions.size() == baselineSessions
+                : "并发取消之后存在残留会话：baseline=" + baselineSessions
+                        + " current=" + dbInstance.dbSessions.size();
+    }
+
+    /** 判断异常是否属于"目标语句被取消"这一类预期结果。 */
+    private static boolean isCancellation(SQLException e) {
+        String message = e.getMessage();
+        if (message == null) {
+            return false;
+        }
+        String lower = message.toLowerCase();
+        return lower.contains("cancel") || lower.contains("interrupt");
     }
 }

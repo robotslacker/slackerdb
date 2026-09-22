@@ -278,6 +278,52 @@ public class CopyDoneRequest extends PostgresRequest {
                 + ", but data length is " + actualBytes + " bytes (expected " + expectedBytes + ").";
     }
 
+    /**
+     * 构造BINARY格式下"数据列数不足"的错误信息。
+     *
+     * <p>改造前这种情况会以 {@code ArrayIndexOutOfBoundsException} 的形式逃逸，客户端只能看到
+     * {@code ERROR: Index 6 out of bounds for length 6}，既不知道是哪一行、也不知道到底缺什么；
+     * 这里改成与CSV路径同样的"[实际] vs [期望]"格式，并补一句人话说明。</p>
+     *
+     * @param rowNumber           出错的行号(从1开始，仅本次COPY的数据流内计数)
+     * @param actualColumnCount   该行数据里实际的列数
+     * @param expectedColumnCount 期望的列数(没有指定列清单时即目标表的列数)
+     */
+    private static String binaryColumnCountMismatchMessage(long rowNumber, int actualColumnCount,
+                                                           int expectedColumnCount)
+    {
+        return "Binary Format error (column size not match. [" + actualColumnCount
+                + "] vs [" + expectedColumnCount + "]). Row " + rowNumber + " has " + actualColumnCount
+                + " columns, but " + expectedColumnCount + " columns are expected.";
+    }
+
+    /**
+     * 构造 Appender 写入失败的错误信息。
+     *
+     * <p>这里刻意<b>不按错误类型做任何特判</b>：DuckDB 报什么原因就带给客户端什么原因，
+     * 无论是 NOT NULL、主键/唯一冲突、CHECK、类型转换还是IO错误，走的都是同一条路径。</p>
+     *
+     * <p>只做一件与错误类型无关的事情：剥掉 Appender 自己的固定外壳
+     * （形如 {@code Appender error, catalog: 'null', schema: 'null', table: 't', message: }，
+     * 其中 catalog/schema/table 与真正的原因重复，且 catalog/schema 恒为字符串 'null'），
+     * 然后在前面统一加一个 {@code Copy failed:} 前缀，说明这是 COPY 写入阶段的失败。
+     * 外壳格式一旦变化，就原样透传整条信息，不丢内容。</p>
+     */
+    private static String copyWriteErrorMessage(String message)
+    {
+        if (message == null || message.isBlank()) {
+            return "Copy failed: failed to write data into DuckDB.";
+        }
+
+        final String appenderWrapperMarker = "message: ";
+        int markerPos = message.indexOf(appenderWrapperMarker);
+        String reason = (markerPos >= 0)
+                ? message.substring(markerPos + appenderWrapperMarker.length()).trim()
+                : message.trim();
+
+        return "Copy failed: " + reason;
+    }
+
     //  CopyDone (F & B)
     //    Byte1('c')
     //      Identifies the message as a COPY-complete indicator.
@@ -379,7 +425,20 @@ public class CopyDoneRequest extends PostgresRequest {
                     // 列类型/名称同样提前取出，逐单元格循环里不再查询会话
                     List<String> copyTableDbColumnType = session.copyTableDbColumnType;
                     List<String> copyTableDbColumnName = session.copyTableDbColumnName;
+                    // COPY数据中每行的字段数量必须能覆盖COPY语句指定的列(没有指定列时就是目标表的列数)。
+                    // 数据列数不足时，下面 row[nPos] 会抛出 ArrayIndexOutOfBoundsException，
+                    // 客户端只能收到 "Index 6 out of bounds for length 6" 这种看不懂的裸异常；
+                    // 因此这里先显式校验，给出"第几行、实际几列、期望几列"的明确错误。
+                    // 注意：数据列数多于期望时维持既有行为(多余的列被忽略)，只有"不够"才报错。
+                    int expectedColumnCount = session.copyColumnCount;
+                    long rowNumber = 1;
                     for (Object[] row : data) {
+                        if (row.length < expectedColumnCount) {
+                            // 与CSV路径一样走 sendErrorAndReady：先丢弃本次COPY已写入的部分行再回错误。
+                            sendErrorAndReady(ctx, request, out,
+                                    binaryColumnCountMismatchMessage(rowNumber, row.length, expectedColumnCount));
+                            return;
+                        }
                         duckDBAppender.beginRow();
                         for (int i=0; i<copyTableDbColumnMapPos.size(); i++) {
                             int nPos = copyTableDbColumnMapPos.get(i);
@@ -494,6 +553,7 @@ public class CopyDoneRequest extends PostgresRequest {
                         }
                         duckDBAppender.endRow();
                         nCopiedRows++;
+                        rowNumber++;
                     }
                 } // BINARY
             }
@@ -508,9 +568,15 @@ public class CopyDoneRequest extends PostgresRequest {
                 // 统一的收尾（丢弃已写入的部分行 → 回 ErrorResponse/CommandComplete → ReadyForQuery）
                 // 放在方法尾部，保证"告诉客户端失败"与"数据不落库"这两件事一起发生。
                 copyFailed = true;
-                errorCode = (ex instanceof SQLException sqlEx)
-                        ? String.valueOf(sqlEx.getErrorCode()) : "SLACKER-0099";
-                errorMessage = ex.getMessage();
+                if (ex instanceof SQLException sqlEx) {
+                    // 数据库/Appender 报出的写入错误同样走统一的信息整理(不按错误类型特判)
+                    errorCode = String.valueOf(sqlEx.getErrorCode());
+                    errorMessage = copyWriteErrorMessage(sqlEx.getMessage());
+                } else {
+                    // 解析类异常(数据流被截断、CSV畸形等)的信息本来就是自解释的，原样返回
+                    errorCode = "SLACKER-0099";
+                    errorMessage = ex.getMessage();
+                }
             }
         }
 
@@ -520,6 +586,21 @@ public class CopyDoneRequest extends PostgresRequest {
         // 已经 BEGIN 过，close() 只是把数据留在事务里，真正的提交/回滚在下面显式完成。
         try {
             if (session.copyTableAppender != null) {
+                // 只有在"看起来一切正常"时才自己 flush()：
+                // 1) 必须先显式 flush()，不能只依赖 close() —— duckdb_jdbc 的 DuckDBAppender.close()
+                //    内部虽然也会 flush，但它把 flush 抛出的 SQLException 直接吞掉了（见该类的字节码：
+                //    close() 调用 flush 的那段落在 catch(SQLException) 里，catch 体什么都不做），
+                //    随后 duckdb_appender_close 的返回码也没有检查。于是像 NOT NULL/主键冲突这类
+                //    只在 flush 时才暴露的错误，在 close() 时完全看不见 —— 服务端会误报 COPY 成功
+                //    （CommandComplete），而 DuckDB 那边事务其实已经变成 aborted，客户端后续语句
+                //    全部报 "Current transaction is aborted (please ROLLBACK)"，且拿不到任何原因。
+                // 2) 循环里已经出错时不再自己 flush：此时 Appender 可能停在"半行"状态
+                //    (beginRow 了但没 endRow)，flush 只会抛出
+                //    "'endRow' must be called before calling 'flush'" 这种噪音，反而把真正的原因顶掉。
+                // 这一步与具体错误类型无关，任何在 flush 时才暴露的错误都会在这里被带到客户端。
+                if (!copyFailed) {
+                    session.copyTableAppender.flush();
+                }
                 session.copyTableAppender.close();
                 session.copyTableAppender = null;
                 session.copyLastRemained.reset();
@@ -528,7 +609,18 @@ public class CopyDoneRequest extends PostgresRequest {
         catch (SQLException se) {
             copyFailed = true;
             errorCode = String.valueOf(se.getErrorCode());
-            errorMessage = se.getMessage();
+            errorMessage = copyWriteErrorMessage(se.getMessage());
+            // flush 已经失败，Appender 不再可用，这里只做资源释放（close() 会再次吞掉错误）
+            if (session.copyTableAppender != null) {
+                try {
+                    session.copyTableAppender.close();
+                }
+                catch (SQLException ignored) {
+                    // 丢弃Appender时的错误无需上报，真正的原因已经记在 errorMessage 里
+                }
+                session.copyTableAppender = null;
+                session.copyLastRemained.reset();
+            }
         }
 
         // 提交或回滚服务端自有的 COPY 事务。

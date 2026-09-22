@@ -27,9 +27,70 @@ public class DBSession {
     public LocalDateTime dbConnectedTime;
     // 客户端连接时候的选项
     public Map<String, String> startupOptions;
-    // 当前是否处于事务当中
-    public boolean inTransaction = false;
-    // 当前会话状态  connected, dbConnected
+
+    /**
+     * 会话的事务状态，对应 PG 协议 ReadyForQuery 的三种状态字节。
+     *
+     * <ul>
+     *   <li>{@link #IDLE} → 'I' 不在事务块中</li>
+     *   <li>{@link #IN_TRANSACTION} → 'T' 在事务块中</li>
+     *   <li>{@link #FAILED} → 'E' 事务块内出错，后续语句一律拒绝，直到 COMMIT/ROLLBACK 结束事务块</li>
+     * </ul>
+     *
+     * <p>会被管理端/状态接口跨线程读取，故为 volatile。</p>
+     */
+    public enum TransactionState {
+        IDLE('I'),
+        IN_TRANSACTION('T'),
+        FAILED('E');
+
+        private final byte statusByte;
+
+        TransactionState(char statusByte) {
+            this.statusByte = (byte) statusByte;
+        }
+
+        /** ReadyForQuery 中要回给客户端的状态字节。 */
+        public byte getStatusByte() {
+            return statusByte;
+        }
+    }
+
+    private volatile TransactionState transactionState = TransactionState.IDLE;
+
+    public TransactionState getTransactionState() {
+        return transactionState;
+    }
+
+    /** 是否处于事务块中（含失败事务块）—— 即 ReadyForQuery 是否应当回 'T' 或 'E'。 */
+    public boolean inTransaction() {
+        return transactionState != TransactionState.IDLE;
+    }
+
+    /** 进入事务块。 */
+    public void beginTransaction() {
+        transactionState = TransactionState.IN_TRANSACTION;
+    }
+
+    /** 结束事务块（COMMIT / ROLLBACK / ABORT / END）。 */
+    public void endTransaction() {
+        transactionState = TransactionState.IDLE;
+    }
+
+    /**
+     * 标记"事务块内的语句执行失败"。
+     *
+     * <p>PG 语义：事务块内一旦有语句报错，整个事务块进入 aborted 状态，
+     * 后续语句（COMMIT/ROLLBACK 除外）一律以 25P02 拒绝，直到事务块被结束。
+     * 只有确实处于事务块中时才需要标记，自动提交模式下的单条语句失败不影响会话状态。</p>
+     */
+    public void markTransactionFailed() {
+        if (transactionState == TransactionState.IN_TRANSACTION) {
+            transactionState = TransactionState.FAILED;
+        }
+    }
+
+    /** 当前会话状态  connected, dbConnected */
     // 会被管理端/状态接口跨线程读取，故为 volatile
     public volatile String status = "N/A";
     // 客户端的IP地址
@@ -76,6 +137,21 @@ public class DBSession {
     public volatile PreparedStatement executingPreparedStatement = null;
     // SqlId, 考虑到SQL的分批执行情况，这里用SqlId来表示对应的信息
     public final AtomicLong executingSqlId = new AtomicLong();
+
+    // 本会话**此刻正在执行**的语句句柄。
+    //
+    // 为什么需要它（而不是复用 parsedStatements）：
+    // parsedStatements 是扩展协议的语句/portal 缓存，里面既可能有"从未执行过"的语句，
+    // 也可能残留"早已执行完"的句柄；而 **简单查询路径（QueryRequest，走 Q 消息）压根不会
+    // 往 parsedStatements 里放任何东西**，导致取消请求遍历不到它、简单查询永远取消不掉。
+    // 这里只登记"正在跑"的句柄，取消时只碰它们。
+    //
+    // 并发约定（与 parsedStatements 一致，不能随意改）：
+    //   * 容器必须是并发的：CancelRequest / KILL SESSION 会从别的线程遍历；
+    //   * 取消方只调用 PreparedStatement.cancel()，绝不直接改本会话的其他字段；
+    //   * 登记/注销只在会话自己的线程上发生。
+    public final Map<Long, PreparedStatement> runningStatements = new ConcurrentHashMap<>();
+    private final AtomicLong runningStatementSeq = new AtomicLong();
 
     // 本会话绑定的客户端连接。
     // 用于让**其它线程**安全地终止本会话：Netty 的 Channel.close() 是线程安全的，
@@ -129,25 +205,65 @@ public class DBSession {
     }
 
     /**
+     * 登记一个"正在执行"的语句句柄，返回稍后用于注销的句柄 id。
+     *
+     * <p>只应由执行该语句的会话线程调用。必须在 {@code try} 中登记、在 {@code finally}
+     * 中注销，否则取消请求会一直拿着已经执行完的句柄（对已关闭的语句调用 cancel 是无害的，
+     * 但会掩盖"到底谁在跑"的事实）。</p>
+     */
+    public long registerRunningStatement(PreparedStatement preparedStatement) {
+        long handleId = runningStatementSeq.incrementAndGet();
+        runningStatements.put(handleId, preparedStatement);
+        return handleId;
+    }
+
+    /**
+     * 注销一个正在执行的语句句柄。
+     *
+     * <p>幂等：允许重复调用，也允许句柄已被关闭（{@link ConcurrentHashMap#remove} 本身是安全的）。</p>
+     */
+    public void unregisterRunningStatement(long handleId) {
+        if (handleId > 0) {
+            runningStatements.remove(handleId);
+        }
+    }
+
+    /**
      * 取消本会话当前正在执行的语句。
      *
      * <p>允许被其它线程调用（CancelRequest 与 KILL SESSION 都是跨会话操作）。
-     * {@link #parsedStatements} 是并发容器，这里的遍历是弱一致的快照语义，不会抛
+     * 两个容器都是并发容器，遍历是弱一致的快照语义，不会抛
      * {@code ConcurrentModificationException}；若语句恰好正在被本会话关闭，
      * 则由 try/catch 兜住。</p>
+     *
+     * <p>先处理 {@link #runningStatements}（精确覆盖简单查询与扩展查询两条路径），
+     * 再兼容性地处理 {@link #parsedStatements}（历史行为，避免既有调用方回归）。</p>
      */
     public void cancelRunningStatements() {
+        for (PreparedStatement preparedStatement : runningStatements.values()) {
+            cancelStatementQuietly(preparedStatement);
+        }
         for (ParsedStatement parsedStatement : parsedStatements.values()) {
-            PreparedStatement preparedStatement = parsedStatement.preparedStatement;
-            if (preparedStatement != null) {
-                try {
-                    if (!preparedStatement.isClosed()) {
-                        preparedStatement.cancel();
-                    }
-                }
-                catch (SQLException ignored) {
-                }
+            if (parsedStatement != null) {
+                cancelStatementQuietly(parsedStatement.preparedStatement);
             }
+        }
+    }
+
+    /**
+     * 尽最大努力取消一个语句：允许 {@code null}、允许已关闭、吞掉底层异常。
+     * 取消是"尽力而为"的操作，任何失败都不应影响发起取消的那条连接。
+     */
+    private static void cancelStatementQuietly(PreparedStatement preparedStatement) {
+        if (preparedStatement == null) {
+            return;
+        }
+        try {
+            if (!preparedStatement.isClosed()) {
+                preparedStatement.cancel();
+            }
+        }
+        catch (SQLException ignored) {
         }
     }
 
@@ -162,10 +278,23 @@ public class DBSession {
         }
     }
 
+    /**
+     * 优雅关闭会话（客户端发送 Terminate 报文后调用）。
+     *
+     * <p><b>事务处理与 PG 语义保持一致：一律回滚未提交的事务。</b>
+     * PostgreSQL 的规则是"没有显式 COMMIT 就等于没提交"，与客户端是否礼貌断开无关；
+     * 因此在事务块中直接断开连接时，未提交的改动必须被丢弃。</p>
+     *
+     * <p>历史上这里对"非 COPY 场景"执行的是 {@code commit()}，会把客户端明确没有提交的
+     * 数据静默落库（BUG-7）。改动后本方法与 {@link #abortSession()} 在事务处理上完全一致，
+     * 两者的区别只剩下语义命名与调用时机。</p>
+     *
+     * <p>唯一需要保留的例外是服务端为 COPY 自开的事务：若客户端没发 CopyDone 就断开，
+     * 说明这次 COPY 没有正常收尾，同样必须回滚（不能提交半截数据）。</p>
+     */
     public void closeSession() throws SQLException
     {
         // 关闭所有连接，并释放所有资源
-        // 默认close的时候要执行Commit操作
         for (ParsedStatement parsedStatement : parsedStatements.values())
         {
             if (parsedStatement != null) {
@@ -178,6 +307,9 @@ public class DBSession {
             }
         }
         parsedStatements.clear();
+        // 注销所有"正在执行"的句柄，避免会话回收后残留引用
+        runningStatements.clear();
+        executingPreparedStatement = null;
 
         if (copyTableAppender != null)
         {
@@ -188,18 +320,12 @@ public class DBSession {
         {
             if (!dbConnection.isReadOnly())
             {
-                // 若会话结束时仍存在服务端为 COPY 开的事务，说明这次 COPY 从未正常收尾
-                //（例如客户端没发 CopyDone 就断开、或直接发了别的语句），此时必须回滚而不是提交，
-                // 否则已经 append 的"半截数据"会被 closeSession 落库。
-                boolean rollbackOwnedCopy = copyOwnTransaction;
+                // 一律回滚：客户端没提交的就是没提交。
+                // copyOwnTransaction 为 true 时说明服务端为 COPY 开的事务还没正常收尾，
+                // 也必须回滚，否则已经 append 的"半截数据"会落库。
                 copyOwnTransaction = false;
                 try {
-                    if (rollbackOwnedCopy) {
-                        dbConnection.rollback();
-                    }
-                    else {
-                        dbConnection.commit();
-                    }
+                    dbConnection.rollback();
                 }
                 catch (SQLException e) {
                     if (!e.getMessage().contains("no transaction is active"))
@@ -210,6 +336,7 @@ public class DBSession {
             }
             dbInstance.dbDataSourcePool.releaseConnection(dbConnection);
         }
+        transactionState = TransactionState.IDLE;
     }
 
     public void abortSession() throws SQLException
@@ -227,6 +354,11 @@ public class DBSession {
                 }
             }
         }
+        // 注销所有"正在执行"的句柄，避免会话回收后残留引用。
+        // 注意：这里刻意**不去 close()** 这些句柄——会话线程正在使用它们，
+        // 跨线程关闭语句违反 JDBC 的线程安全约定，清理交给那条线程自己的 finally。
+        runningStatements.clear();
+        executingPreparedStatement = null;
         if (copyTableAppender != null)
         {
             copyTableAppender.close();
@@ -249,6 +381,7 @@ public class DBSession {
             copyOwnTransaction = false;
             dbInstance.dbDataSourcePool.releaseConnection(dbConnection);
         }
+        transactionState = TransactionState.IDLE;
     }
 
     public void saveParsedStatement(String portalName, ParsedStatement parsedPrepareStatement)

@@ -54,6 +54,11 @@ public class ProxyInstance {
 
     public final ConcurrentHashMap<String,PostgresProxyTarget> proxyTarget = new ConcurrentHashMap<>();
 
+    // 后端会话号 → 上游 的取消路由表。
+    // CancelRequest 报文没有 database，无法按别名选路；代理在握手期从后端的
+    // BackendKeyData 学到 pid，取消到达时按 pid 精确回送（详见 CancelRouter）。
+    public final CancelRouter cancelRouter = new CancelRouter();
+
     // 构造函数
     public ProxyInstance(ServerConfiguration pServerConfiguration) throws ServerException
     {
@@ -226,7 +231,14 @@ public class ProxyInstance {
         }
 
         // 停止对外网络服务
-        protocolServer.stop();
+        // 注意：port=-1（禁用监听）时 protocolServer 从未创建，这里必须判空，否则停止会 NPE
+        if (protocolServer != null) {
+            protocolServer.stop();
+            protocolServer = null;
+        }
+
+        // 清理取消路由表（进程即将退出，避免残留"陈旧路由"影响后续判断）
+        cancelRouter.clear();
 
         // 删除PID文件
         if (pidRandomAccessFile != null )

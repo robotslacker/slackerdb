@@ -165,11 +165,12 @@
                 <configuration>
                     <argLine>--add-opens java.base/java.lang=ALL-UNNAMED -XX:+EnableDynamicAgentLoading -Djdk.instrument.traceUsage=false</argLine>
                     <!--
-                        随用随加的显式清单极易漏登记（历史上 CopyFailureAtomicityTest、
-                        CopyCsvSemanticsTest、SqlReplacerCacheTest 以及 Sanity01~03Test、
+                        随用随加的显式清单极易漏登记（历史上 CopySanityTest
+                        [原 CopyCsvSemanticsTest / CopyFailureAtomicityTest / sql/CopyCsvReaderTest 已合并至此]、
+                        SqlReplacerCacheTest 以及 Sanity01~03Test、
                         ClientTest、HistoryQueueTest、PluginManagerTest、RowEncoderTest、
                         SessionConcurrencyTest、SqlReplacerGoldenTest、BusinessExecutorTest、
-                        PlSqlTest、sql/CopyCsvReaderTest 都因此被 mvn test 静默跳过）。
+                        PlSqlTest 都因此被 mvn test 静默跳过）。
                         这里改为按命名约定自动纳入：所有以 Test 结尾的测试类都会被 mvn test 执行，
                         新增测试只要遵守 *Test.java 命名即可自动生效，无需再改 pom。
                     -->

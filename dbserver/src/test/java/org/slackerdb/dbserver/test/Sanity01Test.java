@@ -5,32 +5,19 @@ import ch.qos.logback.classic.Logger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.postgresql.copy.CopyManager;
-import org.postgresql.core.BaseConnection;
 import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.dbserver.server.DBInstance;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import org.slackerdb.dbserver.sql.PostgresSQLUtil;
 import org.slf4j.LoggerFactory;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.StringReader;
 import java.math.BigDecimal;
 import java.sql.*;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.Calendar;
-import java.util.List;
 import java.util.TimeZone;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 public class Sanity01Test {
     static int dbPort=4309;
@@ -565,33 +552,57 @@ public class Sanity01Test {
         assert expectedResult == actualResult;
     }
 
+    /**
+     * 客户端在事务块中关闭连接（pgjdbc 会发送 Terminate 报文）时，未提交的改动必须被<b>回滚</b>。
+     *
+     * <p>PG 语义：没有显式 COMMIT 就等于没有提交，与连接是否优雅关闭无关。</p>
+     *
+     * <p>注意：改造前服务端的 {@code closeSession()} 对非 COPY 场景执行的是 commit，
+     * 本用例原本名为 {@code testConnectionAutoCommitOnClose} 并断言"关闭时会提交"（recCount == 1），
+     * 那正是 BUG-7 本身。现已按 PG 语义改为断言回滚。</p>
+     */
     @Test
-    void testConnectionAutoCommitOnClose() throws SQLException
+    void testConnectionRollbackOnClose() throws SQLException
     {
         String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
         Connection pgConn1 = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn1.setAutoCommit(false);
 
-        pgConn1.createStatement().execute("Create TABLE testConnectionAutoCommitOnClose (id int)");
+        pgConn1.createStatement().execute("Create TABLE testConnectionRollbackOnClose (id int)");
         pgConn1.commit();
 
-        pgConn1.createStatement().execute("insert into testConnectionAutoCommitOnClose values(3)");
+        // 这条 INSERT 处于事务中且从未提交
+        pgConn1.createStatement().execute("insert into testConnectionRollbackOnClose values(3)");
         pgConn1.close();
 
         Connection pgConn2 = DriverManager.getConnection(connectURL, "", "");
         pgConn2.setAutoCommit(false);
 
-        ResultSet rs = pgConn2.createStatement().executeQuery("SELECT * from testConnectionAutoCommitOnClose");
+        ResultSet rs = pgConn2.createStatement().executeQuery("SELECT * from testConnectionRollbackOnClose");
         int recCount = 0;
         while (rs.next()) {
             recCount++;
-            assert rs.getInt(1) == 3;
         }
-        assert recCount == 1;
+        // 未提交的数据必须被丢弃
+        assert recCount == 0 : "事务中未提交的数据在连接关闭后被保留了，实际行数=" + recCount;
         rs.close();
+
+        // 反向确认：显式提交之后关闭，数据必须保留（防止"一刀切全回滚"的过度修复）
+        pgConn2.createStatement().execute("insert into testConnectionRollbackOnClose values(4)");
+        pgConn2.commit();
         pgConn2.close();
 
+        Connection pgConn3 = DriverManager.getConnection(connectURL, "", "");
+        ResultSet rs2 = pgConn3.createStatement().executeQuery("SELECT * from testConnectionRollbackOnClose");
+        int committedCount = 0;
+        while (rs2.next()) {
+            assert rs2.getInt(1) == 4;
+            committedCount++;
+        }
+        assert committedCount == 1 : "已提交的数据在连接关闭后丢失，实际行数=" + committedCount;
+        rs2.close();
+        pgConn3.close();
     }
 
     @Test
@@ -718,267 +729,6 @@ public class Sanity01Test {
         hikariDataSource.close();
     }
 
-    @Test
-    void testCopy() throws SQLException, IOException {
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn1 = DriverManager.getConnection(
-                connectURL, "", "");
-        pgConn1.setAutoCommit(false);
-
-        {
-            pgConn1.createStatement().execute("create or replace table testCopy(id int, first_name varchar(20), last_name varchar(20))");
-            String csvData = "1,John,Doe\n2,Jane,Smith\n"; // 示例数据
-
-            // 使用BaseConnection以便于进行COPY操作
-            CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
-
-            // 执行COPY FROM STDIN操作(包含表名)
-            String copySql = "COPY testCopy (id, last_name, first_name) FROM STDIN WITH (FORMAT csv)";
-            copyManager.copyIn(copySql, new StringReader(csvData));
-            pgConn1.commit();
-
-            // 检查数据
-            PreparedStatement pstmt = pgConn1.prepareStatement("select * FROM testCopy order by id");
-            ResultSet rs = pstmt.executeQuery();
-            int expectedResult = 2;
-            int nRows = 0;
-            while (rs.next()) {
-                nRows = nRows + 1;
-                if (rs.getInt("id") == 1) {
-                    assert rs.getString("first_name").equals("Doe");
-                    assert rs.getString("last_name").equals("John");
-                }
-                if (rs.getInt("id") == 2) {
-                    assert rs.getString("first_name").equals("Smith");
-                    assert rs.getString("last_name").equals("Jane");
-                }
-            }
-            pstmt.close();
-
-            assert nRows == expectedResult;
-        }
-        {
-            pgConn1.createStatement().execute("create or replace table testCopy2(id int, first_name varchar(20), last_name varchar(20))");
-            String csvData = "1,John,Doe\n2,Jane,Smith\n"; // 示例数据
-
-            // 使用BaseConnection以便于进行COPY操作
-            CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
-
-            // 执行COPY FROM STDIN操作(不包含表名)
-            String copySql = "COPY testCopy2 FROM STDIN WITH (FORMAT csv)";
-            copyManager.copyIn(copySql, new StringReader(csvData));
-            pgConn1.commit();
-
-            PreparedStatement pstmt = pgConn1.prepareStatement("select * FROM testCopy2 order by id");
-            ResultSet rs = pstmt.executeQuery();
-            int nRows = 0;
-            int expectedResult = 2;
-            while (rs.next()) {
-                nRows = nRows + 1;
-                if (rs.getInt("id") == 1)
-                {
-                    assert rs.getString("first_name").equals("John");
-                    assert rs.getString("last_name").equals("Doe");
-                }
-                if (rs.getInt("id") == 2)
-                {
-                    assert rs.getString("first_name").equals("Jane");
-                    assert rs.getString("last_name").equals("Smith");
-                }
-            }
-            pstmt.close();
-            pgConn1.close();
-
-            assert nRows == expectedResult;
-        }
-    }
-
-    @Test
-    void testCopy2() throws SQLException, IOException {
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn1 = DriverManager.getConnection(
-                connectURL, "", "");
-        pgConn1.setAutoCommit(false);
-
-        pgConn1.createStatement().execute("create or replace table testCopy2(id int, first_name varchar(20), last_name varchar(20))");
-        String csvData = "1,John,Doe\n2,Jane,Smith\n"; // 示例数据
-
-        // 使用BaseConnection以便于进行COPY操作
-        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
-
-        // 执行COPY FROM STDIN操作(不包含表名)
-        String copySql = "COPY testCopy2 FROM STDIN WITH (FORMAT csv)";
-        copyManager.copyIn(copySql, new StringReader(csvData));
-        pgConn1.commit();
-
-        PreparedStatement pstmt = pgConn1.prepareStatement("select * FROM testCopy2 order by id");
-        ResultSet rs = pstmt.executeQuery();
-        int nRows = 0;
-        int expectedResult = 2;
-        while (rs.next()) {
-            nRows = nRows + 1;
-            if (rs.getInt("id") == 1)
-            {
-                assert rs.getString("first_name").equals("John");
-                assert rs.getString("last_name").equals("Doe");
-            }
-            if (rs.getInt("id") == 2)
-            {
-                assert rs.getString("first_name").equals("Jane");
-                assert rs.getString("last_name").equals("Smith");
-            }
-        }
-        pstmt.close();
-        pgConn1.close();
-
-        assert nRows == expectedResult;
-    }
-
-    // 客户端以0字节的COPY数据流执行COPY ... FROM STDIN时(驱动只发送CopyDone，不发送任何CopyData)，
-    // 服务端也必须关闭Appender并回应CommandComplete，否则驱动无法确认COPY结束(copyIn返回-1)。
-    @Test
-    void testEmptyCopy() throws SQLException, IOException {
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn1 = DriverManager.getConnection(
-                connectURL, "", "");
-        pgConn1.setAutoCommit(false);
-
-        pgConn1.createStatement().execute("create or replace table testEmptyCopy(id int, first_name varchar(20), last_name varchar(20))");
-
-        // 使用BaseConnection以便于进行COPY操作
-        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
-
-        // 执行COPY FROM STDIN操作(0字节数据流)
-        String copySql = "COPY testEmptyCopy FROM STDIN WITH (FORMAT csv)";
-        long nCopiedRows = copyManager.copyIn(copySql, new StringReader(""));
-
-        PreparedStatement pstmt = pgConn1.prepareStatement("select count(*) FROM testEmptyCopy");
-        ResultSet rs = pstmt.executeQuery();
-        rs.next();
-        int nRows = rs.getInt(1);
-        rs.close();
-        pstmt.close();
-        pgConn1.close();
-
-        assert nCopiedRows == 0;
-        assert nRows == 0;
-    }
-
-    // COPY语句中指定的列顺序与表定义的列顺序不一致时(包括完全逆序、部分列、乱序)，
-    // 数据必须按 COPY 语句中列的顺序被解释，并写入对应的目标列。
-    @Test
-    void testCopyReorderedColumnCsv() throws SQLException, IOException {
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn1 = DriverManager.getConnection(
-                connectURL, "", "");
-        pgConn1.setAutoCommit(false);
-
-        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
-
-        // 1) 完全逆序: COPY(score, first_name, id) vs 表(id, first_name, score)
-        pgConn1.createStatement().execute(
-                "create or replace table testCopyOrderCsv(id int, first_name varchar(20), score double)");
-        long n1 = copyManager.copyIn(
-                "COPY testCopyOrderCsv (score, first_name, id) FROM STDIN WITH (FORMAT csv)",
-                new StringReader("9.5,John,1\n"));
-        PreparedStatement ps1 = pgConn1.prepareStatement("select id, first_name, score from testCopyOrderCsv");
-        ResultSet rs1 = ps1.executeQuery();
-        boolean row1 = false;
-        while (rs1.next()) {
-            assert rs1.getInt("id") == 1;
-            assert rs1.getString("first_name").equals("John");
-            assert rs1.getDouble("score") == 9.5;
-            row1 = true;
-        }
-        rs1.close();
-        ps1.close();
-
-        // 2) 部分列 + 顺序不一致: 只指定 (first_name, id)，score 走默认值
-        pgConn1.createStatement().execute(
-                "create or replace table testCopyOrderCsv2(id int, first_name varchar(20), score double default 7.5)");
-        long n2 = copyManager.copyIn(
-                "COPY testCopyOrderCsv2 (first_name, id) FROM STDIN WITH (FORMAT csv)",
-                new StringReader("Ann,3\n"));
-        PreparedStatement ps2 = pgConn1.prepareStatement("select id, first_name, score from testCopyOrderCsv2");
-        ResultSet rs2 = ps2.executeQuery();
-        boolean row2 = false;
-        while (rs2.next()) {
-            assert rs2.getInt("id") == 3;
-            assert rs2.getString("first_name").equals("Ann");
-            assert rs2.getDouble("score") == 7.5;
-            row2 = true;
-        }
-        rs2.close();
-        ps2.close();
-        pgConn1.close();
-
-        assert n1 == 1;
-        assert n2 == 1;
-        assert row1;
-        assert row2;
-    }
-
-    /**
-     * 构造一段 PG BINARY COPY 数据: 19字节固定头 + 一行(1列 INTEGER) [+ 可选的行尾 -1 结束标志]。
-     */
-    private static byte[] buildBinaryCopyPayload(boolean withTrailer) {
-        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-        // 11字节签名 + 4字节标志位 + 4字节头部扩展区长度
-        out.writeBytes(new byte[]{0x50, 0x47, 0x43, 0x4F, 0x50, 0x59, 0x0A, (byte) 0xFF, 0x0D, 0x0A, 0x00,
-                0, 0, 0, 0, 0, 0, 0, 0});
-        out.write(0); out.write(1);                             // 列数 = 1
-        out.write(0); out.write(0); out.write(0); out.write(4); // 列长度 = 4
-        out.write(0); out.write(0); out.write(0); out.write(1); // 值 = 1
-        if (withTrailer) {
-            out.write(0xFF); out.write(0xFF);                   // (short)-1
-        }
-        return out.toByteArray();
-    }
-
-    // BINARY COPY 数据流不完整时(缺少行尾的 -1 结束标志)，服务端必须回明确错误，
-    // 而不是让 BufferUnderflowException 逃逸到Netty(那样客户端会永久挂起且会话不可再用)。
-    @Test
-    void testBinaryCopyTruncatedStream() throws Exception {
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn1 = DriverManager.getConnection(
-                connectURL, "", "");
-        pgConn1.setAutoCommit(false);
-        // 兜底: 万一回归(服务端不响应)，客户端在60秒后报错而不是把整个测试挂死
-        ExecutorService timeoutExecutor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "copy-truncated-timeout");
-            t.setDaemon(true);
-            return t;
-        });
-        pgConn1.setNetworkTimeout(timeoutExecutor, 60000);
-
-        pgConn1.createStatement().execute("create or replace table test_truncated_copy(id integer)");
-
-        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
-        boolean errorCaught = false;
-        try (InputStream binaryStream = new ByteArrayInputStream(buildBinaryCopyPayload(false))) {
-            try {
-                copyManager.copyIn("COPY test_truncated_copy (id) FROM STDIN WITH (FORMAT BINARY)", binaryStream);
-            } catch (SQLException sqlException) {
-                errorCaught = true;
-                assert sqlException.getMessage().contains("invalid binary COPY data");
-                assert sqlException.getMessage().contains("truncated");
-            }
-        }
-
-        // 出错之后同一条连接必须仍然可用
-        PreparedStatement pstmt = pgConn1.prepareStatement("select count(*) from test_truncated_copy");
-        ResultSet rs = pstmt.executeQuery();
-        rs.next();
-        int nRows = rs.getInt(1);
-        rs.close();
-        pstmt.close();
-        pgConn1.close();
-        timeoutExecutor.shutdownNow();
-
-        assert errorCaught;
-        // 不完整的数据流不应该写入任何数据
-        assert nRows == 0;
-    }
 
     @Test
     void testSetTimeStamp() throws SQLException
@@ -1185,394 +935,6 @@ public class Sanity01Test {
         pgConn1.close();
     }
 
-    @Test
-    void testBinaryCopy1() throws Exception
-    {
-        String timeStr1 = "2020-01-05 23:50:50";
-        String timeStr2 = "2025-03-05 06:33:28";
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-
-        List<Object[]> data = List.of(
-                new Object[]
-                        {
-                                1L, "Alice", 25.5, new BigDecimal("12345.6789"),
-                                Timestamp.from(LocalDateTime.parse(timeStr1, formatter).atZone(ZoneId.of("UTC")).toInstant()),
-                                true
-                        },
-                new Object[]
-                        {
-                                2L, "Bob", 30.8, new BigDecimal("98765.4321"),
-                                Timestamp.from(LocalDateTime.parse(timeStr2, formatter).atZone(ZoneId.of("UTC")).toInstant()),
-                                true
-                        }
-        );
-        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
-
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn1 = DriverManager.getConnection(
-                connectURL, "", "");
-        pgConn1.setAutoCommit(false);
-
-        String sql = """
-            CREATE OR REPLACE TABLE test_binary_copy1 (
-                id BIGINT PRIMARY KEY,
-                name VARCHAR(50),
-                age DOUBLE PRECISION,
-                salary NUMERIC(10,4),
-                created_at TIMESTAMP,
-                is_active BOOLEAN
-            )
-            """;
-        pgConn1.createStatement().execute(sql);
-
-        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
-        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
-            copyManager.copyIn("COPY test_binary_copy1 FROM STDIN WITH (FORMAT BINARY)", binaryStream);
-        }
-
-        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT * FROM test_binary_copy1 order by id")) {
-            rs.next();
-            assert String.format("ID: %d, Name: %s, Age: %.2f, Salary: %s, CreatedAt: %s, Active: %b%n",
-                        rs.getInt("id"),
-                        rs.getString("name"),
-                        rs.getDouble("age"),
-                        rs.getBigDecimal("salary"),
-                        rs.getTimestamp("created_at"),
-                        rs.getBoolean("is_active")).trim().equals("ID: 1, Name: Alice, Age: 25.50, Salary: 12345.6789, CreatedAt: 2020-01-05 23:50:50.0, Active: true");
-            rs.next();
-            assert String.format("ID: %d, Name: %s, Age: %.2f, Salary: %s, CreatedAt: %s, Active: %b%n",
-                    rs.getInt("id"),
-                    rs.getString("name"),
-                    rs.getDouble("age"),
-                    rs.getBigDecimal("salary"),
-                    rs.getTimestamp("created_at"),
-                    rs.getBoolean("is_active")).trim().equals("ID: 2, Name: Bob, Age: 30.80, Salary: 98765.4321, CreatedAt: 2025-03-05 06:33:28.0, Active: true");
-            boolean hasMoreRows = rs.next();
-            assert !hasMoreRows;
-        }
-
-        pgConn1.close();
-    }
-
-    @Test
-    void testBinaryCopy2() throws Exception
-    {
-        String timeStr1 = "2020-01-05 23:50:50";
-        String timeStr2 = "2025-03-05 06:33:28";
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-
-        List<Object[]> data = List.of(
-                new Object[]
-                        {
-                                1L, "Alice", 25.5, new BigDecimal("12345.6789"),
-                                Timestamp.from(LocalDateTime.parse(timeStr1, formatter).atZone(ZoneId.of("UTC")).toInstant()),
-                                true
-                        },
-                new Object[]
-                        {
-                                2L, "Bob", 30.8, new BigDecimal("98765.4321"),
-                                Timestamp.from(LocalDateTime.parse(timeStr2, formatter).atZone(ZoneId.of("UTC")).toInstant()),
-                                true
-                        }
-        );
-        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
-
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn1 = DriverManager.getConnection(
-                connectURL, "", "");
-        pgConn1.setAutoCommit(false);
-
-        String sql = """
-            CREATE OR REPLACE TABLE test_binary_copy2 (
-                id BIGINT PRIMARY KEY,
-                name VARCHAR(50),
-                age DOUBLE PRECISION,
-                salary NUMERIC(10,4),
-                created_at TIMESTAMP,
-                is_active BOOLEAN
-            )
-            """;
-        pgConn1.createStatement().execute(sql);
-
-        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
-        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
-            copyManager.copyIn("COPY test_binary_copy2 (id, name, age) FROM STDIN WITH (FORMAT BINARY)", binaryStream);
-        }
-
-        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT * FROM test_binary_copy2 order by id")) {
-            rs.next();
-            assert String.format("ID: %d, Name: %s, Age: %.2f, Salary: %s, CreatedAt: %s, Active: %b%n",
-                    rs.getInt("id"),
-                    rs.getString("name"),
-                    rs.getDouble("age"),
-                    rs.getBigDecimal("salary"),
-                    rs.getTimestamp("created_at"),
-                    rs.getBoolean("is_active")).trim().equals("ID: 1, Name: Alice, Age: 25.50, Salary: null, CreatedAt: null, Active: false");
-            rs.next();
-            assert String.format("ID: %d, Name: %s, Age: %.2f, Salary: %s, CreatedAt: %s, Active: %b%n",
-                    rs.getInt("id"),
-                    rs.getString("name"),
-                    rs.getDouble("age"),
-                    rs.getBigDecimal("salary"),
-                    rs.getTimestamp("created_at"),
-                    rs.getBoolean("is_active")).trim().equals("ID: 2, Name: Bob, Age: 30.80, Salary: null, CreatedAt: null, Active: false");
-            boolean hasMoreRows = rs.next();
-            assert !hasMoreRows;
-        }
-
-        pgConn1.close();
-    }
-
-    @Test
-    void testBinaryCopy3() throws Exception
-    {
-        String timeStr1 = "2020-01-05 23:50:50";
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-
-        List<Object[]> data = new ArrayList<>();
-        for (int i=0; i<10000;i++)
-        {
-            // 传输内容要超过65K
-            Object[] row =
-                    new Object[]
-                    {
-                            i, "Alice", 25.5, new BigDecimal("12345.6789"),
-                            Timestamp.from(LocalDateTime.parse(timeStr1, formatter).atZone(ZoneId.of("UTC")).toInstant()),
-                            true
-                    };
-            data.add(row);
-        }
-        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
-
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn1 = DriverManager.getConnection(
-                connectURL, "", "");
-        pgConn1.setAutoCommit(false);
-
-        String sql = """
-            CREATE OR REPLACE TABLE test_binary_copy3 (
-                id INT PRIMARY KEY,
-                name VARCHAR(50),
-                age DOUBLE PRECISION,
-                salary NUMERIC(10,4),
-                created_at TIMESTAMP,
-                is_active BOOLEAN
-            )
-            """;
-        pgConn1.createStatement().execute(sql);
-
-        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
-        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
-            copyManager.copyIn("COPY test_binary_copy3 (id, name, age) FROM STDIN WITH (FORMAT BINARY)", binaryStream);
-        }
-
-        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT Count(*),Sum(id),Sum(age)*1000 FROM test_binary_copy3")) {
-            rs.next();
-            assert rs.getInt(1 ) == 10000;
-            assert rs.getInt(2 ) == 49995000;
-            assert rs.getInt(3 ) == 255000000;
-        }
-        pgConn1.close();
-    }
-
-    @Test
-    void testBinaryCopy4() throws Exception
-    {
-        List<Object[]> data = new ArrayList<>();
-        for (int i=0; i<10000;i++)
-        {
-            // 传输内容要超过65K
-            Object[] row =
-                    new Object[]
-                            {
-                                    i, "Alice", (short)-1, "中国",
-                            };
-            data.add(row);
-        }
-        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
-
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn1 = DriverManager.getConnection(
-                connectURL, "", "");
-        pgConn1.setAutoCommit(false);
-
-        String sql = """
-            CREATE OR REPLACE TABLE test_binary_copy4 (
-                id INT PRIMARY KEY,
-                name VARCHAR(50),
-                age   SMALLINT,
-                title VARCHAR
-            )
-            """;
-        pgConn1.createStatement().execute(sql);
-
-        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
-        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
-            copyManager.copyIn("COPY test_binary_copy4  FROM STDIN WITH (FORMAT BINARY)", binaryStream);
-        }
-
-        try (
-                Statement stmt = pgConn1.createStatement();
-                ResultSet rs = stmt.executeQuery("SELECT Count(*),Sum(id),Sum(age),Min(title) FROM test_binary_copy4")) {
-            rs.next();
-            assert rs.getInt(1 ) == 10000;
-            assert rs.getInt(2 ) == 49995000;
-            assert rs.getInt(3 ) == -10000;
-            assert rs.getString(4).equals("中国");
-        }
-        pgConn1.close();
-    }
-
-    @Test
-    void testBinaryCopy5() throws Exception
-    {
-        List<Object[]> data = List.of(
-                new Object[]
-                        {
-                                1L
-                        },
-                new Object[]
-                        {
-                                2L
-                        }
-        );
-        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
-
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn1 = DriverManager.getConnection(
-                connectURL, "", "");
-        pgConn1.setAutoCommit(false);
-
-        boolean errorCaugt = false;
-        String sql = """
-            CREATE OR REPLACE TABLE test_binary_copy5 (
-                id INT
-            )
-            """;
-        pgConn1.createStatement().execute(sql);
-
-        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
-        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
-            try {
-                copyManager.copyIn("COPY test_binary_copy5(id)  FROM STDIN WITH (FORMAT BINARY)", binaryStream);
-            } catch (SQLException sqlException)
-            {
-                errorCaugt = true;
-                assert sqlException.getMessage().contains("data type mismatch");
-            }
-        }
-        pgConn1.close();
-
-        // 确认找到了错误
-        assert errorCaugt;
-    }
-
-    @Test
-    void testBinaryCopy6() throws Exception
-    {
-        List<Object[]> data = new ArrayList<>();
-        for (int i=0; i<10000;i++)
-        {
-            // 传输内容要超过65K
-            Object[] row =
-                    new Object[]
-                            {
-                                    "1", (long)i, "SEND", "DD", "DD"
-                            };
-            data.add(row);
-        }
-        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
-
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn1 = DriverManager.getConnection(
-                connectURL, "", "");
-        pgConn1.setAutoCommit(false);
-
-        String sql = """
-            CREATE OR REPLACE TABLE test_binary_copy6 (
-                id BIGINT,
-                create_time TIMESTAMP default CURRENT_TIMESTAMP,
-                CNT VARCHAR,
-                EVENT_TYPE VARCHAR,
-                SRC_TABLE_UNIQUE_ID VARCHAR,
-                TIME VARCHAR
-            )
-            """;
-        pgConn1.createStatement().execute(sql);
-
-        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
-        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
-            // 只指定部分列，没有指定的列(create_time)使用默认值
-            copyManager.copyIn("COPY test_binary_copy6(CNT, ID, EVENT_TYPE, SRC_TABLE_UNIQUE_ID, TIME)  FROM STDIN WITH (FORMAT BINARY)", binaryStream);
-        }
-
-        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT COUNT(*), SUM(ID) FROM test_binary_copy6")) {
-            rs.next();
-            assert rs.getInt(1) == 10000;
-            assert rs.getInt(2) == 49995000;
-        }
-        pgConn1.close();
-    }
-
-
-    @Test
-    void testBinaryCopy7() throws Exception
-    {
-        List<Object[]> data = new ArrayList<>();
-        for (int i=0; i<2;i++)
-        {
-            // 传输内容要超过65K
-            Object[] row =
-                    new Object[]
-                            {
-                                    "1", (long)i, "SEND", "DD", "DD", "DD"
-                            };
-            data.add(row);
-        }
-        byte[] binaryCopyData = PostgresSQLUtil.convertPGRowToByte(data);
-
-        String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
-        Connection pgConn1 = DriverManager.getConnection(
-                connectURL, "", "");
-        pgConn1.setAutoCommit(false);
-
-        String sql = """
-            CREATE OR REPLACE TABLE test_binary_copy7 (
-                id BIGINT,
-                create_time TIMESTAMP default CURRENT_TIMESTAMP,
-                CNT VARCHAR,
-                SRC_TABLE_UNIQUE_ID VARCHAR,
-                TIME VARCHAR
-            )
-            """;
-        pgConn1.createStatement().execute(sql);
-
-        CopyManager copyManager = new CopyManager((BaseConnection) pgConn1);
-        boolean errorCaught = false;
-        try (InputStream binaryStream = new ByteArrayInputStream(binaryCopyData)) {
-            try {
-                // test_binary_copy7中根本没有EVENT_TYPE字段，这里应该报错
-                copyManager.copyIn("COPY test_binary_copy7(CNT, ID, EVENT_TYPE, SRC_TABLE_UNIQUE_ID, START_TIME, TIME)  FROM STDIN WITH (FORMAT BINARY)", binaryStream);
-            }
-            catch (SQLException sqlException)
-            {
-                errorCaught = true;
-                assert sqlException.getMessage().toLowerCase().contains("event_type");
-                assert sqlException.getMessage().contains("does not exist");
-            }
-        }
-
-        // 确认找到了错误
-        assert errorCaught;
-
-        // 因为列不存在，所以整个Copy应该被拒绝，表中不应该有任何数据
-        try (Statement stmt = pgConn1.createStatement(); ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM test_binary_copy7")) {
-            rs.next();
-            assert rs.getInt(1) == 0;
-        }
-
-        pgConn1.close();
-    }
 
     @Test
     void testTimeInterval() throws Exception {

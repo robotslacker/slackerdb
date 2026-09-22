@@ -190,14 +190,15 @@ public class PostgresServer {
             // 例如：解析消息头、消息体等
             // 解析后的数据对象添加到 out 列表中，以传递给下一个处理器
             while (in.readableBytes() > 0) {
-                // 处理SSLRequest
+                // 处理"前导报文"（没有消息类型字节，位于连接最开头）：
+                //   SSLRequest / CancelRequest / AdminClient 握手 / StartupMessage
                 if (lastRequestCommand == null || lastRequestCommand.isEmpty()) {
                     // 等待网络请求发送完毕，SSLRequest
                     if (in.readableBytes() < 8) {
                         return;
                     }
 
-                    // 首先推断为SSLRequest，或者是管理客户端的请求
+                    // 首先推断为SSLRequest，或者是管理客户端的请求，或者是取消请求
                     data = new byte[8];
                     in.readBytes(data);
 
@@ -218,6 +219,32 @@ public class PostgresServer {
                         // 标记当前步骤
                         lastRequestCommand = AdminClientRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
+                    }
+                    else if (Arrays.equals(data, CancelRequest.CancelRequestHeader))
+                    {
+                        // 标准 CancelRequest（新连接上的首个报文，无消息类型字节）：
+                        //   Int32(16) + Int32(80877102) + Int32(pid) + Int32(secret)
+                        // 首 8 字节已消费，还差 pid + secret 共 8 字节。
+                        // 注意：这里**必须**在"回退指针按 StartupMessage 解析"之前判定，
+                        // 否则 16 字节的长度会通过 StartupMessage 的长度校验，
+                        // 被当成缺少 database 参数的启动包而被拒绝——取消功能将完全失效。
+                        if (in.readableBytes() < 8) {
+                            in.readerIndex(in.readerIndex() - 8);   // 数据未到齐，回退等待
+                            return;
+                        }
+                        byte[] cancelTail = new byte[8];
+                        in.readBytes(cancelTail);
+
+                        CancelRequest cancelRequest = new CancelRequest(dbInstance);
+                        cancelRequest.decodeTail(cancelTail);
+                        pushMsgObject(out, cancelRequest);
+
+                        // 标记当前步骤
+                        lastRequestCommand = CancelRequest.class.getSimpleName();
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
+
+                        // 取消连接只有这一个报文，处理完即结束
+                        return;
                     }
                     else
                     {

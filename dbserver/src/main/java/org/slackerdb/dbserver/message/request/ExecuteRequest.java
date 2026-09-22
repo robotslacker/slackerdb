@@ -9,6 +9,7 @@ import org.slackerdb.dbserver.sql.RowEncoder;
 import org.slackerdb.plsql.ParseSQLException;
 import org.slackerdb.plsql.PlSqlVisitor;
 import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.dbserver.server.DBSession;
 import org.slackerdb.common.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
@@ -111,6 +112,8 @@ public class ExecuteRequest extends PostgresRequest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         long  nRowsAffected = 0;
         long  nSqlHistoryId = -1;
+        // 本次执行登记到会话"正在执行"注册表的句柄 id；0 表示本次没有登记
+        long  runningHandleId = 0;
 
         tryBlock:
         try {
@@ -199,6 +202,22 @@ public class ExecuteRequest extends PostgresRequest {
                 out.close();
                 break tryBlock;
             }
+
+            // 事务块处于失败状态时，除 COMMIT/ROLLBACK/ABORT 之外的语句一律拒绝（SQLSTATE 25P02）。
+            // 与 QueryRequest 路径保持一致：ReadyForQuery 上报 'E' 之后必须真的拒绝后续语句。
+            DBSession executeSession = this.dbInstance.getSession(getCurrentSessionId(ctx));
+            if (executeSession.getTransactionState() == DBSession.TransactionState.FAILED
+                    && !QueryRequest.isTransactionEndStatement(executeSQL)) {
+                ErrorResponse failedTxError = new ErrorResponse(this.dbInstance);
+                failedTxError.setErrorResponse("25P02",
+                        "current transaction is aborted, commands ignored until end of transaction block");
+                failedTxError.setErrorSeverity("ERROR");
+                failedTxError.process(ctx, request, out);
+                PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+                out.close();
+                break tryBlock;
+            }
             this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = executeSQL;
             // 之前有缓存记录
             if (parsedStatement.resultSet != null)
@@ -257,6 +276,10 @@ public class ExecuteRequest extends PostgresRequest {
                 // 记录一个新的SqlID, 和当前正在执行的句柄（便于取消）
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSqlId.incrementAndGet();
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).executingPreparedStatement = parsedStatement.preparedStatement;
+                // 同时登记到统一的"正在执行"注册表：让取消逻辑只依赖注册表一处，
+                // 不必再区分"扩展协议靠 parsedStatements、简单查询靠注册表"两套来源。
+                runningHandleId = this.dbInstance.getSession(getCurrentSessionId(ctx))
+                        .registerRunningStatement(parsedStatement.preparedStatement);
 
                 // 记录到SQL历史中
                 nSqlHistoryId = insertSqlHistory(ctx);
@@ -366,16 +389,15 @@ public class ExecuteRequest extends PostgresRequest {
             }
 
             // 设置语句的事务级别
-            if (executeSQL.toUpperCase().startsWith("BEGIN")) {
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = true;
-            } else if (executeSQL.toUpperCase().startsWith("END")) {
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
-            } else if (executeSQL.toUpperCase().startsWith("COMMIT")) {
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
-            } else if (executeSQL.toUpperCase().startsWith("ROLLBACK")) {
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
-            } else if (executeSQL.toUpperCase().startsWith("ABORT")) {
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction = false;
+            // 更新事务状态机
+            String upperExecuteSql = executeSQL.toUpperCase();
+            if (upperExecuteSql.startsWith("BEGIN") || upperExecuteSql.startsWith("START TRANSACTION")) {
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).beginTransaction();
+            } else if (upperExecuteSql.startsWith("END")
+                    || upperExecuteSql.startsWith("COMMIT")
+                    || upperExecuteSql.startsWith("ROLLBACK")
+                    || upperExecuteSql.startsWith("ABORT")) {
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).endTransaction();
             }
 
             CommandComplete commandComplete = new CommandComplete(this.dbInstance);
@@ -427,6 +449,9 @@ public class ExecuteRequest extends PostgresRequest {
             }
         }
         catch (SQLException e) {
+            // 事务块中的语句失败 → 事务进入 aborted 状态，ReadyForQuery 之后要回 'E'（BUG-15）
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).markTransactionFailed();
+
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
             errorResponse.setErrorFile("ExecuteRequest");
@@ -443,6 +468,14 @@ public class ExecuteRequest extends PostgresRequest {
             }
         }
         finally {
+            // 无论正常结束、分批挂起（PortalSuspended）还是出错，都要摘掉"正在执行"的句柄。
+            // 放在 finally 里是为了覆盖所有 break tryBlock / 异常退出路径；
+            // 挂起后下一次 Execute 会重新登记，因此这里摘掉不会影响 portal 续取。
+            // 会话可能已被并发摘除，这里必须容忍 null（否则会在 finally 里抛出 NPE 掩盖原始异常）。
+            DBSession executingSession = this.dbInstance.getSession(getCurrentSessionId(ctx));
+            if (executingSession != null) {
+                executingSession.unregisterRunningStatement(runningHandleId);
+            }
             out.close();
         }
 

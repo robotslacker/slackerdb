@@ -29,6 +29,9 @@ public class ReadyForQuery extends PostgresMessage {
         out.write((byte) 'Z');
         out.write(Utils.int32ToBytes(5));
 
-        out.write((byte) (this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction ? 'T' : 'I'));
+        // 事务状态字节直接取自会话的事务状态机（'I' / 'T' / 'E'）。
+        // 修复前这里只会回 'T' 或 'I'，事务块内出错后仍报 'T'，与 PG 语义不符（BUG-15）：
+        // 客户端会以为事务还能继续，却在下一条语句上收到莫名其妙的失败。
+        out.write(this.dbInstance.getSession(getCurrentSessionId(ctx)).getTransactionState().getStatusByte());
     }
 }

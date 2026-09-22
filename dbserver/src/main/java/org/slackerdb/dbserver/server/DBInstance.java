@@ -452,10 +452,6 @@ public class DBInstance {
             ChannelFuture future =
                     client.connect(remoteListenerHost, remoteListenerPort).sync();
 
-            // 发送消息头，并等待回应标志
-            ByteBuf buffer = Unpooled.wrappedBuffer(AdminClientRequest.AdminClientRequestHeader);
-            future.channel().writeAndFlush(buffer).sync();
-
             // 拼接消息正文
             InetSocketAddress localAddress = (InetSocketAddress) future.channel().localAddress();
             String message = "";
@@ -470,9 +466,16 @@ public class DBInstance {
                 message = "UNREGISTER " + serverConfiguration.getData() ;
             }
 
-            // 发送消息正文
+            // 发送 8 字节管理握手头 + '!' 命令帧，**必须一次性写出**（同一个 ByteBuf / 同一次 flush）。
+            //
+            // 代理侧的解码器只在"首 8 字节恰好是管理头、且后面还没有数据"时才把它识别为握手头；
+            // 如果分两次 write，操作系统可能把两段合进同一个 TCP 段，解码器面对
+            // "8 字节头 + 5 字节命令头"就会按 StartupMessage 解析（长度域 0x01010101 > 1024）
+            // 并直接关连接。后果是 REGISTER 自注册**间歇性失败**，代理随即报
+            // "Database [alias] does not exist!" —— 这是一个很难复现的偶发故障。
             byte[] msg = message.getBytes(StandardCharsets.UTF_8);
-            buffer = Unpooled.buffer().capacity(5+msg.length);
+            ByteBuf buffer = Unpooled.buffer(AdminClientRequest.AdminClientRequestHeader.length + 5 + msg.length);
+            buffer.writeBytes(AdminClientRequest.AdminClientRequestHeader);
             buffer.writeByte('!');
             buffer.writeInt(4 + msg.length);
             buffer.writeBytes(msg);
@@ -492,6 +495,7 @@ public class DBInstance {
 
     // 终止会话
     // 默认回滚所有会话
+    // 幂等：会话不存在时静默返回（取消连接、重复断开等场景下会被调用到）
     public void abortSession(int sessionId) throws SQLException {
         // 销毁会话保持的数据库信息
         DBSession dbSession = dbSessions.get(sessionId);
@@ -505,6 +509,7 @@ public class DBInstance {
 
     // 关闭会话
     // closeSession默认提交所有未提交内容
+    // 幂等：会话不存在时静默返回
     public void closeSession(int sessionId) throws SQLException {
         // 销毁会话保持的数据库信息
         DBSession dbSession = dbSessions.get(sessionId);
