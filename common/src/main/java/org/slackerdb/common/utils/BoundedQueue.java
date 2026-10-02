@@ -7,41 +7,66 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * 线程安全、有最大容量限制的 FIFO 队列。
  *
- * <p>与标准 {@link BlockingQueue} 的关键差异：<b>入队永不阻塞</b>。队列已满时直接丢弃元素并计数。</p>
- *
- * <p>之所以不使用阻塞式入队：本队列的生产者运行在 Netty EventLoop 等关键线程上
- * （SQL/API 历史记录的入队点见 {@code ExecuteRequest}、{@code ParseRequest}、{@code BindRequest}），
- * 而历史记录本身是"可丢失"的审计数据。一旦消费端跟不上、或者消费线程已经异常退出，
- * 阻塞式入队会把业务线程永久挂住，进而导致整个服务停止响应。
- * 丢弃 + 计数则是一种可观测、可告警的降级行为。</p>
+ * <p><b>审计数据任何情况下都不能丢。</b>
+ * 因此队列满时 {@link #offer(Object)} <b>阻塞</b>等待消费端腾出空位
  *
  * @param <T> 队列中元素的类型
  */
 public class BoundedQueue<T> {
     private final BlockingQueue<T> queue;
+    private final int capacity;
 
-    // 累计尝试入队的元素数量
+    // 累计入队的元素数量
     private final AtomicLong offeredTotal = new AtomicLong(0);
-    // 累计因队列已满而被丢弃的元素数量
-    private final AtomicLong droppedTotal = new AtomicLong(0);
+    // 累计"因队列已满而等待空位"的入队次数（背压强度）
+    private final AtomicLong blockedTotal = new AtomicLong(0);
+    // 累计等待空位的总时长（毫秒）
+    private final AtomicLong blockedMillisTotal = new AtomicLong(0);
 
     public BoundedQueue(int capacity) {
+        this.capacity = capacity;
         this.queue = new LinkedBlockingQueue<>(capacity);
     }
 
     /**
-     * 非阻塞入队：队列已满时丢弃该元素并累加丢弃计数，绝不阻塞调用线程。
+     * 阻塞式入队：队列已满时等待消费端腾出空位，<b>绝不丢弃元素</b>。
+     *
+     * <p>等待期间被 {@link Thread#interrupt()} 打断时不会放弃入队：
+     * 记住中断状态、继续等待，入队完成后再还原中断标记，交由调用方处理。</p>
      *
      * @param item 要插入的元素
-     * @return {@code true} 表示入队成功；{@code false} 表示队列已满，该元素已被丢弃
+     * @return 恒为 {@code true}（本队列没有失败/丢弃路径，保留返回值只为调用方书写方便）
      */
     public boolean offer(T item) {
         offeredTotal.incrementAndGet();
         if (queue.offer(item)) {
             return true;
         }
-        droppedTotal.incrementAndGet();
-        return false;
+
+        blockedTotal.incrementAndGet();
+        long startNano = System.nanoTime();
+        // 先清掉并记住进入时的中断状态，否则 put 会立刻抛出而不是真正等待
+        boolean interrupted = Thread.interrupted();
+        try {
+            while (true) {
+                try {
+                    queue.put(item);
+                    break;
+                }
+                catch (InterruptedException e) {
+                    // 被中断也不能丢审计：记下来，继续等空位
+                    interrupted = true;
+                }
+            }
+        }
+        finally {
+            blockedMillisTotal.addAndGet((System.nanoTime() - startNano) / 1_000_000L);
+            if (interrupted) {
+                // 还原中断状态，让调用方仍能感知到"有人要求我停"
+                Thread.currentThread().interrupt();
+            }
+        }
+        return true;
     }
 
     /**
@@ -68,17 +93,35 @@ public class BoundedQueue<T> {
         return queue.isEmpty();
     }
 
+    /** 队列的最大容量。 */
+    public int getCapacity() {
+        return capacity;
+    }
+
+    /** 还能容纳多少个元素（队列满时为 0）。 */
+    public int remainingCapacity() {
+        return queue.remainingCapacity();
+    }
+
     /**
-     * 累计尝试入队的元素数量（含被丢弃的部分）。
+     * 累计入队的元素数量。
      */
     public long getOfferedTotal() {
         return offeredTotal.get();
     }
 
     /**
-     * 累计因队列已满而被丢弃的元素数量。该值持续增长说明消费端已经跟不上生产速度。
+     * 累计"因队列已满而等待空位"的入队次数。持续增长说明消费端已经跟不上生产速度
+     * （此时生产端被背压拖慢，但数据没有丢）。
      */
-    public long getDroppedTotal() {
-        return droppedTotal.get();
+    public long getBlockedTotal() {
+        return blockedTotal.get();
+    }
+
+    /**
+     * 累计等待空位的总时长（毫秒）。配合 {@link #getBlockedTotal()} 可以看出单次等待的平均时长。
+     */
+    public long getBlockedMillis() {
+        return blockedMillisTotal.get();
     }
 }

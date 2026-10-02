@@ -1,7 +1,7 @@
 package org.slackerdb.dbserver.sql;
 
 /**
- * PG COPY CSV 方言的字节级增量解析器（用于替换 commons-csv）。
+ * PG COPY 的<b>文本类方言</b>字节级增量解析器：{@code FORMAT text} 与 {@code FORMAT csv}。
  *
  * <p>之所以自己写：</p>
  * <ul>
@@ -12,30 +12,41 @@ package org.slackerdb.dbserver.sql;
  *       {@code ""} = 空字符串"的区分，也会让空数值字段变成 {@code NumberFormatException}。</li>
  * </ul>
  *
+ * <p><b>两种方言的差别</b>（都由 {@link CopyDialect} 决定）：</p>
+ * <table border="1">
+ *   <caption>text 与 csv 的差别</caption>
+ *   <tr><th></th><th>csv</th><th>text</th></tr>
+ *   <tr><td>默认分隔符</td><td>{@code ,}</td><td>{@code \t}（制表符）</td></tr>
+ *   <tr><td>引号</td><td>{@code "}，引号内可用 {@code ""}（或 ESCAPE 字符）转义，字段可含分隔符与换行</td>
+ *       <td>没有引号概念</td></tr>
+ *   <tr><td>转义</td><td>{@code ""} → {@code "}</td>
+ *       <td>反斜杠：{@code \b \f \n \r \t \v \\ \.}、八进制 {@code \123}、十六进制 {@code \xHH}</td></tr>
+ *   <tr><td>默认 NULL</td><td>未加引号的空字段</td><td>{@code \N}（原样比较，未反转义）</td></tr>
+ * </table>
+ *
  * <p>本实现的契约：</p>
  * <ul>
- *   <li>字段以 {@code (off, len, quoted)} <b>视图</b>交给 {@link FieldSink}，不复制字节；
+ *   <li>字段以 {@code (off, len, isNull)} <b>视图</b>交给 {@link FieldSink}，不复制字节；
  *       取值时用 {@link #buffer()} 配合 {@code new String(buf, off, len, charset)}。
- *       <b>NULL 的判定：{@code len == 0 && !quoted}</b>（未加引号的空字段）。加了引号的空字段是空字符串。</li>
+ *       <b>NULL 已由本类判定完毕</b>（见上表），调用方不再需要自己推导。</li>
  *   <li><b>可增量</b>：一行被任意切分（例如 TCP 分片）都能续解，调用方只需把新到的字节 {@link #append} 进来
  *       —— 因此不必把整个 COPY 载荷留在内存里。</li>
- *   <li>方言：分隔符 {@code ,}、引号 {@code "}、引号内 {@code ""} 表示一个 {@code "}、引号内允许分隔符与换行；
- *       记录分隔符为 {@code \n}、{@code \r\n} 或裸 {@code \r}；<b>完全空行被跳过</b>
+ *   <li>记录分隔符为 {@code \n}、{@code \r\n} 或裸 {@code \r}；<b>完全空行被跳过</b>
  *       （否则载荷末尾的换行会变成一条假记录）。</li>
- *   <li><b>畸形输入显式报错</b>（{@link CsvFormatException}）：引号到结尾仍未闭合、闭引号后出现非分隔字符。
- *       静默接受会造成"看起来导入成功但内容错了"。</li>
+ *   <li><b>畸形输入显式报错</b>（{@link CsvFormatException}）：引号到结尾仍未闭合、闭引号后出现非分隔字符、
+ *       转义序列不完整。静默接受会造成"看起来导入成功但内容错了"。</li>
  * </ul>
  */
 public final class CopyCsvReader {
 
-    /** 字段回调。{@code off/len} 指向 {@link #buffer()} 中的区间。 */
+    /** 字段回调。{@code off/len} 指向 {@link #buffer()} 中的区间；{@code isNull} 表示该字段是 NULL。 */
     public interface FieldSink {
-        void field(int off, int len, boolean quoted);
+        void field(int off, int len, boolean isNull);
 
         void endRow();
     }
 
-    /** 畸形 CSV 输入。 */
+    /** 畸形的文本输入（引号/转义不合法）。 */
     public static final class CsvFormatException extends RuntimeException {
         public CsvFormatException(String message) {
             super(message);
@@ -49,6 +60,13 @@ public final class CopyCsvReader {
     private int scanPos;
     private boolean eof;
 
+    // ---- 方言 ----
+    private final boolean csvMode;
+    private final byte delimiter;
+    private final byte quote;
+    private final byte escape;
+    private final byte[] nullString;
+
     // ---- 当前行/字段的状态：跨 append 保留，使得一行被分片切断时可以续解 ----
     private boolean rowInProgress;
     private int fieldBegin;        // 字段起点（若带引号，指向开引号）
@@ -56,19 +74,35 @@ public final class CopyCsvReader {
     private boolean inQuotes;
     private boolean fieldQuoted;
     private boolean quoteClosed;   // 闭引号已消费：此后只允许分隔符/行尾
-    private boolean fieldHasEscape; // 出现过 ""，需要就地展开
+    private boolean fieldHasEscape; // 出现过转义序列，需要就地展开
     private long completedRows;    // 已完成的记录数，仅用于报错定位
 
     public CopyCsvReader() {
-        this(DEFAULT_CAPACITY);
+        this(DEFAULT_CAPACITY, null);
     }
 
     public CopyCsvReader(int capacity) {
+        this(capacity, null);
+    }
+
+    public CopyCsvReader(int capacity, CopyDialect dialect) {
         this.buf = new byte[Math.max(64, capacity)];
+        CopyDialect effective = (dialect == null) ? CopyDialect.defaultCsv() : dialect;
+        this.csvMode = effective.csv;
+        this.delimiter = (byte) effective.delimiter;
+        this.quote = (byte) effective.quote;
+        this.escape = (byte) effective.escape;
+        this.nullString = effective.nullString.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     /** 接管一个字节数组作为解析输入（不复制）。调用方此后不得再使用该数组。 */
     public CopyCsvReader(byte[] data, int length) {
+        this(data, length, null);
+    }
+
+    /** 接管一个字节数组作为解析输入（不复制），按给定方言解析。 */
+    public CopyCsvReader(byte[] data, int length, CopyDialect dialect) {
+        this(0, dialect);
         this.buf = data;
         this.limit = length;
     }
@@ -130,7 +164,9 @@ public final class CopyCsvReader {
                 byte c = buf[scanPos];
 
                 if (inQuotes) {
-                    if (c == '"') {
+                    // 引号优先，且与改造前逐字节等价：引号后面还是引号 → 一个转义引号；
+                    // 否则就是闭引号。（默认 ESCAPE 就是引号本身，这条路覆盖 PG 的 `""`。）
+                    if (c == quote) {
                         if (scanPos + 1 >= limit) {
                             if (!eof) {
                                 return false;   // 可能是 "" 的前半，等更多数据
@@ -140,7 +176,7 @@ public final class CopyCsvReader {
                             scanPos++;
                             continue;
                         }
-                        if (buf[scanPos + 1] == '"') {
+                        if (buf[scanPos + 1] == quote) {
                             fieldHasEscape = true;
                             scanPos += 2;
                             continue;
@@ -150,11 +186,40 @@ public final class CopyCsvReader {
                         scanPos++;
                         continue;
                     }
+                    // ESCAPE 被指定成别的字符时，它用来转义引号或它自己
+                    if (escape != quote && c == escape) {
+                        if (scanPos + 1 >= limit) {
+                            if (!eof) {
+                                return false;   // 转义序列被分片切断
+                            }
+                            scanPos++;
+                            continue;
+                        }
+                        fieldHasEscape = true;
+                        scanPos += 2;
+                        continue;
+                    }
                     scanPos++;
                     continue;
                 }
 
-                if (c == '"' && scanPos == fieldBegin && !fieldQuoted && !quoteClosed) {
+                if (!csvMode && c == '\\') {
+                    // text 方言：反斜杠转义。被转义的字符可能是分隔符甚至换行，
+                    // 因此这里必须连同下一个字节一起吃掉，不能留给后面的分支。
+                    if (scanPos + 1 >= limit) {
+                        if (!eof) {
+                            return false;   // 转义序列被分片切断
+                        }
+                        throw new CsvFormatException(
+                                "TEXT 格式错误：第 " + (completedRows + 1)
+                                        + " 行以未完成的反斜杠转义结尾（输入已结束）");
+                    }
+                    fieldHasEscape = true;
+                    scanPos += 2;
+                    continue;
+                }
+
+                if (csvMode && c == quote && scanPos == fieldBegin && !fieldQuoted && !quoteClosed) {
                     inQuotes = true;
                     fieldQuoted = true;
                     scanPos++;
@@ -162,7 +227,7 @@ public final class CopyCsvReader {
                     continue;
                 }
 
-                if (c == ',') {
+                if (c == delimiter) {
                     emitField(sink);
                     scanPos++;
                     fieldBegin = scanPos;
@@ -262,33 +327,130 @@ public final class CopyCsvReader {
         return true;
     }
 
-    /** 产出当前字段视图（引号字段去掉首尾引号，{@code ""} 就地展开）。 */
+    /**
+     * 产出当前字段视图。
+     *
+     * <p>引号字段去掉首尾引号并展开转义；text 方言的字段展开反斜杠转义。
+     * 两种情况都是"原地收缩"（转义序列变短），不需要额外缓冲。</p>
+     */
     private void emitField(FieldSink sink) {
-        int start = valueStart;
-        int end = scanPos;
-        if (fieldQuoted && quoteClosed) {
-            end = Math.max(start, end - 1);   // 去掉闭引号
-        }
         if (!fieldQuoted) {
-            // 未加引号：字段范围是 [fieldBegin, scanPos)
-            sink.field(fieldBegin, scanPos - fieldBegin, false);
+            // 未加引号：字段范围是 [fieldBegin, scanPos)。
+            // NULL 判定用**原始字节**：text 方言的 \N 就是原始输入里的两个字符，
+            // csv 方言则拿未加引号的字段与 null 串比较（默认 null 串为空 → 空字段即 NULL）。
+            int len = scanPos - fieldBegin;
+            boolean isNull = rawEqualsNull(fieldBegin, len);
+            if (!csvMode && fieldHasEscape && !isNull) {
+                sink.field(fieldBegin, unescapeText(fieldBegin, scanPos) - fieldBegin, false);
+                return;
+            }
+            sink.field(fieldBegin, len, isNull);
             return;
         }
+
+        int start = valueStart;
+        int end = quoteClosed ? Math.max(start, scanPos - 1) : scanPos;
         if (fieldHasEscape) {
-            int w = start;
-            for (int r = start; r < end; r++) {
-                byte c = buf[r];
-                if (c == '"' && r + 1 < end && buf[r + 1] == '"') {
-                    buf[w++] = '"';
-                    r++;
-                } else {
-                    buf[w++] = c;
+            sink.field(start, expandCsvEscape(start, end) - start, false);
+        } else {
+            sink.field(start, Math.max(0, end - start), false);
+        }
+    }
+
+    /** 未加引号字段是否等于 NULL 串。 */
+    private boolean rawEqualsNull(int off, int len) {
+        if (len != nullString.length) {
+            return false;
+        }
+        for (int i = 0; i < len; i++) {
+            if (buf[off + i] != nullString[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** CSV 转义展开：{@code escape+quote} / {@code escape+escape} → 对应单个字符。返回新的结束位置。 */
+    private int expandCsvEscape(int start, int end) {
+        int w = start;
+        for (int r = start; r < end; r++) {
+            byte c = buf[r];
+            if (c == escape && r + 1 < end && (buf[r + 1] == quote || buf[r + 1] == escape)) {
+                buf[w++] = buf[++r];
+            } else {
+                buf[w++] = c;
+            }
+        }
+        return w;
+    }
+
+    /**
+     * text 方言的反斜杠转义展开，返回新的结束位置。
+     *
+     * <p>支持的序列与 PG 一致：{@code \b \f \n \r \t \v \\}、八进制 {@code \123}（1~3 位）、
+     * 十六进制 {@code \xHH}（1~2 位）；其他字符按字面处理（例如 {@code \.} → {@code .}）。</p>
+     */
+    private int unescapeText(int start, int end) {
+        int w = start;
+        for (int r = start; r < end; r++) {
+            byte c = buf[r];
+            if (c != '\\' || r + 1 >= end) {
+                buf[w++] = c;
+                continue;
+            }
+            byte n = buf[++r];
+            switch (n) {
+                case 'b' -> buf[w++] = '\b';
+                case 'f' -> buf[w++] = '\f';
+                case 'n' -> buf[w++] = '\n';
+                case 'r' -> buf[w++] = '\r';
+                case 't' -> buf[w++] = '\t';
+                case 'v' -> buf[w++] = 0x0B;
+                case '\\' -> buf[w++] = '\\';
+                case 'x' -> {
+                    int value = 0;
+                    int digits = 0;
+                    while (digits < 2 && r + 1 < end && isHexDigit(buf[r + 1])) {
+                        value = value * 16 + hexValue(buf[++r]);
+                        digits++;
+                    }
+                    if (digits == 0) {
+                        throw new CsvFormatException(
+                                "TEXT 格式错误：第 " + (completedRows + 1) + " 行的 \\x 后面缺少十六进制数字");
+                    }
+                    buf[w++] = (byte) value;
+                }
+                default -> {
+                    if (n >= '0' && n <= '7') {
+                        int value = n - '0';
+                        int digits = 1;
+                        while (digits < 3 && r + 1 < end && buf[r + 1] >= '0' && buf[r + 1] <= '7') {
+                            value = value * 8 + (buf[++r] - '0');
+                            digits++;
+                        }
+                        buf[w++] = (byte) value;
+                    } else {
+                        // PG：反斜杠后面的其他字符按字面值处理（\. → .）
+                        buf[w++] = n;
+                    }
                 }
             }
-            sink.field(start, w - start, true);
-        } else {
-            sink.field(start, Math.max(0, end - start), true);
         }
+        return w;
+    }
+
+    private static boolean isHexDigit(byte c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    }
+
+    private static int hexValue(byte c) {
+        if (c >= '0' && c <= '9') {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'f') {
+            return c - 'a' + 10;
+        }
+        return c - 'A' + 10;
     }
 
     // ---------------------------------------------------------------- 字节区间数值解析

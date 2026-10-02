@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="generator" content="Asciidoctor 2.0.23">
+<meta name="generator" content="Asciidoctor 2.0.17">
 <title>SlackerDB (DuckDB Postgres proxy)</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans:300,300italic,400,400italic,600,600italic%7CNoto+Serif:400,400italic,700,700italic%7CDroid+Sans+Mono:400,700">
 <style>
@@ -84,10 +84,10 @@ code{font-family:"Droid Sans Mono","DejaVu Sans Mono",monospace;font-weight:400;
 ul,ol,dl{line-height:1.6;margin-bottom:1.25em;list-style-position:outside;font-family:inherit}
 ul,ol{margin-left:1.5em}
 ul li ul,ul li ol{margin-left:1.25em;margin-bottom:0}
+ul.square li ul,ul.circle li ul,ul.disc li ul{list-style:inherit}
+ul.square{list-style-type:square}
 ul.circle{list-style-type:circle}
 ul.disc{list-style-type:disc}
-ul.square{list-style-type:square}
-ul.circle ul:not([class]),ul.disc ul:not([class]),ul.square ul:not([class]){list-style:inherit}
 ol li ul,ol li ol{margin-left:1.25em;margin-bottom:0}
 dl dt{margin-bottom:.3125em;font-weight:bold}
 dl dd{margin-bottom:1.25em}
@@ -140,7 +140,7 @@ p a>code:hover{color:rgba(0,0,0,.9)}
 #content::before{content:none}
 #header>h1:first-child{color:rgba(0,0,0,.85);margin-top:2.25rem;margin-bottom:0}
 #header>h1:first-child+#toc{margin-top:8px;border-top:1px solid #dddddf}
-#header>h1:only-child{border-bottom:1px solid #dddddf;padding-bottom:8px}
+#header>h1:only-child,body.toc2 #header>h1:nth-last-child(2){border-bottom:1px solid #dddddf;padding-bottom:8px}
 #header .details{border-bottom:1px solid #dddddf;line-height:1.45;padding-top:.25em;padding-bottom:.25em;padding-left:.25em;color:rgba(0,0,0,.6);display:flex;flex-flow:row wrap}
 #header .details span:first-child{margin-left:-.125em}
 #header .details span.email a{color:rgba(0,0,0,.85)}
@@ -162,7 +162,6 @@ p a>code:hover{color:rgba(0,0,0,.9)}
 #toctitle{color:#7a2518;font-size:1.2em}
 @media screen and (min-width:768px){#toctitle{font-size:1.375em}
 body.toc2{padding-left:15em;padding-right:0}
-body.toc2 #header>h1:nth-last-child(2){border-bottom:1px solid #dddddf;padding-bottom:8px}
 #toc.toc2{margin-top:0!important;background:#f8f8f7;position:fixed;width:15em;left:0;top:0;border-right:1px solid #e7e7e9;border-top-width:0!important;border-bottom-width:0!important;z-index:1000;padding:1.25em 1em;height:100%;overflow:auto}
 #toc.toc2 #toctitle{margin-top:0;margin-bottom:.8rem;font-size:1.2em}
 #toc.toc2>ul{font-size:.9em;margin-bottom:0}
@@ -209,10 +208,13 @@ table.tableblock.fit-content>caption.title{white-space:nowrap;width:0}
 .admonitionblock>table td.content{padding-left:1.125em;padding-right:1.25em;border-left:1px solid #dddddf;color:rgba(0,0,0,.6);word-wrap:anywhere}
 .admonitionblock>table td.content>:last-child>:last-child{margin-bottom:0}
 .exampleblock>.content{border:1px solid #e6e6e6;margin-bottom:1.25em;padding:1.25em;background:#fff;border-radius:4px}
+.exampleblock>.content>:first-child{margin-top:0}
+.exampleblock>.content>:last-child{margin-bottom:0}
 .sidebarblock{border:1px solid #dbdbd6;margin-bottom:1.25em;padding:1.25em;background:#f3f3f2;border-radius:4px}
+.sidebarblock>:first-child{margin-top:0}
+.sidebarblock>:last-child{margin-bottom:0}
 .sidebarblock>.content>.title{color:#7a2518;margin-top:0;text-align:center}
-.exampleblock>.content>:first-child,.sidebarblock>.content>:first-child{margin-top:0}
-.exampleblock>.content>:last-child,.exampleblock>.content>:last-child>:last-child,.exampleblock>.content .olist>ol>li:last-child>:last-child,.exampleblock>.content .ulist>ul>li:last-child>:last-child,.exampleblock>.content .qlist>ol>li:last-child>:last-child,.sidebarblock>.content>:last-child,.sidebarblock>.content>:last-child>:last-child,.sidebarblock>.content .olist>ol>li:last-child>:last-child,.sidebarblock>.content .ulist>ul>li:last-child>:last-child,.sidebarblock>.content .qlist>ol>li:last-child>:last-child{margin-bottom:0}
+.exampleblock>.content>:last-child>:last-child,.exampleblock>.content .olist>ol>li:last-child>:last-child,.exampleblock>.content .ulist>ul>li:last-child>:last-child,.exampleblock>.content .qlist>ol>li:last-child>:last-child,.sidebarblock>.content>:last-child>:last-child,.sidebarblock>.content .olist>ol>li:last-child>:last-child,.sidebarblock>.content .ulist>ul>li:last-child>:last-child,.sidebarblock>.content .qlist>ol>li:last-child>:last-child{margin-bottom:0}
 .literalblock pre,.listingblock>.content>pre{border-radius:4px;overflow-x:auto;padding:1em;font-size:.8125em}
 @media screen and (min-width:768px){.literalblock pre,.listingblock>.content>pre{font-size:.90625em}}
 @media screen and (min-width:1280px){.literalblock pre,.listingblock>.content>pre{font-size:1em}}
@@ -328,7 +330,7 @@ a.image{text-decoration:none;display:inline-block}
 a.image object{pointer-events:none}
 sup.footnote,sup.footnoteref{font-size:.875em;position:static;vertical-align:super}
 sup.footnote a,sup.footnoteref a{text-decoration:none}
-sup.footnote a:active,sup.footnoteref a:active,#footnotes .footnote a:first-of-type:active{text-decoration:underline}
+sup.footnote a:active,sup.footnoteref a:active{text-decoration:underline}
 #footnotes{padding-top:.75em;padding-bottom:.75em;margin-bottom:.625em}
 #footnotes hr{width:20%;min-width:6.25em;margin:-.25em 0 .75em;border-width:1px 0 0}
 #footnotes .footnote{padding:0 .375em 0 .225em;line-height:1.3334;font-size:.875em;margin-left:1.2em;margin-bottom:.2em}
@@ -391,7 +393,7 @@ b.conum *{color:inherit!important}
 dt,th.tableblock,td.content,div.footnote{text-rendering:optimizeLegibility}
 h1,h2,p,td.content,span.alt,summary{letter-spacing:-.01em}
 p strong,td.content strong,div.footnote strong{letter-spacing:-.005em}
-p,blockquote,dt,td.content,td.hdlist1,span.alt,summary{font-size:1.0625rem}
+p,blockquote,dt,td.content,span.alt,summary{font-size:1.0625rem}
 p{margin-bottom:1.25rem}
 .sidebarblock p,.sidebarblock dt,.sidebarblock td.content,p.tableblock{font-size:1em}
 .exampleblock>.content{background:#fffef7;border-color:#e0e0dc;box-shadow:0 1px 4px #e0e0dc}
@@ -433,118 +435,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 #footer-text{color:rgba(0,0,0,.6);font-size:.9em}}
 @media amzn-kf8{#header,#content,#footnotes,#footer{padding:0}}
 </style>
-<style>
-/*! Asciidoctor Tabs | Copyright (c) 2018-present Dan Allen | MIT License */
-.tabs {
-    margin-bottom: 1.25em;
-}
-
-.tablist > ul {
-    display: flex;
-    flex-wrap: wrap;
-    list-style: none;
-    margin: 0;
-    padding: 0;
-}
-
-.tablist > ul li {
-    align-items: center;
-    background-color: #fff;
-    cursor: pointer;
-    display: flex;
-    font-weight: bold;
-    line-height: 1.5;
-    padding: 0.25em 1em;
-    position: relative;
-}
-
-.tablist > ul li:focus-visible {
-    outline: none;
-}
-
-.tablist.ulist,
-.tablist.ulist > ul li {
-    margin: 0;
-}
-
-.tablist.ulist > ul li + li {
-    margin-left: 0.25em;
-}
-
-.tabs .tablist li::after {
-    content: "";
-    display: block;
-    height: 1px;
-    position: absolute;
-    bottom: -1px;
-    left: 0;
-    right: 0;
-}
-
-.tabs.is-loading .tablist li:not(:first-child),
-.tabs:not(.is-loading) .tablist li:not(.is-selected) {
-    background-color: #f5f5f5;
-}
-
-.tabs.is-loading .tablist li:first-child::after,
-.tabs:not(.is-loading) .tablist li.is-selected::after {
-    background-color: #fff;
-}
-
-/*
-.tabs:not(.is-loading) .tablist li,
-.tabs:not(.is-loading) .tablist li::after {
-  transition: background-color 200ms ease-in-out;
-}
-*/
-
-.tablist > ul p {
-    line-height: inherit;
-    margin: 0;
-}
-
-.tabpanel {
-    background-color: #fff;
-    padding: 1.25em;
-}
-
-.tablist > ul li,
-.tabpanel {
-    border: 1px solid #dcdcdc;
-}
-
-.tablist > ul li {
-    border-bottom: 0;
-}
-
-.tabs.is-loading .tabpanel + .tabpanel,
-.tabs:not(.is-loading) .tabpanel.is-hidden {
-    display: none;
-}
-
-.tabpanel > :first-child {
-    margin-top: 0;
-}
-
-/* #content is a signature of the Asciidoctor standalone HTML output */
-#content .tabpanel > :last-child,
-#content .tabpanel > :last-child > :last-child,
-#content .tabpanel > :last-child > :last-child > li:last-child > :last-child {
-    margin-bottom: 0;
-}
-
-.tablecontainer {
-    overflow-x: auto;
-}
-
-#content .tablecontainer {
-    margin-bottom: 1.25em;
-}
-
-#content .tablecontainer > table.tableblock {
-    margin-bottom: 0;
-}
-</style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
 </head>
 <body class="article">
 <div id="header">
@@ -552,7 +443,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <div id="content">
 <div class="imageblock">
 <div class="content">
-<img src="../../../../../robotslacker.jpg" alt="RobotSlacker">
+<img src="robotslacker.jpg" alt="RobotSlacker">
 </div>
 <div class="title">Figure 1. RobotSlacker</div>
 </div>
@@ -566,65 +457,75 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 with network access and multiprocess support.</p>
 </div>
 <div class="sect3">
-<h4 id="_what_we_can_do">What we can do:</h4>
+<h4 id="_what_is_slackerdb">What is SlackerDB?</h4>
 <div class="paragraph">
-<p>Based on the description, this extension can do following:</p>
+<p>SlackerDB is a powerful, Java‑based extension that transforms DuckDB from a local, single‑process database into a fully networked, multi‑process data service platform. It bridges the gap between DuckDB&#8217;s exceptional analytical performance and the connectivity requirements of modern applications.</p>
 </div>
+<div class="sect4">
+<h5 id="_capabilities">Capabilities</h5>
 <div class="ulist">
 <ul>
 <li>
-<p>Enables remote access to DuckDB via TCP/IP from network, instead of
-local connect only restriction.</p>
+<p><strong>Network‑Enabled DuckDB</strong> – Breaks DuckDB&#8217;s local‑only limitation by providing full TCP/IP network access, allowing remote clients to connect via standard PostgreSQL wire protocol.</p>
 </li>
 <li>
-<p>Supports multiprocess access to DuckDB instead of single-process
-restriction.</p>
+<p><strong>Multi‑Process Support</strong> – Enables concurrent access from multiple processes and applications, overcoming DuckDB&#8217;s single‑process restriction.</p>
 </li>
 <li>
-<p>Provides PostgreSQL wire protocol compatibility (JDBC, ODBC, etc.),
-allowing DuckDB to serve as a PostgreSQL database.</p>
+<p><strong>PostgreSQL Protocol Compatibility</strong> – Implements the PostgreSQL wire protocol, making DuckDB accessible through any PostgreSQL‑compatible client (JDBC, ODBC, libpq, psql, etc).</p>
 </li>
 <li>
-<p>Offers a dedicated access client, which has:</p>
-<div class="olist arabic">
-<ol class="arabic">
-<li>
-<p>Advanced features</p>
+<p><strong>High‑Performance Data Import</strong> – Supports PostgreSQL COPY syntax for bulk data loading with performance comparable to native DuckDB imports.</p>
 </li>
 <li>
-<p>Comprehensive data dictionary access support</p>
+<p><strong>Dual‑Layer Architecture</strong> – Provides both a direct database server (<code>dbserver</code>) and a connection proxy (<code>dbproxy</code>) for load balancing and high availability.</p>
 </li>
-</ol>
+<li>
+<p><strong>Embeddable Design</strong> – Can be embedded directly into Java applications as a library, or run as standalone servers.</p>
+</li>
+<li>
+<p><strong>Flexible Deployment</strong> – Supports multiple deployment models: standalone server, embedded library.</p>
+</li>
+<li>
+<p><strong>Plugin System</strong> – Extensible PF4J‑based plugin framework for custom functionality, HTTP endpoints, and integration with external systems.</p>
+</li>
+<li>
+<p><strong>Data Encryption</strong> – Leverages DuckDB&#8217;s native encryption for secure data‑at‑rest protection.</p>
+</li>
+</ul>
 </div>
-</li>
-<li>
-<p>You can use COPY syntax to import data with high performence, this
-compatible with PG CopyManager.</p>
-</li>
-<li>
-<p>Provides self-managed data services and API.</p>
-</li>
-<li>
-<p>You have multiple ways to connect to this extension:</p>
+</div>
+<div class="sect4">
+<h5 id="_data_service_platform">Data Service Platform</h5>
 <div class="ulist">
 <ul>
 <li>
-<p>Directly connect to the server with jdbc, odbc, &#8230;&#8203;</p>
+<p><strong>RESTful Data APIs</strong> – Exposes database operations through comprehensive REST APIs, enabling integration with web applications, microservices, and serverless architectures.</p>
 </li>
 <li>
-<p>Connect through a connection gateway which multiple servers(can on
-different host or different process) are behinds it.</p>
+<p><strong>Self‑Managed Services</strong> – Allows dynamic registration and management of data services at runtime without server restarts.</p>
 </li>
 <li>
-<p>Embed the compiled jar package into your own application.</p>
-</li>
-<li>
-<p>Register a data service and access data through REST API.</p>
+<p><strong>SQL‑as‑a‑Service</strong> – Transform SQL queries into reusable, parameterized API endpoints with built‑in caching and security controls.</p>
 </li>
 </ul>
 </div>
+</div>
+<div class="sect4">
+<h5 id="_use_cases">Use Cases</h5>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Analytical Application Backends</strong> – Serve as the data engine for BI tools, dashboards, and reporting applications.</p>
+</li>
+<li>
+<p><strong>Edge Computing</strong> – Lightweight, embeddable database for edge devices and IoT OLAP applications.</p>
 </li>
 </ul>
+</div>
+<div class="paragraph">
+<p>SlackerDB combines DuckDB&#8217;s analytical prowess with network connectivity, making it the ideal solution for modern data‑driven applications that require both high performance and flexible access patterns.</p>
+</div>
 </div>
 </div>
 </div>
@@ -717,6 +618,10 @@ temp_dir=
 # Default: $HOME/.duckdb/extensions
 extension_dir=
 
+# Directory for custom plugins
+# Default: None
+plugins_dir=
+
 # Run as background daemon (true/false)
 daemon=
 
@@ -738,6 +643,11 @@ log_level=INFO
 # -1 = disable network interface
 # Default: 0 (disabled)
 port=
+
+# Used to indicate whether data encryption is enabled.
+# If enabled, a key must be provided before accessing the database.
+# default: false
+data_encrypt=false
 
 # Data service API port
 # 0 = random port assignment
@@ -767,13 +677,29 @@ max_connections=
 # Default: CPU core count
 max_workers=
 
+# Business processing threads (executes SQL off the Netty I/O threads)
+# Default: -1 = follow max_connections (one business thread per session)
+#   0 = disabled (run SQL on the I/O threads; a slow query will block other
+#       connections sharing the same I/O thread)
+#  &gt;0 = explicit thread count
+# Note: connections sharing one business thread still queue behind each other.
+# The number of connections affected by a slow query is about
+# (connections / business_threads - 1), so keep this close to the number of
+# concurrently active sessions.
+business_threads=
+
 # Database engine threads
-# Default: 50% of CPU cores
-# Recommendation: 5-10GB RAM per thread
+# Default: memory_limit (GB) / 10 (minimum 1)
+# Recommendation: adjust based on workload
 threads=
 
+# Auto workload threshold for memory limit calculation
+# Value range: &gt;0 and &lt;=1, default: 0.8
+# Used to compute default memory_limit if memory_limit is not set
+auto_workload_threshold=
+
 # Memory usage limit (K/M/G suffix)
-# Default: 60% of available memory
+# Default: 80% of total system memory
 # -1 = unlimited (memory mode only)
 memory_limit=
 
@@ -814,7 +740,12 @@ connection_pool_maximum_lifecycle_time=900000
 # - Set to 0 to disable caching
 query_result_cache_size=
 
-# Data service schema initialization
+# Data service history
+# ON = enable tracking
+# OFF = disable (default)
+data_service_history=
+
+# Data service schema initialization file/path
 # - Accepts:
 #   * JSON file path (single schema)
 #   * Directory path (loads all *.service files)
@@ -827,7 +758,25 @@ data_service_schema=
 #   * JSON file path (single config)
 #   * Directory path (loads all *.mcp files)
 # Default: empty (no MCP configuration)
-mcp_config=</pre>
+mcp_config=
+
+# MCP LLM server configuration
+# Format: &lt;service&gt;:&lt;ip&gt;:&lt;port&gt;:&lt;model&gt;
+# Example: openai:api.openai.com:443:gpt-4
+# Default: empty (no LLM server configuration)
+mcp_llm_server=
+
+# MCP LLM API key for services that require authentication
+# Required for OpenAI API and optional for other services
+# Example: sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Default: empty (no API key)
+mcp_llm_key=
+
+# Unix Domain Socket file path
+# Used for UDS (Unix Domain Socket) connections instead of TCP
+# Default: empty (UDS disabled, use TCP)
+# Note: Only supported on Linux/macOS. Ignored on Windows.
+socket=</pre>
 </div>
 </div>
 </div>
@@ -871,6 +820,26 @@ client_timeout=600
 # Maximum worker threads
 # Default: CPU core count
 max_workers=
+
+# Business processing threads (executes SQL off the Netty I/O threads)
+# Default: -1 = follow max_connections (one business thread per session)
+#   0 = disabled (run SQL on the I/O threads); &gt;0 = explicit thread count
+business_threads=
+
+# Database engine threads
+# Default: memory_limit (GB) / 10 (minimum 1)
+# Recommendation: adjust based on workload
+threads=
+
+# Auto workload threshold for memory limit calculation
+# Value range: &gt;0 and &lt;=1, default: 0.8
+# Used to compute default memory_limit if memory_limit is not set
+auto_workload_threshold=
+
+# Memory usage limit (K/M/G suffix)
+# Default: 80% of total system memory
+# -1 = unlimited (memory mode only)
+memory_limit=
 
 # System locale
 # Default: OS setting
@@ -917,7 +886,7 @@ conn.setAutoCommit(false);</pre>
 </div>
 <div class="paragraph">
 <p>You can connect to SlackerDB from database tools DBeaver. (For other tools, we have not verified it.)<br>
-<strong>Use Postgresl driver</strong><br>
+<strong>Use PostgreSQL driver</strong><br>
 Download postgresql server and connect database like a pg.</p>
 </div>
 <div class="paragraph">
@@ -938,6 +907,970 @@ Database -&gt; Driver Manager -&gt; New
 <div class="paragraph">
 <p><strong>ODBC and Python</strong>
 SlackerDB also supports ODBC and Python connections via the same PostgreSQL wire protocol. Refer to the respective client documentation for setup details.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_unix_domain_socket_uds_support">Unix Domain Socket (UDS) Support</h4>
+<div class="paragraph">
+<p>SlackerDB supports Unix Domain Socket (UDS) connections for local inter-process communication. UDS provides lower latency and higher throughput compared to TCP loopback connections, making it ideal for local client-server communication on the same machine.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+UDS is only supported on Linux and macOS. On Windows, the <code>socket</code> parameter is ignored and a log message is printed.
+</td>
+</tr>
+</table>
+</div>
+<div class="sect4">
+<h5 id="_server_configuration">Server Configuration</h5>
+<div class="paragraph">
+<p>You can enable UDS by setting the <code>socket</code> parameter in the server configuration file:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre># dbserver/conf/dbserver.conf
+socket=/tmp/.s.slackerdb.4309</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Alternatively, use the <code>--socket</code> command-line parameter:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar start --socket /tmp/.s.slackerdb.4309</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>When <code>socket</code> is configured, the server listens on both the TCP port and the UDS socket simultaneously. Clients can connect via either method.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_jdbc_connection_via_uds">JDBC Connection via UDS</h5>
+<div class="paragraph">
+<p>To connect to SlackerDB via UDS using the SlackerDB JDBC driver, use the <code>jdbc:slackerdb://</code> protocol with the <code>socketFactory</code> and <code>socketFactoryArg</code> connection parameters:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>// SlackerDB JDBC driver with UDS
+String url = "jdbc:slackerdb:///mem";
+Properties props = new Properties();
+props.setProperty("user", "");
+props.setProperty("password", "");
+props.setProperty("socketFactory",
+        "org.slackerdb.jdbc.UnixDomainSocketFactory");
+props.setProperty("socketFactoryArg", "/tmp/.s.slackerdb.4309");
+
+Connection conn = DriverManager.getConnection(url, props);
+conn.setAutoCommit(false);</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The <code>UnixDomainSocketFactory</code> class is included in the SlackerDB JDBC driver and uses Java&#8217;s built-in <code>UnixDomainSocketAddress</code> API (Java 16+) to establish UDS connections.</p>
+</div>
+<div class="paragraph">
+<p>Key points:
+* The <code>socketFactory</code> parameter must be set to <code>org.slackerdb.jdbc.UnixDomainSocketFactory</code>
+* The <code>socketFactoryArg</code> parameter specifies the UDS socket file path
+* The <code>jdbc:slackerdb://</code> protocol is used (not <code>jdbc:postgresql://</code>)
+* The host portion of the URL is ignored when using UDS; use <code>///database</code> format</p>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_basic_services">Basic Services</h4>
+<div class="paragraph">
+<p>The following HTTP endpoints provide basic administrative functions, such as backup, file upload/download, log viewing, and status monitoring. These endpoints are available when the Data Services API port (port_x) is enabled.</p>
+</div>
+<div class="sect4">
+<h5 id="_backup_post">/backup (POST)</h5>
+<div class="paragraph">
+<p>Performs a database backup. The backup file is saved in the <code>backup/</code> directory with the naming pattern <code>{database}_{backupTag}.db</code>.</p>
+</div>
+<div class="listingblock">
+<div class="title">Request body (JSON):</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">{
+  "backupTag": "mybackup"
+}</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="title">Response example (success):</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">{
+  "retCode": 0,
+  "retMsg": "Successful. Backup file has placed to [C:\\Work\\slackerdb\\backup\\mydb_mybackup.db]."
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_download_get">/download (GET)</h5>
+<div class="paragraph">
+<p>Downloads a file from the server&#8217;s working directory.</p>
+</div>
+<div class="ulist">
+<div class="title">Query parameters:</div>
+<ul>
+<li>
+<p><code>filename</code> (required) – relative path to the file.</p>
+</li>
+</ul>
+</div>
+<div class="literalblock">
+<div class="title">Example:</div>
+<div class="content">
+<pre>GET /download?filename=logs/slackerdb.log</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The endpoint supports Range requests for partial downloads.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_upload_post">/upload (POST)</h5>
+<div class="paragraph">
+<p>Uploads a file to the server&#8217;s working directory.</p>
+</div>
+<div class="ulist">
+<div class="title">Query parameters:</div>
+<ul>
+<li>
+<p><code>filename</code> (required) – target file path.</p>
+</li>
+</ul>
+</div>
+<div class="ulist">
+<div class="title">Form data:</div>
+<ul>
+<li>
+<p><code>file</code> (required) – the file to upload.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="title">Example using curl:</div>
+<div class="content">
+<pre class="highlight"><code class="language-bash" data-lang="bash">curl -X POST -F "file=@local.txt" "http://localhost:8080/upload?filename=uploads/remote.txt"</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="title">Response:</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">"uploaded: C:\\Work\\slackerdb\\uploads\\remote.txt"</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_viewlog_get">/viewLog (GET)</h5>
+<div class="paragraph">
+<p>Retrieves the last N lines of a log file.</p>
+</div>
+<div class="ulist">
+<div class="title">Query parameters:</div>
+<ul>
+<li>
+<p><code>filename</code> (required) – path to the log file.</p>
+</li>
+<li>
+<p><code>lines</code> (optional) – number of lines to return (default 100, max 10000).</p>
+</li>
+</ul>
+</div>
+<div class="literalblock">
+<div class="title">Example:</div>
+<div class="content">
+<pre>GET /viewLog?filename=logs/slackerdb.log&amp;lines=50</pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="title">Response (JSON array of strings):</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">[
+  "2025-12-04 10:00:00 INFO  Server started",
+  "2025-12-04 10:00:01 INFO  Listening on port 8080"
+]</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_status_get">/status (GET)</h5>
+<div class="paragraph">
+<p>Returns comprehensive server status information, including server details, database metrics, configuration parameters, usage statistics, installed extensions, and active sessions.</p>
+</div>
+<div class="literalblock">
+<div class="title">Example:</div>
+<div class="content">
+<pre>GET /status</pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="title">Response (abbreviated):</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">{
+  "server": {
+    "status": "RUNNING",
+    "version": "0.2.1",
+    "build": "2025-12-04 10:00:00.000 UTC",
+    "pid": 12345,
+    "now": "2025-12-04 15:20:00",
+    "bootTime": "2025-12-04 10:00:00",
+    "runTime": "5 hours, 20 minutes, 0 seconds"
+  },
+  "database": {
+    "version": "v1.0.0",
+    "size": "1.2 GB",
+    "memoryUsage": "256 MB",
+    "walSize": "0 B"
+  },
+  "parameters": {},
+  "usage": {},
+  "extensions": [],
+  "sessions": []
+}</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_plsql_support">PL/SQL Support</h4>
+<div class="paragraph">
+<p>SlackerDB ships a PL/SQL engine for <strong>anonymous blocks</strong>: declare variables, branch, loop, iterate
+cursors, fetch into variables and handle exceptions — all on top of DuckDB.</p>
+</div>
+<div class="sect4">
+<h5 id="_running_a_block">Running a block</h5>
+<div class="paragraph">
+<p>Wrap the block in <code>DO  ... </code> (PostgreSQL style) and send it like any other statement:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-sql" data-lang="sql">DO $$
+DECLARE
+    CURSOR cur IS SELECT id, name FROM users WHERE active = true;
+    v_id   BIGINT;
+    v_name TEXT;
+    total  INTEGER := 0;
+BEGIN
+    OPEN cur;
+    LOOP
+        FETCH cur INTO v_id, v_name;
+        EXIT WHEN cur%NOTFOUND;
+
+        IF v_name IS NULL THEN
+            CONTINUE;
+        ELSIF length(v_name) &gt; 20 THEN
+            UPDATE users SET name = substr(:v_name, 1, 20) WHERE id = :v_id;
+        ELSE
+            INSERT INTO audit(user_id, note) VALUES (:v_id, 'ok: ' || :v_name);
+        END IF;
+
+        total := total + 1;
+        EXIT WHEN total &gt;= 1000;
+    END LOOP;
+    CLOSE cur;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        INSERT INTO audit(user_id, note) VALUES (NULL, 'no rows');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+$$;</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Supported wrappers: <code>DO  ... </code>, <code>DO $tag$ &#8230;&#8203; $tag$</code>, bare <code> ... </code>, and unwrapped
+<code>DECLARE &#8230;&#8203; BEGIN &#8230;&#8203; END;</code> scripts (the latter needs a client that does not split statements —
+see <strong>Client notes</strong> below). One query string may contain several statements; they run in order.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_typical_examples">Typical examples</h5>
+<div class="paragraph">
+<p>The four blocks below are <strong>self-contained</strong>: each one creates its own tables, so you can paste any
+of them into a client and run it as is. Two conventions to keep in mind: in the structural part
+(<code>IF</code>, <code>WHILE</code>, <code>FETCH INTO</code>, assignments) variables can be written bare; while <strong>variables inside
+embedded SQL must be written as <code>:name</code></strong> (bind parameters).</p>
+</div>
+<div class="paragraph">
+<p><strong>Variables, <code>IF</code>/<code>ELSIF</code> branching and a <code>WHILE</code> loop</strong>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-sql" data-lang="sql">DO $$
+DECLARE
+    i     INTEGER := 1;
+    total INTEGER := 0;
+BEGIN
+    CREATE OR REPLACE TABLE demo_numbers(n INTEGER, kind TEXT);
+
+    WHILE i &lt;= 6 LOOP
+        IF i % 2 = 0 THEN
+            INSERT INTO demo_numbers VALUES (:i, 'even');
+        ELSIF i % 3 = 0 THEN
+            INSERT INTO demo_numbers VALUES (:i, 'multiple of 3');
+        ELSE
+            INSERT INTO demo_numbers VALUES (:i, 'other');
+        END IF;
+        total := total + i;
+        i := i + 1;
+    END LOOP;
+
+    INSERT INTO demo_numbers VALUES (:total, 'sum');
+END;
+$$;</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Result: <code>demo_numbers</code> holds six classified rows (<code>other</code> / <code>even</code> / <code>multiple of 3</code>) plus the
+summary row <code>(21, 'sum')</code>.</p>
+</div>
+<div class="paragraph">
+<p><strong>Walking a cursor with <code>%NOTFOUND</code>, plus an exception handler</strong>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-sql" data-lang="sql">DO $$
+DECLARE
+    CURSOR cur IS SELECT id, name FROM demo_emp ORDER BY id;
+    v_id    INTEGER;
+    v_name  TEXT;
+    v_total INTEGER := 0;
+BEGIN
+    CREATE OR REPLACE TABLE demo_emp(id INTEGER, name TEXT);
+    INSERT INTO demo_emp VALUES (1, 'alice'), (2, 'bob'), (3, 'carol');
+    CREATE OR REPLACE TABLE demo_audit(id INTEGER, note TEXT);
+
+    OPEN cur;
+    LOOP
+        FETCH cur INTO v_id, v_name;
+        EXIT WHEN cur%NOTFOUND;
+
+        IF v_name IS NULL THEN
+            CONTINUE;
+        END IF;
+
+        INSERT INTO demo_audit VALUES (:v_id, 'ok: ' || :v_name);
+        v_total := v_total + 1;
+    END LOOP;
+    CLOSE cur;
+
+    INSERT INTO demo_audit VALUES (0, 'count = ' || CAST(:v_total AS TEXT));
+EXCEPTION
+    WHEN OTHERS THEN
+        INSERT INTO demo_audit VALUES (-1, 'failed');
+END;
+$$;</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Result: <code>demo_audit</code> receives three <code>ok: &lt;name&gt;</code> rows for ids <code>1/2/3</code>, plus <code>(0, 'count = 3')</code>.</p>
+</div>
+<div class="paragraph">
+<p><strong><code>SELECT &#8230;&#8203; INTO</code> with an exception handler that branches on the error code</strong>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-sql" data-lang="sql">DO $$
+DECLARE
+    v_name TEXT;
+    v_cnt  INTEGER;
+BEGIN
+    CREATE OR REPLACE TABLE demo_dept(id INTEGER, name TEXT);
+    INSERT INTO demo_dept VALUES (1, 'sales'), (2, 'hr');
+
+    SELECT count(*) INTO v_cnt FROM demo_dept;
+
+    BEGIN
+        SELECT name INTO v_name FROM demo_dept WHERE id = 99;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            v_name := '(not found)';
+        WHEN TOO_MANY_ROWS THEN
+            v_name := '(too many rows)';
+    END;
+
+    CREATE OR REPLACE TABLE demo_result(cnt INTEGER, name TEXT);
+    INSERT INTO demo_result VALUES (:v_cnt, :v_name);
+END;
+$$;</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Result: <code>demo_result</code> holds <code>(2, '(not found)')</code> — when the query matches no row, <code>SELECT INTO</code>
+raises <code>NO_DATA_FOUND</code>, which the inner block catches.</p>
+</div>
+<div class="paragraph">
+<p><strong>Dynamic SQL: <code>EXECUTE IMMEDIATE</code> with <code>USING</code> and <code>INTO</code></strong>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-sql" data-lang="sql">DO $$
+DECLARE
+    v_table TEXT := 'demo_dyn';
+    v_id    INTEGER := 7;
+    v_cnt   INTEGER;
+BEGIN
+    EXECUTE IMMEDIATE 'CREATE OR REPLACE TABLE ' || v_table || '(id INTEGER)';
+    EXECUTE IMMEDIATE 'INSERT INTO ' || v_table || ' VALUES (?)' USING v_id;
+    EXECUTE IMMEDIATE 'SELECT count(*) FROM ' || v_table INTO v_cnt;
+    EXECUTE IMMEDIATE 'INSERT INTO ' || v_table || ' VALUES (?)' USING v_cnt * 10;
+END;
+$$;</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Result: <code>demo_dyn</code> holds the two rows <code>7</code> and <code>10</code>; <code>USING</code> values bind to the placeholders in the
+order they appear (<code>?</code>, <code>:1</code> and <code>:name</code> all work, and <code>:name</code> also resolves from the current scope
+when there is no <code>USING</code> clause).</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_what_is_supported">What is supported</h5>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 22%;">
+<col style="width: 78%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Area</th>
+<th class="tableblock halign-left valign-top">Supported</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Declaration</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>DECLARE</code> variables with <code>INTEGER</code>/<code>SMALLINT</code>/<code>BIGINT</code>/<code>DECIMAL(p,s)</code>/<code>REAL</code>/<code>DOUBLE</code>/<code>VARCHAR(n)</code>/<code>CHAR(n)</code>/<code>TEXT</code>/<code>BOOLEAN</code>/<code>DATE</code>/<code>TIME</code>/<code>TIMESTAMP [WITH TIME ZONE]</code>/<code>INTERVAL</code>, <code>NOT NULL</code>, defaults, and <code>CURSOR name [(params)] IS &lt;query&gt;</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Assignment</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>x := expr;</code> and <code>LET x = expr;</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Conditionals</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>IF / ELSIF / ELSE / END IF</code> (also <code>ELSEIF</code>, <code>ENDIF</code>, <code>==</code>, <code>!=</code>, <code>&amp;&amp;</code>, <code>!</code>)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Loops</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>LOOP</code>, <code>WHILE cond LOOP</code>, <code>FOR i IN [REVERSE] a..b LOOP</code> (inclusive), <code>FOR i IN [v1, v2] LOOP</code>, <code>EXIT [WHEN cond]</code>, <code>CONTINUE [WHEN cond]</code>, labelled loops</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Cursors</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>OPEN</code> / <code>FETCH &#8230;&#8203; INTO</code> / <code>CLOSE</code>, <code>%FOUND</code>, <code>%NOTFOUND</code>, <code>%ROWCOUNT</code>, <code>%ISOPEN</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Queries</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>SELECT &#8230;&#8203; INTO v1[, v2]</code> (exactly one row), any DuckDB SQL statement, <code>:name</code> bind variables in SQL text</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Dynamic SQL</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>EXECUTE IMMEDIATE &lt;SQL text&gt; [INTO targets&#8230;&#8203;] [USING values&#8230;&#8203;]</code>: the SQL text is evaluated at run time (build it with <code>||</code>), placeholders may be <code>?</code> / <code>:1</code> / <code>:name</code>, and <code>USING</code> binds them in order of appearance; without <code>INTO</code> a result set is discarded, with <code>INTO</code> single-row semantics apply (<code>NO_DATA_FOUND</code> / <code>TOO_MANY_ROWS</code> / <code>24000</code>), and a placeholder/<code>USING</code> count mismatch raises <code>07001</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Exceptions</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>EXCEPTION WHEN NO_DATA_FOUND / TOO_MANY_ROWS / ZERO_DIVIDE / OTHERS / &lt;custom&gt; THEN</code>, <code>RAISE</code>, <code>RAISE name</code>, re-raise inside a handler, nested blocks (legacy <code>EXCEPTION:</code> = <code>WHEN OTHERS</code>)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Expressions</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Arithmetic, <code>||</code> concatenation, comparisons, <code>IS [NOT] NULL</code>, <code>LIKE</code>, <code>IN</code>, <code>BETWEEN</code>, <code>CASE</code>, logical <code>AND</code>/<code>OR</code>/<code>NOT</code> with short-circuit, and any DuckDB function</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect4">
+<h5 id="_semantics_worth_knowing">Semantics worth knowing</h5>
+<div class="ulist">
+<ul>
+<li>
+<p>Variables start as <code>NULL</code> (not <code>0</code>).</p>
+</li>
+<li>
+<p><code>FOR i IN 1..5</code> iterates <strong>1,2,3,4,5</strong> (both bounds inclusive); <code>FOR i IN 5..1</code> iterates 0 times;
+<code>FOR i IN REVERSE 5..1</code> iterates 5,4,3,2,1.</p>
+</li>
+<li>
+<p><code>EXIT</code> leaves only the innermost loop; <code>EXIT label</code> leaves the named loop.</p>
+</li>
+<li>
+<p><code>SELECT &#8230;&#8203; INTO</code> with 0 rows raises <code>NO_DATA_FOUND</code>, with more than one row <code>TOO_MANY_ROWS</code> —
+it never silently picks a row.</p>
+</li>
+<li>
+<p><code>:name</code> inside <strong>string literals</strong> is not substituted (<code>'Hello :name'</code> is literal text; use <code>||</code>).</p>
+</li>
+<li>
+<p>Expressions are evaluated with <strong>bind parameters</strong> — values are never spliced into SQL text.</p>
+</li>
+<li>
+<p>Division by zero raises <code>ZERO_DIVIDE</code>, so <code>WHEN ZERO_DIVIDE</code> works.</p>
+</li>
+<li>
+<p>A block never returns a result set; write results to tables instead.</p>
+</li>
+<li>
+<p>Runaway loops are stopped by a statement budget (200000 statements) → <code>54000</code>.</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_error_codes">Error codes</h5>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 22%;">
+<col style="width: 78%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">SQLSTATE</th>
+<th class="tableblock halign-left valign-top">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>42601</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Syntax or semantic error (unknown variable/cursor, duplicate declaration, unsupported type) — reported with <code>line:column</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>P0002</code> / <code>P0003</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>NO_DATA_FOUND</code> / <code>TOO_MANY_ROWS</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>22012</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>ZERO_DIVIDE</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>22001</code> / <code>22003</code> / <code>22P02</code> / <code>22007</code> / <code>42804</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">String too long / numeric out of range / bad numeric text / bad datetime / datatype mismatch</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Invalid cursor state; <code>INTO</code> target count mismatch</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>P0001</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">User <code>RAISE</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>57014</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Canceled by <code>CancelRequest</code> / <code>KILL SESSION</code> (long PL/SQL loops are interruptible)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>54000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Statement budget exceeded (possible infinite loop)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect4">
+<h5 id="_client_notes">Client notes</h5>
+<div class="paragraph">
+<p>A PL/SQL block must reach the server <strong>unsplit</strong>. SlackerDB&#8217;s own JDBC driver splits statements on
+top-level semicolons in the extended protocol; it understands dollar quoting, so <code>DO  ... </code> is
+sent as one statement while an unwrapped <code>DECLARE &#8230;&#8203; END;</code> block is not.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Block form</th>
+<th class="tableblock halign-left valign-top">Extended protocol (default)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Simple query protocol (<code>preferQueryMode=simple</code>, psql)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>DO  ... </code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">bare <code> ... </code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">unwrapped <code>DECLARE &#8230;&#8203; END;</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">split by the driver — use <code>DO $$</code> instead</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect4">
+<h5 id="_types_and_implicit_conversion">Types and implicit conversion</h5>
+<div class="paragraph">
+<p>Variables are typed at declaration. Every assignment converts the value to the declared type with
+these rules:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 30%;">
+<col style="width: 70%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Source → target</th>
+<th class="tableblock halign-left valign-top">Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">NULL → any</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK (stays NULL)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">between numeric types</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK; widening is lossless, narrowing rounds half-up, <strong>overflow raises <code>22003</code></strong></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">string → numeric/date/time/timestamp</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK when the text parses as that literal, otherwise <code>22P02</code> (or <code>22007</code> for datetime)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">numeric/date/time/timestamp → string</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK (standard text form)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">string → <code>VARCHAR(n)</code>/<code>CHAR(n)</code> when longer than <code>n</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong><code>22001</code> — never silently truncated</strong></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">anything involving <code>BOOLEAN</code> (except NULL)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>42804</code> — use an explicit function or <code>CAST</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">anything else</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>42804</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Identifiers are case-insensitive and folded to lower case unless quoted (<code>"Mixed"</code> keeps its case).
+An uninitialised variable is <code>NULL</code>; <code>NOT NULL</code> declarations reject NULL assignment (<code>22004</code>).</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_loop_boundaries">Loop boundaries</h5>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 45%;">
+<col style="width: 55%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Form</th>
+<th class="tableblock halign-left valign-top">Iterations</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>FOR i IN 1..1</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1 (i = 1)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>FOR i IN 1..5</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">5 — <strong>both bounds inclusive</strong></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>FOR i IN 1..0</code>, <code>FOR i IN 5..1</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>FOR i IN REVERSE 5..1</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">5 → 5,4,3,2,1</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>FOR i IN REVERSE 1..5</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>FOR i IN -3..-1</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">3 → -3,-2,-1</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>FOR i IN [v1, v2, v3]</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">one iteration per list element (compatibility form)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>WHILE NULL LOOP</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0 (NULL counts as false)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>LOOP</code> that never exits</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">stopped by the statement budget → <code>54000</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>The loop variable is implicit, read-only, and invisible outside the loop. <code>EXIT</code> / <code>CONTINUE</code>
+affect only the innermost loop; <code>EXIT name</code> leaves the loop that carries that label:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-sql" data-lang="sql">&lt;&lt;outer_loop&gt;&gt;
+LOOP
+    ...
+    EXIT outer_loop WHEN done = 1;
+END LOOP outer_loop;</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_expression_semantics">Expression semantics</h5>
+<div class="ulist">
+<ul>
+<li>
+<p>Precedence, high to low: <code><strong>*</code> → unary <code>-</code> / <code>NOT</code> → <code></strong> / %</code> → <code>+ -</code> → <code>||</code> → comparisons
+(<code>= &lt;&gt; &lt; &#8656; &gt; &gt;=</code>, <code>IS [NOT] NULL</code>, <code>LIKE</code>, <code>IN</code>, <code>BETWEEN</code>) → <code>AND</code> → <code>OR</code>.</p>
+</li>
+<li>
+<p><code>NULL</code> in a condition counts as false; <code>AND</code>/<code>OR</code> short-circuit, so <code>false AND (1/0 = 1)</code> is fine.</p>
+</li>
+<li>
+<p><code>||</code> is <strong>string concatenation</strong> (SQL semantics) — write <code>OR</code> for logical or.</p>
+</li>
+<li>
+<p>Every variable value is passed as a bind parameter; values are never spliced into SQL text.</p>
+</li>
+<li>
+<p>Function calls are delegated to DuckDB, so any DuckDB scalar function works (qualified names such
+as <code>schema.func</code> are accepted).</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Compatibility aliases kept from earlier versions:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 30%;">
+<col style="width: 70%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Alias</th>
+<th class="tableblock halign-left valign-top">Equivalent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>LET x = e</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>x := e</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>PASS</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>NULL;</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>BREAK</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>EXIT</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>==</code> <code>!=</code> <code>&amp;&amp;</code> <code>!</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>=</code> <code>&lt;&gt;</code> <code>AND</code> <code>NOT</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>ELSEIF</code> / <code>ENDIF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>ELSIF</code> / <code>END IF</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>EXCEPTION:</code> + statements</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>EXCEPTION WHEN OTHERS THEN</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>FOR :i IN 1 TO 5</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>FOR i IN 1..5</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>FOR i IN [v1, v2]</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">list iteration</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>%notfound</code>, <code>%found</code>, <code>%rowcount</code>, <code>%isopen</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">case-insensitive cursor attributes</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect4">
+<h5 id="_cursor_state_machine">Cursor state machine</h5>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 12.5%;">
+<col style="width: 12.5%;">
+<col style="width: 12.5%;">
+<col style="width: 12.5%;">
+<col style="width: 12.5%;">
+<col style="width: 12.5%;">
+<col style="width: 12.5%;">
+<col style="width: 12.5%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">State \ operation</th>
+<th class="tableblock halign-left valign-top">OPEN</th>
+<th class="tableblock halign-left valign-top">FETCH</th>
+<th class="tableblock halign-left valign-top">CLOSE</th>
+<th class="tableblock halign-left valign-top"><code>%ISOPEN</code></th>
+<th class="tableblock halign-left valign-top"><code>%FOUND</code></th>
+<th class="tableblock halign-left valign-top"><code>%NOTFOUND</code></th>
+<th class="tableblock halign-left valign-top"><code>%ROWCOUNT</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Closed (declared, not opened)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Open, rows available</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK, count+1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">true</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">true</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">n</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Open, no rows</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK → EOF, notFound=true</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">true</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">true</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Open, after EOF</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK (stays EOF, variables keep their values)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">true</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">true</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">n</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Closed after fetching</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OK</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>24000</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>A cursor opened in a block is closed automatically when that block ends (including on the exception
+path); <code>CLOSE</code> followed by <code>OPEN</code> is allowed and resets <code>%ROWCOUNT</code>.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_statement_routing">Statement routing</h5>
+<div class="ulist">
+<ul>
+<li>
+<p>Wrappers: <code>DO  … </code>, <code>DO $tag$ … $tag$</code>, bare <code> … </code>, or an unwrapped <code>DECLARE … END;</code> script.</p>
+</li>
+<li>
+<p>Dollar quoting follows PostgreSQL: there are no escapes inside, the matching tag ends the string —
+use another tag (<code>$body$ … $body$</code>) when the body itself must contain <code>$$</code>.</p>
+</li>
+<li>
+<p>In the simple query protocol one query string may contain several statements separated by
+semicolons; they run in order and each returns its own <code>CommandComplete</code> (and result set).</p>
+</li>
+<li>
+<p>A PL/SQL block itself returns no rows: <code>CommandComplete</code> reports <code>DO</code>. Use <code>DESCRIBE</code>-visible
+statements (ordinary queries) or write into tables for output.</p>
+</li>
+<li>
+<p>In the extended protocol a PL/SQL portal is described as <code>NoData</code> and bound without parameters.</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_limitations_and_known_gaps">Limitations and known gaps</h5>
+<div class="paragraph">
+<p>Stored procedures, functions, triggers, packages, records/<code>%ROWTYPE</code>, collections, cursor <code>FOR</code>
+loops and <code>GOTO</code> are <strong>not</strong> supported. Unsupported constructs fail with an explicit error instead
+of being silently ignored.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>%FOUND</code> / <code>%NOTFOUND</code> applied to a name that is not a cursor is not rejected at compile time.</p>
+</li>
+<li>
+<p>Division by zero is detected when the divisor can be resolved locally (literal, variable, cursor
+attribute); a divisor computed by a query keeps the backend behaviour (<code>Infinity</code>).</p>
+</li>
+<li>
+<p><code>TIMESTAMP WITH TIME ZONE</code> keeps the backend representation; values are not normalised to UTC.</p>
+</li>
+<li>
+<p>A block that fails does not roll back by itself — issue <code>ROLLBACK</code> in an <code>EXCEPTION</code> handler or
+from the client, exactly as with PostgreSQL <code>DO</code>.</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_how_it_works">How it works</h5>
+<div class="paragraph">
+<p>A block is compiled before anything runs:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>source text
+  └─ detector          classify SQL / block / multi-statement script, unwrap DO $$ … $$
+       └─ preparer     replace embedded SQL with equal-length placeholders (line/column preserved)
+            └─ ANTLR    structure-only grammar (keywords, control flow, cursors, expressions)
+                 └─ AST   statements + expression tree
+                      └─ semantic check (unknown names, duplicates) before execution
+                           └─ interpreter (scopes, cursors, exceptions, budget, cancellation)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Embedded SQL is never guessed by the parser and never re-written; expressions are compiled to
+<code>SELECT &lt;expr&gt;</code> with bind parameters and cached per syntax node, while purely local expressions are
+evaluated in the JVM (that is why a tight loop costs about a microsecond per iteration instead of a
+database round trip).</p>
+</div>
+<div class="paragraph">
+<p>The grammars live under <code>src/main/antlr4</code> — <code>plsql/src/main/antlr4/org/slackerdb/plsql/block/</code> for
+the block structure and <code>dbserver/src/main/antlr4/org/slackerdb/dbserver/sql/antlr/</code> for <code>COPY</code>.
+Nothing has to be generated by hand: the <code>antlr4-maven-plugin</code> runs during <code>generate-sources</code> and
+writes the parsers into <code>target/generated-sources/antlr4</code>, which is registered as a compile source
+root automatically. That is ordinary build output — <code>mvn clean</code> removes it and git never sees it — so
+edit only the <code>.g4</code> files and let the next build regenerate the rest.</p>
+</div>
 </div>
 </div>
 <div class="sect3">
@@ -1100,7 +2033,7 @@ Put it simplify, the token is currently used as the user ID.</p>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/api/setContxt</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/api/setContext</code></p></td>
 </tr>
 </tbody>
 </table>
@@ -1206,7 +2139,7 @@ key-value pairs by calling setContext multiple times.</p>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/api/removeContxt</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/api/removeContext</code></p></td>
 </tr>
 </tbody>
 </table>
@@ -1367,7 +2300,7 @@ value</p></td>
     "serviceName": "queryTest1",
     "serviceVersion": "1.0",
     "serviceType": "GET",
-    "sql", "SELECT 1"
+    "sql": "SELECT 1"
   }</pre>
 </div>
 </div>
@@ -1453,7 +2386,7 @@ value</p></td>
 <pre>  {
     "serviceName": "queryTest1",
     "serviceVersion": "1.0",
-    "serviceType": "GET",
+    "serviceType": "GET"
   }</pre>
 </div>
 </div>
@@ -1511,12 +2444,12 @@ value</p></td>
 
   {
     "retCode": 0,
-    "retMsg": "Successful."
+    "retMsg": "Successful.",
     "services":
       {
         "Query1":
         {
-          "seviceName" : "Query1",
+          "serviceName" : "Query1",
           "serviceType" : "GET",
           ....
         }
@@ -1618,8 +2551,8 @@ snapshotLimit format: 3 hours / 30 minutes / 45 seconds</p>
 
   {
     "retCode": 0,
-    "retMsg": "Successful."
-    "description" "test 1",
+    "retMsg": "Successful.",
+    "description": "test 1",
     "cached": false,
     "timestamp": 17777700,
     "data":
@@ -1630,6 +2563,999 @@ snapshotLimit format: 3 hours / 30 minutes / 45 seconds</p>
       }
   }</pre>
 </div>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_mcp_tool">MCP Tool</h4>
+<div class="paragraph">
+<p>MCP (Model Context Protocol) Tool provides a way to register, manage, and invoke tools through the MCP protocol. These tools can be used by AI assistants and other clients that support MCP to perform specific operations or queries.</p>
+</div>
+<div class="sect4">
+<h5 id="_registermcptool">registerMCPTool</h5>
+<div class="paragraph">
+<p>Register an MCP tool.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/registerMCPTool</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>request body:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 20%;">
+<col style="width: 80%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">name</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">tool name (required)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">version</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">tool version (required)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">description</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">tool description (required)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">category</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">tool category (optional)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">capabilities</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">list of capabilities (optional array)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">use_cases</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">list of use cases (optional array)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">parameters</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">list of parameters (optional array of objects with name, type, required, description)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">examples</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">list of examples (optional array of objects with user_query, parameters)</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Request example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>  {
+    "name": "queryDatabase",
+    "version": "1.0",
+    "description": "Execute SQL queries on the database",
+    "category": "database",
+    "capabilities": ["query", "execute"],
+    "use_cases": ["data analysis", "report generation"],
+    "parameters": [
+      {
+        "name": "sql",
+        "type": "string",
+        "required": true,
+        "description": "SQL query to execute"
+      }
+    ],
+    "examples": [
+      {
+        "user_query": "Get all customers from the database",
+        "parameters": {"sql": "SELECT * FROM customers"}
+      }
+    ]
+  }</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Response example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Tool registered successfully"
+  }</pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_unregistermcptool">unregisterMCPTool</h5>
+<div class="paragraph">
+<p>Unregister an MCP tool.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/unregisterMCPTool</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>request body:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 20%;">
+<col style="width: 80%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">name</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">tool name (required)</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Request example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>  {
+    "name": "queryDatabase"
+  }</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Response example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Tool unregistered successfully"
+  }</pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_loadmcptool">loadMCPTool</h5>
+<div class="paragraph">
+<p>Load MCP tool definitions from JSON.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/loadMCPTool</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>request body: JSON array of tool definitions or a single tool definition object.</p>
+</div>
+<div class="paragraph">
+<p>Response example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Tools loaded successfully"
+  }</pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_savemcptool">saveMCPTool</h5>
+<div class="paragraph">
+<p>Save MCP tool definitions to configuration file.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/saveMCPTool</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Response example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Tools saved successfully",
+    "savedPath": "/path/to/config/file"
+  }</pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_dumpmcptool">dumpMCPTool</h5>
+<div class="paragraph">
+<p>Dump MCP tool definitions as JSON for download.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/dumpMCPTool</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Response: JSON file download with Content-Disposition header.</p>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_mcp_resource">MCP Resource</h4>
+<div class="paragraph">
+<p>MCP (Model Context Protocol) Resource provides a way to register, manage, and access resources through the MCP protocol. These resources can be used by AI assistants and other clients that support MCP to access data, files, or other resources.</p>
+</div>
+<div class="sect4">
+<h5 id="_registermcpresource">registerMCPResource</h5>
+<div class="paragraph">
+<p>Register an MCP resource.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/registerMCPResource</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>request body:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 20%;">
+<col style="width: 80%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">name</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">resource name (required)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">type</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">resource type (required, e.g., "file", "database", "api")</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">description</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">resource description (required)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">uri</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">resource URI or path (required)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">metadata</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">additional metadata (optional object)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">access_method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">access method (optional, e.g., "read", "write", "both")</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Request example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>  {
+    "name": "customerData",
+    "type": "database",
+    "description": "Customer database table",
+    "uri": "duckdb://localhost/customers",
+    "metadata": {
+      "schema": "public",
+      "table": "customers"
+    },
+    "access_method": "read"
+  }</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Response example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Resource registered successfully"
+  }</pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_unregistermcpresource">unregisterMCPResource</h5>
+<div class="paragraph">
+<p>Unregister an MCP resource.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/unregisterMCPResource</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>request body:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 20%;">
+<col style="width: 80%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">name</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">resource name (required)</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Request example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>  {
+    "name": "customerData"
+  }</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Response example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Resource unregistered successfully"
+  }</pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_loadmcpresource">loadMCPResource</h5>
+<div class="paragraph">
+<p>Load MCP resource definitions from JSON.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/loadMCPResource</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>request body: JSON array of resource definitions or a single resource definition object.</p>
+</div>
+<div class="paragraph">
+<p>Response example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Resources loaded successfully"
+  }</pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_savemcpresource">saveMCPResource</h5>
+<div class="paragraph">
+<p>Save MCP resource definitions to configuration file.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/saveMCPSource</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Response example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Resources saved successfully",
+    "savedPath": "/path/to/config/file"
+  }</pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_dumpmcpresource">dumpMCPResource</h5>
+<div class="paragraph">
+<p>Dump MCP resource definitions as JSON for download.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/dumpMCPSource</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Response: JSON file download with Content-Disposition header.</p>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_mcp_service">MCP Service</h4>
+<div class="paragraph">
+<p>MCP (Model Context Protocol) Service provides a way to register, manage, and invoke services through the MCP protocol. These services can be used by AI assistants and other clients that support MCP.</p>
+</div>
+<div class="sect4">
+<h5 id="_registermcpservice">registerMCPService</h5>
+<div class="paragraph">
+<p>Register an MCP service.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/registerMCPService</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>request body:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 20%;">
+<col style="width: 80%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">name</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">service name (required)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">apiName</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">API name (required)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">version</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">service version (required)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">service method, GET/POST (required)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">description</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">service description (required)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">category</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">service category (optional)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">capabilities</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">list of capabilities (optional array)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">use_cases</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">list of use cases (optional array)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">parameters</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">list of parameters (optional array of objects with name, type, required, description)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">examples</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">list of examples (optional array of objects with user_query, parameters)</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Request example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>  {
+    "name": "queryCustomer",
+    "apiName": "queryCustomer",
+    "version": "1.0",
+    "method": "GET",
+    "description": "Query customer information",
+    "category": "database",
+    "capabilities": ["query", "filter"],
+    "use_cases": ["customer lookup", "data analysis"],
+    "parameters": [
+      {
+        "name": "customer_id",
+        "type": "integer",
+        "required": true,
+        "description": "Customer ID to query"
+      }
+    ],
+    "examples": [
+      {
+        "user_query": "Get customer with ID 123",
+        "parameters": {"customer_id": 123}
+      }
+    ]
+  }</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Response example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Service registered successfully"
+  }</pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_unregistermcpservice">unregisterMCPService</h5>
+<div class="paragraph">
+<p>Unregister an MCP service.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/unregisterMCPService</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>request body:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 20%;">
+<col style="width: 80%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">name</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">service name (required)</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Request example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>  {
+    "name": "queryCustomer"
+  }</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Response example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Service unregistered successfully"
+  }</pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_loadmcpservice">loadMCPService</h5>
+<div class="paragraph">
+<p>Load MCP service definitions from JSON.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/loadMCPService</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>request body: JSON array of service definitions or a single service definition object.</p>
+</div>
+<div class="paragraph">
+<p>Response example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Services loaded successfully"
+  }</pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_savemcpservice">saveMCPService</h5>
+<div class="paragraph">
+<p>Save MCP service definitions to configuration file.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/saveMCPService</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Response example:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>Success response (200)
+
+  {
+    "retCode": 0,
+    "retMsg": "Services saved successfully",
+    "savedPath": "/path/to/config/file"
+  }</pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_dumpmcpservice">dumpMCPService</h5>
+<div class="paragraph">
+<p>Dump MCP service definitions as JSON for download.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Attribute</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Protocol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">HTTP</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Method</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">POST</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/mcp/dumpMCPService</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Response: JSON file download with Content-Disposition header.</p>
 </div>
 </div>
 </div>
@@ -1675,14 +3601,29 @@ It is useful for long-running queries where you want to avoid blocking the clien
 <div class="literalblock">
 <div class="content">
 <pre>{
-  "id": "unique-request-id",   // used to match responses
+  "id": "unique-request-id",   // used to match responses, echoed back unchanged
   "type": "message-type",      // one of: start, exec, fetch, cancel, close
-  "data": { ... }              // payload specific to the message type
+  "data": { ... }              // payload specific to the message type; defaults to {}
 }</pre>
 </div>
 </div>
 <div class="paragraph">
-<p>The server will respond with a JSON message that mirrors the request <code>id</code> and includes a <code>retCode</code> (0 for success, non‑zero for error) and relevant data.</p>
+<p>The server replies with the same three fields: <code>id</code>, <code>type</code> (same as the request) and <code>data</code>.
+There is <strong>no</strong> <code>retCode</code> / <code>retMsg</code> — success or failure is reported by <code>data.status</code>.
+When a message fails validation or refers to an unknown session, the server replies with an error
+object that carries neither <code>id</code> nor <code>type</code>:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>{ "error": "Field 'sessionId' must be a string" }</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Validation errors you may see: <code>Field 'id' must be a string</code>, <code>Field 'type' must be a string</code>,
+<code>Field 'data' must be an object</code>, <code>Unknown type: &lt;type&gt;</code>, <code>Field 'sessionId' must be a string</code>,
+<code>Field 'sql' must be a string</code>, <code>Field 'fetchSize' must be a number</code>,
+<code>Field 'maxRows' must be a number</code>, <code>Invalid session</code>, <code>Invalid taskId</code>,
+<code>Another SQL is already running</code>.</p>
 </div>
 </div>
 <div class="sect4">
@@ -1709,14 +3650,17 @@ It is useful for long-running queries where you want to avoid blocking the clien
 <div class="content">
 <pre>{
   "id": "1",
-  "retCode": 0,
-  "retMsg": "Session created",
-  "sessionId": "session-123"
+  "type": "start",
+  "data": { "sessionId": "session-123" }
 }</pre>
 </div>
 </div>
 <div class="paragraph">
 <p>All further messages for this session must include <code>"sessionId": "session-123"</code> in their <code>data</code> field.</p>
+</div>
+<div class="paragraph">
+<p>A session owns its own backend connection and can run <strong>one task at a time</strong>; sending <code>exec</code> while a
+task is still running answers <code>{"error": "Another SQL is already running"}</code>.</p>
 </div>
 </div>
 <div class="sect4">
@@ -1735,27 +3679,30 @@ It is useful for long-running queries where you want to avoid blocking the clien
   "data": {
     "sessionId": "session-123",
     "sql": "SELECT * FROM large_table",
-    "fetchSize": 1000   // optional, default is 1000
+    "fetchSize": 100   // optional, default 100; applied to the underlying Statement
   }
 }</pre>
 </div>
 </div>
 <div class="paragraph">
-<p>Response:</p>
+<p>Response (returned as soon as the task is accepted, while it is still running):</p>
 </div>
 <div class="literalblock">
 <div class="content">
 <pre>{
   "id": "2",
-  "retCode": 0,
-  "retMsg": "Task submitted",
-  "taskId": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "running"   // or "completed" if result fits in first page
+  "type": "exec",
+  "data": {
+    "taskId": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "running"
+  }
 }</pre>
 </div>
 </div>
 <div class="paragraph">
-<p>If the SQL execution fails immediately (e.g., syntax error), the response will contain <code>retCode</code> != 0 and an error message.</p>
+<p>If the SQL fails while executing, the task status becomes <code>error</code> and <code>fetch</code> reports it as
+<code>data.status = "error"</code> with the message in <code>data.error</code> (the <code>exec</code> response itself only means the
+task was accepted).</p>
 </div>
 </div>
 <div class="sect4">
@@ -1786,24 +3733,45 @@ It is useful for long-running queries where you want to avoid blocking the clien
 <div class="content">
 <pre>{
   "id": "3",
-  "retCode": 0,
-  "retMsg": "Success",
-  "taskId": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "completed",   // "running", "completed", or "error"
-  "hasMore": false,        // true if there are more rows to fetch
-  "columns": ["id", "name"],
-  "rows": [
-    {"id": 1, "name": "Alice"},
-    {"id": 2, "name": "Bob"}
-  ],
-  "fetched": 2
+  "type": "fetch",
+  "data": {
+    "status": "completed",
+    "columns": ["id", "name"],
+    "rows": [
+      {"id": 1, "name": "Alice"},
+      {"id": 2, "name": "Bob"}
+    ],
+    "hasMore": false,     // true while there are more rows
+    "fetched": 2          // rows read so far for this task
+  }
 }</pre>
 </div>
 </div>
 <div class="paragraph">
-<p>If the task is still running (status = "running"), <code>rows</code> may be empty and <code>hasMore</code> will be true.
-If the task has completed and all rows have been fetched, <code>status</code> becomes "completed" and <code>hasMore</code> false.
-If an error occurs during execution, <code>status</code> becomes "error" and <code>retMsg</code> contains the error details.</p>
+<p>The values of <code>data.status</code> and the payload that comes with them:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>running</code> — the task is still executing; the payload is <strong>only</strong> <code>{"status": "running"}</code>
+(there are no <code>rows</code> / <code>hasMore</code> yet);</p>
+</li>
+<li>
+<p><code>error</code> — execution failed: <code>{"status": "error", "error": "&lt;message&gt;"}</code>;</p>
+</li>
+<li>
+<p><code>completed</code> with a result set — <code>columns</code>, <code>rows</code>, <code>hasMore</code> and <code>fetched</code>; keep calling <code>fetch</code>
+while <code>hasMore</code> is true;</p>
+</li>
+<li>
+<p><code>completed</code> without a result set (INSERT/UPDATE/DDL) — <code>{"status": "completed", "updateCount": &lt;n&gt;}</code>,
+with no <code>rows</code>;</p>
+</li>
+<li>
+<p><code>idle</code> — the task has finished and its result set/statement have been closed (all rows consumed);
+a later <code>fetch</code> answers with this status.</p>
+</li>
+</ul>
 </div>
 <div class="paragraph">
 <p>You can send multiple <code>fetch</code> messages until <code>hasMore</code> becomes false. Each call returns the next page of rows.</p>
@@ -1812,7 +3780,9 @@ If an error occurs during execution, <code>status</code> becomes "error" and <co
 <div class="sect4">
 <h5 id="_cancel_task">Cancel Task</h5>
 <div class="paragraph">
-<p>Cancels an ongoing SQL task. If no taskId is provided, cancels the current session&#8217;s active task.</p>
+<p>Cancels the task that is currently running in the session. Only <code>sessionId</code> is read — <code>taskId</code> is
+ignored (a session has at most one running task): the server interrupts the executing thread and
+calls <code>Statement.cancel()</code>.</p>
 </div>
 <div class="paragraph">
 <p>Message:</p>
@@ -1823,8 +3793,7 @@ If an error occurs during execution, <code>status</code> becomes "error" and <co
   "id": "4",
   "type": "cancel",
   "data": {
-    "sessionId": "session-123",
-    "taskId": "550e8400-e29b-41d4-a716-446655440000"   // optional, omit to cancel the session's active task
+    "sessionId": "session-123"
   }
 }</pre>
 </div>
@@ -1836,10 +3805,19 @@ If an error occurs during execution, <code>status</code> becomes "error" and <co
 <div class="content">
 <pre>{
   "id": "4",
-  "retCode": 0,
-  "retMsg": "Task cancelled"
+  "type": "cancel",
+  "data": {
+    "status": "canceled",   // "no-running-statement" when there was nothing to cancel
+    "detail": "statement canceled"
+  }
 }</pre>
 </div>
+</div>
+<div class="paragraph">
+<p>When <code>status</code> is <code>canceled</code>, <code>detail</code> is either <code>"future canceled"</code> (the executing thread was
+interrupted) or <code>"statement canceled"</code> (the running statement was cancelled); when there was nothing
+to cancel, <code>status</code> is <code>no-running-statement</code> and <code>detail</code> is an empty string. A successful cancel
+resets the task, so a later <code>fetch</code> with the old <code>taskId</code> answers <code>Invalid taskId</code>.</p>
 </div>
 </div>
 <div class="sect4">
@@ -1868,8 +3846,10 @@ If an error occurs during execution, <code>status</code> becomes "error" and <co
 <div class="content">
 <pre>{
   "id": "5",
-  "retCode": 0,
-  "retMsg": "Session closed"
+  "type": "close",
+  "data": {
+    "status": "closed"
+  }
 }</pre>
 </div>
 </div>
@@ -1885,8 +3865,8 @@ If an error occurs during execution, <code>status</code> becomes "error" and <co
 <p>Connect to WebSocket endpoint:</p>
 <div class="listingblock">
 <div class="content">
-<pre class="CodeRay highlight"><code data-lang="javascript">const WebSocket = require(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">'</span><span style="color:#D20">ws</span><span style="color:#710">'</span></span>);
-const ws = <span style="color:#080;font-weight:bold">new</span> WebSocket(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">'</span><span style="color:#D20">ws://localhost:8080/sql/ws</span><span style="color:#710">'</span></span>);</code></pre>
+<pre class="highlight"><code class="language-javascript" data-lang="javascript">const WebSocket = require('ws');
+const ws = new WebSocket('ws://localhost:8080/sql/ws');</code></pre>
 </div>
 </div>
 </li>
@@ -1894,10 +3874,10 @@ const ws = <span style="color:#080;font-weight:bold">new</span> WebSocket(<span 
 <p>Create a session:</p>
 <div class="listingblock">
 <div class="content">
-<pre class="CodeRay highlight"><code data-lang="javascript">ws.send(JSON.stringify({
-  <span style="color:#606">id</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">1</span><span style="color:#710">&quot;</span></span>,
-  <span style="color:#606">type</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">start</span><span style="color:#710">&quot;</span></span>,
-  <span style="color:#606">data</span>: {}
+<pre class="highlight"><code class="language-javascript" data-lang="javascript">ws.send(JSON.stringify({
+  id: "1",
+  type: "start",
+  data: {}
 }));</code></pre>
 </div>
 </div>
@@ -1906,13 +3886,13 @@ const ws = <span style="color:#080;font-weight:bold">new</span> WebSocket(<span 
 <p>Execute a long query:</p>
 <div class="listingblock">
 <div class="content">
-<pre class="CodeRay highlight"><code data-lang="javascript">ws.send(JSON.stringify({
-  <span style="color:#606">id</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">2</span><span style="color:#710">&quot;</span></span>,
-  <span style="color:#606">type</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">exec</span><span style="color:#710">&quot;</span></span>,
-  <span style="color:#606">data</span>: {
-    <span style="color:#606">sessionId</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">session-123</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606">sql</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">SELECT * FROM huge_table</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606">fetchSize</span>: <span style="color:#00D">500</span>
+<pre class="highlight"><code class="language-javascript" data-lang="javascript">ws.send(JSON.stringify({
+  id: "2",
+  type: "exec",
+  data: {
+    sessionId: "session-123",
+    sql: "SELECT * FROM huge_table",
+    fetchSize: 500
   }
 }));</code></pre>
 </div>
@@ -1922,13 +3902,13 @@ const ws = <span style="color:#080;font-weight:bold">new</span> WebSocket(<span 
 <p>Fetch first page:</p>
 <div class="listingblock">
 <div class="content">
-<pre class="CodeRay highlight"><code data-lang="javascript">ws.send(JSON.stringify({
-  <span style="color:#606">id</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">3</span><span style="color:#710">&quot;</span></span>,
-  <span style="color:#606">type</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">fetch</span><span style="color:#710">&quot;</span></span>,
-  <span style="color:#606">data</span>: {
-    <span style="color:#606">sessionId</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">session-123</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606">taskId</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">abc123</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606">maxRows</span>: <span style="color:#00D">100</span>
+<pre class="highlight"><code class="language-javascript" data-lang="javascript">ws.send(JSON.stringify({
+  id: "3",
+  type: "fetch",
+  data: {
+    sessionId: "session-123",
+    taskId: "abc123",
+    maxRows: 100
   }
 }));</code></pre>
 </div>
@@ -1938,15 +3918,14 @@ const ws = <span style="color:#080;font-weight:bold">new</span> WebSocket(<span 
 <p>Fetch subsequent pages until <code>hasMore</code> becomes false.</p>
 </li>
 <li>
-<p>Optionally cancel if needed:</p>
+<p>Optionally cancel (only <code>sessionId</code> is read — it cancels the session&#8217;s current task):</p>
 <div class="listingblock">
 <div class="content">
-<pre class="CodeRay highlight"><code data-lang="javascript">ws.send(JSON.stringify({
-  <span style="color:#606">id</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">4</span><span style="color:#710">&quot;</span></span>,
-  <span style="color:#606">type</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">cancel</span><span style="color:#710">&quot;</span></span>,
-  <span style="color:#606">data</span>: {
-    <span style="color:#606">sessionId</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">session-123</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606">taskId</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">abc123</span><span style="color:#710">&quot;</span></span>
+<pre class="highlight"><code class="language-javascript" data-lang="javascript">ws.send(JSON.stringify({
+  id: "4",
+  type: "cancel",
+  data: {
+    sessionId: "session-123"
   }
 }));</code></pre>
 </div>
@@ -1956,11 +3935,11 @@ const ws = <span style="color:#080;font-weight:bold">new</span> WebSocket(<span 
 <p>Close the session when done:</p>
 <div class="listingblock">
 <div class="content">
-<pre class="CodeRay highlight"><code data-lang="javascript">ws.send(JSON.stringify({
-  <span style="color:#606">id</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">5</span><span style="color:#710">&quot;</span></span>,
-  <span style="color:#606">type</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">close</span><span style="color:#710">&quot;</span></span>,
-  <span style="color:#606">data</span>: {
-    <span style="color:#606">sessionId</span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">session-123</span><span style="color:#710">&quot;</span></span>
+<pre class="highlight"><code class="language-javascript" data-lang="javascript">ws.send(JSON.stringify({
+  id: "5",
+  type: "close",
+  data: {
+    sessionId: "session-123"
   }
 }));</code></pre>
 </div>
@@ -1974,166 +3953,10 @@ const ws = <span style="color:#080;font-weight:bold">new</span> WebSocket(<span 
 </div>
 </div>
 <div class="sect3">
-<h4 id="_basic_services">Basic Services</h4>
-<div class="paragraph">
-<p>The following HTTP endpoints provide basic administrative functions, such as backup, file upload/download, log viewing, and status monitoring. These endpoints are available when the Data Services API port (port_x) is enabled.</p>
-</div>
-<div class="sect4">
-<h5 id="_backup_post">/backup (POST)</h5>
-<div class="paragraph">
-<p>Performs a database backup. The backup file is saved in the <code>backup/</code> directory with the naming pattern <code>{database}_{backupTag}.db</code>.</p>
-</div>
-<div class="listingblock">
-<div class="title">Request body (JSON):</div>
-<div class="content">
-<pre class="CodeRay highlight"><code data-lang="json">{
-  <span style="color:#606"><span style="color:#404">&quot;</span><span>backupTag</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">mybackup</span><span style="color:#710">&quot;</span></span>
-}</code></pre>
-</div>
-</div>
-<div class="listingblock">
-<div class="title">Response example (success):</div>
-<div class="content">
-<pre class="CodeRay highlight"><code data-lang="json">{
-  <span style="color:#606"><span style="color:#404">&quot;</span><span>retCode</span><span style="color:#404">&quot;</span></span>: <span style="color:#00D">0</span>,
-  <span style="color:#606"><span style="color:#404">&quot;</span><span>retMsg</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">Successful. Backup file has placed to [C:</span><span style="color:#b0b">\\</span><span style="color:#D20">Work</span><span style="color:#b0b">\\</span><span style="color:#D20">slackerdb</span><span style="color:#b0b">\\</span><span style="color:#D20">backup</span><span style="color:#b0b">\\</span><span style="color:#D20">mydb_mybackup.db].</span><span style="color:#710">&quot;</span></span>
-}</code></pre>
-</div>
-</div>
-</div>
-<div class="sect4">
-<h5 id="_download_get">/download (GET)</h5>
-<div class="paragraph">
-<p>Downloads a file from the server&#8217;s working directory.</p>
-</div>
-<div class="ulist">
-<div class="title">Query parameters:</div>
-<ul>
-<li>
-<p><code>filename</code> (required) – relative path to the file.</p>
-</li>
-</ul>
-</div>
-<div class="literalblock">
-<div class="title">Example:</div>
-<div class="content">
-<pre>GET /download?filename=logs/slackerdb.log</pre>
-</div>
-</div>
-<div class="paragraph">
-<p>The endpoint supports Range requests for partial downloads.</p>
-</div>
-</div>
-<div class="sect4">
-<h5 id="_upload_post">/upload (POST)</h5>
-<div class="paragraph">
-<p>Uploads a file to the server&#8217;s working directory.</p>
-</div>
-<div class="ulist">
-<div class="title">Query parameters:</div>
-<ul>
-<li>
-<p><code>filename</code> (required) – target file path.</p>
-</li>
-</ul>
-</div>
-<div class="ulist">
-<div class="title">Form data:</div>
-<ul>
-<li>
-<p><code>file</code> (required) – the file to upload.</p>
-</li>
-</ul>
-</div>
-<div class="listingblock">
-<div class="title">Example using curl:</div>
-<div class="content">
-<pre class="CodeRay highlight"><code data-lang="bash">curl -X POST -F &quot;file=@local.txt&quot; &quot;http://localhost:8080/upload?filename=uploads/remote.txt&quot;</code></pre>
-</div>
-</div>
-<div class="listingblock">
-<div class="title">Response:</div>
-<div class="content">
-<pre class="CodeRay highlight"><code data-lang="json"><span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">uploaded: C:</span><span style="color:#b0b">\\</span><span style="color:#D20">Work</span><span style="color:#b0b">\\</span><span style="color:#D20">slackerdb</span><span style="color:#b0b">\\</span><span style="color:#D20">uploads</span><span style="color:#b0b">\\</span><span style="color:#D20">remote.txt</span><span style="color:#710">&quot;</span></span></code></pre>
-</div>
-</div>
-</div>
-<div class="sect4">
-<h5 id="_viewlog_get">/viewLog (GET)</h5>
-<div class="paragraph">
-<p>Retrieves the last N lines of a log file.</p>
-</div>
-<div class="ulist">
-<div class="title">Query parameters:</div>
-<ul>
-<li>
-<p><code>filename</code> (required) – path to the log file.</p>
-</li>
-<li>
-<p><code>lines</code> (optional) – number of lines to return (default 100, max 10000).</p>
-</li>
-</ul>
-</div>
-<div class="literalblock">
-<div class="title">Example:</div>
-<div class="content">
-<pre>GET /viewLog?filename=logs/slackerdb.log&amp;lines=50</pre>
-</div>
-</div>
-<div class="listingblock">
-<div class="title">Response (JSON array of strings):</div>
-<div class="content">
-<pre class="CodeRay highlight"><code data-lang="json">[
-  <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">2025-12-04 10:00:00 INFO  Server started</span><span style="color:#710">&quot;</span></span>,
-  <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">2025-12-04 10:00:01 INFO  Listening on port 8080</span><span style="color:#710">&quot;</span></span>
-]</code></pre>
-</div>
-</div>
-</div>
-<div class="sect4">
-<h5 id="_status_get">/status (GET)</h5>
-<div class="paragraph">
-<p>Returns comprehensive server status information, including server details, database metrics, configuration parameters, usage statistics, installed extensions, and active sessions.</p>
-</div>
-<div class="literalblock">
-<div class="title">Example:</div>
-<div class="content">
-<pre>GET /status</pre>
-</div>
-</div>
-<div class="listingblock">
-<div class="title">Response (abbreviated):</div>
-<div class="content">
-<pre class="CodeRay highlight"><code data-lang="json">{
-  <span style="color:#606"><span style="color:#404">&quot;</span><span>server</span><span style="color:#404">&quot;</span></span>: {
-    <span style="color:#606"><span style="color:#404">&quot;</span><span>status</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">RUNNING</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606"><span style="color:#404">&quot;</span><span>version</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">0.2.1</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606"><span style="color:#404">&quot;</span><span>build</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">2025-12-04 10:00:00.000 UTC</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606"><span style="color:#404">&quot;</span><span>pid</span><span style="color:#404">&quot;</span></span>: <span style="color:#00D">12345</span>,
-    <span style="color:#606"><span style="color:#404">&quot;</span><span>now</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">2025-12-04 15:20:00</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606"><span style="color:#404">&quot;</span><span>bootTime</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">2025-12-04 10:00:00</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606"><span style="color:#404">&quot;</span><span>runTime</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">5 hours, 20 minutes, 0 seconds</span><span style="color:#710">&quot;</span></span>
-  },
-  <span style="color:#606"><span style="color:#404">&quot;</span><span>database</span><span style="color:#404">&quot;</span></span>: {
-    <span style="color:#606"><span style="color:#404">&quot;</span><span>version</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">v1.0.0</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606"><span style="color:#404">&quot;</span><span>size</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">1.2 GB</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606"><span style="color:#404">&quot;</span><span>memoryUsage</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">256 MB</span><span style="color:#710">&quot;</span></span>,
-    <span style="color:#606"><span style="color:#404">&quot;</span><span>walSize</span><span style="color:#404">&quot;</span></span>: <span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">0 B</span><span style="color:#710">&quot;</span></span>
-  },
-  <span style="color:#606"><span style="color:#404">&quot;</span><span>parameters</span><span style="color:#404">&quot;</span></span>: {},
-  <span style="color:#606"><span style="color:#404">&quot;</span><span>usage</span><span style="color:#404">&quot;</span></span>: {},
-  <span style="color:#606"><span style="color:#404">&quot;</span><span>extensions</span><span style="color:#404">&quot;</span></span>: [],
-  <span style="color:#606"><span style="color:#404">&quot;</span><span>sessions</span><span style="color:#404">&quot;</span></span>: []
-}</code></pre>
-</div>
-</div>
-</div>
-</div>
-<div class="sect3">
 <h4 id="_web_based_sql_console">Web-based SQL Console</h4>
 <div class="imageblock">
 <div class="content">
-<img src="../../../../../imgs/console.png" alt="Console">
+<img src="imgs/console.png" alt="Console">
 </div>
 </div>
 <div class="paragraph">
@@ -2246,14 +4069,14 @@ const ws = <span style="color:#080;font-weight:bold">new</span> WebSocket(<span 
 <div class="content">
 <pre>  // create configuration,  and update as your need
   ServerConfiguration serverConfiguration = new ServerConfiguration();
-  serverConfiguration1.setPort(4309);
-  serverConfiguration1.setData("data1");
+  serverConfiguration.setPort(4309);
+  serverConfiguration.setData("data1");
 
   // init database
-  DBInstance dbInstance= new DBInstance(serverConfiguration1);
+  DBInstance dbInstance = new DBInstance(serverConfiguration);
 
   // startup database
-  dbInstance1.start();
+  dbInstance.start();
 
   // shutdown database
   dbInstance.stop();
@@ -2326,10 +4149,9 @@ you can fill anything as you like, it doesn’t make sense.</p>
 <h4 id="_2_limited_support_for_duckdb_datatype">2. Limited support for duckdb datatype</h4>
 <div class="paragraph">
 <p>Only some duckdb data types are supported, mainly simple types, such as
-int, number, double, varchar, … For complex types, some are still under
-development, and some are not supported by the PG protocol, such as
-blob, list, map… You can refer to sanity01.java to see what we currently
-support.</p>
+int, number, double, varchar, … Complex types are either still under
+development or cannot be represented in the PG protocol (blob, list, map…),
+and they are rejected with an explicit error rather than silently converted.</p>
 </div>
 </div>
 <div class="sect3">
@@ -2394,12 +4216,12 @@ support this.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="CodeRay highlight"><code data-lang="xml"><span style="color:#070;font-weight:bold">&lt;dependency&gt;</span>
-    <span style="color:#070;font-weight:bold">&lt;groupId&gt;</span>org.slackerdb<span style="color:#070;font-weight:bold">&lt;/groupId&gt;</span>
-    <span style="color:#070;font-weight:bold">&lt;artifactId&gt;</span>slackerdb-plugin<span style="color:#070;font-weight:bold">&lt;/artifactId&gt;</span>
-    <span style="color:#070;font-weight:bold">&lt;version&gt;</span>0.2.1<span style="color:#070;font-weight:bold">&lt;/version&gt;</span>
-    <span style="color:#070;font-weight:bold">&lt;scope&gt;</span>provided<span style="color:#070;font-weight:bold">&lt;/scope&gt;</span>
-<span style="color:#070;font-weight:bold">&lt;/dependency&gt;</span></code></pre>
+<pre class="highlight"><code class="language-xml" data-lang="xml">&lt;dependency&gt;
+    &lt;groupId&gt;org.slackerdb&lt;/groupId&gt;
+    &lt;artifactId&gt;slackerdb-plugin&lt;/artifactId&gt;
+    &lt;version&gt;0.2.1&lt;/version&gt;
+    &lt;scope&gt;provided&lt;/scope&gt;
+&lt;/dependency&gt;</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -2413,62 +4235,60 @@ support this.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="CodeRay highlight"><code data-lang="java"><span style="color:#080;font-weight:bold">package</span> <span style="color:#707;font-weight:bold">org.slackerdb.myplugin</span>;
+<pre class="highlight"><code class="language-java" data-lang="java">package org.slackerdb.myplugin;
 
-<span style="color:#080;font-weight:bold">import</span> <span style="color:#B44;font-weight:bold">io.javalin.Javalin</span>;
-<span style="color:#080;font-weight:bold">import</span> <span style="color:#B44;font-weight:bold">org.pf4j.PluginWrapper</span>;
-<span style="color:#080;font-weight:bold">import</span> <span style="color:#B44;font-weight:bold">org.slackerdb.plugin.DBPlugin</span>;
-<span style="color:#080;font-weight:bold">import</span> <span style="color:#B44;font-weight:bold">org.slf4j.Logger</span>;
+import io.javalin.Javalin;
+import org.pf4j.PluginWrapper;
+import org.slackerdb.plugin.DBPlugin;
+import org.slf4j.Logger;
 
-<span style="color:#080;font-weight:bold">import</span> <span style="color:#B44;font-weight:bold">java.sql.Connection</span>;
-<span style="color:#080;font-weight:bold">import</span> <span style="color:#B44;font-weight:bold">java.sql.SQLException</span>;
+import java.sql.Connection;
+import java.sql.SQLException;
 
-<span style="color:#088;font-weight:bold">public</span> <span style="color:#339;font-weight:bold">class</span> <span style="color:#B06;font-weight:bold">MyPlugin</span> <span style="color:#088;font-weight:bold">extends</span> DBPlugin {
-    <span style="color:#088;font-weight:bold">private</span> <span style="color:#0a8;font-weight:bold">Connection</span> conn;
-    <span style="color:#088;font-weight:bold">private</span> Javalin app;
-    <span style="color:#088;font-weight:bold">private</span> <span style="color:#0a8;font-weight:bold">Logger</span> logger;
+public class MyPlugin extends DBPlugin {
+    private Connection conn;
+    private Javalin app;
+    private Logger logger;
 
-    <span style="color:#088;font-weight:bold">protected</span> MyPlugin(PluginWrapper wrapper) {
-        <span style="color:#950">super</span>(wrapper);
+    public MyPlugin(PluginWrapper wrapper) {
+        super(wrapper);
     }
 
-    <span style="color:#007">@Override</span>
-    <span style="color:#088;font-weight:bold">protected</span> <span style="color:#339;font-weight:bold">void</span> onStart() {
-        <span style="color:#777">// Obtain resources</span>
-        <span style="color:#080;font-weight:bold">try</span> {
-            <span style="color:#950">this</span>.conn = getDbConnection();
-        } <span style="color:#080;font-weight:bold">catch</span> (<span style="color:#C00;font-weight:bold">SQLException</span> e) {
-            <span style="color:#777">// Handle exception</span>
+    @Override
+    protected void onStart() {
+        // Obtain resources
+        try {
+            this.conn = getDbConnection();
+        } catch (SQLException e) {
+            // Handle exception
         }
-        <span style="color:#950">this</span>.logger = getLogger();
-        <span style="color:#950">this</span>.app = getJavalinApp();
+        this.logger = getLogger();
+        this.app = getJavalinApp();
 
-        <span style="color:#777">// Register a custom HTTP endpoint</span>
-        app.get(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">/myplugin/hello</span><span style="color:#710">&quot;</span></span>, ctx -&gt; {
-            ctx.result(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">Hello from MyPlugin!</span><span style="color:#710">&quot;</span></span>);
-        });
+        // Register a custom HTTP endpoint
+        app.get("/myplugin/hello", ctx -&gt; ctx.result("Hello from MyPlugin!"));
 
-        <span style="color:#777">// Initialize a database table</span>
-        <span style="color:#080;font-weight:bold">try</span> (<span style="color:#339;font-weight:bold">var</span> stmt = conn.createStatement()) {
-            stmt.execute(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">CREATE TABLE IF NOT EXISTS myplugin_data (id INTEGER, name VARCHAR)</span><span style="color:#710">&quot;</span></span>);
-        } <span style="color:#080;font-weight:bold">catch</span> (<span style="color:#C00;font-weight:bold">SQLException</span> e) {
-            logger.error(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">Failed to create table</span><span style="color:#710">&quot;</span></span>, e);
+        // Initialize a database table
+        try (var stmt = conn.createStatement()) {
+            stmt.execute("CREATE TABLE IF NOT EXISTS myplugin_data (id INTEGER, name VARCHAR)");
+        } catch (SQLException e) {
+            logger.error("Failed to create table", e);
         }
 
-        logger.info(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">MyPlugin started successfully</span><span style="color:#710">&quot;</span></span>);
+        logger.info("MyPlugin started successfully");
     }
 
-    <span style="color:#007">@Override</span>
-    <span style="color:#088;font-weight:bold">protected</span> <span style="color:#339;font-weight:bold">void</span> onStop() {
-        <span style="color:#777">// Clean up resources</span>
-        <span style="color:#080;font-weight:bold">if</span> (conn != <span style="color:#069">null</span>) {
-            <span style="color:#080;font-weight:bold">try</span> { conn.close(); } <span style="color:#080;font-weight:bold">catch</span> (<span style="color:#C00;font-weight:bold">SQLException</span> ignored) {}
+    @Override
+    protected void onStop() {
+        // Clean up resources
+        if (conn != null) {
+            try { conn.close(); } catch (SQLException ignored) {}
         }
-        logger.info(<span style="background-color:hsla(0,100%,50%,0.05)"><span style="color:#710">&quot;</span><span style="color:#D20">MyPlugin stopped</span><span style="color:#710">&quot;</span></span>);
+        logger.info("MyPlugin stopped");
     }
 
-    <span style="color:#777">// Optional: override other lifecycle hook methods</span>
-    <span style="color:#777">// beforeStart, afterStart, beforeStop, afterStop, beforeDelete, afterDelete</span>
+    // Optional: override other lifecycle hook methods
+    // beforeStart, afterStart, beforeStop, afterStop, beforeDelete, afterDelete
 }</code></pre>
 </div>
 </div>
@@ -2480,7 +4300,7 @@ support this.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="CodeRay highlight"><code data-lang="properties"># Plugin unique identifier, must match the plugin JAR filename (without extension)
+<pre class="highlight"><code class="language-properties" data-lang="properties"># Plugin unique identifier, must match the plugin JAR filename (without extension)
 plugin.id=myplugin
 
 # Fully qualified name of the plugin main class, must extend org.slackerdb.plugin.DBPlugin
@@ -2501,7 +4321,7 @@ plugin.requires=*</code></pre>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="CodeRay highlight"><code data-lang="bash">mvn clean package</code></pre>
+<pre class="highlight"><code class="language-bash" data-lang="bash">mvn clean package</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -2521,7 +4341,7 @@ plugin.requires=*</code></pre>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="CodeRay highlight"><code>[SERVER][PLUGIN     ] Load plugin [myplugin] ...
+<pre class="highlight"><code>[SERVER][PLUGIN     ] Load plugin [myplugin] ...
 [SERVER][PLUGIN     ] start plugin [myplugin] ...</code></pre>
 </div>
 </div>
@@ -2549,7 +4369,468 @@ plugin.requires=*</code></pre>
 <div class="sect3">
 <h4 id="_plugin_example">Plugin Example</h4>
 <div class="paragraph">
-<p>The <code>plugin‑example</code> module in the project provides a complete plugin example that demonstrates the basic structure and resource access methods. Developers can refer to this example to get started quickly.</p>
+<p>This section shows a complete, working plugin: its basic structure, resource access methods and
+lifecycle. It is reproduced in full here so you can copy the files it describes.</p>
+</div>
+<div class="sect4">
+<h5 id="_module_structure">Module Structure</h5>
+<div class="paragraph">
+<p>The plugin‑example module contains the following key components:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>The main plugin class</strong> – extends <code>DBPlugin</code> and implements all lifecycle methods. Its full source
+is reproduced in this section.</p>
+</li>
+<li>
+<p><strong>A standalone runner</strong> – demonstrates how to execute a plugin without the full PF4J framework
+(also reproduced below).</p>
+</li>
+<li>
+<p><strong>The plugin descriptor</strong> – a <code>plugin.properties</code> file that defines the plugin&#8217;s metadata.</p>
+</li>
+<li>
+<p><strong>The Maven build</strong> – configuration with a dependency on <code>slackerdb‑plugin</code>.</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_pluginexample_class_overview">PluginExample Class Overview</h5>
+<div class="paragraph">
+<p>The <code>PluginExample</code> class extends <code>DBPlugin</code> and provides implementations for all lifecycle methods:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-java" data-lang="java">public class PluginExample extends DBPlugin {
+    private Connection conn;
+    private Javalin    app = null;
+    private Logger     logger = null;
+
+    public PluginExample(PluginWrapper wrapper) {
+        super(wrapper);
+    }
+
+    @Override
+    protected void onStart() {
+        // Example: Obtain plugin resources
+        // try {
+        //     this.conn = getDbConnection();
+        // } catch (SQLException ignored) {}
+        // this.logger = getLogger();
+        // this.app = getJavalinApp();
+
+        // Add plugin startup logic here
+    }
+
+    protected void onStop() {
+        // Clean up resources
+    }
+
+    protected void onDelete() {
+        // Permanent cleanup operations
+    }
+
+    // Lifecycle hook methods: beforeStart, afterStart, beforeStop, afterStop,
+    // beforeDelete, afterDelete
+
+    // Standalone mode support
+    public static PluginExample standAloneInstance() throws Exception {
+        return DBPlugin.Standalone.createInstance(PluginExample.class);
+    }
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_key_features_demonstrated">Key Features Demonstrated</h5>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p><strong>Resource Access</strong> – Shows how to obtain database connections, loggers, and Javalin application instances via <code>getDbConnection()</code>, <code>getLogger()</code>, and <code>getJavalinApp()</code>.</p>
+</li>
+<li>
+<p><strong>Lifecycle Management</strong> – Implements all lifecycle methods (<code>onStart</code>, <code>onStop</code>, <code>onDelete</code>) and their corresponding hook methods (<code>beforeStart</code>, <code>afterStart</code>, etc).</p>
+</li>
+<li>
+<p><strong>Standalone Mode</strong> – Includes a <code>standAloneInstance()</code> method that enables the plugin to be executed without the PF4J framework (see the "Plugin Standalone Mode" section below).</p>
+</li>
+<li>
+<p><strong>Thread Safety</strong> – The plugin instance is a singleton; developers should ensure thread‑safe access to shared resources.</p>
+</li>
+</ol>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_building_and_running_the_example">Building and Running the Example</h5>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p><strong>Build the plugin</strong>:</p>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-bash" data-lang="bash">cd plugin-example
+mvn clean package</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The resulting JAR file (<code>plugin‑example‑0.2.1.jar</code>) will be placed in the <code>target</code> directory.</p>
+</div>
+</li>
+<li>
+<p><strong>Deploy to a SlackerDB server</strong>:</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Copy the JAR file to the server&#8217;s plugin directory (configured via <code>plugins_dir</code> parameter).</p>
+</li>
+<li>
+<p>Start the server; the plugin will be loaded automatically.</p>
+</li>
+<li>
+<p>Check server logs for plugin loading messages.</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p><strong>Run in standalone mode</strong> (for testing):</p>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-bash" data-lang="bash">cd plugin-example
+mvn compile exec:java -Dexec.mainClass="org.slackerdb.pluginExample.SimplePluginRunner"</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>This executes the <code>SimplePluginRunner</code> class, which demonstrates how to run the plugin without a full SlackerDB server.</p>
+</div>
+</li>
+</ol>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_customizing_the_example">Customizing the Example</h5>
+<div class="paragraph">
+<p>To create your own plugin based on this example:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p><strong>Rename the package and class</strong> – Change <code>org.slackerdb.pluginExample</code> to your own package name.</p>
+</li>
+<li>
+<p><strong>Update plugin.properties</strong> – Modify <code>plugin.id</code>, <code>plugin.class</code>, and <code>plugin.version</code> accordingly.</p>
+</li>
+<li>
+<p><strong>Implement business logic</strong> – Uncomment the resource acquisition code in <code>onStart()</code> and add your custom functionality.</p>
+</li>
+<li>
+<p><strong>Add dependencies</strong> – Update <code>pom.xml</code> with any additional libraries your plugin requires.</p>
+</li>
+<li>
+<p><strong>Test thoroughly</strong> – Use the standalone mode for quick testing before deploying to a production server.</p>
+</li>
+</ol>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_plugin_descriptor_file">Plugin Descriptor File</h5>
+<div class="paragraph">
+<p>The <code>src/main/resources/plugin.properties</code> file contains the plugin metadata:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-properties" data-lang="properties">plugin.id=plugin-example
+plugin.class=org.slackerdb.pluginExample.PluginExample
+plugin.version=0.2.1
+plugin.requires=*</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>plugin.id</code> must match the JAR filename (without the <code>.jar</code> extension).</p>
+</li>
+<li>
+<p><code>plugin.class</code> must be the fully qualified name of the plugin main class.</p>
+</li>
+<li>
+<p><code>plugin.version</code> follows semantic versioning.</p>
+</li>
+<li>
+<p><code>plugin.requires</code> specifies plugin dependencies (<code>*</code> means no specific dependency).</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_plugin_standalone_mode">Plugin Standalone Mode</h5>
+<div class="paragraph">
+<p>In addition to the standard PF4J-based plugin loading mechanism, SlackerDB provides a <strong>standalone mode</strong> that allows plugins to be executed directly without the full PF4J framework. This is useful for testing, debugging, or embedding plugin logic in custom applications.</p>
+</div>
+<div class="paragraph">
+<p>The standalone mode works by:
+1. Creating a plugin instance via the <code>standAloneInstance()</code> method (available in plugins that extend <code>DBPlugin</code>)
+2. Manually constructing a <code>DBPluginContext</code> with the required resources (database connection, logger, Javalin app)
+3. Injecting the context into the plugin via <code>setDBPluginContext()</code>
+4. Calling the plugin&#8217;s lifecycle methods (<code>start()</code>, <code>stop()</code>) directly</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_using_the_standalone_mode">Using the Standalone Mode</h5>
+<div class="paragraph">
+<p>The <code>plugin-example</code> module includes a <code>SimplePluginRunner</code> class that demonstrates how to run a plugin in standalone mode. Here&#8217;s a simplified version:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-java" data-lang="java">package org.slackerdb.pluginExample;
+
+import io.javalin.Javalin;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slackerdb.plugin.DBPluginContext;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+
+public class SimplePluginRunner {
+    public static void main(String[] args) throws Exception {
+        // 1. Create database connection
+        Connection conn = DriverManager.getConnection("jdbc:duckdb:memory:");
+
+        // 2. Create Javalin app instance
+        Javalin javalin = Javalin.create();
+
+        // 3. Create logger
+        Logger pluginLogger = LoggerFactory.getLogger(PluginExample.class);
+
+        // 4. Create and configure DBPluginContext
+        DBPluginContext ctx = new DBPluginContext();
+        ctx.setDbBackendConn(conn);
+        ctx.setLogger(pluginLogger);
+        ctx.setJavalin(javalin);
+
+        // 5. Create plugin instance via standalone mode
+        PluginExample plugin = PluginExample.standAloneInstance();
+
+        // 6. Inject context
+        plugin.setDBPluginContext(ctx);
+
+        // 7. Start the plugin
+        plugin.start();
+
+        // 8. (Optional) Wait and then stop
+        Thread.sleep(1000);
+        plugin.stop();
+
+        // 9. Clean up resources
+        conn.close();
+    }
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_key_points">Key Points</h5>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Resource Management</strong> – In standalone mode, you are responsible for creating and managing all resources (database connection, Javalin instance, logger).</p>
+</li>
+<li>
+<p><strong>Lifecycle Control</strong> – You control when the plugin starts and stops by calling <code>start()</code> and <code>stop()</code> directly.</p>
+</li>
+<li>
+<p><strong>No PF4J Overhead</strong> – The standalone mode bypasses the PF4J plugin manager, making it lightweight and suitable for integration into existing applications.</p>
+</li>
+<li>
+<p><strong>Testing and Debugging</strong> – This mode is ideal for unit testing plugin logic or debugging plugin behavior without deploying it to a full SlackerDB server.</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_when_to_use_standalone_mode">When to Use Standalone Mode</h5>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Development and Testing</strong> – Quickly test plugin logic during development.</p>
+</li>
+<li>
+<p><strong>Embedded Scenarios</strong> – Embed plugin functionality in custom applications that don&#8217;t need the full PF4J framework.</p>
+</li>
+<li>
+<p><strong>Prototyping</strong> – Experiment with plugin ideas without building complete JAR packages.</p>
+</li>
+<li>
+<p><strong>CI/CD Pipelines</strong> – Run plugin tests in automated build environments.</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_limitations">Limitations</h5>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>No Hot Reload</strong> – Plugins cannot be reloaded dynamically; you must restart the application.</p>
+</li>
+<li>
+<p><strong>Manual Resource Management</strong> – You must handle resource creation, injection, and cleanup.</p>
+</li>
+<li>
+<p><strong>No Plugin Manager Features</strong> – Features like dependency resolution, version management, and plugin discovery are not available.</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_plugin_management_api">Plugin Management API</h4>
+<div class="paragraph">
+<p>SlackerDB provides a set of HTTP endpoints for managing plugins at runtime. These endpoints allow you to load, unload, start, stop, and list plugins without restarting the server. All endpoints return JSON responses with a standard format: <code>{"retCode": 0/-1, "retMsg": "message"}</code>.</p>
+</div>
+<div class="sect4">
+<h5 id="_pluginload_post">/plugin/load (POST)</h5>
+<div class="paragraph">
+<p>Loads a plugin from a JAR file in the server&#8217;s plugin directory.</p>
+</div>
+<div class="listingblock">
+<div class="title">Request body (JSON):</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">{
+  "filename": "myplugin.jar"
+}</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>filename</code> – Plugin JAR filename (e.g., "myplugin.jar") or full path to the JAR file. If a simple filename is provided, it will be loaded from the server&#8217;s plugin directory (configured via <code>plugins_dir</code> parameter). If a full path is provided, it will be loaded directly from that location.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="title">Response example (success):</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">{
+  "retCode": 0,
+  "retMsg": "Plugin loaded successfully",
+  "pluginId": "myplugin"
+}</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="title">Response example (error):</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">{
+  "retCode": -1,
+  "retMsg": "Plugin file does not exist: /path/to/plugins/myplugin.jar"
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_pluginunload_post">/plugin/unload (POST)</h5>
+<div class="paragraph">
+<p>Unloads a previously loaded plugin. The plugin will be stopped first if it is running.</p>
+</div>
+<div class="listingblock">
+<div class="title">Request body (JSON):</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">{
+  "plugid": "myplugin"
+}</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="title">Response example (success):</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">{
+  "retCode": 0,
+  "retMsg": "Plugin unloaded successfully"
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_pluginstart_post">/plugin/start (POST)</h5>
+<div class="paragraph">
+<p>Starts a loaded plugin. The plugin&#8217;s <code>start()</code> method will be called, which triggers the plugin&#8217;s lifecycle hooks (<code>beforeStart()</code>, <code>onStart()</code>, <code>afterStart()</code>).</p>
+</div>
+<div class="listingblock">
+<div class="title">Request body (JSON):</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">{
+  "plugid": "myplugin"
+}</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="title">Response example (success):</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">{
+  "retCode": 0,
+  "retMsg": "Plugin started successfully"
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_pluginstop_post">/plugin/stop (POST)</h5>
+<div class="paragraph">
+<p>Stops a running plugin. The plugin&#8217;s <code>stop()</code> method will be called, which triggers the plugin&#8217;s lifecycle hooks (<code>beforeStop()</code>, <code>onStop()</code>, <code>afterStop()</code>).</p>
+</div>
+<div class="listingblock">
+<div class="title">Request body (JSON):</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">{
+  "plugid": "myplugin"
+}</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="title">Response example (success):</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">{
+  "retCode": 0,
+  "retMsg": "Plugin stopped successfully"
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_pluginlist_get">/plugin/list (GET)</h5>
+<div class="paragraph">
+<p>Lists all currently loaded plugins with their details.</p>
+</div>
+<div class="listingblock">
+<div class="title">Response example:</div>
+<div class="content">
+<pre class="highlight"><code class="language-json" data-lang="json">{
+  "retCode": 0,
+  "retMsg": "Success",
+  "plugins": [
+    {
+      "pluginId": "myplugin",
+      "pluginState": "STARTED",
+      "version": "1.0.0",
+      "description": "My example plugin"
+    },
+    {
+      "pluginId": "anotherplugin",
+      "pluginState": "STOPPED",
+      "version": "2.0.0",
+      "description": "Another plugin"
+    }
+  ]
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The <code>pluginState</code> field can be one of: <code>CREATED</code>, <code>DISABLED</code>, <code>LOADED</code>, <code>STARTED</code>, <code>STOPPED</code>, <code>UNLOADED</code>.</p>
+</div>
 </div>
 </div>
 <div class="sect3">
@@ -2583,137 +4864,8 @@ plugin.requires=*</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2025-12-19 00:33:38 +0800
+Last updated 2026-10-03 00:56:30 +0800
 </div>
 </div>
-<script>
-;(function () { /*! Asciidoctor Tabs | Copyright (c) 2018-present Dan Allen | MIT License */
-  'use strict'
-
-  var config = (document.currentScript || {}).dataset || {}
-  var forEach = Array.prototype.forEach
-
-  init(document.querySelectorAll('.tabs'))
-
-  function init (tabsBlocks) {
-    if (!tabsBlocks.length) return
-    forEach.call(tabsBlocks, function (tabs) {
-      var syncIds = tabs.classList.contains('is-sync') ? {} : undefined
-      var tablist = tabs.querySelector('.tablist ul')
-      tablist.setAttribute('role', 'tablist')
-      var start
-      forEach.call(tablist.querySelectorAll('li'), function (tab, idx) {
-        tab.tabIndex = -1
-        tab.setAttribute('role', tab.classList.add('tab') || 'tab')
-        var id, anchor, syncId
-        if (!(id = tab.id) && (anchor = tab.querySelector('a[id]'))) {
-          id = tab.id = anchor.parentNode.removeChild(anchor).id
-        }
-        var panel = id && tabs.querySelector('.tabpanel[aria-labelledby~="' + id + '"]')
-        if (!panel) return idx ? undefined : toggleSelected(tab, true) // invalid state
-        syncIds && (((syncId = tab.textContent.trim()) in syncIds) ? (syncId = undefined) : true) &&
-        (syncIds[(tab.dataset.syncId = syncId)] = tab)
-        idx || (syncIds && (start = { tab: tab, panel: panel })) ? toggleHidden(panel, true) : toggleSelected(tab, true)
-        tab.setAttribute('aria-controls', panel.id)
-        panel.setAttribute('role', 'tabpanel')
-        var onClick = syncId === undefined ? activateTab : activateTabSync
-        tab.addEventListener('click', onClick.bind({ tabs: tabs, tab: tab, panel: panel }))
-      })
-      if (!tabs.closest('.tabpanel')) {
-        forEach.call(tabs.querySelectorAll('.tabpanel table.tableblock'), function (table) {
-          var container = Object.assign(document.createElement('div'), { className: 'tablecontainer' })
-          table.parentNode.insertBefore(container, table).appendChild(table)
-        })
-      }
-      if (start) {
-        var syncGroupId
-        for (var i = 0, lst = tabs.classList, len = lst.length, className; i !== len; i++) {
-          if (!(className = lst.item(i)).startsWith('data-sync-group-id=')) continue
-          tabs.dataset.syncGroupId = syncGroupId = lst.remove(className) || className.slice(19).replace(/\u00a0/g, ' ')
-          break
-        }
-        if (syncGroupId === undefined) tabs.dataset.syncGroupId = syncGroupId = Object.keys(syncIds).sort().join('|')
-        var preferredSyncId = 'syncStorageKey' in config &&
-          window[(config.syncStorageScope || 'local') + 'Storage'].getItem(config.syncStorageKey + '-' + syncGroupId)
-        var tab = preferredSyncId && syncIds[preferredSyncId]
-        tab && Object.assign(start, { tab: tab, panel: document.getElementById(tab.getAttribute('aria-controls')) })
-        toggleSelected(start.tab, true) || toggleHidden(start.panel, false)
-      }
-    })
-    onHashChange()
-    toggleClassOnEach(tabsBlocks, 'is-loading', 'remove')
-    window.setTimeout(toggleClassOnEach.bind(null, tabsBlocks, 'is-loaded', 'add'), 0)
-    window.addEventListener('hashchange', onHashChange)
-  }
-
-  function activateTab (e) {
-    var tab = this.tab
-    var tabs = this.tabs || (this.tabs = tab.closest('.tabs'))
-    var panel = this.panel || (this.panel = document.getElementById(tab.getAttribute('aria-controls')))
-    querySelectorWithSiblings(tabs, '.tablist .tab', 'tab').forEach(function (el) {
-      toggleSelected(el, el === tab)
-    })
-    querySelectorWithSiblings(tabs, '.tabpanel', 'tabpanel').forEach(function (el) {
-      toggleHidden(el, el !== panel)
-    })
-    if (!this.isSync && 'syncStorageKey' in config && 'syncGroupId' in tabs.dataset) {
-      var storageKey = config.syncStorageKey + '-' + tabs.dataset.syncGroupId
-      window[(config.syncStorageScope || 'local') + 'Storage'].setItem(storageKey, tab.dataset.syncId)
-    }
-    if (!e) return
-    var loc = window.location
-    var hashIdx = loc.hash ? loc.href.indexOf('#') : -1
-    if (~hashIdx) window.history.replaceState(null, '', loc.href.slice(0, hashIdx))
-    e.preventDefault()
-  }
-
-  function activateTabSync (e) {
-    activateTab.call(this, e)
-    var thisTabs = this.tabs
-    var thisTab = this.tab
-    var initialY = thisTabs.getBoundingClientRect().y
-    forEach.call(document.querySelectorAll('.tabs'), function (tabs) {
-      if (tabs === thisTabs || tabs.dataset.syncGroupId !== thisTabs.dataset.syncGroupId) return
-      querySelectorWithSiblings(tabs, '.tablist .tab', 'tab').forEach(function (tab) {
-        if (tab.dataset.syncId === thisTab.dataset.syncId) activateTab.call({ tabs: tabs, tab: tab, isSync: true })
-      })
-    })
-    var shiftedBy = thisTabs.getBoundingClientRect().y - initialY
-    if (shiftedBy && (shiftedBy = Math.round(shiftedBy))) window.scrollBy({ top: shiftedBy, behavior: 'instant' })
-  }
-
-  function querySelectorWithSiblings (scope, selector, siblingClass) {
-    var el = scope.querySelector(selector)
-    if (!el) return []
-    var result = [el]
-    while ((el = el.nextElementSibling) && el.classList.contains(siblingClass)) result.push(el)
-    return result
-  }
-
-  function toggleClassOnEach (elements, className, method) {
-    forEach.call(elements, function (el) {
-      el.classList[method](className)
-    })
-  }
-
-  function toggleHidden (el, state) {
-    el.classList[(el.hidden = state) ? 'add' : 'remove']('is-hidden')
-  }
-
-  function toggleSelected (el, state) {
-    el.setAttribute('aria-selected', '' + state)
-    el.classList[state ? 'add' : 'remove']('is-selected')
-    el.tabIndex = state ? 0 : -1
-  }
-
-  function onHashChange () {
-    var id = window.location.hash.slice(1)
-    if (!id) return
-    var tab = document.getElementById(~id.indexOf('%') ? decodeURIComponent(id) : id)
-    if (!(tab && tab.classList.contains('tab'))) return
-    'syncId' in tab.dataset ? activateTabSync.call({ tab: tab }) : activateTab.call({ tab: tab })
-  }
-})()
-</script>
 </body>
 </html>

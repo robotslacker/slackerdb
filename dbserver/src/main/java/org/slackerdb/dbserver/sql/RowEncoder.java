@@ -37,27 +37,35 @@ import java.util.Locale;
  * <p>{@link #encode(ResultSet)} 返回的 {@link Column} 列表与内部对象<b>是复用的</b>，
  * 调用方必须在写出这一行之后才能再调用一次 {@code encode}（现有的两处调用点都是
  * {@code dataRow.process(...)} 之后立刻写出，符合该约定）。</p>
+ *
+ * <p><b>不变量（必须一直保持）</b>：每个列在 {@code RowDescription} 里声明的 format code
+ * 必须与 {@code DataRow} 里实际发出去的字节一致 —— 声明 0 就必须是文本，声明 1 就必须是
+ * 对应宽度的二进制。客户端（psql / libpq / 各种驱动）就是按这个声明去解码的。
+ * 定长类型（int2/int4/int8/bool/float4/float8/date）此前是<b>无条件</b>按二进制写的，
+ * 于是简单查询路径（声明全文本）把它们发成了二进制：{@code getInt()} 直接报
+ * "Bad value for type int"，而 {@code SELECT TRUE} 更糟 —— 不报错、静默读成 {@code false}。
+ * 现在这 7 个类型与 {@code T_BYTEA} 一样，按 {@link #isBinary(int)} 分支编码。</p>
  */
 public final class RowEncoder {
 
     // ---- 内部列类型编码：避免在热路径上做字符串比较 ----
     /** 未识别的类型，按文本（UTF-8）返回，并在构造阶段告警一次 */
     public static final int T_UNKNOWN = 0;
-    /** TINYINT / SMALLINT，二进制 2 字节 */
+    /** TINYINT / SMALLINT：二进制 2 字节 / 文本十进制 */
     public static final int T_SMALLINT = 1;
-    /** INTEGER，二进制 4 字节 */
+    /** INTEGER：二进制 4 字节 / 文本十进制 */
     public static final int T_INTEGER = 2;
-    /** BIGINT，二进制 8 字节 */
+    /** BIGINT：二进制 8 字节 / 文本十进制 */
     public static final int T_BIGINT = 3;
     /** VARCHAR / INTERVAL，文本 UTF-8 */
     public static final int T_VARCHAR = 4;
-    /** DATE，二进制 4 字节（距 2000-01-01 的天数） */
+    /** DATE：二进制 4 字节（距 2000-01-01 的天数）/ 文本 ISO yyyy-MM-dd */
     public static final int T_DATE = 5;
-    /** BOOLEAN，二进制 1 字节 */
+    /** BOOLEAN：二进制 1 字节 / 文本 't' | 'f' */
     public static final int T_BOOLEAN = 6;
-    /** FLOAT，二进制 4 字节 */
+    /** FLOAT：二进制 4 字节 / 文本（Float.toString） */
     public static final int T_FLOAT = 7;
-    /** DOUBLE，二进制 8 字节 */
+    /** DOUBLE：二进制 8 字节 / 文本（Double.toString） */
     public static final int T_DOUBLE = 8;
     /** TIMESTAMP，文本 "yyyy-MM-dd HH:mm:ss.SSS" */
     public static final int T_TIMESTAMP = 9;
@@ -71,6 +79,8 @@ public final class RowEncoder {
     public static final int T_DECIMAL = 13;
     /** UINTEGER / HUGEINT / UBIGINT，按文本（ASCII）返回 */
     public static final int T_NUMERIC_TEXT = 14;
+    /** BLOB / BYTEA：二进制格式下原样发字节；文本格式下按 PG 的 {@code \x} + 十六进制发 */
+    public static final int T_BYTEA = 15;
 
     // 线程安全且可复用的格式化器（DateTimeFormatter 是不可变对象）
     private static final DateTimeFormatter TIMESTAMP_FORMATTER =
@@ -114,15 +124,47 @@ public final class RowEncoder {
 
             Field field = new Field();
             field.name = metaData.getColumnName(i);
+            // 列归属：DuckDB 不暴露"这一列来自哪张表"，也没有稳定的表 OID，
+            // 因此按协议允许的方式留 0（PG 对表达式列同样发 0）。
             field.objectIdOfTable = 0;
             field.attributeNumberOfColumn = 0;
             field.dataTypeId = PostgresTypeOids.getTypeOidFromTypeName(columnTypeName);
-            field.dataTypeSize = (short) 2147483647;
-            field.dataTypeModifier = -1;
+            // typeSize 是 pg_type.typlen（定长类型的内部宽度），变长类型一律 -1。
+            // 改造前这里写的是 (short) 2147483647（线上即 0xFFFF/-1）：变长类型碰巧对了，
+            // 但 bool/int2/int4/int8/float/date/time/uuid… 这些定长类型也全被报成 -1。
+            field.dataTypeSize = PostgresTypeOids.getTypeSizeFromTypeOid(field.dataTypeId);
+            field.dataTypeModifier = typeModifierOf(typeCode, metaData, i);
             field.formatCode = this.formatCodes[i - 1];
             fieldList.add(field);
         }
         this.fields = fieldList;
+    }
+
+    /**
+     * 计算 {@code atttypmod}（类型的声明修饰符）。
+     *
+     * <p>PG 的编码：{@code numeric(p,s)} → {@code ((p << 16) | s) + 4}（4 = VARHDRSZ）、
+     * {@code varchar(n)} → {@code n + 4}、没有修饰符 → -1。</p>
+     *
+     * <p>DuckDB 侧能拿到什么（实测）：<b>DECIMAL 的 p/s 完全可以拿到</b>
+     * （类型名是 {@code DECIMAL(18,4)}，{@code getPrecision/getScale} 也给 18/4），所以数值类型
+     * 这一项要填对，否则客户端 {@code getPrecision()/getScale()} 恒为 0/0，DBeaver/ORM 看不到
+     * {@code numeric(18,4)}；而 <b>VARCHAR 的声明长度拿不到</b>（DuckDB 的 {@code VARCHAR(n)}
+     * 只是运行期校验，连 {@code information_schema} 里都是 null），
+     * TIME/TIMESTAMP 的精度也拿不到（DuckDB 固定微秒），这两类只能保持 -1（= PG 的默认/无界）。</p>
+     */
+    private static int typeModifierOf(int typeCode, ResultSetMetaData metaData, int columnIndex)
+            throws SQLException {
+        if (typeCode != T_DECIMAL) {
+            return -1;
+        }
+        int precision = metaData.getPrecision(columnIndex);
+        int scale = metaData.getScale(columnIndex);
+        // precision 拿不到时 DuckDB/JDBC 会给 0 或 Integer.MAX_VALUE，别把它当成真值编进 typmod
+        if (precision <= 0 || precision > 1000 || scale < 0 || scale > precision) {
+            return -1;
+        }
+        return ((precision << 16) | scale) + 4;
     }
 
     /**
@@ -152,57 +194,73 @@ public final class RowEncoder {
                 short value = rs.getShort(columnIndex);
                 if (rs.wasNull()) {
                     setNull(column);
-                } else {
+                } else if (isBinary(columnIndex - 1)) {
                     setValue(column, Utils.int16ToBytes(value));
+                } else {
+                    setValue(column, text(String.valueOf(value)));
                 }
             }
             case T_INTEGER -> {
                 int value = rs.getInt(columnIndex);
                 if (rs.wasNull()) {
                     setNull(column);
-                } else {
+                } else if (isBinary(columnIndex - 1)) {
                     setValue(column, Utils.int32ToBytes(value));
+                } else {
+                    setValue(column, text(String.valueOf(value)));
                 }
             }
             case T_BIGINT -> {
                 long value = rs.getLong(columnIndex);
                 if (rs.wasNull()) {
                     setNull(column);
-                } else {
+                } else if (isBinary(columnIndex - 1)) {
                     setValue(column, Utils.int64ToBytes(value));
+                } else {
+                    setValue(column, text(String.valueOf(value)));
                 }
             }
             case T_BOOLEAN -> {
                 boolean value = rs.getBoolean(columnIndex);
                 if (rs.wasNull()) {
                     setNull(column);
-                } else {
+                } else if (isBinary(columnIndex - 1)) {
                     setValue(column, new byte[]{value ? (byte) 0x01 : (byte) 0x00});
+                } else {
+                    // PG 的 bool 文本形式就是 't' / 'f'
+                    setValue(column, text(value ? "t" : "f"));
                 }
             }
             case T_FLOAT -> {
                 float value = rs.getFloat(columnIndex);
                 if (rs.wasNull()) {
                     setNull(column);
-                } else {
+                } else if (isBinary(columnIndex - 1)) {
                     setValue(column, Utils.int32ToBytes(Float.floatToIntBits(value)));
+                } else {
+                    setValue(column, text(Float.toString(value)));
                 }
             }
             case T_DOUBLE -> {
                 double value = rs.getDouble(columnIndex);
                 if (rs.wasNull()) {
                     setNull(column);
-                } else {
+                } else if (isBinary(columnIndex - 1)) {
                     setValue(column, Utils.int64ToBytes(Double.doubleToLongBits(value)));
+                } else {
+                    setValue(column, text(Double.toString(value)));
                 }
             }
             case T_DATE -> {
                 Date value = rs.getDate(columnIndex);
                 if (value == null) {
                     setNull(column);
-                } else {
+                } else if (isBinary(columnIndex - 1)) {
                     long days = ChronoUnit.DAYS.between(PG_EPOCH_DATE, value.toLocalDate());
                     setValue(column, Utils.int32ToBytes((int) days));
+                } else {
+                    // PG 的 date 文本形式是 ISO 的 yyyy-MM-dd
+                    setValue(column, text(value.toLocalDate().toString()));
                 }
             }
             case T_TIMESTAMP -> {
@@ -275,6 +333,26 @@ public final class RowEncoder {
                     setValue(column, value.getBytes(StandardCharsets.UTF_8));
                 }
             }
+            case T_BYTEA -> {
+                byte[] value = rs.getBytes(columnIndex);
+                if (value == null) {
+                    setNull(column);
+                } else if (formatCodes[columnIndex - 1] == 1) {
+                    // 二进制结果格式：原样发字节
+                    setValue(column, value);
+                } else {
+                    // 文本结果格式：PG 的 bytea 文本表示是 "\x" + 十六进制
+                    byte[] hex = new byte[2 + value.length * 2];
+                    hex[0] = '\\';
+                    hex[1] = 'x';
+                    final char[] digits = "0123456789abcdef".toCharArray();
+                    for (int i = 0; i < value.length; i++) {
+                        hex[2 + i * 2] = (byte) digits[(value[i] >> 4) & 0x0F];
+                        hex[2 + i * 2 + 1] = (byte) digits[value[i] & 0x0F];
+                    }
+                    setValue(column, hex);
+                }
+            }
             default -> {
                 // 未识别类型：按字符串处理（构造阶段已经告警过一次）
                 String value = rs.getString(columnIndex);
@@ -290,6 +368,11 @@ public final class RowEncoder {
     private static void setNull(Column column) {
         column.columnLength = -1;
         column.columnValue = null;
+    }
+
+    /** 文本格式的列值（数字 / 布尔 / 日期都是 ASCII）。 */
+    private static byte[] text(String value) {
+        return value.getBytes(StandardCharsets.US_ASCII);
     }
 
     private static void setValue(Column column, byte[] value) {
@@ -309,7 +392,7 @@ public final class RowEncoder {
      */
     private static boolean isBinaryType(int typeCode) {
         return switch (typeCode) {
-            case T_SMALLINT, T_INTEGER, T_BIGINT, T_DATE, T_BOOLEAN, T_FLOAT, T_DOUBLE -> true;
+            case T_SMALLINT, T_INTEGER, T_BIGINT, T_DATE, T_BOOLEAN, T_FLOAT, T_DOUBLE, T_BYTEA -> true;
             default -> false;
         };
     }
@@ -336,7 +419,14 @@ public final class RowEncoder {
             case "TIME" -> T_TIME;
             case "TIMESTAMP WITH TIME ZONE" -> T_TIMESTAMP_TZ;
             case "BIT" -> T_BIT;
-            case "UINTEGER", "HUGEINT", "UBIGINT" -> T_NUMERIC_TEXT;
+            case "BLOB", "BYTEA" -> T_BYTEA;
+            // DuckDB 的 128 位/无符号整数：编码宽度必须与 PostgresTypeOids 里声明的 OID 一致，
+            // 否则客户端按声明的类型解析就会溢出（UINTEGER 声明 int8、USMALLINT 声明 int4）。
+            // HUGEINT/UBIGINT/UHUGEINT 声明为 NUMERIC，只能按十进制文本发（T_NUMERIC_TEXT）。
+            case "UINTEGER" -> T_BIGINT;
+            case "USMALLINT" -> T_INTEGER;
+            case "UTINYINT" -> T_SMALLINT;
+            case "HUGEINT", "UBIGINT", "UHUGEINT" -> T_NUMERIC_TEXT;
             default -> typeName.startsWith("DECIMAL") ? T_DECIMAL : T_UNKNOWN;
         };
     }

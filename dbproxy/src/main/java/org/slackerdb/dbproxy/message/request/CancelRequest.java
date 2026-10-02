@@ -16,7 +16,7 @@ import java.util.Arrays;
  * </pre>
  *
  * <p>代理在这里**只做解析**：真正的转发（按 pid 查 {@code CancelRouter} 并回送到上游）由
- * {@code PostgresProxyServerHandler} 完成。按 PG 规范，服务端处理取消时不应发送任何响应字节，
+ * {@code PostgresProxyServerHandler} 完成。服务端处理取消时不应发送任何响应字节，
  * 因此 {@link #process} 只负责关闭连接。</p>
  */
 public class CancelRequest extends PostgresRequest {

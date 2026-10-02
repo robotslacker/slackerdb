@@ -10,8 +10,6 @@ import java.util.Base64;
  * AES加密解密工具类。
  * 提供AES对称加密算法的封装，支持加密和解密操作。
  *
- * <p><b>安全警告：</b>当前实现使用硬编码密钥，存在安全风险。建议从安全配置源获取密钥。</p>
- *
  * @see javax.crypto.Cipher
  * @see javax.crypto.SecretKey
  */

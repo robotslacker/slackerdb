@@ -69,7 +69,7 @@ public class StartupRequest  extends PostgresRequest {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 // 生成一个错误消息
                 ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
-                errorResponse.setErrorResponse("SLACKERDB-00001",Utils.getMessage("SLACKERDB-00001"));
+                errorResponse.setErrorResponse("3D000",Utils.getMessage("SLACKERDB-00001"));
                 errorResponse.process(ctx, request, out);
 
                 // 发送并刷新返回消息
@@ -103,7 +103,7 @@ public class StartupRequest  extends PostgresRequest {
                     // 生成一个错误消息
                     ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
                     errorResponse.setErrorResponse(
-                            "Catalog-Error",
+                            "3D000",
                             "Database [" + startupOptions.get("database") + " does not exist! \n" +
                                     sqlException.getMessage());
                     errorResponse.process(ctx, request, out);

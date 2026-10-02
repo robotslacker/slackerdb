@@ -16,7 +16,6 @@ public class CancelRequest  extends PostgresRequest {
      * 其固定首 8 字节为：Int32(16) + Int32(80877102)。
      *
      * <p>这与 {@link SSLRequest#SSLRequestHeader} 处于同一个协议位置（前导报文）。
-     * 真实客户端（psql 的 Ctrl+C、pgjdbc 的 {@code Statement.cancel()}）走的都是这种形态：
      * 新建一条 TCP 连接 → 只发这 16 字节 → 立即关闭，服务端**不应回任何响应**。</p>
      */
     public static final byte[] CancelRequestHeader =

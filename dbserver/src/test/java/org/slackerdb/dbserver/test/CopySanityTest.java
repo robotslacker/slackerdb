@@ -1285,26 +1285,46 @@ public class CopySanityTest {
         }
     }
 
-    /** 不支持的列类型快速失败：在任何数据写入之前就报错（消息里带列类型名）。 */
+    /**
+     * 块 Appender 建不起来的列类型（BIT / INTERVAL / TIME_NS / BIGNUM / VARIANT）快速失败：
+     * 在任何数据写入之前就报错，消息里带列名与类型名。
+     *
+     * <p>这几类列在 duckdb_jdbc 1.5.6.0 里 {@code createAppender()} 直接抛
+     * {@code unsupported C API type: N}，必须给出可读的原因。</p>
+     */
     @Test
     void testUnsupportedColumnTypeFailsEarly() throws SQLException {
         try (Connection conn = connect()) {
             conn.setAutoCommit(false);
             conn.createStatement().execute(
-                    "create or replace table csv_unsupported(id int, d date)");
+                    "create or replace table csv_unsupported(id int, b bit, iv interval)");
 
             boolean failed = false;
             try {
                 copyIn(conn, "COPY csv_unsupported FROM STDIN WITH (FORMAT csv)",
-                        "1,2020-01-01\n2,2020-01-02\n");
+                        "1,1010,1 day\n2,1011,2 days\n");
             } catch (SQLException e) {
                 failed = true;
-                assert e.getMessage() != null && e.getMessage().contains("not support")
+                assert e.getMessage() != null && e.getMessage().contains("does not support")
                         : "应报类型不支持，实际: " + e.getMessage();
-                assert e.getMessage().contains("DATE")
-                        : "错误信息应带列类型名，实际: " + e.getMessage();
+                assert e.getMessage().contains("BIT")
+                        : "错误信息应带列类型名(BIT)，实际: " + e.getMessage();
+                assert e.getMessage().contains("b")
+                        : "错误信息应带列名(b)，实际: " + e.getMessage();
             }
-            assert failed : "不支持的列类型必须失败";
+            assert failed : "BIT 列必须明确报错";
+
+            // 表里含这种列时，即使不写它也无法用 Appender（createAppender 按整表列类型校验），
+            // 同样必须给出明确错误
+            boolean failed2 = false;
+            try {
+                copyIn(conn, "COPY csv_unsupported (id) FROM STDIN WITH (FORMAT csv)", "7\n");
+            } catch (SQLException e) {
+                failed2 = true;
+                assert e.getMessage() != null && e.getMessage().contains("does not support")
+                        : "应报类型不支持，实际: " + e.getMessage();
+            }
+            assert failed2 : "表里含不受支持的列类型时必须明确报错";
         }
     }
 
@@ -1735,8 +1755,9 @@ public class CopySanityTest {
     private static void drain(CopyCsvReader reader, List<String> out) {
         while (reader.nextRow(new CopyCsvReader.FieldSink() {
             @Override
-            public void field(int off, int len, boolean quoted) {
-                if (len == 0 && !quoted) {
+            public void field(int off, int len, boolean isNull) {
+                // isNull 由解析器按方言判定（CSV：未加引号的空字段；TEXT：等于 NULL 串的字段）
+                if (isNull) {
                     out.add("<NULL>");
                 } else {
                     out.add(new String(reader.buffer(), off, len, StandardCharsets.UTF_8));

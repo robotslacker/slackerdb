@@ -43,7 +43,7 @@
         <dependency>
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
-            <version>1.5.5.1</version>
+            <version>1.5.6.0</version>
         </dependency>
         <!-- PF4J 插件 -->
         <dependency>
@@ -75,6 +75,11 @@
             <groupId>io.javalin</groupId>
             <artifactId>javalin-bundle</artifactId>
             <version>7.2.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.jetty.websocket</groupId>
+            <artifactId>jetty-websocket-jetty-api</artifactId>
+            <version>12.0.34</version>
         </dependency>
         <dependency>
             <groupId>org.java-websocket</groupId>
@@ -129,6 +134,36 @@
             </resource>
         </resources>
         <plugins>
+            <!--
+                COPY 语句文法（CopyStatement.g4）的生成：
+                源在 src/main/antlr4 下，官方插件在 generate-sources 阶段生成到
+                target/generated-sources/antlr4/（自动注册为源码根），包名与手写类
+                （CopyVisitor / ParserErrorListener / ParseSQLException）一致，
+                因此调用方与手写类都无需改动；mvn clean 天然清掉，git 也看不到生成物。
+            -->
+            <plugin>
+                <groupId>org.antlr</groupId>
+                <artifactId>antlr4-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>antlr-generate-copy-statement</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>antlr4</goal>
+                        </goals>
+                        <configuration>
+                            <sourceDirectory>${project.basedir}/src/main/antlr4</sourceDirectory>
+                            <outputDirectory>${project.build.directory}/generated-sources/antlr4</outputDirectory>
+                            <visitor>true</visitor>
+                            <listener>false</listener>
+                            <arguments>
+                                <argument>-package</argument>
+                                <argument>org.slackerdb.dbserver.sql.antlr</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-deploy-plugin</artifactId>

@@ -63,15 +63,15 @@ public class ServerConfiguration {
 
     // 默认使用全部的CPU作为Netty的后台线程数
     private final int default_max_workers = Runtime.getRuntime().availableProcessors();
-    // 业务处理线程数的默认值：-1 表示"自动"，即跟随 max_connections（每个会话一个业务线程）。
+    // 业务处理线程数的默认值：0 表示"自动"，即跟随 max_connections（每个会话一个业务线程）。
     //
     // 之所以这样取默认值：业务线程组是按 channel 固定分配 executor 的，同一 executor 上的连接
     // 会互相排队；被拖累的连接数约为 (连接数 / 业务线程数 - 1)。取 max_connections 可让该值为 0，
     // 即彻底消除"一条慢查询拖住别的连接"。而服务端本来就为每个会话独占一个物理数据库连接，
     // 再配一个业务线程属于同一量级的资源。Netty 的线程是首次派发任务时才真正创建的，
     // 因此实际线程数约等于实际并发连接数，而不是配置值。
-    // 取值含义：< 0 = 自动（= max_connections）；0 = 不使用业务线程组（回到旧行为）；> 0 = 显式指定
-    private final int default_business_threads = -1;
+    // 取值含义：0 = 自动（= max_connections）；> 0 = 显式指定
+    private final int default_business_threads = 0;
     // 默认客户端的超时时间
     private final int default_client_timeout = 600;
     // 默认不配置初始化脚本
@@ -658,7 +658,7 @@ public class ServerConfiguration {
     }
 
     /**
-     * 业务处理线程数的配置原值：&lt; 0 自动、0 关闭、&gt; 0 显式指定。
+     * 业务处理线程数的配置原值：0 自动、&gt; 0 显式指定。
      * 实际生效的值请用 {@link #resolveBusiness_threads()}。
      */
     public int getBusiness_threads()
@@ -669,19 +669,15 @@ public class ServerConfiguration {
     /**
      * 实际生效的业务处理线程数：
      * <ul>
-     *   <li>{@code 0} —— 不使用业务线程组（业务处理仍跑在 Netty I/O 线程上，即旧行为）；</li>
-     *   <li>{@code > 0} —— 显式指定；</li>
-     *   <li>{@code < 0} —— 自动，等于 {@code max_connections}（每个会话一个业务线程）。
-     *       这样"被一条慢查询拖累的连接数"（约为 连接数/业务线程数 - 1）为 0。</li>
+     *   <li>{@code 0}（默认）—— 自动，等于 {@code max_connections}（每个会话一个业务线程）。
+     *       这样"被一条慢查询拖累的连接数"（约为 连接数/业务线程数 - 1）为 0；</li>
+     *   <li>{@code > 0} —— 显式指定的业务线程数。</li>
      * </ul>
      */
     public int resolveBusiness_threads()
     {
         if (business_threads > 0) {
             return business_threads;
-        }
-        if (business_threads == 0) {
-            return 0;
         }
         return Math.max(1, max_connections);
     }
@@ -698,8 +694,8 @@ public class ServerConfiguration {
             throw new ServerException(
                     Utils.getMessage("SLACKERDB-00005", "business_threads", pBusinessThreads));
         }
-        // 负数表示"自动跟随 max_connections"
-        if (temp < -1)
+        // 0 表示"自动跟随 max_connections"
+        if (temp < 0)
         {
             throw new ServerException(
                     Utils.getMessage("SLACKERDB-00005", "business_threads", pBusinessThreads));

@@ -185,7 +185,7 @@ public class DBInstance {
                     catch (ServerException serverException)
                     {
                         logger.warn("[SERVER] Try register current service to [{}] failed. {}",
-                                serverConfiguration.getRemoteListener(), serverException.getErrorMessage());
+                                serverConfiguration.getRemoteListener(), serverException.getMessage());
                     }
                 }
 
@@ -209,7 +209,7 @@ public class DBInstance {
     class DBInstanceSQLHistoryThread extends Thread
     {
         // 上一次告警时记录的丢弃数量，用于避免重复刷屏
-        private long lastReportedDropped = 0;
+        private long lastReportedBlocked = 0;
 
         @Override
         public void run()
@@ -308,7 +308,7 @@ public class DBInstance {
                             sqlHistoryConn.commit();
                             nProcessedRows = 0;
                         }
-                        reportDroppedRecords();
+                        reportQueuePressure();
                         try {
                             TimeUnit.SECONDS.sleep(1);
                         }
@@ -322,7 +322,6 @@ public class DBInstance {
                     // 单次失败不能让消费线程退出，否则队列永远不会被排空
                     logger.error("[SQLHistory] Save sql history failed. Will reconnect and retry.", historyException);
                     rollbackQuietly(sqlHistoryConn);
-                    nProcessedRows = 0;
                 }
                 finally {
                     closeQuietly(historyInsertStmt);
@@ -345,15 +344,21 @@ public class DBInstance {
         }
 
         /**
-         * 队列满导致历史记录被丢弃时给出可观测的告警（每个排空周期最多一条，避免刷屏）。
+         * 给出历史队列的背压信号（每个排空周期最多一条，避免刷屏）。
+         *
+         * <p>入队按设计"满了就阻塞、绝不丢弃"，所以这里唯一需要告警的就是
+         * <b>生产者被迫等待</b>：说明消费端跟不上，业务线程已经被拖慢
+         * （数据没丢，但不能一直这样）。</p>
          */
-        private void reportDroppedRecords() {
-            long dropped = sqlHistoryList.getDroppedTotal();
-            if (dropped > lastReportedDropped) {
-                logger.warn("[SQLHistory] History queue is full. {} record(s) dropped so far (queue capacity = {}). " +
-                                "The consumer is slower than the producers, or it had failed earlier.",
-                        dropped, HISTORY_QUEUE_CAPACITY);
-                lastReportedDropped = dropped;
+        private void reportQueuePressure() {
+            long blocked = sqlHistoryList.getBlockedTotal();
+            if (blocked > lastReportedBlocked) {
+                logger.warn("[SQLHistory] History queue is full. Producers blocked {} time(s), {} ms in total "
+                                + "(queue capacity = {}, current size = {}). The consumer is slower than the producers; "
+                                + "audit records are NOT dropped, the producers wait instead.",
+                        blocked, sqlHistoryList.getBlockedMillis(),
+                        HISTORY_QUEUE_CAPACITY, sqlHistoryList.size());
+                lastReportedBlocked = blocked;
             }
         }
 
@@ -1231,7 +1236,7 @@ public class DBInstance {
                 talkWithRemoteListener("UNREGISTER", remoteListenerHost, remoteListenerPort);
             } catch (ServerException serverException) {
                 logger.warn("[SERVER] Try unregister current service to [{}] failed. {}",
-                        serverConfiguration.getRemoteListener(), serverException.getErrorMessage());
+                        serverConfiguration.getRemoteListener(), serverException.getMessage());
             }
         }
 
@@ -1387,7 +1392,7 @@ public class DBInstance {
 
         // 检查是否需要执行磁盘空间检查
         if (currentTime - lastDiskCheckTime > DISK_CHECK_INTERVAL) {
-            long requiredFreeSpace = 128L * 1024 * 1024; // 128MB
+            long requiredFreeSpace = (long) 1024 * 1024 * 1024; // 1GB
             long freeSpace = OSUtil.getFreeDiskSpace(serverConfiguration.getData_Dir());
             diskSpaceValid = (freeSpace >= requiredFreeSpace);
             lastDiskCheckTime = currentTime;
@@ -1398,10 +1403,5 @@ public class DBInstance {
                         serverConfiguration.getData_Dir(), freeSpaceMB);
             }
         }
-    }
-
-    // 获取磁盘空间是否有效
-    public boolean isDiskSpaceValid() {
-        return diskSpaceValid;
     }
 }

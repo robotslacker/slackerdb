@@ -1,21 +1,20 @@
 package org.slackerdb.common.exceptions;
 
+import java.io.Serial;
+
 /**
  * Slackerdb服务器异常类。
  * 表示服务器运行时发生的异常，包含错误代码和错误消息。
  *
- * <p>注意：当前实现中errorMessage字段与父类的message字段重复，建议重构。</p>
  */
 public class ServerException extends RuntimeException
 {
     /** 序列化版本UID */
+    @Serial
     private static final long serialVersionUID = 1L;
 
     /** 错误代码 */
     private String errorCode;
-
-    /** 错误消息（注意：与父类的message字段重复） */
-    private String errorMessage;
 
     /**
      * 使用底层原因构造服务器异常。
@@ -47,7 +46,6 @@ public class ServerException extends RuntimeException
     {
         super(errorMessage);
         this.errorCode = errorCode;
-        this.errorMessage = errorMessage;
     }
 
     /**
@@ -58,16 +56,6 @@ public class ServerException extends RuntimeException
     public String getErrorCode()
     {
         return errorCode;
-    }
-
-    /**
-     * 获取错误消息。
-     *
-     * @return 错误消息
-     */
-    public String getErrorMessage()
-    {
-        return errorMessage;
     }
 
     /**

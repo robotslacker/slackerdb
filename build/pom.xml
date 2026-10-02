@@ -58,6 +58,22 @@
                     <attributes>
                         <icons>font</icons>
                     </attributes>
+                    <!--
+                        只把 README 及其图片资源复制到输出目录。
+                        如不限定 resources，插件会把整个 sourceDirectory（仓库根目录，
+                        含各模块 target 与 dist 压缩包）整体复制进 generated-docs，
+                        且输出目录位于被复制目录之内，会随每次构建自我嵌套。
+                    -->
+                    <resources>
+                        <resource>
+                            <directory>${project.basedir}/..</directory>
+                            <includes>
+                                <include>README.adoc</include>
+                                <include>robotslacker.jpg</include>
+                                <include>imgs/**</include>
+                            </includes>
+                        </resource>
+                    </resources>
                 </configuration>
                 <executions>
                     <execution>

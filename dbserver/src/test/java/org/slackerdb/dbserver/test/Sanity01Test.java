@@ -272,6 +272,16 @@ public class Sanity01Test {
         pgConn1.close();
     }
 
+    /**
+     * 事务块内失败的语句必须让整个事务块进入 aborted 状态（PG 语义）。
+     *
+     * <p><b>注意：本用例改造前断言的是相反的行为</b> —— 失败之后继续执行后续语句，
+     * 并期望两条 insert 都在（count=2 / sum=4）。那其实是
+     * "Parse 阶段失败的语句不会中止事务块" 这个缺陷的产物：当时只有简单查询路径会调用
+     * {@code markTransactionFailed()}，所以扩展协议下"表不存在"这类在 prepare 阶段就报错的语句
+     * 不会中止事务块，后续语句照常执行。现在两条路径一致：
+     * 失败后事务块被中止，后续语句一律以 25P02 拒绝，必须 ROLLBACK/COMMIT 才能继续。</p>
+     */
     @Test
     void testFailedHybridSQL() throws SQLException {
         String  connectURL = "jdbc:" + protocol + "://127.0.0.1:" + dbPort + "/mem";
@@ -287,20 +297,37 @@ public class Sanity01Test {
 
         try {
             pgConn1.createStatement().execute("insert into testFailedHybridSQLFake values(2)");
+            assert false : "对不存在的表插入应当失败";
         }
         catch (SQLException se)
         {
             assert se.getClass().getSimpleName().equalsIgnoreCase("PSQLException");
         }
-        pgConn1.createStatement().execute("insert into testFailedHybridSQL values(3)");
+
+        // 事务块已被中止：后续语句必须被 25P02 拒绝，而不是照常执行
+        try {
+            pgConn1.createStatement().execute("insert into testFailedHybridSQL values(3)");
+            assert false : "失败事务块内的语句应当被 25P02 拒绝";
+        }
+        catch (SQLException se) {
+            assert "25P02".equals(se.getSQLState())
+                    : "失败事务块内的语句应以 25P02 拒绝，实际 " + se.getSQLState();
+        }
+
+        // ROLLBACK 结束事务块：块内那条成功的 insert(1) 一并回滚，会话恢复可用
+        pgConn1.rollback();
+        pgConn1.createStatement().execute("insert into testFailedHybridSQL values(4)");
+        pgConn1.commit();
 
         ResultSet rs = pgConn1.createStatement().executeQuery("SELECT Count(*),Sum(id) from testFailedHybridSQL");
 
         int resultCount = 0;
         while (rs.next()) {
             resultCount++;
-            assert rs.getInt(1) == 2;
-            assert rs.getInt(2) == 4;
+            assert rs.getInt(1) == 1
+                    : "只有 ROLLBACK 之后提交的那一行应当存在，实际 " + rs.getInt(1) + " 行";
+            assert rs.getInt(2) == 4
+                    : "仅应有 id=4 这一行，实际 sum=" + rs.getInt(2);
         }
         rs.close();
         pgConn1.close();

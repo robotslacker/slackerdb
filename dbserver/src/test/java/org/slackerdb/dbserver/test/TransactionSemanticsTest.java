@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.dbserver.test.support.PgWireClient;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -17,7 +18,11 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 import java.util.TimeZone;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 /**
  * 事务语义批次验收测试。
@@ -405,6 +410,72 @@ public class TransactionSemanticsTest {
                             + (char) committed.readyForQuery + "'";
 
             assert client.query("SELECT 1").errorCount == 0 : "COMMIT 之后语句应恢复正常";
+        }
+    }
+
+    // ---------------------------------------------------------------- 协议级错误也必须中止事务块
+
+    /**
+     * 扩展协议：<b>Parse 阶段</b>就失败的语句也必须让事务块进入 aborted 状态。
+     *
+     * <p>"表不存在"这类错误 DuckDB 在 {@code prepareStatement} 时就抛出，走的是
+     * {@code ParseRequest} 的错误分支。改造前只有简单查询与 Execute 两条路径会调用
+     * {@code markTransactionFailed()}，于是这里的事务块不会被中止：
+     * ReadyForQuery 仍报 'T'，后续语句也不会被 25P02 拒绝，而是照常执行。</p>
+     */
+    @Test
+    void parseFailureInsideTransactionAbortsBlock() throws Exception {
+        try (PgWireClient client = new PgWireClient("127.0.0.1", dbPort, "txsem", 10_000)) {
+            client.sendQuery("BEGIN");
+            assertEquals('T', PgWireClient.readyStatus(client.readUntilReadyForQuery()),
+                    "BEGIN 之后应为 'T'");
+
+            // Parse 阶段失败（表不存在）
+            client.sendParse("s_missing", "SELECT * FROM no_such_table_in_tx");
+            client.sendSync();
+            List<PgWireClient.Frame> failed = client.readUntilReadyForQuery();
+            assertNotNull(PgWireClient.errorField(failed, 'C'), "Parse 失败应当回 ErrorResponse");
+            assertEquals('E', PgWireClient.readyStatus(failed),
+                    "Parse 阶段失败后事务块必须中止（ReadyForQuery = 'E'）");
+
+            // 后续普通语句必须被 25P02 拒绝，而不是照常执行
+            client.sendQuery("SELECT 1");
+            List<PgWireClient.Frame> rejected = client.readUntilReadyForQuery();
+            assertEquals("25P02", PgWireClient.errorField(rejected, 'C'),
+                    "失败事务块内的语句必须被 25P02 拒绝");
+
+            // ROLLBACK 仍能把会话救回来
+            client.sendQuery("ROLLBACK");
+            assertEquals('I', PgWireClient.readyStatus(client.readUntilReadyForQuery()),
+                    "ROLLBACK 之后应回到 'I'");
+        }
+    }
+
+    /**
+     * 扩展协议：<b>Bind 阶段</b>失败的语句同样必须中止事务块。
+     *
+     * <p>构造方式：Parse 声明参数是 int4，Bind 却只发 3 字节二进制 → Bind 报 22P03。</p>
+     */
+    @Test
+    void bindFailureInsideTransactionAbortsBlock() throws Exception {
+        try (PgWireClient client = new PgWireClient("127.0.0.1", dbPort, "txsem", 10_000)) {
+            client.sendQuery("BEGIN");
+            assertEquals('T', PgWireClient.readyStatus(client.readUntilReadyForQuery()));
+
+            client.sendParse("s_bin", "SELECT $1::INTEGER", 23);   // 23 = int4
+            client.sendBindWithBinaryParam("p_bin", "s_bin", new byte[]{0x01, 0x02, 0x03});
+            client.sendSync();
+            List<PgWireClient.Frame> failed = client.readUntilReadyForQuery();
+            assertNotNull(PgWireClient.errorField(failed, 'C'), "Bind 失败应当回 ErrorResponse");
+            assertEquals('E', PgWireClient.readyStatus(failed),
+                    "Bind 阶段失败后事务块必须中止（ReadyForQuery = 'E'）");
+
+            client.sendQuery("SELECT 1");
+            assertEquals("25P02", PgWireClient.errorField(client.readUntilReadyForQuery(), 'C'),
+                    "失败事务块内的语句必须被 25P02 拒绝");
+
+            client.sendQuery("ROLLBACK");
+            assertEquals('I', PgWireClient.readyStatus(client.readUntilReadyForQuery()));
         }
     }
 }

@@ -146,7 +146,14 @@ public class Sanity02Test {
         }
         rs.close();
         Collections.sort(schemasInfo);
-        assert schemasInfo.toString().trim().equals("[TABLE_CATALOG: null, TABLE_CATALOG: null, TABLE_SCHEM: schema1, TABLE_SCHEM: schema2]".trim());
+        // 多出来的 'main' 是服务端 fake catalog 故意暴露的默认命名空间：
+        // pg_namespace 必须含一行"oid = pg_type.typnamespace、名字是当前搜索路径里的 main"的记录，
+        // 否则客户端"按 OID 取类型名"的兜底查询（pg_type JOIN pg_namespace）恒为 0 行，
+        // 官方 pgjdbc / dbdriver 都会在 initSqlType 的 castNonNull 上直接抛（那是 interval 整列不可用的根因）。
+        assert schemasInfo.toString().trim().equals(("[TABLE_CATALOG: null, TABLE_CATALOG: null,"
+                + " TABLE_CATALOG: null, TABLE_SCHEM: main, TABLE_SCHEM: schema1,"
+                + " TABLE_SCHEM: schema2]").trim())
+                : "unexpected schemas: " + schemasInfo;
 
         // getTables
         List<String> tablesInfo = new ArrayList<>();
@@ -163,6 +170,10 @@ public class Sanity02Test {
         assert tablesInfo.toString().equals("[REF_GENERATION: , REMARKS: null, SELF_REFERENCING_COL_NAME: , TABLE_CAT: null, TABLE_NAME: tab1, TABLE_SCHEM: schema5, TABLE_TYPE: TABLE, TYPE_CAT: , TYPE_NAME: , TYPE_SCHEM: ]");
 
         // getColumns
+        // 注意 col1/col2 的 TYPE_NAME 现在是 int / bigint（以前是 null）：
+        // 这两列的类型名要靠 pg_attribute→pg_type→pg_namespace 的 JOIN 解析出来，
+        // 而 pg_namespace 以前对不上 pg_type.typnamespace，JOIN 全被丢掉 → TYPE_NAME 只能是 null。
+        // 修好 pg_namespace（见 SlackerCatalog）后这两个名字才真正解析出来，属于修复而非回归。
         List<String> columnsInfo = new ArrayList<>();
         pgConn1.createStatement().execute("USE memory.schema5");
         rs = pgConn1.getMetaData().getColumns("memory", "schema5", "%", "%");
@@ -176,8 +187,8 @@ public class Sanity02Test {
         }
         rs.close();
         Collections.sort(columnsInfo);
-        assert columnsInfo.get(0).equals("TABLE_CAT: null,TABLE_SCHEM: schema5,TABLE_NAME: tab1,COLUMN_NAME: col1,DATA_TYPE: 1111,TYPE_NAME: null,COLUMN_SIZE: 2147483647,BUFFER_LENGTH: null,DECIMAL_DIGITS: 0,NUM_PREC_RADIX: 10,NULLABLE: 1,REMARKS: null,COLUMN_DEF: null,SQL_DATA_TYPE: null,SQL_DATETIME_SUB: null,CHAR_OCTET_LENGTH: 2147483647,ORDINAL_POSITION: 1,IS_NULLABLE: YES,SCOPE_CATALOG: null,SCOPE_SCHEMA: null,SCOPE_TABLE: null,SOURCE_DATA_TYPE: null,IS_AUTOINCREMENT: NO,IS_GENERATEDCOLUMN: NO,");
-        assert columnsInfo.get(1).equals("TABLE_CAT: null,TABLE_SCHEM: schema5,TABLE_NAME: tab1,COLUMN_NAME: col2,DATA_TYPE: 1111,TYPE_NAME: null,COLUMN_SIZE: 2147483647,BUFFER_LENGTH: null,DECIMAL_DIGITS: 0,NUM_PREC_RADIX: 10,NULLABLE: 1,REMARKS: null,COLUMN_DEF: null,SQL_DATA_TYPE: null,SQL_DATETIME_SUB: null,CHAR_OCTET_LENGTH: 2147483647,ORDINAL_POSITION: 2,IS_NULLABLE: YES,SCOPE_CATALOG: null,SCOPE_SCHEMA: null,SCOPE_TABLE: null,SOURCE_DATA_TYPE: null,IS_AUTOINCREMENT: NO,IS_GENERATEDCOLUMN: NO,");
+        assert columnsInfo.get(0).equals("TABLE_CAT: null,TABLE_SCHEM: schema5,TABLE_NAME: tab1,COLUMN_NAME: col1,DATA_TYPE: 1111,TYPE_NAME: int,COLUMN_SIZE: 2147483647,BUFFER_LENGTH: null,DECIMAL_DIGITS: 0,NUM_PREC_RADIX: 10,NULLABLE: 1,REMARKS: null,COLUMN_DEF: null,SQL_DATA_TYPE: null,SQL_DATETIME_SUB: null,CHAR_OCTET_LENGTH: 2147483647,ORDINAL_POSITION: 1,IS_NULLABLE: YES,SCOPE_CATALOG: null,SCOPE_SCHEMA: null,SCOPE_TABLE: null,SOURCE_DATA_TYPE: null,IS_AUTOINCREMENT: NO,IS_GENERATEDCOLUMN: NO,") : ("unexpected columns: " + columnsInfo);
+        assert columnsInfo.get(1).equals("TABLE_CAT: null,TABLE_SCHEM: schema5,TABLE_NAME: tab1,COLUMN_NAME: col2,DATA_TYPE: 1111,TYPE_NAME: bigint,COLUMN_SIZE: 2147483647,BUFFER_LENGTH: null,DECIMAL_DIGITS: 0,NUM_PREC_RADIX: 10,NULLABLE: 1,REMARKS: null,COLUMN_DEF: null,SQL_DATA_TYPE: null,SQL_DATETIME_SUB: null,CHAR_OCTET_LENGTH: 2147483647,ORDINAL_POSITION: 2,IS_NULLABLE: YES,SCOPE_CATALOG: null,SCOPE_SCHEMA: null,SCOPE_TABLE: null,SOURCE_DATA_TYPE: null,IS_AUTOINCREMENT: NO,IS_GENERATEDCOLUMN: NO,");
         assert columnsInfo.get(2).equals("TABLE_CAT: null,TABLE_SCHEM: schema5,TABLE_NAME: tab1,COLUMN_NAME: col3,DATA_TYPE: 4,TYPE_NAME: int4,COLUMN_SIZE: 10,BUFFER_LENGTH: null,DECIMAL_DIGITS: 0,NUM_PREC_RADIX: 10,NULLABLE: 1,REMARKS: null,COLUMN_DEF: null,SQL_DATA_TYPE: null,SQL_DATETIME_SUB: null,CHAR_OCTET_LENGTH: 10,ORDINAL_POSITION: 3,IS_NULLABLE: YES,SCOPE_CATALOG: null,SCOPE_SCHEMA: null,SCOPE_TABLE: null,SOURCE_DATA_TYPE: null,IS_AUTOINCREMENT: NO,IS_GENERATEDCOLUMN: NO,");
         assert columnsInfo.get(3).equals("TABLE_CAT: null,TABLE_SCHEM: schema5,TABLE_NAME: tab1,COLUMN_NAME: col4,DATA_TYPE: 12,TYPE_NAME: text,COLUMN_SIZE: 2147483647,BUFFER_LENGTH: null,DECIMAL_DIGITS: 0,NUM_PREC_RADIX: 10,NULLABLE: 1,REMARKS: null,COLUMN_DEF: null,SQL_DATA_TYPE: null,SQL_DATETIME_SUB: null,CHAR_OCTET_LENGTH: 2147483647,ORDINAL_POSITION: 4,IS_NULLABLE: YES,SCOPE_CATALOG: null,SCOPE_SCHEMA: null,SCOPE_TABLE: null,SOURCE_DATA_TYPE: null,IS_AUTOINCREMENT: NO,IS_GENERATEDCOLUMN: NO,");
 

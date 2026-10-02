@@ -7,12 +7,21 @@ import org.duckdb.DuckDBConnection;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.response.*;
+import org.slackerdb.dbserver.sql.CommandTag;
+import org.slackerdb.dbserver.sql.CopyProtocolHandler;
+import org.slackerdb.dbserver.sql.PlSqlHostImpl;
 import org.slackerdb.dbserver.sql.RowEncoder;
 import org.slackerdb.dbserver.sql.SQLReplacer;
 import org.slackerdb.dbserver.sql.SqlCommentStripper;
 import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.dbserver.sql.SqlStateMapper;
 import org.slackerdb.dbserver.server.DBSession;
 import org.slackerdb.dbserver.sql.antlr.CopyVisitor;
+import org.slackerdb.plsql.PlSqlEngine;
+import org.slackerdb.plsql.PlSqlException;
+import org.slackerdb.plsql.detect.PlSqlDetector;
+import org.slackerdb.plsql.detect.PlSqlScript;
+import org.slackerdb.plsql.detect.PlSqlStatement;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -86,6 +95,17 @@ public class QueryRequest  extends PostgresRequest {
     public void decode(byte[] data) {
         sql = new String(data, StandardCharsets.UTF_8);
 
+        // 简单查询消息的 SQL 是 NUL 结尾的字符串：这里必须把结尾的 NUL 去掉，
+        // 否则 "BEGIN\0" 这类文本会带着不可见字节进入后续解析（历史上它会让
+        // PL/SQL 检测误判成匿名块，并把 NUL 交给 SQL 层）。
+        int end = sql.length();
+        while (end > 0 && sql.charAt(end - 1) == '\0') {
+            end--;
+        }
+        if (end != sql.length()) {
+            sql = sql.substring(0, end);
+        }
+
         super.decode(data);
     }
 
@@ -98,213 +118,70 @@ public class QueryRequest  extends PostgresRequest {
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
+        // 本次语句在 SQL 历史表里的记录 ID：-1 = 还没登记。
+        // 声明在 try 之外，这样异常分支也能把它收尾（否则失败的语句会永远停在"进行中"）。
+        long sqlHistoryId = -1;
+
         tryBlock:
         try {
-            JSONObject parseObject = CopyVisitor.parseCopyStatement(sql);
-            if (parseObject.getInteger("errorCode") == 0)
-            {
-                // 这次一个Copy语句
-                if (!parseObject.getString("copyDirection").equals("FROM") ||
-                        !parseObject.getString("copyFilePath").equals("STDIN") ||
-                        !parseObject.getString("copyType").equals("table")
-                )
-                {
-                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
-                    errorResponse.setErrorResponse(
-                            "SLACKER-0099",
-                            "Feature not supported. Only support COPY .. FROM STDIN");
-                    errorResponse.setErrorSeverity("ERROR");
-                    errorResponse.process(ctx, request, out);
+            // COPY ... FROM STDIN：简单查询路径。
+            // 与扩展协议（ExecuteRequest）共用 CopyProtocolHandler，避免两条路径行为分叉。
+            CopyProtocolHandler.Result copyResult = CopyProtocolHandler.beginCopyIn(this, ctx, sql);
+            if (copyResult == CopyProtocolHandler.Result.COPY_STARTED) {
+                // 已发出 CopyInResponse：本回合到此结束，后续由 CopyData/CopyDone 收尾
+                out.close();
+                break tryBlock;
+            }
+            if (copyResult == CopyProtocolHandler.Result.REJECTED) {
+                // CopyProtocolHandler 已经发过错误与 ReadyForQuery
+                out.close();
+                break tryBlock;
+            }
 
-                    // 发送并刷新返回消息
-                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+            // 命令标签必须基于**客户端原文**判断，而不是 SQLReplacer 改写后的 SQL。
+            // 原因：SET/SHOW 这类语句会被 SQLReplacer 改写（SET 被改写成空串、SHOW 被改写成
+            // 等价的 SELECT），改写后就再也认不出原始命令了，标签会退化成 "SELECT 0"。
+            String originalSql = sql;
 
-                    // 发送ReadyForQuery
-                    ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
-                    readyForQuery.process(ctx, request, out);
+            // PL/SQL 检测：简单查询协议下也必须支持匿名块与多语句脚本。
+            // 历史实现完全没有这条分支，`DO $$...$$` 会被原样丢给 DuckDB 并报错。
+            PlSqlScript plsqlScript = PlSqlDetector.analyze(sql);
+            if (plsqlScript.hasError()) {
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).markTransactionFailed();
+                sqlHistoryId = insertSqlHistory(ctx);
+                updateSqlHistory(sqlHistoryId, 0, 0, "42601: " + plsqlScript.error());
 
-                    // 发送并刷新返回消息
-                    PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+                ErrorResponse lexicalError = new ErrorResponse(this.dbInstance);
+                lexicalError.setErrorFile("QueryRequest");
+                lexicalError.setErrorResponse("42601", plsqlScript.error());
+                lexicalError.process(ctx, request, out);
+                PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
 
-                    return;
-                }
-                // 获取导入的用户表和表名
-                String copyTableName = parseObject.getString("table");
-                String targetTableName;
-                String targetSchemaName;
-                if (copyTableName.split("\\.").length > 1) {
-                    targetSchemaName = copyTableName.split("\\.")[0];
-                    targetTableName = copyTableName.split("\\.")[1];
-                } else {
-                    targetSchemaName = "";
-                    targetTableName = copyTableName;
-                }
-
-                // 获取需要导入的列名
-                Map<String, Integer> targetColumnMap = new HashMap<>();
-                JSONArray columnsJson = parseObject.getJSONArray("columns");
-                if (columnsJson != null) {
-                    for (int i = 0; i < columnsJson.size(); i++) {
-                        targetColumnMap.put(columnsJson.get(i).toString().trim().toUpperCase(), i);
-                    }
-                }
-
-                // 获取COPY的文件类型
-                JSONObject copyOptions = parseObject.getJSONObject("options");
-                String copyTableFormat = null;
-                if (copyOptions != null && copyOptions.containsKey("FORMAT"))
-                {
-                    copyTableFormat = copyOptions.getString("FORMAT").toUpperCase();
-                }
-                if (copyTableFormat == null ||
-                        (!copyTableFormat.equals("CSV") && !copyTableFormat.equals("BINARY") )
-                )
-                {
-                    ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
-                    errorResponse.setErrorResponse(
-                            "SLACKER-0099",
-                            "Feature not supported. Only support FORMAT CSV|BINARY");
-                    errorResponse.setErrorSeverity("ERROR");
-                    errorResponse.process(ctx, request, out);
-
-                    // 发送并刷新返回消息
-                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
-
-                    // 发送ReadyForQuery
-                    ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
-                    readyForQuery.process(ctx, request, out);
-
-                    // 发送并刷新返回消息
-                    PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
-
-                    return;
-                }
-
-                DuckDBConnection conn = (DuckDBConnection) this.dbInstance.getSession(getCurrentSessionId(ctx)).dbConnection;
-
-                // 获取表名的实际表名，DUCK并不支持部分字段的Appender操作。所以要追加列表中不存在的相关信息
-                List<Integer> copyTableDbColumnMapPos = new ArrayList<>();
-                List<String> copyTableDbColumnType = new ArrayList<>();
-                List<String> copyTableDbColumnName = new ArrayList<>();
-                String executeSql;
-                if (targetSchemaName.isEmpty()) {
-                    executeSql = "SELECT * FROM " + targetTableName + " LIMIT 0";
-                } else {
-                    executeSql = "SELECT * FROM " + targetSchemaName + "." + targetTableName + " LIMIT 0";
-                }
-                PreparedStatement ps = conn.prepareStatement(executeSql);
-                ResultSet rs = ps.executeQuery();
-                rs.next();
-                for (int i = 0; i < rs.getMetaData().getColumnCount(); i++) {
-                    if (!targetColumnMap.isEmpty()) {
-                        // 指定了字段名称，则其余字段填-1
-                        copyTableDbColumnMapPos.add(targetColumnMap.getOrDefault(
-                                rs.getMetaData().getColumnName(i + 1).toUpperCase(), -1));
-                    }
-                    else
-                    {
-                        copyTableDbColumnMapPos.add(i);
-                    }
-                    copyTableDbColumnType.add(rs.getMetaData().getColumnTypeName(i+1));
-                    copyTableDbColumnName.add(rs.getMetaData().getColumnName(i+1));
-                }
-
-                rs.close();
-                ps.close();
-
-                // 校验COPY语句中指定的列必须存在于目标表中，并且不能被重复指定(与PostgreSQL的行为保持一致)。
-                // 如果不做校验，那么不存在的列会被静默忽略，客户端无法感知到数据导入出现了错误。
-                if (columnsJson != null && !columnsJson.isEmpty())
-                {
-                    Set<String> tableColumnNames = new HashSet<>();
-                    for (String dbColumnName : copyTableDbColumnName) {
-                        tableColumnNames.add(dbColumnName.toUpperCase());
-                    }
-
-                    Set<String> parsedColumnNames = new HashSet<>();
-                    String   columnErrorMessage = null;
-                    for (Object o : columnsJson) {
-                        String copyColumnName = o.toString().trim();
-                        if (!tableColumnNames.contains(copyColumnName.toUpperCase())) {
-                            // 例如: column "EVENT_TYPE" of relation "test_binary_copy7" does not exist
-                            columnErrorMessage = "column \"" + copyColumnName + "\" of relation \"" +
-                                    targetTableName + "\" does not exist";
-                            break;
-                        }
-                        if (!parsedColumnNames.add(copyColumnName.toUpperCase())) {
-                            // 例如: column "ID" specified more than once
-                            columnErrorMessage = "column \"" + copyColumnName + "\" specified more than once";
-                            break;
-                        }
-                    }
-
-                    if (columnErrorMessage != null)
-                    {
-                        ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
-                        errorResponse.setErrorResponse("SLACKER-0099", columnErrorMessage);
-                        errorResponse.setErrorSeverity("ERROR");
-                        errorResponse.process(ctx, request, out);
-
-                        // 发送并刷新返回消息
-                        PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
-
-                        // 发送ReadyForQuery
-                        ReadyForQuery readyForQuery = new ReadyForQuery(this.dbInstance);
-                        readyForQuery.process(ctx, request, out);
-
-                        // 发送并刷新返回消息
-                        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
-
-                        return;
-                    }
-                }
-
-                // 将解析信息记录到Session会话中
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableFormat = copyTableFormat;
-
-                // 防御：上一个 COPY 若没有正常收尾（客户端没发 CopyDone 就直接发了别的语句），
-                // 这里先丢弃它的未提交数据并回滚自己开的事务。否则遗留的 Appender 会泄漏，
-                // 且下面的 BEGIN 会在已有事务中再次开启事务而报错。
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).discardUncommittedCopy();
-
-                // 用服务端自己的显式事务包裹本次 COPY。
-                // 原因：DuckDBAppender 在事务之外 close() 会立刻提交，只要后续某一行出错，
-                // 已经 append 的行就成了"半截数据"（PG 语义下失败的 COPY 应当整体不生效）。
-                // 放进显式事务后失败可整体 ROLLBACK；注意 JDBC 的 setAutoCommit(false)+rollback()
-                // 对 appender 无效，必须走显式 BEGIN/COMMIT/ROLLBACK。
-                // 客户端已经处于事务块中时不另开事务：数据留在客户端事务里，由客户端自行提交/回滚。
-                if (!this.dbInstance.getSession(getCurrentSessionId(ctx)).inTransaction()) {
-                    try (Statement beginStatement = conn.createStatement()) {
-                        beginStatement.execute("BEGIN TRANSACTION");
-                    }
-                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyOwnTransaction = true;
-                }
-
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableAppender = conn.createAppender(targetSchemaName, targetTableName);
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyLastRemained.reset();
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnMapPos = copyTableDbColumnMapPos;
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnType = copyTableDbColumnType;
-                this.dbInstance.getSession(getCurrentSessionId(ctx)).copyTableDbColumnName = copyTableDbColumnName;
-                // 记录COPY数据中每行的字段数量(没有指定列的时候，就是目标表的列数量)
-                if (targetColumnMap.isEmpty()) {
-                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyColumnCount = copyTableDbColumnName.size();
-                }
-                else
-                {
-                    this.dbInstance.getSession(getCurrentSessionId(ctx)).copyColumnCount = columnsJson.size();
-                }
-
-                // 发送CopyInResponse
-                CopyInResponse copyInResponse = new CopyInResponse(this.dbInstance);
-                copyInResponse.copyColumnCount = (short) this.dbInstance.getSession(getCurrentSessionId(ctx)).copyColumnCount;
-                copyInResponse.process(ctx, request, out);
-
-                // 发送并刷新返回消息
-                PostgresMessage.writeAndFlush(ctx, CopyInResponse.class.getSimpleName(), out, this.dbInstance.logger);
+                ReadyForQuery lexicalReady = new ReadyForQuery(this.dbInstance);
+                lexicalReady.process(ctx, request, out);
+                PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
 
                 out.close();
                 break tryBlock;
+            }
 
+            if (plsqlScript.isSingleBlock() || plsqlScript.isScript()) {
+                // 匿名块 / 多语句脚本：逐条执行并逐条回 CommandComplete（PG 简单查询语义）
+                sqlHistoryId = insertSqlHistory(ctx);
+                long scriptRows = executePlSqlScript(ctx, request, out, plsqlScript);
+                updateSqlHistory(sqlHistoryId, 0, scriptRows, null);
+
+                ReadyForQuery scriptReady = new ReadyForQuery(this.dbInstance);
+                scriptReady.process(ctx, request, out);
+                PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+
+                out.close();
+                break tryBlock;
+            }
+
+            if (plsqlScript.isEmpty()) {
+                // 空脚本 / 只有注释：走下面的空语句分支（避免把纯注释丢给 DuckDB）
+                sql = "";
             }
 
             // 在执行之前需要做替换
@@ -316,6 +193,11 @@ public class QueryRequest  extends PostgresRequest {
             DBSession currentSession = this.dbInstance.getSession(getCurrentSessionId(ctx));
             if (currentSession.getTransactionState() == DBSession.TransactionState.FAILED
                     && !isTransactionEndStatement(sql)) {
+                // 被拒绝的语句同样要进审计：客户端确实发过这条语句，只是没执行
+                sqlHistoryId = insertSqlHistory(ctx);
+                updateSqlHistory(sqlHistoryId, 0, 0,
+                        "25P02: current transaction is aborted, commands ignored until end of transaction block");
+
                 ErrorResponse failedTxError = new ErrorResponse(this.dbInstance);
                 failedTxError.setErrorResponse("25P02",
                         "current transaction is aborted, commands ignored until end of transaction block");
@@ -333,7 +215,16 @@ public class QueryRequest  extends PostgresRequest {
 
             // 取出上次解析的SQL，如果为空语句，则直接返回
             if (sql.isEmpty()) {
+                // 空语句（客户端发的空串，或被 SQLReplacer 改写掉的 SET/SHOW）也要进审计：
+                // 审计记录的是**客户端原文**，所以这里仍然能看出到底发了什么。
+                sqlHistoryId = insertSqlHistory(ctx);
+                updateSqlHistory(sqlHistoryId, 0, 0, null);
+
                 CommandComplete commandComplete = new CommandComplete(this.dbInstance);
+                // 空标签在协议上非法（客户端无法解析），统一回一个可解析的标签。
+                // 注意用客户端原文判断：SET/RESET 等被 SQLReplacer 改写成空串，
+                // 此时标签应当是 "SET" 而不是 "SELECT 0"。
+                commandComplete.setCommandResult(CommandTag.of(originalSql, 0, false));
                 commandComplete.process(ctx, request, out);
 
                 // 发送并刷新返回消息
@@ -354,6 +245,11 @@ public class QueryRequest  extends PostgresRequest {
             // 理解为简单查询
             long nAffectedRows = 0;
             DBSession simpleQuerySession = this.dbInstance.getSession(getCurrentSessionId(ctx));
+            // 每条简单查询都算一个新语句：SqlId 递增后，历史记录才能唯一标识这次执行
+            simpleQuerySession.executingSqlId.incrementAndGet();
+            // 先登记再 prepare/execute：prepare 阶段就可能失败（语法错误），
+            // 登记放在前面才能保证"失败的语句也进历史"，并且会被 catch 分支收尾。
+            sqlHistoryId = insertSqlHistory(ctx);
             PreparedStatement preparedStatement =
                     simpleQuerySession.dbConnection.prepareStatement(sql);
             // 登记"正在执行"的句柄，让 CancelRequest / KILL SESSION 能真正取消简单查询。
@@ -450,26 +346,14 @@ public class QueryRequest  extends PostgresRequest {
                 querySession.endTransaction();
             }
 
+            // 语句执行完毕（成功），用最终行数收尾审计
+            updateSqlHistory(sqlHistoryId, 0, nAffectedRows, null);
+
             CommandComplete commandComplete = new CommandComplete(this.dbInstance);
-            if (sql.toUpperCase().startsWith("BEGIN")) {
-                commandComplete.setCommandResult("BEGIN");
-            } else if (sql.toUpperCase().startsWith("END")) {
-                commandComplete.setCommandResult("COMMIT");
-            } else if (sql.toUpperCase().startsWith("SELECT")) {
-                commandComplete.setCommandResult("SELECT " + nAffectedRows);
-            } else if (sql.toUpperCase().startsWith("INSERT")) {
-                commandComplete.setCommandResult("INSERT 0 " + nAffectedRows);
-            } else if (sql.toUpperCase().startsWith("COMMIT")) {
-                commandComplete.setCommandResult("COMMIT");
-            } else if (sql.toUpperCase().startsWith("ROLLBACK")) {
-                commandComplete.setCommandResult("ROLLBACK");
-            } else if (sql.toUpperCase().startsWith("ABORT")) {
-                commandComplete.setCommandResult("ROLLBACK");
-            }
-            else
-            {
-                commandComplete.setCommandResult("UPDATE " + nAffectedRows);
-            }
+            // 命令标签由 CommandTag 统一生成：只有 DML/查询系列带行数，
+            // DDL 与工具类命令回命令名本身。改造前这里靠字符串前缀猜，
+            // DELETE/DDL/SET/WITH..SELECT 全部被误报成 "UPDATE <n>"。
+            commandComplete.setCommandResult(CommandTag.of(originalSql, nAffectedRows, isResultSet));
             commandComplete.process(ctx, request, out);
 
             // 发送并刷新返回消息
@@ -481,16 +365,41 @@ public class QueryRequest  extends PostgresRequest {
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+        } catch (PlSqlException pe) {
+            // PL/SQL 结构化错误：SQLSTATE 由引擎给出（42601 / 57014 / P0001 ...）
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).markTransactionFailed();
+
+            String message = pe.getMessage() + pe.positionSuffix();
+            if (sqlHistoryId != -1) {
+                updateSqlHistory(sqlHistoryId, -1, 0, pe.getSqlState() + ":" + message);
+            }
+
+            ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+            errorResponse.setErrorFile("QueryRequest");
+            errorResponse.setErrorResponse(pe.getSqlState(), message);
+            errorResponse.setErrorSeverity("ERROR");
+            errorResponse.process(ctx, request, out);
+            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+            ReadyForQuery plsqlReady = new ReadyForQuery(this.dbInstance);
+            plsqlReady.process(ctx, request, out);
+            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
         } catch (SQLException se) {
             // 事务块中的语句失败 → 事务进入 aborted 状态，ReadyForQuery 之后要回 'E'（BUG-15）。
             // 自动提交模式下（不在事务块中）标记是空操作。
             this.dbInstance.getSession(getCurrentSessionId(ctx)).markTransactionFailed();
 
+            // 失败的语句同样要收尾审计（sqlHistoryId == -1 表示异常发生在登记之前）
+            if (sqlHistoryId != -1) {
+                updateSqlHistory(sqlHistoryId, se.getErrorCode(), 0,
+                        SqlStateMapper.fromException(se) + ":" + se.getMessage());
+            }
+
             StackTraceElement[] stackTrace = se.getStackTrace();
 
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
-            errorResponse.setErrorResponse(String.valueOf(se.getErrorCode()), se.getMessage());
+            errorResponse.setErrorResponse(SqlStateMapper.fromException(se), se.getMessage());
             errorResponse.setErrorSeverity("ERROR");
             errorResponse.setErrorFile(stackTrace[0].getFileName());
             errorResponse.setErrorLine(String.valueOf(stackTrace[0].getLineNumber()));
@@ -513,5 +422,116 @@ public class QueryRequest  extends PostgresRequest {
         this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
         this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = "";
         this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
+    }
+
+    /**
+     * 简单查询协议下逐条执行脚本（匿名块与 SQL 混合），并逐条回 {@code CommandComplete}。
+     *
+     * <p>这是 {@code psql} / {@code Statement.execute} 发多语句脚本的路径：
+     * 历史实现把整串文本丢给 DuckDB prepare，必然失败；PL/SQL 块更是完全没有分支。</p>
+     *
+     * @return 所有语句返回的结果行数之和（用于审计收尾）
+     */
+    private long executePlSqlScript(ChannelHandlerContext ctx, Object request, ByteArrayOutputStream out,
+                                    PlSqlScript script) throws IOException, SQLException {
+        DBSession session = this.dbInstance.getSession(getCurrentSessionId(ctx));
+        PlSqlHostImpl host = new PlSqlHostImpl(this.dbInstance, session);
+        long totalRows = 0;
+        int pendingBytes = 0;
+
+        for (PlSqlStatement statement : script.statements()) {
+            session.clearCancelRequested();
+            session.executingSqlId.incrementAndGet();
+
+            if (statement.isBlock()) {
+                session.executingSQL = statement.body();
+                PlSqlEngine.execute(host, statement.body());
+
+                CommandComplete blockComplete = new CommandComplete(this.dbInstance);
+                blockComplete.setCommandResult("DO");
+                blockComplete.process(ctx, request, out);
+                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
+                continue;
+            }
+
+            String statementSql = SQLReplacer.replaceSQL(this.dbInstance, statement.sql());
+            if (statementSql.isEmpty()) {
+                CommandComplete emptyComplete = new CommandComplete(this.dbInstance);
+                emptyComplete.setCommandResult(CommandTag.of(statement.sql(), 0, false));
+                emptyComplete.process(ctx, request, out);
+                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
+                continue;
+            }
+            session.executingSQL = statementSql;
+
+            long affectedRows = -1;
+            boolean returnedRows = false;
+            try (PreparedStatement preparedStatement = session.dbConnection.prepareStatement(statementSql)) {
+                long handleId = session.registerRunningStatement(preparedStatement);
+                try {
+                    boolean hasResultSet;
+                    try {
+                        hasResultSet = preparedStatement.execute();
+                    }
+                    catch (SQLException e) {
+                        if (!e.getMessage().contains("no transaction is active")) {
+                            throw e;
+                        }
+                        hasResultSet = false;
+                    }
+
+                    if (hasResultSet) {
+                        returnedRows = true;
+                        ResultSet resultSet = preparedStatement.getResultSet();
+                        RowEncoder encoder = new RowEncoder(resultSet.getMetaData(), false, this.dbInstance.logger);
+
+                        RowDescription rowDescription = new RowDescription(this.dbInstance);
+                        rowDescription.setFields(encoder.describe());
+                        rowDescription.process(ctx, request, out);
+                        PostgresMessage.writeAndFlush(ctx, RowDescription.class.getSimpleName(), out, this.dbInstance.logger);
+                        rowDescription.setFields(null);
+
+                        DataRow dataRow = new DataRow(this.dbInstance);
+                        long rows = 0;
+                        while (resultSet.next()) {
+                            dataRow.setColumns(encoder.encode(resultSet));
+                            dataRow.process(ctx, request, out);
+                            dataRow.setColumns(null);
+                            rows++;
+                            pendingBytes += PostgresMessage.write(ctx, DataRow.class.getSimpleName(), out, this.dbInstance.logger);
+                            if (pendingBytes >= PostgresMessage.FLUSH_THRESHOLD_BYTES) {
+                                ctx.flush();
+                                pendingBytes = 0;
+                            }
+                        }
+                        resultSet.close();
+                        ctx.flush();
+                        affectedRows = rows;
+                        totalRows += rows;
+                    }
+                    else if (!preparedStatement.isClosed()) {
+                        affectedRows = preparedStatement.getUpdateCount();
+                    }
+                }
+                finally {
+                    session.unregisterRunningStatement(handleId);
+                }
+            }
+
+            // 事务状态机：与单语句路径保持一致的判定
+            String upperSql = statementSql.toUpperCase();
+            if (upperSql.startsWith("BEGIN") || upperSql.startsWith("START TRANSACTION")) {
+                session.beginTransaction();
+            } else if (upperSql.startsWith("END") || upperSql.startsWith("COMMIT")
+                    || upperSql.startsWith("ROLLBACK") || upperSql.startsWith("ABORT")) {
+                session.endTransaction();
+            }
+
+            CommandComplete commandComplete = new CommandComplete(this.dbInstance);
+            commandComplete.setCommandResult(CommandTag.of(statement.sql(), affectedRows, returnedRows));
+            commandComplete.process(ctx, request, out);
+            PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
+        }
+        return totalRows;
     }
 }

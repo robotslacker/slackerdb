@@ -64,7 +64,7 @@ public class DBInstanceX {
     class DBInstanceXAPIHistoryThread extends Thread
     {
         // 上一次告警时记录的丢弃数量，用于避免重复刷屏
-        private long lastReportedDropped = 0;
+        private long lastReportedBlocked = 0;
 
         @Override
         public void run()
@@ -165,7 +165,7 @@ public class DBInstanceX {
                             apiHistoryConn.commit();
                             nProcessedRows = 0;
                         }
-                        reportDroppedRecords();
+                        reportQueuePressure();
                         try {
                             TimeUnit.SECONDS.sleep(1);
                         }
@@ -202,14 +202,19 @@ public class DBInstanceX {
         }
 
         /**
-         * 队列满导致历史记录被丢弃时给出可观测的告警（每个排空周期最多一条，避免刷屏）。
+         * 给出历史队列的背压信号（每个排空周期最多一条，避免刷屏）。
+         *
+         * <p>入队按设计"满了就阻塞、绝不丢弃"，所以唯一需要告警的是<b>生产者被迫等待</b>。</p>
          */
-        private void reportDroppedRecords() {
-            long dropped = apiHistoryList.getDroppedTotal();
-            if (dropped > lastReportedDropped) {
-                logger.warn("[APIHistory] History queue is full. {} record(s) dropped so far (queue capacity = {}).",
-                        dropped, DBInstance.HISTORY_QUEUE_CAPACITY);
-                lastReportedDropped = dropped;
+        private void reportQueuePressure() {
+            long blocked = apiHistoryList.getBlockedTotal();
+            if (blocked > lastReportedBlocked) {
+                logger.warn("[APIHistory] History queue is full. Producers blocked {} time(s), {} ms in total "
+                                + "(queue capacity = {}, current size = {}). The consumer is slower than the producers; "
+                                + "audit records are NOT dropped, the producers wait instead.",
+                        blocked, apiHistoryList.getBlockedMillis(),
+                        DBInstance.HISTORY_QUEUE_CAPACITY, apiHistoryList.size());
+                lastReportedBlocked = blocked;
             }
         }
 
@@ -746,11 +751,18 @@ public class DBInstanceX {
             usage.put("idleConnections", this.dbInstance.dbDataSourcePool.getIdleConnectionPoolSize());
             usage.put("activeSessions", this.dbInstance.activeSessions);
             usage.put("activeChannels", this.dbInstance.getRegisteredConnectionsCount());
+            // 历史落库的可观测性：
+            //   queued*/capacity* —— 队列当前占用与上限（满了生产者会阻塞等待，不会丢数据）
+            //   blocked*          —— 生产者因队列满而被迫等待的次数/总时长，"消费端跟不上"的信号
+            //   *_HistoryThreadAlive 为 false 说明历史已完全停止落库（此时生产者会被背压永久拖住）
             usage.put("queuedSqlHistory", this.dbInstance.sqlHistoryList.size());
-            // 历史落库的可观测性：dropped* 持续增长说明消费端跟不上（或已失败），
-            // *_HistoryThreadAlive 为 false 说明历史已完全停止落库
-            usage.put("droppedSqlHistory", this.dbInstance.sqlHistoryList.getDroppedTotal());
-            usage.put("droppedApiHistory", this.apiHistoryList.getDroppedTotal());
+            usage.put("queuedApiHistory", this.apiHistoryList.size());
+            usage.put("capacitySqlHistory", this.dbInstance.sqlHistoryList.getCapacity());
+            usage.put("capacityApiHistory", this.apiHistoryList.getCapacity());
+            usage.put("blockedSqlHistory", this.dbInstance.sqlHistoryList.getBlockedTotal());
+            usage.put("blockedApiHistory", this.apiHistoryList.getBlockedTotal());
+            usage.put("blockedSqlHistoryMillis", this.dbInstance.sqlHistoryList.getBlockedMillis());
+            usage.put("blockedApiHistoryMillis", this.apiHistoryList.getBlockedMillis());
             usage.put("sqlHistoryThreadAlive", this.dbInstance.isSqlHistoryThreadAlive());
             usage.put("apiHistoryThreadAlive",
                     this.dbInstanceXAPIHistoryThread != null && this.dbInstanceXAPIHistoryThread.isAlive());

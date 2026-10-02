@@ -1,11 +1,11 @@
 package org.slackerdb.dbserver.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
-import org.slackerdb.dbserver.entity.ParsedStatement;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.CloseComplete;
 import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.dbserver.server.DBSession;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -34,52 +34,73 @@ public class CloseRequest extends PostgresRequest {
 
     @Override
     public void decode(byte[] data) {
-        portalName = new String(data, StandardCharsets.UTF_8);
-        closeType = portalName.charAt(0);
-        portalName = portalName.substring(1);
+        // 报文体：Byte1(closeType) + String(name) + 结尾 0
+        //
+        // **必须剥掉结尾的 0**：它是 CString 的终止符，不属于名字。驱动（pgjdbc 及本仓库的
+        // dbdriver，见 QueryExecutorImpl.sendCloseStatement/sendClosePortal）在名字后一定会写这个 0。
+        // 改造前这里把整段字节（含 0）当成名字，缓存 key 于是变成
+        // "PreparedStatement-s1\0"，与 Parse/Bind 存入的 key 对不上 ——
+        // Close 清不掉任何东西，却仍然照常回 CloseComplete，语句/门户静默泄漏到会话结束。
+        if (data == null || data.length == 0) {
+            super.decode(data);
+            return;
+        }
+
+        closeType = (char) (data[0] & 0xFF);
+
+        int nameLength = data.length - 1;
+        if (nameLength > 0 && data[data.length - 1] == 0) {
+            nameLength--;
+        }
+        portalName = new String(data, 1, nameLength, StandardCharsets.UTF_8);
+
+        // key 规则必须与写入方完全一致：
+        //   * Parse/Bind 对**匿名语句**统一记作 "NONAME"（ParseRequest.decode）；
+        //   * Bind 对**匿名门户**保持空串（BindRequest.decode）。
+        if (closeType == 'S' && portalName.isEmpty()) {
+            portalName = "NONAME";
+        }
 
         super.decode(data);
     }
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+        DBSession session = this.dbInstance.getSession(getCurrentSessionId(ctx));
+
         // 记录会话的开始时间，以及业务类型
-        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = this.getClass().getSimpleName();
-        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = LocalDateTime.now();
+        session.executingFunction = this.getClass().getSimpleName();
+        session.executingTime = LocalDateTime.now();
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
-        String closePortal;
-        if (closeType == 'S') {
-            closePortal = "PreparedStatement" + "-" + portalName;
-        }
-        else
-        {
-            // (closeType == 'P')
-            closePortal = "Portal" + "-" + portalName;
-        }
         try {
-            ParsedStatement parsedPreparedStatement =
-                    this.dbInstance.getSession(getCurrentSessionId(ctx)).getParsedStatement(closePortal);
-            if (parsedPreparedStatement != null && parsedPreparedStatement.preparedStatement != null) {
-                parsedPreparedStatement.preparedStatement.close();
+            if (closeType == 'S') {
+                session.clearParsedStatement("PreparedStatement" + "-" + portalName);
             }
-            this.dbInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement(closePortal);
+            else {
+                // (closeType == 'P')
+                // 关门户只释放它的结果集，不动共享的 PreparedStatement（见 DBSession.closePortal）。
+                session.closePortal("Portal" + "-" + portalName);
+            }
+        }
+        catch (Exception e) {
+            // 释放资源失败不能演变成"不回包"：客户端还在等 CloseComplete，
+            // 不回就会挂到空闲超时。这里记录日志后照常应答。
+            this.dbInstance.logger.error("[SERVER][PG PROTOCOL] Failed to release resource for Close [{}].",
+                    closeType == 'S'
+                            ? "PreparedStatement-" + portalName
+                            : "Portal-" + portalName, e);
+        }
 
-            // 标记Close完成
-            CloseComplete closeComplete = new CloseComplete(this.dbInstance);
-            closeComplete.process(ctx, request, out);
-            PostgresMessage.writeAndFlush(ctx, CloseComplete.class.getSimpleName(), out, this.dbInstance.logger);
-        }
-        catch(Exception e) {
-            this.dbInstance.logger.error("Failed to close prepared statement", e);
-        }
-        finally {
-            out.close();
-        }
+        // 标记Close完成
+        CloseComplete closeComplete = new CloseComplete(this.dbInstance);
+        closeComplete.process(ctx, request, out);
+        PostgresMessage.writeAndFlush(ctx, CloseComplete.class.getSimpleName(), out, this.dbInstance.logger);
+        out.close();
 
         // 取消会话的开始时间，以及业务类型
-        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingFunction = "";
-        this.dbInstance.getSession(getCurrentSessionId(ctx)).executingTime = null;
+        session.executingFunction = "";
+        session.executingTime = null;
     }
 }

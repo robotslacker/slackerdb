@@ -1,0 +1,2697 @@
+.RobotSlacker
+image::robotslacker.jpg[RobotSlacker]
+
+== SlackerDB（DuckDB PostgreSQL 代理）
+
+==== 什么是 SlackerDB？
+
+SlackerDB 是一个强大的、基于 Java 的 DuckDB 扩展，它把 DuckDB 从一个本地的、单进程数据库
+转变为一个支持网络访问、可多进程连接的数据服务平台。它弥合了 DuckDB 卓越的分析性能
+与现代应用连接性需求之间的差距。
+
+===== 能力
+
+* *网络化的 DuckDB* —— 突破 DuckDB 仅限本地的限制，提供完整的 TCP/IP 网络访问，允许远程客户端通过标准的 PostgreSQL 线路协议连接。
+* *多进程支持* —— 支持来自多个进程和应用的并发访问，克服 DuckDB 的单进程限制。
+* *PostgreSQL 协议兼容* —— 实现 PostgreSQL 线路协议，使 DuckDB 可以通过任何兼容 PostgreSQL 的客户端（JDBC、ODBC、libpq、psql 等）访问。
+* *高性能数据导入* —— 支持 PostgreSQL COPY 语法进行批量数据加载，性能可与 DuckDB 原生导入相媲美。
+* *双层架构* —— 同时提供直接数据库服务器（`dbserver`）和连接代理（`dbproxy`）：前者对外提供数据库服务，后者按会话别名把客户端连接转发到后端服务器。
+* *可嵌入设计* —— 可以作为库直接嵌入 Java 应用，也可以作为独立服务器运行。
+* *灵活部署* —— 支持多种部署模式：独立服务器、嵌入式库。
+* *插件系统* —— 基于 PF4J 的可扩展插件框架，用于自定义功能、HTTP 端点以及与外部系统的集成。
+* *数据加密* —— 利用 DuckDB 原生加密实现静态数据保护。
+
+===== 数据服务平台
+
+* *RESTful 数据 API* —— 通过全面的 REST API 暴露数据库操作，可与 Web 应用、微服务和无服务器架构集成。
+* *自管理服务* —— 允许在运行时动态注册和管理数据服务，而无需重启服务器。
+* *SQL 即服务* —— 将 SQL 查询转变为可复用、参数化的 API 端点，内置缓存和安全控制。
+
+
+===== 使用场景
+
+* *分析型应用后端* —— 作为 BI 工具、仪表盘和报表应用的数据引擎。
+* *边缘计算* —— 面向边缘设备和 IoT OLAP 应用的轻量级、可嵌入数据库。
+
+SlackerDB 将 DuckDB 的分析能力与网络连接性结合在一起，使其成为既需要高性能
+又需要灵活访问模式的现代数据驱动应用的理想解决方案。
+
+=== 使用方式
+
+==== 从源码构建：
+
+....
+    # 确保已准备好 JDK17 和 maven 3.6+。
+    # 下载源代码
+    git clone ...
+    # 编译
+    cd slackerdb
+    mvn clean compile package -Dmaven.test.skip=true
+
+    # 所有编译结果都会放在 dist 目录中。
+    #    编译后的 Jar 包，
+    #    源码 jar 包
+    #    默认配置文件。
+....
+
+==== 启动数据库服务器
+
+....
+    java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar start
+....
+
+==== 停止数据库服务器
+
+....
+    java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar stop
+....
+
+==== 查看数据库状态
+
+....
+    java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar status
+....
+
+==== 启动数据库代理
+
+....
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.1-standalone.jar start
+....
+
+==== 停止数据库代理
+
+....
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.1-standalone.jar stop
+....
+
+==== 查看代理状态
+
+....
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.1-standalone.jar status
+....
+
+==== 服务器配置文件模板
+
+....
+# 数据库名称，默认为空。
+data=
+
+# 数据文件保存路径
+# ":memory:" 表示内存模式（重启后数据会丢失）
+data_dir=:memory:
+
+# 运行期间的临时文件目录
+# 磁盘模式：   未指定时默认为 data_dir
+# 内存模式：   未指定时默认为系统临时目录
+# 建议：       为 temp_dir 使用高性能存储
+temp_dir=
+
+# 扩展插件目录
+# 默认：$HOME/.duckdb/extensions
+extension_dir=
+
+# 自定义插件目录
+# 默认：无
+plugins_dir=
+
+# 以后台守护进程方式运行（true/false）。默认是false
+daemon=
+
+# PID 文件位置
+# - 服务器运行期间独占锁定
+# - 如果文件已被其他进程锁定，启动会中止
+# - 未配置则不创建文件，也不加锁。
+pid=
+
+# 日志输出目标（逗号分隔）
+# "CONSOLE" 表示标准输出，文件路径表示写入文件日志
+log=CONSOLE,logs/slackerdb.log
+
+# 日志详细级别
+log_level=INFO
+
+# 主服务端口
+#  0 = 随机分配端口
+# -1 = 禁用网络接口
+# 默认：0（即随机分配端口）
+port=
+
+# 用于指示是否启用数据加密。
+# 如果启用，访问数据库前必须提供密钥。
+# 默认：false
+data_encrypt=false
+
+# 数据服务 API 端口
+#  0 = 随机分配端口
+# -1 = 禁用接口（默认）
+port_x=
+
+# 网络绑定地址
+bind=0.0.0.0
+
+# 客户端连接空闲超时（秒）
+client_timeout=600
+
+# 外部远程监听器注册中心端点
+# 格式：IP:PORT
+# 默认：无（禁用）
+remote_listener=
+
+# 数据库打开模式。
+# 默认：READ_WRITE
+access_mode=READ_WRITE
+
+# 最大并发连接数
+# 默认：256
+max_connections=
+
+# 最大工作线程数
+# 默认：CPU 核心数
+max_workers=
+
+# 业务处理线程（在 Netty I/O 线程之外执行 SQL）
+# 默认：0 = 跟随 max_connections（每个会话一个业务线程）
+#  >0 = 显式指定线程数
+# 说明：共享同一个业务线程的连接之间仍会互相排队，
+# 被慢查询拖累的连接数约为 (连接数 / business_threads - 1)，
+# 因此该值应接近并发活跃会话数。
+business_threads=
+
+# 数据库引擎线程数
+# 默认：memory_limit (GB) / 10（最小为 1）
+# 建议：根据工作负载进行调整
+threads=
+
+# 用于计算内存限制的自动工作负载阈值
+# 取值范围：>0 且 <=1，默认：0.8
+# 当未设置 memory_limit 时用于计算默认的 memory_limit
+auto_workload_threshold=
+
+# 内存使用限制（支持 K/M/G 后缀）
+# 默认：系统总内存的 80%
+# -1 = 无限制（仅内存模式）
+memory_limit=
+
+# 数据库模板文件
+template=
+
+# 初始化脚本
+# 仅在首次启动时执行
+# 接受：.sql 文件或目录
+init_script=
+
+# 启动脚本
+# 每次启动时执行
+# 接受：.sql 文件或目录
+startup_script=
+
+# 系统区域设置
+# 默认：操作系统设置
+locale=
+
+# SQL 命令历史
+# ON = 启用跟踪
+# OFF = 禁用（默认）
+sql_history=OFF
+
+# 连接池中的最小空闲连接数
+connection_pool_minimum_idle=3
+
+# 连接池中的最大空闲连接数
+connection_pool_maximum_idle=10
+
+# 连接生命周期（毫秒）
+connection_pool_maximum_lifecycle_time=900000
+
+# 查询结果缓存配置（单位：字节）
+# - 仅缓存 API 请求结果（JDBC 查询不受影响）
+# - 默认：1GB（1073741824 字节）
+# - 设置为 0 可禁用缓存
+query_result_cache_size=
+
+# 数据服务历史
+#  ON = 启用跟踪
+# OFF = 禁用（默认）
+data_service_history=
+
+# 数据服务 schema 初始化文件/路径
+# - 接受：
+#   * JSON 文件路径（单个 schema）
+#   * 目录路径（加载所有 *.service 文件）
+# - Schema 文件应包含 JSON 格式的服务定义
+data_service_schema=
+
+# MCP 配置文件/路径
+# 指定用于动态加载工具/资源的 Model Context Protocol 配置文件。
+# - 接受：
+#   * JSON 文件路径（单个配置）
+#   * 目录路径（加载所有 *.mcp 文件）
+# 默认：空（无 MCP 配置）
+mcp_config=
+
+# MCP LLM 服务器配置
+# 格式：<service>:<ip>:<port>:<model>
+# 示例：openai:api.openai.com:443:gpt-4
+# 默认：空（无 LLM 服务器配置）
+mcp_llm_server=
+
+# 用于需要身份验证的服务的 MCP LLM API 密钥
+# OpenAI API 必需，其他服务可选
+# 示例：sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# 默认：空（无 API 密钥）
+mcp_llm_key=
+
+# Unix 域套接字文件路径
+# 用于 UDS（Unix Domain Socket）连接，替代 TCP
+# 默认：空（UDS 禁用，使用 TCP）
+# 注意：仅在 Linux/macOS 上支持。在 Windows 上会被忽略。
+socket=
+
+# Quack 远程服务地址
+# 格式：IP:PORT（例如 0.0.0.0:9494）
+# 默认：无（Quack 禁用）
+quack_addr=
+....
+
+==== 代理配置文件模板
+
+....
+# PID 文件位置
+# - 服务器运行期间独占锁定
+# - 如果文件已被其他进程锁定，启动会中止
+# - 未配置则不创建文件，也不加锁。
+pid=
+
+# 日志输出目标（逗号分隔）
+# "CONSOLE" 表示标准输出，文件路径表示写入文件日志
+log=CONSOLE,logs/slackerdb-proxy.log
+
+# 日志级别
+log_level=INFO
+
+# 以后台守护进程方式运行（true/false）
+daemon=
+
+# 主服务端口
+#  0 = 随机分配端口
+# -1 = 禁用网络接口
+# 默认：0（随机分配端口）
+port=0
+
+# 数据服务 API 端口
+#  0 = 随机分配端口
+# -1 = 禁用接口（默认）
+port_x=
+
+# 网络绑定地址
+bind=0.0.0.0
+
+# 客户端连接空闲超时（秒）
+client_timeout=600
+
+# 最大工作线程数
+# 默认：CPU 核心数
+max_workers=
+
+# 系统区域设置
+# 默认：操作系统设置
+locale=
+....
+
+注意：所有参数都是可选的。 +
+你可以只保留需要修改的参数。 +
+未配置的参数将使用默认值。
+
+==== JDBC 支持
+
+SlackerDB 提供完整的 PostgreSQL 线路协议兼容性，允许你使用标准 JDBC 驱动进行连接。这使你能够使用任何兼容 PostgreSQL 的 JDBC 客户端，包括原生 SlackerDB JDBC 驱动，以获得最佳集成体验。
+
+*PostgreSQL JDBC 驱动*
+你可以使用标准的 PostgreSQL JDBC 驱动（`org.postgresql.Driver`），连接 URL 格式为 `jdbc:postgresql://host:port/database`。当你希望复用现有的 PostgreSQL 工具链时，这很有用。
+
+*SlackerDB JDBC 驱动*
+为了更好的集成和更多特性，请使用原生 SlackerDB JDBC 驱动（`org.slackerdb.jdbc.Driver`）。连接 URL 格式为 `jdbc:slackerdb://host:port/database`。该驱动包含在发行包中，推荐用于新应用。
+
+*连接示例*
+
+....
+// PostgreSQL JDBC 驱动
+String url = "jdbc:postgresql://127.0.0.1:3175/db1";
+Connection conn = DriverManager.getConnection(url, "main", "");
+conn.setAutoCommit(false);
+
+// SlackerDB JDBC 驱动
+String url = "jdbc:slackerdb://127.0.0.1:3175/db1";
+Connection conn = DriverManager.getConnection(url, "main", "");
+conn.setAutoCommit(false);
+....
+
+*IDE 集成*
+
+你可以从数据库工具 DBeaver 连接到 SlackerDB。（其他工具我们尚未验证。） +
+*使用 PostgreSQL 驱动* +
+下载 PostgreSQL 服务器，然后像连接 pg 一样连接数据库。
+
+*使用自定义驱动* +
+由于原生 Postgres 客户端经常使用一些 DuckDB 并不具备的数据字典信息， +
+你可以使用以下设置创建一个通用 JDBC 驱动： +
+
+....
+Dbeaver:
+Database -> Driver Manager -> New
+   Database type: generic database.
+   Class name:    org.slackerdb.jdbc.Driver
+   URL template:  jdbc:slackerdb://{host}:{port}/[{database}]
+....
+
+
+
+*ODBC 与 Python*
+SlackerDB 还通过相同的 PostgreSQL 线路协议支持 ODBC 和 Python 连接。设置细节请参考相应客户端的文档。
+
+==== Unix 域套接字（UDS）支持
+
+SlackerDB 支持 Unix 域套接字（UDS）连接，用于本地进程间通信。与 TCP 回环连接相比，UDS 提供更低的延迟和更高的吞吐量，非常适合同一机器上的本地客户端-服务器通信。
+
+NOTE: UDS 仅在 Linux 和 macOS 上支持。在 Windows 上，`socket` 参数会被忽略，并打印一条日志消息。
+
+===== 服务器配置
+
+你可以通过在服务器配置文件中设置 `socket` 参数来启用 UDS：
+
+....
+# dbserver/conf/dbserver.conf
+socket=/tmp/.s.slackerdb.4309
+....
+
+或者使用 `--socket` 命令行参数：
+
+....
+java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar start --socket /tmp/.s.slackerdb.4309
+....
+
+配置了 `socket` 后，服务器会同时监听 TCP 端口和 UDS 套接字。客户端可以通过任一方式连接。
+
+===== 通过 UDS 进行 JDBC 连接
+
+要通过 UDS 使用 SlackerDB JDBC 驱动连接到 SlackerDB，请使用 `jdbc:slackerdb://` 协议，并设置 `socketFactory` 和 `socketFactoryArg` 连接参数：
+
+....
+// 使用 UDS 的 SlackerDB JDBC 驱动
+String url = "jdbc:slackerdb:///mem";
+Properties props = new Properties();
+props.setProperty("user", "");
+props.setProperty("password", "");
+props.setProperty("socketFactory",
+        "org.slackerdb.jdbc.UnixDomainSocketFactory");
+props.setProperty("socketFactoryArg", "/tmp/.s.slackerdb.4309");
+
+Connection conn = DriverManager.getConnection(url, props);
+conn.setAutoCommit(false);
+....
+
+`UnixDomainSocketFactory` 类包含在 SlackerDB JDBC 驱动中，它使用 Java 内置的 `UnixDomainSocketAddress` API（Java 16+）来建立 UDS 连接。
+
+要点：
+* `socketFactory` 参数必须设置为 `org.slackerdb.jdbc.UnixDomainSocketFactory`
+* `socketFactoryArg` 参数指定 UDS 套接字文件路径
+* 使用 `jdbc:slackerdb://` 协议（而不是 `jdbc:postgresql://`）
+* 使用 UDS 时 URL 中的主机部分会被忽略；请使用 `///database` 格式
+
+==== 基础服务
+以下 HTTP 端点提供基础的管理功能，例如备份、文件上传/下载、日志查看和状态监控。当数据服务 API 端口（port_x）启用时，这些端点可用。
+
+===== /backup (POST)
+
+执行数据库备份。备份文件保存在服务器工作目录的 `backup/` 子目录中，文件名为 `<数据库名>_<backupTag>.db`。`backupTag` 不能为空，也不能包含路径符号或点号（`<>:"|?*\/.`）。
+
+.请求体（JSON）：
+[source,json]
+----
+{
+  "backupTag": "mybackup"
+}
+----
+
+.响应示例（成功）：
+[source,json]
+----
+{
+  "retCode": 0,
+  "retMsg": "Successful. Backup file has placed to [C:\\Work\\slackerdb\\backup\\mydb_mybackup.db]."
+}
+----
+
+===== /download (GET)
+
+从服务器的 `./downloads/` 目录下载文件。
+
+.查询参数：
+* `filename`（必填）—— 相对 `./downloads/` 目录的文件路径。
+
+.示例：
+ GET /download?filename=logs/slackerdb.log
+
+该端点支持 Range 请求，用于分片下载。
+
+===== /upload (POST)
+
+将文件上传到服务器的 `./uploads/` 目录。
+
+.查询参数：
+* `filename`（必填）—— 目标文件名。只取其中的文件名部分（不含目录），其中的 `\ / : * ? " < > |` 等非法字符会被替换为 `_`。
+
+.表单数据：
+* `file`（必填）—— 要上传的文件。
+
+.使用 curl 的示例：
+[source,bash]
+----
+curl -X POST -F "file=@local.txt" "http://localhost:8080/upload?filename=uploads/remote.txt"
+----
+
+.响应：
+[source,json]
+----
+"uploaded: C:\\Work\\slackerdb\\uploads\\remote.txt"
+----
+
+===== /viewLog (GET)
+
+从服务器的 `./logs/` 目录读取日志文件的最后 N 行。
+
+.查询参数：
+* `filename`（必填）—— 相对 `./logs/` 目录的日志文件路径。
+* `lines`（可选）—— 要返回的行数（默认 100，最大 10000）。
+
+.示例：
+ GET /viewLog?filename=logs/slackerdb.log&lines=50
+
+.响应（字符串 JSON 数组）：
+[source,json]
+----
+[
+  "2025-12-04 10:00:00 INFO  Server started",
+  "2025-12-04 10:00:01 INFO  Listening on port 8080"
+]
+----
+
+===== /status (GET)
+
+返回全面的服务器状态信息，包括服务器详情、数据库指标、配置参数、使用统计、已安装扩展和活跃会话。
+
+.示例：
+ GET /status
+
+.响应（节选）：
+[source,json]
+----
+{
+  "server": {
+    "status": "RUNNING",
+    "version": "0.2.1",
+    "build": "2025-12-04 10:00:00.000 UTC",
+    "pid": 12345,
+    "now": "2025-12-04 15:20:00",
+    "bootTime": "2025-12-04 10:00:00",
+    "runTime": "5 hours, 20 minutes, 0 seconds"
+  },
+  "database": {
+    "version": "v1.0.0",
+    "size": "1.2 GB",
+    "memoryUsage": "256 MB",
+    "walSize": "0 B"
+  },
+  "parameters": {},
+  "usage": {},
+  "extensions": [],
+  "sessions": []
+}
+----
+
+==== PL/SQL 支持
+
+SlackerDB 内置了一个用于**匿名块**的 PL/SQL 引擎：声明变量、分支、循环、遍历游标、
+将数据取入变量并处理异常 —— 这一切都构建在 DuckDB 之上。
+
+===== 运行一个块
+
+将块包裹在 `DO $$ ... $$`（PostgreSQL 风格）中，然后像发送其他语句一样发送它：
+
+[source,sql]
+----
+DO $$
+DECLARE
+    CURSOR cur IS SELECT id, name FROM users WHERE active = true;
+    v_id   BIGINT;
+    v_name TEXT;
+    total  INTEGER := 0;
+BEGIN
+    OPEN cur;
+    LOOP
+        FETCH cur INTO v_id, v_name;
+        EXIT WHEN cur%NOTFOUND;
+
+        IF v_name IS NULL THEN
+            CONTINUE;
+        ELSIF length(v_name) > 20 THEN
+            UPDATE users SET name = substr(:v_name, 1, 20) WHERE id = :v_id;
+        ELSE
+            INSERT INTO audit(user_id, note) VALUES (:v_id, 'ok: ' || :v_name);
+        END IF;
+
+        total := total + 1;
+        EXIT WHEN total >= 1000;
+    END LOOP;
+    CLOSE cur;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        INSERT INTO audit(user_id, note) VALUES (NULL, 'no rows');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+$$;
+----
+
+支持的包裹形式：`DO $$ ... $$`、`DO $tag$ ... $tag$`、裸 `$$ ... $$`，以及未包裹的
+`DECLARE ... BEGIN ... END;` 脚本（后者需要客户端不拆分语句 ——
+参见下面的 *客户端注意事项*）。一个查询字符串可以包含多条语句；它们会按顺序执行。
+
+===== 典型示例
+
+下面四个例子都是**自包含**的：每个都自己建表，复制到任意客户端即可直接执行。
+注意两个约定：结构部分（`IF`、`WHILE`、`FETCH INTO`、赋值）里变量可以裸写；而**内嵌 SQL
+里的变量必须写成 `:name`**（绑定参数）。
+
+*变量、IF/ELSIF 分支与 WHILE 循环*：
+
+[source,sql]
+----
+DO $$
+DECLARE
+    i     INTEGER := 1;
+    total INTEGER := 0;
+BEGIN
+    CREATE OR REPLACE TABLE demo_numbers(n INTEGER, kind TEXT);
+
+    WHILE i <= 6 LOOP
+        IF i % 2 = 0 THEN
+            INSERT INTO demo_numbers VALUES (:i, 'even');
+        ELSIF i % 3 = 0 THEN
+            INSERT INTO demo_numbers VALUES (:i, 'multiple of 3');
+        ELSE
+            INSERT INTO demo_numbers VALUES (:i, 'other');
+        END IF;
+        total := total + i;
+        i := i + 1;
+    END LOOP;
+
+    INSERT INTO demo_numbers VALUES (:total, 'sum');
+END;
+$$;
+----
+
+结果：`demo_numbers` 里有 6 行分类（`other`/`even`/`multiple of 3`）以及 1 行汇总
+`(21, 'sum')`。
+
+*游标遍历 + `%NOTFOUND` + 异常处理*：
+
+[source,sql]
+----
+DO $$
+DECLARE
+    CURSOR cur IS SELECT id, name FROM demo_emp ORDER BY id;
+    v_id    INTEGER;
+    v_name  TEXT;
+    v_total INTEGER := 0;
+BEGIN
+    CREATE OR REPLACE TABLE demo_emp(id INTEGER, name TEXT);
+    INSERT INTO demo_emp VALUES (1, 'alice'), (2, 'bob'), (3, 'carol');
+    CREATE OR REPLACE TABLE demo_audit(id INTEGER, note TEXT);
+
+    OPEN cur;
+    LOOP
+        FETCH cur INTO v_id, v_name;
+        EXIT WHEN cur%NOTFOUND;
+
+        IF v_name IS NULL THEN
+            CONTINUE;
+        END IF;
+
+        INSERT INTO demo_audit VALUES (:v_id, 'ok: ' || :v_name);
+        v_total := v_total + 1;
+    END LOOP;
+    CLOSE cur;
+
+    INSERT INTO demo_audit VALUES (0, 'count = ' || CAST(:v_total AS TEXT));
+EXCEPTION
+    WHEN OTHERS THEN
+        INSERT INTO demo_audit VALUES (-1, 'failed');
+END;
+$$;
+----
+
+结果：`demo_audit` 得到 `1/2/3` 三条 `ok: <name>`，外加 `(0, 'count = 3')`。
+
+*`SELECT ... INTO` 与按错误码分支的异常处理*：
+
+[source,sql]
+----
+DO $$
+DECLARE
+    v_name TEXT;
+    v_cnt  INTEGER;
+BEGIN
+    CREATE OR REPLACE TABLE demo_dept(id INTEGER, name TEXT);
+    INSERT INTO demo_dept VALUES (1, 'sales'), (2, 'hr');
+
+    SELECT count(*) INTO v_cnt FROM demo_dept;
+
+    BEGIN
+        SELECT name INTO v_name FROM demo_dept WHERE id = 99;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            v_name := '(not found)';
+        WHEN TOO_MANY_ROWS THEN
+            v_name := '(too many rows)';
+    END;
+
+    CREATE OR REPLACE TABLE demo_result(cnt INTEGER, name TEXT);
+    INSERT INTO demo_result VALUES (:v_cnt, :v_name);
+END;
+$$;
+----
+
+结果：`demo_result` 得到 `(2, '(not found)')` —— 查不到行时 `SELECT INTO` 抛
+`NO_DATA_FOUND`，被内层块接住。
+
+*动态 SQL：`EXECUTE IMMEDIATE` + `USING` + `INTO`*：
+
+[source,sql]
+----
+DO $$
+DECLARE
+    v_table TEXT := 'demo_dyn';
+    v_id    INTEGER := 7;
+    v_cnt   INTEGER;
+BEGIN
+    EXECUTE IMMEDIATE 'CREATE OR REPLACE TABLE ' || v_table || '(id INTEGER)';
+    EXECUTE IMMEDIATE 'INSERT INTO ' || v_table || ' VALUES (?)' USING v_id;
+    EXECUTE IMMEDIATE 'SELECT count(*) FROM ' || v_table INTO v_cnt;
+    EXECUTE IMMEDIATE 'INSERT INTO ' || v_table || ' VALUES (?)' USING v_cnt * 10;
+END;
+$$;
+----
+
+结果：`demo_dyn` 得到 `7` 和 `10` 两行；`USING` 的值按占位符出现顺序绑定（`?`、`:1`、
+`:name` 都可以，也支持没有 `USING` 时的 `:name` 作用域取值）。
+
+===== 支持的内容
+
+[cols="22%,78%",options="header",]
+|===
+|范围 |支持情况
+
+|声明 |`DECLARE` 变量，类型包括 `INTEGER`/`SMALLINT`/`BIGINT`/`DECIMAL(p,s)`/`REAL`/`DOUBLE`/`VARCHAR(n)`/`CHAR(n)`/`TEXT`/`BOOLEAN`/`DATE`/`TIME`/`TIMESTAMP [WITH TIME ZONE]`/`INTERVAL`，支持 `NOT NULL`、默认值，以及 `CURSOR name [(params)] IS <query>`
+
+|赋值 |`x := expr;` 和 `LET x = expr;`
+
+|条件控制 |`IF / ELSIF / ELSE / END IF`（也支持 `ELSEIF`、`ENDIF`、`==`、`!=`、`&&`、`!`）
+
+|循环 |`LOOP`、`WHILE cond LOOP`、`FOR i IN [REVERSE] a..b LOOP`（包含边界）、`FOR i IN [v1, v2] LOOP`、`EXIT [WHEN cond]`、`CONTINUE [WHEN cond]`、带标签的循环
+
+|游标 |`OPEN` / `FETCH ... INTO` / `CLOSE`、`%FOUND`、`%NOTFOUND`、`%ROWCOUNT`、`%ISOPEN`
+
+|查询 |`SELECT ... INTO v1[, v2]`（必须恰好一行）、任意 DuckDB SQL 语句、SQL 文本中的 `:name` 绑定变量
+
+|动态 SQL |`EXECUTE IMMEDIATE <SQL 文本> [INTO 目标...] [USING 值...]`：SQL 文本在运行期求值（可用 `\|\|` 拼接），占位符支持 `?` / `:1` / `:name`，`USING` 按出现顺序绑定；无 `INTO` 时结果集被丢弃，有 `INTO` 时按单行语义（`NO_DATA_FOUND` / `TOO_MANY_ROWS` / `24000`），占位符与 `USING` 个数不符报 `07001`
+
+|异常 |`EXCEPTION WHEN NO_DATA_FOUND / TOO_MANY_ROWS / ZERO_DIVIDE / OTHERS / <custom> THEN`、`RAISE`、`RAISE name`、在处理器内部重新抛出、嵌套块（旧式 `EXCEPTION:` 等价于 `WHEN OTHERS`）
+
+|表达式 |算术运算、`\|\|` 连接、比较、`IS [NOT] NULL`、`LIKE`、`IN`、`BETWEEN`、`CASE`、带短路求值的逻辑 `AND`/`OR`/`NOT`，以及任意 DuckDB 函数
+|===
+
+===== 值得了解的语义
+
+* 变量初始值为 `NULL`（而不是 `0`）。
+* `FOR i IN 1..5` 迭代 **1,2,3,4,5**（两端边界都包含）；`FOR i IN 5..1` 迭代 0 次；
+  `FOR i IN REVERSE 5..1` 迭代 5,4,3,2,1。
+* `EXIT` 只跳出最内层循环；`EXIT label` 跳出指定名称的循环。
+* `SELECT ... INTO` 返回 0 行时抛出 `NO_DATA_FOUND`，多于一行时抛出 `TOO_MANY_ROWS` ——
+  它绝不会静默地选取某一行。
+* **字符串字面量**中的 `:name` 不会被替换（`'Hello :name'` 是字面文本；请使用 `||`）。
+* 表达式使用**绑定参数**求值 —— 值绝不会被拼接进 SQL 文本。
+* 除以零会抛出 `ZERO_DIVIDE`，因此 `WHEN ZERO_DIVIDE` 可以正常工作。
+* 块永远不会返回结果集；请把结果写入表。
+* 失控循环会被语句预算（200000 条语句）中止 → `54000`。
+
+===== 错误码
+
+[cols="22%,78%",options="header",]
+|===
+|SQLSTATE |含义
+
+|`42601` |语法或语义错误（未知变量/游标、重复声明、不支持的类型）—— 会附带 `行:列` 报告
+|`P0002` / `P0003` |`NO_DATA_FOUND` / `TOO_MANY_ROWS`
+|`22012` |`ZERO_DIVIDE`
+|`22001` / `22003` / `22P02` / `22007` / `42804` |字符串过长 / 数值超出范围 / 数值文本非法 / 日期时间非法 / 数据类型不匹配
+|`24000` |游标状态无效；`INTO` 目标数量不匹配
+|`P0001` |用户 `RAISE`
+|`57014` |被 `CancelRequest` / `KILL SESSION` 取消（长时间运行的 PL/SQL 循环可被中断）
+|`54000` |超出语句预算（可能是无限循环）
+|===
+
+===== 客户端注意事项
+
+PL/SQL 块必须**不被拆分**地到达服务器。SlackerDB 自带的 JDBC 驱动在扩展协议中
+会按顶层分号拆分语句；它能识别美元引用，因此 `DO $$ ... $$` 会作为一条语句发送，
+而未包裹的 `DECLARE ... END;` 块则不会。
+
+[cols=",",options="header",]
+|===
+|块形式 |扩展协议（默认） |简单查询协议（`preferQueryMode=simple`、psql）
+
+|`DO $$ ... $$` |正常 |正常
+|裸 `$$ ... $$` |正常 |正常
+|未包裹的 `DECLARE ... END;` |会被驱动拆分 —— 请改用 `DO $$` |正常
+|===
+
+===== 类型与隐式转换
+
+变量在声明时确定类型。每次赋值都会按以下规则把值转换为声明的类型：
+
+[cols="30%,70%",options="header",]
+|===
+|源类型 → 目标类型 |结果
+
+|NULL → 任意类型 |正常（保持为 NULL）
+|数值类型之间 |正常；拓宽是无损的，收窄按四舍五入，**溢出会抛出 `22003`**
+|字符串 → 数值/日期/时间/时间戳 |当文本能按该字面量解析时正常，否则为 `22P02`（日期时间则为 `22007`）
+|数值/日期/时间/时间戳 → 字符串 |正常（标准文本形式）
+|字符串 → `VARCHAR(n)`/`CHAR(n)` 且长度超过 `n` |**`22001` —— 绝不静默截断**
+|任何涉及 `BOOLEAN` 的情况（NULL 除外） |`42804` —— 请使用显式函数或 `CAST`
+|其他任何情况 |`42804`
+|===
+
+标识符不区分大小写，默认折叠为小写，除非使用引号（`"Mixed"` 会保留大小写）。
+未初始化的变量为 `NULL`；`NOT NULL` 声明会拒绝 NULL 赋值（`22004`）。
+
+===== 循环边界
+
+[cols="45%,55%",options="header",]
+|===
+|形式 |迭代次数
+
+|`FOR i IN 1..1` |1（i = 1）
+|`FOR i IN 1..5` |5 —— **两端边界都包含**
+|`FOR i IN 1..0`、`FOR i IN 5..1` |0
+|`FOR i IN REVERSE 5..1` |5 → 5,4,3,2,1
+|`FOR i IN REVERSE 1..5` |0
+|`FOR i IN -3..-1` |3 → -3,-2,-1
+|`FOR i IN [v1, v2, v3]` |列表每个元素迭代一次（兼容形式）
+|`WHILE NULL LOOP` |0（NULL 视为 false）
+|永不退出的 `LOOP` |被语句预算中止 → `54000`
+|===
+
+循环变量是隐式的、只读的，并且在循环外部不可见。`EXIT` / `CONTINUE`
+只影响最内层循环；`EXIT name` 跳出带有该标签的循环：
+
+[source,sql]
+----
+<<outer_loop>>
+LOOP
+    ...
+    EXIT outer_loop WHEN done = 1;
+END LOOP outer_loop;
+----
+
+===== 表达式语义
+
+* 优先级由高到低：`**` → 一元 `-` / `NOT` → `* / %` → `+ -` → `||` → 比较
+  （`= <> < <= > >=`、`IS [NOT] NULL`、`LIKE`、`IN`、`BETWEEN`）→ `AND` → `OR`。
+* 条件中的 `NULL` 视为 false；`AND`/`OR` 会短路求值，因此 `false AND (1/0 = 1)` 是合法的。
+* `||` 是**字符串连接**（SQL 语义）—— 逻辑或请使用 `OR`。
+* 每个变量值都作为绑定参数传递；值绝不会被拼接进 SQL 文本。
+* 函数调用会委托给 DuckDB，因此任意 DuckDB 标量函数都可用（接受 `schema.func`
+  这类限定名）。
+
+保留自早期版本的兼容别名：
+
+[cols="30%,70%",options="header",]
+|===
+|别名 |等价形式
+
+|`LET x = e` |`x := e`
+|`PASS` |`NULL;`
+|`BREAK` |`EXIT`
+|`==` `!=` `&&` `!` |`=` `<>` `AND` `NOT`
+|`ELSEIF` / `ENDIF` |`ELSIF` / `END IF`
+|`EXCEPTION:` + 语句 |`EXCEPTION WHEN OTHERS THEN`
+|`FOR :i IN 1 TO 5` |`FOR i IN 1..5`
+|`FOR i IN [v1, v2]` |列表迭代
+|`%notfound`、`%found`、`%rowcount`、`%isopen` |不区分大小写的游标属性
+|===
+
+===== 游标状态机
+
+|===
+|状态 \ 操作 |OPEN |FETCH |CLOSE |`%ISOPEN` |`%FOUND` |`%NOTFOUND` |`%ROWCOUNT`
+
+|已关闭（已声明，未打开） |正常 |`24000` |`24000` |false |`24000` |`24000` |`24000`
+|已打开，有可用行 |`24000` |正常，计数 +1 |正常 |true |true |false |n
+|已打开，无行 |`24000` |正常 → EOF，notFound=true |正常 |true |false |true |0
+|已打开，到达 EOF 之后 |`24000` |正常（保持 EOF，变量保留其值） |正常 |true |false |true |n
+|取值后已关闭 |正常 |`24000` |`24000` |false |`24000` |`24000` |`24000`
+|===
+
+在块中打开的游标会在该块结束时自动关闭（包括异常路径）；
+允许在 `CLOSE` 之后再次 `OPEN`，这会重置 `%ROWCOUNT`。
+
+===== 语句路由
+
+* 包裹形式：`DO $$ … $$`、`DO $tag$ … $tag$`、裸 `$$ … $$`，或未包裹的 `DECLARE … END;` 脚本。
+* 美元引用（dollar quoting）遵循 PostgreSQL 规则：内部没有转义，匹配的标签结束字符串 ——
+  当主体本身需要包含 `$$` 时，请使用其他标签（`$body$ … $body$`）。
+* 在简单查询协议中，一个查询字符串可以包含由分号分隔的多条语句；
+  它们会按顺序执行，每条语句返回自己的 `CommandComplete`（以及结果集）。
+* PL/SQL 块本身不返回行：`CommandComplete` 报告 `DO`。请使用 `DESCRIBE` 可见的
+  语句（普通查询）或将结果写入表来获得输出。
+* 在扩展协议中，PL/SQL 门户被描述为 `NoData`，并且不绑定任何参数。
+
+===== 限制与已知缺口
+
+存储过程、函数、触发器、包、记录/`%ROWTYPE`、集合、游标 `FOR` 循环和 `GOTO` **均不受**支持。
+
+* 除以零只在除数可以在本地解析（字面量、变量、游标
+  属性）时被检测到；由查询计算出的除数会保留后端行为（`Infinity`）。
+* `TIMESTAMP WITH TIME ZONE` 保留后端表示形式；值不会被规范化为 UTC。
+* 失败的块不会自行回滚 —— 请在 `EXCEPTION` 处理器中或从客户端发出 `ROLLBACK`，
+  这与 PostgreSQL 的 `DO` 完全一致。
+
+==== 数据服务
+
+* 数据服务依赖 port_x 工作，请确保你已在
+服务器配置中或通过命令参数启用它。需要特别注意的是，
+我们并未考虑数据安全性。这意味着数据服务必须在
+可信环境中工作。
+
+===== 用户登录
+
+用户登录（注意：这是可选的）。登录成功后服务器返回一个令牌，之后需要携带它才能使用上下文功能。 +
+令牌是一串不透明的随机字符串（UUID 的 Base64URL 编码），**不是 JWT**，服务器只把它当作内存中的会话 ID 使用 +
+（也就是说，令牌仅用于关联该会话的上下文变量；没有它，`/api/setContext`、`/api/removeContext` 等接口会直接报错）。 +
+如果你的程序不使用上下文功能，可以完全忽略登录这一步。 +
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/api/login+`
+|===
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "token": "yJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+    "retMsg": "Login successful."
+  }
+....
+
+===== 用户登出
+
+用户登出
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/api/logout+`
+|===
+
+请求头：
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|Authorization |NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1
+|===
+
+这里的令牌信息来自之前调用 /login 时获得的内容
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Successful."
+  }
+....
+
+===== 设置上下文
+
+设置上下文
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/api/setContext+`
+|===
+
+请求头：
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|Authorization |NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1
+|===
+
+这里的令牌信息来自之前调用 /login 时获得的内容
+
+请求体：
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|key1 |value1
+|key2 |value2
+|… |…
+|keyx |valuex
+|===
+
+你可以一次设置一个或多个键值对，也可以通过多次
+调用 setContext 来设置多个键值对。
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Successful."
+  }
+....
+
+===== removeContext
+
+移除上下文
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/api/removeContext+`
+|===
+
+请求头：
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|Authorization |NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1
+|===
+
+这里的令牌信息来自之前调用 /login 时获得的内容
+
+请求体：
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|removedKeyList |[key1,key2, ….]
+|===
+
+你可以一次移除一个或多个键值对，也可以通过多次
+调用 removeContext 来移除多个键值对。
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Successful."
+  }
+....
+
+===== registerService
+
+注册一个服务
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/api/registerService+`
+|===
+
+请求体：
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|属性 |值
+|serviceName |服务名称
+
+|serviceVersion |服务版本
+
+|serviceType |服务类型，GET/POST
+
+|searchPath |SQL 默认搜索路径，可选参数
+
+|sql |SQL 语句，可以用 `${var1}` 这样的占位符引用上下文变量或请求参数
+
+|description |描述（可选，缺省为 `NO DESCRIPTION.`）
+
+|category |服务分类（可选，用于按分类分组保存；不能包含 `\ / : * ? " < > |` 等字符）
+
+|snapshotLimit |查询结果缓存时长（可选），例如 `3 hours` / `30 minutes` / `45 seconds`
+
+|parameters |参数默认值列表（可选）：JSON **字符串**形式的数组，元素形如 `{"name":"var1","defaultValue":"..."}`；当查询 API 未提供该参数时使用这里的默认值。
+|===
+
+snapshotLimit 格式：3 hours / 30 minutes / 45 seconds
+
+请求示例：
+
+....
+  {
+    "serviceName": "queryTest1",
+    "serviceVersion": "1.0",
+    "serviceType": "GET",
+    "sql": "SELECT 1"
+  }
+....
+
+请求示例（带参数默认值）：
+
+....
+  {
+    "serviceName": "queryTest2",
+    "serviceVersion": "1.0",
+    "serviceType": "GET",
+    "sql": "SELECT * FROM t WHERE id = ${id}",
+    "parameters": "[{\"name\":\"id\",\"defaultValue\":\"1\"}]"
+  }
+....
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Successful."
+  }
+....
+
+===== unRegisterService
+
+注销一个服务
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/api/unRegisterService+`
+|===
+
+请求体：
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|属性 |值
+|serviceName |服务名称
+|serviceVersion |服务版本
+|serviceType |服务类型，GET/POST
+|===
+
+请求示例：
+
+....
+  {
+    "serviceName": "queryTest1",
+    "serviceVersion": "1.0",
+    "serviceType": "GET"
+  }
+....
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Successful."
+  }
+....
+
+===== listRegisteredService
+
+列出所有服务
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |GET
+|路径 |`+/api/listRegisteredService+`
+|===
+
+响应示例：JSON 数组（**不含** `retCode` / `retMsg` 包装），每个元素是一个已注册服务：
+
+....
+成功响应（200）
+
+  [
+    {
+      "serviceName": "Query1",
+      "serviceVersion": "1.0",
+      "category": null,
+      "searchPath": "",
+      "sql": "SELECT 1",
+      "description": "NO DESCRIPTION.",
+      "serviceType": "GET",
+      "snapshotLimit": "",
+      "parameter": {}
+    }
+  ]
+....
+
+===== /api/\{apiVersion}/\{apiName}
+
+API 查询
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST 或 GET
+|路径 |`+/api/{apiVersion}/{apiName}+`
+|===
+
+请求头：
+
+[width="100%",cols="18%,82%",options="header",]
+|===
+|属性 |值
+|Authorization |NzJjYjE3NmQtN2Y2ZC00OWMyLWIwODAtYTU1MDE3YzVmZDU1
+
+|snapshotLimit |可选。用于覆盖服务定义。0 表示
+不缓存结果
+|===
+
+这里的令牌信息来自调用 /login 时获得的内容。 +
+令牌是可选的，如果你的 SQL 语句中使用了上下文，
+则必须设置它。 +
+snapshotLimit 格式：3 hours / 30 minutes / 45 seconds
+
+GET 请求示例：
+
+....
+  GET /api/1.0/queryApi?context1=xxx&context2=yyy
+....
+
+POST 请求示例：
+
+....
+  POST /api/1.0/queryApi
+
+  {
+    "context1": "xxx",
+    "context2": "yyy",
+  }
+....
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Successful",
+    "description": "test 1",
+    "cached": false,
+    "timestamp": "2025-12-04 15:20:00",
+    "data":
+      {
+        "columnNames":["col1","col2","col3"],
+        "columnTypes":["INTEGER","INTEGER","VARCHAR"],
+        "dataset":[[1,2,"中国"]],
+        "timestamp": 1777770000000,
+        "affectedRows": 1
+      }
+  }
+....
+
+==== MCP 工具
+
+MCP（Model Context Protocol，模型上下文协议）工具提供了通过 MCP 协议注册、管理和调用工具的方式。这些工具可供 AI 助手和其他支持 MCP 的客户端使用，以执行特定操作或查询。
+
+===== registerMCPTool
+
+注册一个 MCP 工具。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/registerMCPTool+`
+|===
+
+请求体：
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|属性 |值
+|name |工具名称（必填）
+
+|version |工具版本（必填）
+
+|description |工具描述（必填）
+
+|category |工具分类（可选）
+
+|capabilities |能力列表（可选数组）
+
+|use_cases |使用场景列表（可选数组）
+
+|parameters |参数列表（可选的对象数组，包含 name、type、required、description）
+
+|examples |示例列表（可选的对象数组，包含 user_query、parameters）
+|===
+
+请求示例：
+
+....
+  {
+    "name": "queryDatabase",
+    "version": "1.0",
+    "description": "Execute SQL queries on the database",
+    "category": "database",
+    "capabilities": ["query", "execute"],
+    "use_cases": ["data analysis", "report generation"],
+    "parameters": [
+      {
+        "name": "sql",
+        "type": "string",
+        "required": true,
+        "description": "SQL query to execute"
+      }
+    ],
+    "examples": [
+      {
+        "user_query": "Get all customers from the database",
+        "parameters": {"sql": "SELECT * FROM customers"}
+      }
+    ]
+  }
+....
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Tool registered successfully"
+  }
+....
+
+===== unregisterMCPTool
+
+注销一个 MCP 工具。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/unregisterMCPTool+`
+|===
+
+请求体：
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|属性 |值
+|name |工具名称（必填）
+|===
+
+请求示例：
+
+....
+  {
+    "name": "queryDatabase"
+  }
+....
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Tool unregistered successfully"
+  }
+....
+
+===== loadMCPTool
+
+从 JSON 加载 MCP 工具定义。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/loadMCPTool+`
+|===
+
+请求体：工具定义的 JSON 数组或单个工具定义对象。
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Tools loaded successfully"
+  }
+....
+
+===== saveMCPTool
+
+将 MCP 工具定义保存到配置文件。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/saveMCPTool+`
+|===
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Tools saved successfully",
+    "savedPath": "/path/to/config/file"
+  }
+....
+
+===== dumpMCPTool
+
+将 MCP 工具定义导出为 JSON 以供下载。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/dumpMCPTool+`
+|===
+
+响应：带 Content-Disposition 头的 JSON 文件下载。
+
+==== MCP 资源
+
+MCP（Model Context Protocol，模型上下文协议）资源提供了通过 MCP 协议注册、管理和访问资源的方式。这些资源可供 AI 助手和其他支持 MCP 的客户端使用，以访问数据、文件或其他资源。
+
+===== registerMCPResource
+
+注册一个 MCP 资源。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/registerMCPResource+`
+|===
+
+请求体：
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|属性 |值
+|name |资源名称（必填）
+
+|type |资源类型（必填，例如 "file"、"database"、"api"）
+
+|description |资源描述（必填）
+
+|uri |资源 URI 或路径（必填）
+
+|metadata |附加元数据（可选对象）
+
+|access_method |访问方式（可选，例如 "read"、"write"、"both"）
+|===
+
+请求示例：
+
+....
+  {
+    "name": "customerData",
+    "type": "database",
+    "description": "Customer database table",
+    "uri": "duckdb://localhost/customers",
+    "metadata": {
+      "schema": "public",
+      "table": "customers"
+    },
+    "access_method": "read"
+  }
+....
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Resource registered successfully"
+  }
+....
+
+===== unregisterMCPResource
+
+注销一个 MCP 资源。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/unregisterMCPResource+`
+|===
+
+请求体：
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|属性 |值
+|name |资源名称（必填）
+|===
+
+请求示例：
+
+....
+  {
+    "name": "customerData"
+  }
+....
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Resource unregistered successfully"
+  }
+....
+
+===== loadMCPResource
+
+从 JSON 加载 MCP 资源定义。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/loadMCPResource+`
+|===
+
+请求体：资源定义的 JSON 数组或单个资源定义对象。
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Resources loaded successfully"
+  }
+....
+
+===== saveMCPResource
+
+将 MCP 资源定义保存到配置文件。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/saveMCPSource+`
+|===
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Resources saved successfully",
+    "savedPath": "/path/to/config/file"
+  }
+....
+
+===== dumpMCPResource
+
+将 MCP 资源定义导出为 JSON 以供下载。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/dumpMCPSource+`
+|===
+
+响应：带 Content-Disposition 头的 JSON 文件下载。
+
+==== MCP 服务
+
+MCP（Model Context Protocol，模型上下文协议）服务提供了通过 MCP 协议注册、管理和调用服务的方式。这些服务可供 AI 助手和其他支持 MCP 的客户端使用。
+
+===== registerMCPService
+
+注册一个 MCP 服务。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/registerMCPService+`
+|===
+
+请求体：
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|属性 |值
+|name |服务名称（必填）
+
+|apiName |API 名称（必填）
+
+|version |服务版本（必填）
+
+|method |服务方法，GET/POST（必填）
+
+|description |服务描述（必填）
+
+|category |服务分类（可选）
+
+|capabilities |能力列表（可选数组）
+
+|use_cases |使用场景列表（可选数组）
+
+|parameters |参数列表（可选的对象数组，包含 name、type、required、description）
+
+|examples |示例列表（可选的对象数组，包含 user_query、parameters）
+|===
+
+请求示例：
+
+....
+  {
+    "name": "queryCustomer",
+    "apiName": "queryCustomer",
+    "version": "1.0",
+    "method": "GET",
+    "description": "Query customer information",
+    "category": "database",
+    "capabilities": ["query", "filter"],
+    "use_cases": ["customer lookup", "data analysis"],
+    "parameters": [
+      {
+        "name": "customer_id",
+        "type": "integer",
+        "required": true,
+        "description": "Customer ID to query"
+      }
+    ],
+    "examples": [
+      {
+        "user_query": "Get customer with ID 123",
+        "parameters": {"customer_id": 123}
+      }
+    ]
+  }
+....
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Service registered successfully"
+  }
+....
+
+===== unregisterMCPService
+
+注销一个 MCP 服务。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/unregisterMCPService+`
+|===
+
+请求体：
+
+[width="100%",cols="20%,80%",options="header",]
+|===
+|属性 |值
+|name |服务名称（必填）
+|===
+
+请求示例：
+
+....
+  {
+    "name": "queryCustomer"
+  }
+....
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Service unregistered successfully"
+  }
+....
+
+===== loadMCPService
+
+从 JSON 加载 MCP 服务定义。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/loadMCPService+`
+|===
+
+请求体：服务定义的 JSON 数组或单个服务定义对象。
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Services loaded successfully"
+  }
+....
+
+===== saveMCPService
+
+将 MCP 服务定义保存到配置文件。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/saveMCPService+`
+|===
+
+响应示例：
+
+....
+成功响应（200）
+
+  {
+    "retCode": 0,
+    "retMsg": "Services saved successfully",
+    "savedPath": "/path/to/config/file"
+  }
+....
+
+===== dumpMCPService
+
+将 MCP 服务定义导出为 JSON 以供下载。
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |HTTP
+|方法 |POST
+|路径 |`+/mcp/dumpMCPService+`
+|===
+
+响应：带 Content-Disposition 头的 JSON 文件下载。
+
+==== SQL REPL 服务器
+
+SQL REPL 服务器提供了一个异步 WebSocket 接口，用于执行 SQL 查询并分页获取结果。
+它适用于希望避免阻塞客户端的长时间运行查询，并且契合 MCP（Model Context Protocol）使用 WebSocket 进行双向通信的理念。
+
+要使用它，请确保在服务器配置中启用了数据服务 API 端口（port_x）。
+
+===== WebSocket 端点
+
+连接到 WebSocket 端点：
+
+[cols=",",options="header",]
+|===
+|属性 |值
+|协议 |WebSocket（ws:// 或 wss://）
+|路径 |`+/sql/ws+`
+|===
+
+连接后，你可以发送具有以下通用格式的 JSON 消息：
+
+....
+{
+  "id": "unique-request-id",   // 用于匹配响应，会被原样回显
+  "type": "message-type",      // 取值之一：start、exec、fetch、cancel、close
+  "data": { ... }              // 该消息类型特有的负载，缺省为 {}
+}
+....
+
+服务器返回的消息同样由 `id`、`type`（与请求相同）和 `data` 三部分组成；
+**没有** `retCode` / `retMsg` 字段，成败通过 `data.status` 判断。
+参数校验失败或会话无效时，服务器返回一个不含 `id`、`type` 的错误对象：
+
+....
+{ "error": "Field 'sessionId' must be a string" }
+....
+
+可能出现的校验错误（都以这种不含 `id`/`type` 的形式返回）：`Field 'id' must be a string`、
+`Field 'type' must be a string`、`Field 'data' must be an object`、`Unknown type: <type>`、
+`Field 'sessionId' must be a string`、`Field 'sql' must be a string`、
+`Field 'fetchSize' must be a number`、`Field 'maxRows' must be a number`、`Invalid session`、
+`Invalid taskId`、`Another SQL is already running`。
+
+===== 会话管理
+
+会话通过发送 `start` 消息创建。服务器会返回一个 `sessionId`，后续属于同一会话的消息都必须包含它。
+
+启动消息：
+
+....
+{
+  "id": "1",
+  "type": "start",
+  "data": {}
+}
+....
+
+响应：
+
+....
+{
+  "id": "1",
+  "type": "start",
+  "data": { "sessionId": "session-123" }
+}
+....
+
+该会话的所有后续消息（`exec`、`fetch`、`cancel`、`close`）都必须在其 `data` 字段中包含 `"sessionId": "session-123"`。
+
+一个会话持有自己的后端连接，同一时刻**只能有一个任务在运行**；任务还没结束时再次发送 `exec`，
+服务器返回 `{"error": "Another SQL is already running"}`。
+
+===== 执行 SQL（异步）
+
+提交一条 SQL 语句以异步执行。返回一个任务 ID，之后可用它来获取结果。
+
+消息：
+
+....
+{
+  "id": "2",
+  "type": "exec",
+  "data": {
+    "sessionId": "session-123",
+    "sql": "SELECT * FROM large_table",
+    "fetchSize": 100   // 可选，默认 100；仅用于设置底层 Statement 的 fetchSize
+  }
+}
+....
+
+响应（任务提交后立即返回，此时任务仍在运行）：
+
+....
+{
+  "id": "2",
+  "type": "exec",
+  "data": {
+    "taskId": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "running"
+  }
+}
+....
+
+如果 SQL 执行失败，任务状态会变成 `error`，由 `fetch` 以 `data.status = "error"` 并附带
+`data.error` 返回错误信息（提交 `exec` 的响应本身只表示任务已受理）。
+
+===== 获取结果
+
+获取指定任务 ID 的一页结果。每次最多返回 `maxRows` 行，并指示是否还有更多行。
+
+消息：
+
+....
+{
+  "id": "3",
+  "type": "fetch",
+  "data": {
+    "sessionId": "session-123",
+    "taskId": "550e8400-e29b-41d4-a716-446655440000",
+    "maxRows": 100   // 可选，默认 100
+  }
+}
+....
+
+响应（`data` 中的 `status` 取值为 `running` / `completed` / `error` / `idle`）：
+
+....
+{
+  "id": "3",
+  "type": "fetch",
+  "data": {
+    "status": "completed",
+    "columns": ["id", "name"],
+    "rows": [
+      {"id": 1, "name": "Alice"},
+      {"id": 2, "name": "Bob"}
+    ],
+    "hasMore": false,     // 还有更多行时为 true
+    "fetched": 2          // 该任务累计已读取的行数
+  }
+}
+....
+
+`data.status` 的取值与对应负载：
+
+* `running` —— 任务仍在执行，负载**只有** `{"status": "running"}`（此时还没有 `rows` / `hasMore`）；
+* `error` —— 执行失败，负载为 `{"status": "error", "error": "<错误信息>"}`；
+* `completed` + 有结果集 —— 负载含 `columns`、`rows`、`hasMore`、`fetched`；`hasMore` 为 true 时继续 `fetch` 下一页；
+* `completed` + 无结果集（INSERT/UPDATE/DDL 等）—— 负载为 `{"status": "completed", "updateCount": <影响行数>}`，不含 `rows`；
+* `idle` —— 任务已结束且结果集/语句已关闭（行已取完），此时再 `fetch` 会得到这个状态。
+
+你可以持续发送多条 `fetch` 消息，直到 `hasMore` 变为 false。每次调用返回下一页行。
+
+===== 取消任务
+
+取消当前会话正在执行的任务。该消息只读取 `sessionId`（`taskId` 会被忽略）：
+服务器会中断正在执行的线程并调用 `Statement.cancel()`。
+
+消息：
+
+....
+{
+  "id": "4",
+  "type": "cancel",
+  "data": {
+    "sessionId": "session-123"
+  }
+}
+....
+
+响应：
+
+....
+{
+  "id": "4",
+  "type": "cancel",
+  "data": {
+    "status": "canceled",   // 没有可取消的任务时为 "no-running-statement"
+    "detail": "statement canceled"
+  }
+}
+....
+
+`status` 为 `canceled` 时，`detail` 是 `"future canceled"`（中断了执行线程）或
+`"statement canceled"`（命中并取消了正在执行的语句）；没有可取消的任务时 `status` 为
+`no-running-statement`、`detail` 为空字符串。取消成功后任务会被重置，之后再用旧的 `taskId`
+`fetch` 会得到 `Invalid taskId` 错误。
+
+===== 关闭会话
+
+关闭会话并释放所有相关资源（包括任何待处理的任务）。
+
+消息：
+
+....
+{
+  "id": "5",
+  "type": "close",
+  "data": {
+    "sessionId": "session-123"
+  }
+}
+....
+
+响应：
+
+....
+{
+  "id": "5",
+  "type": "close",
+  "data": {
+    "status": "closed"
+  }
+}
+....
+
+关闭后，该会话 ID 不再有效。
+
+===== 工作流示例（使用 JavaScript/Node.js）
+
+1. 连接到 WebSocket 端点：
++
+[source,javascript]
+----
+const WebSocket = require('ws');
+const ws = new WebSocket('ws://localhost:8080/sql/ws');
+----
+
+2. 创建一个会话：
++
+[source,javascript]
+----
+ws.send(JSON.stringify({
+  id: "1",
+  type: "start",
+  data: {}
+}));
+----
+
+3. 执行一个长查询：
++
+[source,javascript]
+----
+ws.send(JSON.stringify({
+  id: "2",
+  type: "exec",
+  data: {
+    sessionId: "session-123",
+    sql: "SELECT * FROM huge_table",
+    fetchSize: 500
+  }
+}));
+----
+
+4. 获取第一页：
++
+[source,javascript]
+----
+ws.send(JSON.stringify({
+  id: "3",
+  type: "fetch",
+  data: {
+    sessionId: "session-123",
+    taskId: "abc123",
+    maxRows: 100
+  }
+}));
+----
+
+5. 继续获取后续页，直到 `hasMore` 变为 false。
+
+6. 如有需要，可选择取消（`cancel` 只认 `sessionId`，取消该会话当前的任务）：
++
+[source,javascript]
+----
+ws.send(JSON.stringify({
+  id: "4",
+  type: "cancel",
+  data: {
+    sessionId: "session-123"
+  }
+}));
+----
+
+7. 完成后关闭会话：
++
+[source,javascript]
+----
+ws.send(JSON.stringify({
+  id: "5",
+  type: "close",
+  data: {
+    sessionId: "session-123"
+  }
+}));
+----
+
+*注意：* 上述示例假定你以异步方式处理收到的消息。在真实客户端中，你应按 `id` 匹配响应。
+
+==== 基于 Web 的 SQL 控制台
+
+image::imgs/console.png[Console]
+
+*注意：Web 控制台**并非生产就绪的功能**。它是一个演示工具，旨在帮助你以可视化、可交互的方式理解和验证后端服务（数据服务、MCP 工具和 MCP 资源）。*
+
+SlackerDB 包含一个基于 Web 的 SQL 控制台，提供交互式界面，可直接从浏览器执行 SQL 查询、查看结果并执行管理任务。除了核心 SQL REPL 之外，控制台还提供用于管理 **数据服务**、**MCP 工具** 和 **MCP 资源** 的专用面板 —— 这三者是 SlackerDB 生态中关键的扩展机制。
+
+*访问：* 在启用数据服务 API 端口（`port_x`）的情况下启动服务器后，在现代浏览器中打开 `http://<server>:<port_x>/console.html`。
+
+*功能：*
+
+* **交互式 SQL Shell：** 在提示符处输入 SQL 语句并按回车执行。可使用上/下方向键访问命令历史。
+* **WebSocket 连接：** 控制台会自动通过 WebSocket（`/sql/ws`）连接到 SQL REPL 服务器并管理会话。
+* **表格化结果：** 查询结果以格式化表格显示，包含列名和类型。
+* **侧边栏工具面板：** 提供以下功能的快速访问：
+** *服务器状态* —— 展示服务器指标、数据库参数、使用统计、扩展和活跃会话的详细弹窗。
+** *备份数据库* —— 创建备份并可选下载生成文件的弹窗。
+** *日志查看器* —— 实时查看服务器日志的弹窗。
+* **连接指示器：** 以可视化方式显示控制台是否已连接到服务器。
+* **异步执行：** 长时间运行的查询会异步执行；结果可以分页获取。
+* **数据服务管理面板：** 注册、列出、加载、保存和注销数据服务。你还可以将服务定义下载为 JSON 文件（下载时会通过浏览器的文件选择对话框提示你选择保存位置）。
+* **MCP 工具管理面板：** 列出、加载、保存和注销 MCP（Model Context Protocol）工具。将工具定义下载为 JSON（带文件选择对话框）。
+* **MCP 资源管理面板：** 列出、加载、保存和注销 MCP 资源。将资源定义下载为 JSON（带文件选择对话框）。
+
+*用法：*
+
+1. 确保服务器在配置了 `port_x` 的情况下运行（例如 `port_x=8080`）。
+2. 访问 `http://localhost:8080/console.html`。
+3. 控制台会尝试自动连接。连接成功后，你就可以开始输入 SQL。
+4. 使用左侧边栏按钮在 **控制台**、**数据服务**、**MCP 工具** 和 **MCP 资源** 视图之间切换。
+5. 在每个管理面板中，你可以：
+   * 刷新已注册条目的列表。
+   * 通过复选框选择条目并执行批量操作（注销、下载）。
+   * 从 JSON 文件加载定义。
+   * 将定义保存到服务器的配置目录。
+   * 将定义下载为 JSON 文件 —— 浏览器会弹出文件保存对话框，让你选择位置和文件名。
+6. 使用右侧边栏按钮打开状态、备份或日志弹窗。
+
+控制台无需额外安装。它面向可信环境中的开发、测试和管理用途，主要用于演示和试用后端的数据服务、MCP 工具和 MCP 资源子系统。
+
+==== 在你的代码中嵌入数据库服务器
+
+....
+  // 创建配置，并按需修改
+  ServerConfiguration serverConfiguration = new ServerConfiguration();
+  serverConfiguration.setPort(4309);
+  serverConfiguration.setData("data1");
+
+  // 初始化数据库
+  DBInstance dbInstance = new DBInstance(serverConfiguration);
+
+  // 启动数据库
+  dbInstance.start();
+
+  // 关闭数据库
+  dbInstance.stop();
+
+  // 目前支持同时启动多个实例。
+  // 但每个实例必须有自己的端口和实例名。
+....
+
+==== 在你的代码中嵌入数据库代理
+
+....
+    ServerConfiguration proxyConfiguration = new ServerConfiguration();
+    proxyConfiguration.setPort(dbPort);
+    ProxyInstance proxyInstance = new ProxyInstance(proxyConfiguration);
+    proxyInstance.start();
+
+    // 等待服务器就绪
+    while (!proxyInstance.instanceState.equalsIgnoreCase("RUNNING")) {
+        Sleeper.sleep(1000);
+    }
+....
+
+==== 数据安全
+基于 DuckDB 的安全加密机制，我们支持数据加密。
+
+要使用此功能，你需要：
+
+1. 将参数 data_encrypt 设置为 true。
+2. 通过以下三种方式之一设置数据库密钥：
+     . 环境变量：SLACKERDB_<dbName>_KEY（其中 <dbName> 替换为你的数据库实例名称）。
+     . Java 属性：启动程序时以 -DSLACKERDB_<dbName>_KEY=... 指定。
+     . 启动后通过语句指定：ALTER DATABASE <dbName> SET Encrypt Key <key>。
+
+
+=== 已知问题
+
+==== 1. 用户与密码授权
+
+我们不支持用户密码认证，保留这两个选项只是为了兼容性。 +
+你可以随意填写任何内容，它没有任何实际作用。
+
+==== 2. 对 DuckDB 数据类型支持有限
+
+仅支持部分 DuckDB 数据类型，主要是简单类型，例如
+int、number、double、varchar…… 复杂类型要么仍在
+开发中，要么无法在 PG 协议中表示（blob、list、map……），
+它们会以显式错误被拒绝，而不是被静默转换。
+
+==== 3. postgresql-fdw
+
+fdw 会使用 "`Declare CURSOR`" 来获取远程数据，而 DuckDB 不支持
+这一点。
+
+=== 插件系统
+
+SlackerDB 提供基于 PF4J 的插件框架，允许开发者扩展数据库服务器的功能。插件可以访问数据库连接、日志记录器和 Javalin Web 应用实例，从而能够注册自定义 HTTP 端点、执行后台任务或集成外部服务。
+
+==== 插件机制概览
+
+插件系统构建在 PF4J（Plugin Framework for Java）之上，并经过定制以提供数据库特定的上下文。核心组件包括：
+
+* *DBPlugin* —— 抽象插件基类，继承 PF4J 的 `Plugin` 类并实现 `IDBPluginContext` 接口。插件必须继承该类并实现生命周期方法。
+* *DBPluginContext* —— 插件上下文对象，包含数据库连接、日志记录器和 Javalin 应用实例。插件管理器会在插件启动前注入该上下文。
+* *DBPluginManager* —— 自定义插件管理器，负责加载、启动、停止和卸载插件。它使用自定义的 `DBPluginFactory` 来确保插件创建时自动注入上下文。
+* *DBPluginFactory* —— 自定义插件工厂，在创建插件实例后检查插件是否实现了 `IDBPluginContext`，如果是则注入 `DBPluginContext`。
+
+插件生命周期：
+1. *加载* —— 服务器启动时，扫描配置的插件目录（`plugins_dir`）并加载所有符合 PF4J 规范的 JAR 包。
+2. *创建* —— 通过 `DBPluginFactory` 创建插件实例，并注入 `DBPluginContext`。
+3. *启动* —— 调用插件的 `start()` 方法，该方法会依次执行 `beforeStart()`、`onStart()` 和 `afterStart()`。
+4. *运行* —— 插件在 `onStart()` 中执行自定义逻辑，例如注册 Javalin 路由、初始化数据库表等。
+5. *停止* —— 服务器关闭时，调用插件的 `stop()` 方法，依次执行 `beforeStop()`、`onStop()` 和 `afterStop()`。
+6. *删除* —— 插件被卸载时，调用其 `delete()` 方法，依次执行 `beforeDelete()`、`onDelete()` 和 `afterDelete()`。
+
+插件可以访问以下资源：
+* *数据库连接* —— 通过 `getDbConnection()` 获取后端数据库的新连接（通过 `DuckDBConnection.duplicate()` 创建）。
+* *日志记录器* —— 通过 `getLogger()` 获取已配置的 SLF4J 日志记录器。
+* *Web 应用实例* —— 通过 `getJavalinApp()` 获取 Javalin 应用实例，可用于注册 HTTP 路由和中间件。
+
+==== 如何编写插件
+
+以下步骤基于 `plugin‑example` 模块，演示如何编写一个 SlackerDB 插件。
+
+===== 1. 创建 Maven 项目
+
+插件项目需要依赖 `slackerdb‑plugin` 模块。在 `pom.xml` 中添加以下依赖：
+
+[source,xml]
+----
+<dependency>
+    <groupId>org.slackerdb</groupId>
+    <artifactId>slackerdb-plugin</artifactId>
+    <version>0.2.1</version>
+    <scope>provided</scope>
+</dependency>
+----
+
+还需要 PF4J 核心库（通常已经是 `slackerdb‑plugin` 的传递依赖）。
+
+===== 2. 实现插件主类
+
+创建一个继承 `DBPlugin` 并实现必要生命周期方法的类。示例：
+
+[source,java]
+----
+package org.slackerdb.myplugin;
+
+import io.javalin.Javalin;
+import org.pf4j.PluginWrapper;
+import org.slackerdb.plugin.DBPlugin;
+import org.slf4j.Logger;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+
+public class MyPlugin extends DBPlugin {
+    private Connection conn;
+    private Javalin app;
+    private Logger logger;
+
+    public MyPlugin(PluginWrapper wrapper) {
+        super(wrapper);
+    }
+
+    @Override
+    protected void onStart() {
+        // 获取资源
+        try {
+            this.conn = getDbConnection();
+        } catch (SQLException e) {
+            // 处理异常
+        }
+        this.logger = getLogger();
+        this.app = getJavalinApp();
+
+        // 注册自定义 HTTP 端点
+        app.get("/myplugin/hello", ctx -> ctx.result("Hello from MyPlugin!"));
+
+        // 初始化数据库表
+        try (var stmt = conn.createStatement()) {
+            stmt.execute("CREATE TABLE IF NOT EXISTS myplugin_data (id INTEGER, name VARCHAR)");
+        } catch (SQLException e) {
+            logger.error("Failed to create table", e);
+        }
+
+        logger.info("MyPlugin started successfully");
+    }
+
+    @Override
+    protected void onStop() {
+        // 清理资源
+        if (conn != null) {
+            try { conn.close(); } catch (SQLException ignored) {}
+        }
+        logger.info("MyPlugin stopped");
+    }
+
+    // 可选：覆盖其他生命周期钩子方法
+    // beforeStart、afterStart、beforeStop、afterStop、beforeDelete、afterDelete
+}
+----
+
+===== 3. 配置插件描述文件
+
+在 `src/main/resources` 目录中创建 `plugin.properties` 文件，内容如下：
+
+[source,properties]
+----
+# 插件唯一标识，必须与插件 JAR 文件名一致（不含扩展名）
+plugin.id=myplugin
+
+# 插件主类的全限定名，必须继承 org.slackerdb.plugin.DBPlugin
+plugin.class=org.slackerdb.myplugin.MyPlugin
+
+# 插件版本号，遵循语义化版本规范
+plugin.version=1.0.0
+
+# 插件依赖要求，* 表示没有特定依赖
+plugin.requires=*
+----
+
+===== 4. 构建插件
+
+使用 Maven 打包插件：
+
+[source,bash]
+----
+mvn clean package
+----
+
+生成的 JAR 文件（例如 `myplugin‑1.0.0.jar`）应包含插件类和 `plugin.properties` 文件。
+
+===== 5. 部署插件
+
+将插件 JAR 文件放入 SlackerDB 服务器的插件目录（由配置文件中的 `plugins_dir` 参数指定）。该参数默认为**空**，此时不会扫描任何插件目录；请显式配置它，并确保目录存在且服务器具有读权限。
+
+===== 6. 启动服务器
+
+启动 SlackerDB 服务器；只要正确配置了 `plugins_dir`，插件就会被自动加载并启动。用 `status` 命令或管理端口可以确认插件状态。检查服务器日志以确认插件加载成功：
+
+[source]
+----
+[SERVER][PLUGIN     ] Load plugin [myplugin] ...
+[SERVER][PLUGIN     ] start plugin [myplugin] ...
+----
+
+如果插件注册了 HTTP 端点，你可以在 `http://localhost:<port_x>/myplugin/hello` 访问它（假设管理端口 `port_x` 已启用）。
+
+===== 7. 调试插件
+
+* *日志* —— 插件可以通过 `getLogger()` 输出日志；日志级别由服务器的 `log_level` 配置控制。
+* *错误处理* —— 插件生命周期方法中的异常会被捕获并包装为 `RuntimeException`，导致插件启动失败。错误消息会记录在服务器日志中。
+* *热重载* —— 目前不支持热重载；修改插件后必须重启服务器。
+
+==== 插件示例
+
+本节展示一个完整可用的插件：它的基本结构、资源访问方式和
+生命周期。这里完整复现，以便你复制其中描述的文件。
+
+===== 模块结构
+
+plugin‑example 模块包含以下关键组件：
+
+* *插件主类* —— 继承 `DBPlugin` 并实现所有生命周期方法。其完整源码
+  在本节中复现。
+* *独立运行器* —— 演示如何在不使用完整 PF4J 框架的情况下执行插件
+  （同样在下面复现）。
+* *插件描述文件* —— 定义插件元数据的 `plugin.properties` 文件。
+* *Maven 构建* —— 依赖 `slackerdb‑plugin` 的配置。
+
+===== PluginExample 类概览
+
+`PluginExample` 类继承 `DBPlugin` 并为所有生命周期方法提供实现：
+
+[source,java]
+----
+public class PluginExample extends DBPlugin {
+    private Connection conn;
+    private Javalin    app = null;
+    private Logger     logger = null;
+
+    public PluginExample(PluginWrapper wrapper) {
+        super(wrapper);
+    }
+
+    @Override
+    protected void onStart() {
+        // 示例：获取插件资源
+        // try {
+        //     this.conn = getDbConnection();
+        // } catch (SQLException ignored) {}
+        // this.logger = getLogger();
+        // this.app = getJavalinApp();
+
+        // 在此添加插件启动逻辑
+    }
+
+    protected void onStop() {
+        // 清理资源
+    }
+
+    protected void onDelete() {
+        // 永久性清理操作
+    }
+
+    // 生命周期钩子方法：beforeStart、afterStart、beforeStop、afterStop、
+    // beforeDelete、afterDelete
+
+    // 独立模式支持
+    public static PluginExample standAloneInstance() throws Exception {
+        return DBPlugin.Standalone.createInstance(PluginExample.class);
+    }
+}
+----
+
+===== 演示的关键特性
+
+1. *资源访问* —— 展示如何通过 `getDbConnection()`、`getLogger()` 和 `getJavalinApp()` 获取数据库连接、日志记录器和 Javalin 应用实例。
+2. *生命周期管理* —— 实现所有生命周期方法（`onStart`、`onStop`、`onDelete`）及其对应的钩子方法（`beforeStart`、`afterStart` 等）。
+3. *独立模式* —— 包含一个 `standAloneInstance()` 方法，使插件可以在没有 PF4J 框架的情况下执行（参见下面的“插件独立模式”一节）。
+4. *线程安全* —— 插件实例是单例；开发者应确保对共享资源的线程安全访问。
+
+===== 构建并运行示例
+
+1. *构建插件*：
++
+[source,bash]
+----
+cd plugin-example
+mvn clean package
+----
++
+生成的 JAR 文件（`plugin‑example‑0.2.1.jar`）会放在 `target` 目录中。
+
+2. *部署到 SlackerDB 服务器*：
+   - 将 JAR 文件复制到服务器的插件目录（通过 `plugins_dir` 参数配置）。
+   - 启动服务器；插件会被自动加载。
+   - 检查服务器日志中的插件加载消息。
+
+3. *以独立模式运行*（用于测试）：
++
+[source,bash]
+----
+cd plugin-example
+mvn compile exec:java -Dexec.mainClass="org.slackerdb.pluginExample.SimplePluginRunner"
+----
++
+这会执行 `SimplePluginRunner` 类，它演示如何在没有完整 SlackerDB 服务器的情况下运行插件。
+
+===== 定制该示例
+
+要基于此示例创建你自己的插件：
+
+1. *重命名包和类* —— 将 `org.slackerdb.pluginExample` 改为你自己的包名。
+2. *更新 plugin.properties* —— 相应修改 `plugin.id`、`plugin.class` 和 `plugin.version`。
+3. *实现业务逻辑* —— 取消 `onStart()` 中获取资源代码的注释，并添加你的自定义功能。
+4. *添加依赖* —— 在 `pom.xml` 中补充插件所需的任何额外库。
+5. *充分测试* —— 在部署到生产服务器之前，使用独立模式进行快速测试。
+
+===== 插件描述文件
+
+`src/main/resources/plugin.properties` 文件包含插件元数据：
+
+[source,properties]
+----
+plugin.id=plugin-example
+plugin.class=org.slackerdb.pluginExample.PluginExample
+plugin.version=0.2.1
+plugin.requires=*
+----
+
+* `plugin.id` 必须与 JAR 文件名一致（不含 `.jar` 扩展名）。
+* `plugin.class` 必须是插件主类的全限定名。
+* `plugin.version` 遵循语义化版本规范。
+* `plugin.requires` 指定插件依赖（`*` 表示没有特定依赖）。
+
+===== 插件独立模式
+
+除了标准的基于 PF4J 的插件加载机制之外，SlackerDB 还提供*独立模式*，允许插件在不需要完整 PF4J 框架的情况下直接执行。这对于测试、调试或将插件逻辑嵌入自定义应用非常有用。
+
+独立模式的工作方式：
+1. 通过 `standAloneInstance()` 方法创建插件实例（该方法在继承 `DBPlugin` 的插件中可用）
+2. 使用所需资源（数据库连接、日志记录器、Javalin 应用）手动构建 `DBPluginContext`
+3. 通过 `setDBPluginContext()` 将上下文注入插件
+4. 直接调用插件的生命周期方法（`start()`、`stop()`）
+
+===== 使用独立模式
+
+`plugin-example` 模块包含一个 `SimplePluginRunner` 类，演示如何以独立模式运行插件。以下是一个简化版本：
+
+[source,java]
+----
+package org.slackerdb.pluginExample;
+
+import io.javalin.Javalin;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slackerdb.plugin.DBPluginContext;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+
+public class SimplePluginRunner {
+    public static void main(String[] args) throws Exception {
+        // 1. 创建数据库连接
+        Connection conn = DriverManager.getConnection("jdbc:duckdb:memory:");
+
+        // 2. 创建 Javalin 应用实例
+        Javalin javalin = Javalin.create();
+
+        // 3. 创建日志记录器
+        Logger pluginLogger = LoggerFactory.getLogger(PluginExample.class);
+
+        // 4. 创建并配置 DBPluginContext
+        DBPluginContext ctx = new DBPluginContext();
+        ctx.setDbBackendConn(conn);
+        ctx.setLogger(pluginLogger);
+        ctx.setJavalin(javalin);
+
+        // 5. 通过独立模式创建插件实例
+        PluginExample plugin = PluginExample.standAloneInstance();
+
+        // 6. 注入上下文
+        plugin.setDBPluginContext(ctx);
+
+        // 7. 启动插件
+        plugin.start();
+
+        // 8. （可选）等待后停止
+        Thread.sleep(1000);
+        plugin.stop();
+
+        // 9. 清理资源
+        conn.close();
+    }
+}
+----
+
+===== 要点
+
+* *资源管理* —— 在独立模式下，由你负责创建和管理所有资源（数据库连接、Javalin 实例、日志记录器）。
+* *生命周期控制* —— 你通过直接调用 `start()` 和 `stop()` 来控制插件何时启动和停止。
+* *无 PF4J 开销* —— 独立模式绕过 PF4J 插件管理器，因而轻量，适合集成到现有应用中。
+* *测试与调试* —— 该模式非常适合对插件逻辑进行单元测试，或在未部署到完整 SlackerDB 服务器的情况下调试插件行为。
+
+===== 何时使用独立模式
+
+* *开发与测试* —— 在开发过程中快速测试插件逻辑。
+* *嵌入式场景* —— 将插件功能嵌入到不需要完整 PF4J 框架的自定义应用中。
+* *原型验证* —— 在构建完整 JAR 包之前试验插件想法。
+* *CI/CD 流水线* —— 在自动化构建环境中运行插件测试。
+
+===== 限制
+
+* *不支持热重载* —— 插件无法动态重新加载；必须重启应用。
+* *手动资源管理* —— 你必须自行处理资源的创建、注入和清理。
+* *无插件管理器特性* —— 依赖解析、版本管理和插件发现等特性不可用。
+
+==== 插件管理 API
+
+SlackerDB 提供一组用于在运行时管理插件的 HTTP 端点。这些端点允许你在不重启服务器的情况下加载、卸载、启动、停止和列出插件。所有端点都返回标准格式的 JSON 响应：`{"retCode": 0/-1, "retMsg": "message"}`。
+
+===== /plugin/load (POST)
+
+从服务器插件目录中的 JAR 文件加载插件。
+
+.请求体（JSON）：
+[source,json]
+----
+{
+  "filename": "myplugin.jar"
+}
+----
+
+* `filename` —— 插件 JAR 文件名（例如 "myplugin.jar"）或 JAR 文件的完整路径。如果提供的是简单文件名，将从服务器的插件目录（通过 `plugins_dir` 参数配置）加载。如果提供的是完整路径，则直接从该位置加载。
+
+.响应示例（成功）：
+[source,json]
+----
+{
+  "retCode": 0,
+  "retMsg": "Plugin loaded successfully",
+  "pluginId": "myplugin"
+}
+----
+
+.响应示例（错误）：
+[source,json]
+----
+{
+  "retCode": -1,
+  "retMsg": "Plugin file does not exist: /path/to/plugins/myplugin.jar"
+}
+----
+
+===== /plugin/unload (POST)
+
+卸载之前加载的插件。如果插件正在运行，会先被停止。
+
+.请求体（JSON）：
+[source,json]
+----
+{
+  "plugid": "myplugin"
+}
+----
+
+.响应示例（成功）：
+[source,json]
+----
+{
+  "retCode": 0,
+  "retMsg": "Plugin unloaded successfully"
+}
+----
+
+===== /plugin/start (POST)
+
+启动已加载的插件。会调用插件的 `start()` 方法，从而触发插件的生命周期钩子（`beforeStart()`、`onStart()`、`afterStart()`）。
+
+.请求体（JSON）：
+[source,json]
+----
+{
+  "plugid": "myplugin"
+}
+----
+
+.响应示例（成功）：
+[source,json]
+----
+{
+  "retCode": 0,
+  "retMsg": "Plugin started successfully"
+}
+----
+
+===== /plugin/stop (POST)
+
+停止正在运行的插件。会调用插件的 `stop()` 方法，从而触发插件的生命周期钩子（`beforeStop()`、`onStop()`、`afterStop()`）。
+
+.请求体（JSON）：
+[source,json]
+----
+{
+  "plugid": "myplugin"
+}
+----
+
+.响应示例（成功）：
+[source,json]
+----
+{
+  "retCode": 0,
+  "retMsg": "Plugin stopped successfully"
+}
+----
+
+===== /plugin/list (GET)
+
+列出当前加载的所有插件及其详情。
+
+.响应示例：
+[source,json]
+----
+{
+  "retCode": 0,
+  "retMsg": "Success",
+  "plugins": [
+    {
+      "pluginId": "myplugin",
+      "pluginState": "STARTED",
+      "version": "1.0.0",
+      "description": "My example plugin"
+    },
+    {
+      "pluginId": "anotherplugin",
+      "pluginState": "STOPPED",
+      "version": "2.0.0",
+      "description": "Another plugin"
+    }
+  ]
+}
+----
+
+`pluginState` 字段可以是以下之一：`CREATED`、`DISABLED`、`LOADED`、`STARTED`、`STOPPED`、`UNLOADED`。
+
+==== 注意事项
+
+1. *线程安全* —— 在服务器生命周期内，插件实例是单例；请确保 `onStart()` 之类的方法线程安全。
+2. *资源管理* —— 通过 `getDbConnection()` 获取的数据库连接必须由插件管理，并在插件停止时关闭。
+3. *依赖冲突* —— 避免引入与服务器依赖冲突的库版本；对于服务器已提供的库，建议使用 `provided` 作用域。
+4. *性能影响* —— 插件执行会消耗服务器资源；避免在插件中执行长时间阻塞的操作。
+
+=== 路线图
+
+…

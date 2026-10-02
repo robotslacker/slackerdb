@@ -12,11 +12,13 @@ import org.slackerdb.dbserver.message.response.ReadyForQuery;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.dbserver.server.DBSession;
 import org.slackerdb.dbserver.sql.CopyCsvReader;
+import org.slackerdb.dbserver.sql.CopyDialect;
+import org.slackerdb.dbserver.sql.CopyValueWriters;
+import org.slackerdb.dbserver.sql.SqlStateMapper;
 import org.slackerdb.dbserver.sql.PostgresSQLUtil;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
@@ -24,30 +26,28 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 public class CopyDoneRequest extends PostgresRequest {
-    // 列类型编码：在进入逐行/逐单元格循环之前，把列类型名称解析成整数编码，
-    // 避免在内层循环中对每个单元格重复做多次字符串比较。
+
+    // ================= BINARY COPY 专用的列类型编码 =================
+    // 只服务 PG 二进制载荷的解码（与 CSV 的文本解析是两套东西）。
+    // CSV 路径按 DuckDB 类型名构造 CopyValueWriters.ColumnWriter，不再用这些编码。
     private static final int TYPE_UNSUPPORTED = 0;
-    private static final int TYPE_SMALLINT    = 1;
-    private static final int TYPE_INTEGER     = 2;
-    private static final int TYPE_BIGINT      = 3;
-    private static final int TYPE_VARCHAR     = 4;
-    private static final int TYPE_FLOAT       = 5;
-    private static final int TYPE_DOUBLE      = 6;
-    private static final int TYPE_DECIMAL     = 7;
-    private static final int TYPE_TIMESTAMP   = 8;
-    private static final int TYPE_BOOLEAN     = 9;
+    private static final int TYPE_SMALLINT = 1;
+    private static final int TYPE_INTEGER = 2;
+    private static final int TYPE_BIGINT = 3;
+    private static final int TYPE_VARCHAR = 4;
+    private static final int TYPE_FLOAT = 5;
+    private static final int TYPE_DOUBLE = 6;
+    private static final int TYPE_DECIMAL = 7;
+    private static final int TYPE_TIMESTAMP = 8;
+    private static final int TYPE_BOOLEAN = 9;
 
-    // CSV COPY 的时间戳格式。原来是每个单元格 new 一次（与已修的 H2 同类问题），这里提为常量。
-    private static final DateTimeFormatter COPY_TIMESTAMP_FORMATTER =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-
-    /** 把列类型名称解析为类型编码，未支持的类型返回 {@link #TYPE_UNSUPPORTED}。 */
-    private static int columnTypeCode(String columnType)
-    {
+    /**
+     * 把列类型名称解析为 PG 二进制载荷解码用的类型编码，未支持的类型返回 {@link #TYPE_UNSUPPORTED}。
+     */
+    private static int columnTypeCode(String columnType) {
         if ("SMALLINT".equals(columnType)) {
             return TYPE_SMALLINT;
         }
@@ -77,69 +77,84 @@ public class CopyDoneRequest extends PostgresRequest {
         }
         return TYPE_UNSUPPORTED;
     }
-
     /** 列数不符时用于立即停止解析（不是错误，由调用方统一报错）。 */
     private static final class StopParsing extends RuntimeException {
         StopParsing() {
+            // 控制流异常：关掉栈回溯的开销（列数不符时每行都会走到这里）
             super(null, null, false, false);
         }
     }
 
     /**
-     * 把 {@link CopyCsvReader} 产出的字段视图逐行写入 {@link DuckDBAppender}。
+     * 把 {@link CopyCsvReader} 产出的字段视图逐行写进 {@link DuckDBAppender}。
      *
-     * <p>字段视图是"指向解析缓冲的 (off,len)"，因此本类不做任何复制；只有文本列需要
-     * {@code new String(...)}（Appender 只接受 String），数值列直接从字节解析。</p>
+     * <p>字段视图是"指向解析缓冲的 (off,len)"，因此这里不做无谓的复制：每个列的写入器
+     * （{@link CopyValueWriters.ColumnWriter}，按 DuckDB 列类型名构造一次）自己决定怎么解析。</p>
      *
-     * <p>空值语义按 PG：<b>未加引号的空字段 = NULL</b>（{@code appendNull()}），
-     * 加了引号的空字段是空字符串。这与改造前（commons-csv 无法区分，且空数值字段会抛
-     * NumberFormatException）不同，属于已确认的行为变更。</p>
+     * <p>NULL 由解析器按方言判定后通过 {@code isNull} 传入：CSV 是"未加引号的空字段"
+     * （或未加引号且等于 NULL 串的字段），TEXT 是"等于 NULL 串的字段"（默认 {@code \N}）。
+     * 因此这里不再自行推导，避免两处对 NULL 的理解漂移。</p>
+     *
+     * <p>{@code HEADER} 选项要求跳过第一条记录（表头）：表头不写库，
+     * 也不计入 {@code COPY n} 的行数。</p>
      */
-    private static final class CsvRowSink implements CopyCsvReader.FieldSink {
+    private static final class CopyRowSink implements CopyCsvReader.FieldSink {
         private final CopyCsvReader reader;
         private final DuckDBAppender appender;
+        private final CopyValueWriters.ColumnWriter[] columnWriters;
         private final int[] columnMapPos;      // 表列 i -> COPY 数据中的列号，-1 表示该列不在 COPY 列表里
-        private final int[] columnTypeCodes;
         private final int expectedColumnCount;
 
         private int[] offsets = new int[8];
         private int[] lengths = new int[8];
-        private boolean[] quoted = new boolean[8];
+        private boolean[] nulls = new boolean[8];
         private int fieldCount;
+
+        /** 还需要跳过的表头行数（HEADER 选项） */
+        private int headerRowsToSkip;
+        /** 实际写入的行数（表头行不计入） */
+        long writtenRows;
 
         /** 列数不符时记录实际列数与该行内容（只记第一次），供调用方报错 */
         int mismatchActualCount = -1;
         String mismatchRowText = null;
 
-        CsvRowSink(CopyCsvReader reader, DuckDBAppender appender, List<Integer> columnMapPos,
-                   int[] columnTypeCodes, int expectedColumnCount) {
+        CopyRowSink(CopyCsvReader reader, DuckDBAppender appender,
+                    CopyValueWriters.ColumnWriter[] columnWriters, List<Integer> columnMapPos,
+                    int expectedColumnCount, int headerRowsToSkip) {
             this.reader = reader;
             this.appender = appender;
+            this.columnWriters = columnWriters;
             this.columnMapPos = new int[columnMapPos.size()];
             for (int i = 0; i < columnMapPos.size(); i++) {
                 this.columnMapPos[i] = columnMapPos.get(i);
             }
-            this.columnTypeCodes = columnTypeCodes;
             this.expectedColumnCount = expectedColumnCount;
+            this.headerRowsToSkip = headerRowsToSkip;
         }
 
         @Override
-        public void field(int off, int len, boolean isQuoted) {
+        public void field(int off, int len, boolean isNull) {
             if (fieldCount == offsets.length) {
                 int newLen = offsets.length * 2;
                 offsets = java.util.Arrays.copyOf(offsets, newLen);
                 lengths = java.util.Arrays.copyOf(lengths, newLen);
-                quoted = java.util.Arrays.copyOf(quoted, newLen);
+                nulls = java.util.Arrays.copyOf(nulls, newLen);
             }
             offsets[fieldCount] = off;
             lengths[fieldCount] = len;
-            quoted[fieldCount] = isQuoted;
+            nulls[fieldCount] = isNull;
             fieldCount++;
         }
 
         @Override
         public void endRow() {
             try {
+                if (headerRowsToSkip > 0) {
+                    // HEADER：第一条记录是表头，直接丢弃（不校验列数，与 PG 一致）
+                    headerRowsToSkip--;
+                    return;
+                }
                 if (fieldCount != expectedColumnCount) {
                     mismatchActualCount = fieldCount;
                     mismatchRowText = rowText();
@@ -153,49 +168,20 @@ public class CopyDoneRequest extends PostgresRequest {
                         appender.appendDefault();
                         continue;
                     }
-                    int off = offsets[nPos];
-                    int len = lengths[nPos];
-                    if (len == 0 && !quoted[nPos]) {
-                        // PG 语义：未加引号的空字段是 NULL（加引号的空串不是）
+                    if (nulls[nPos]) {
                         appender.appendNull();
                         continue;
                     }
-                    appendValue(columnTypeCodes[i], off, len);
+                    columnWriters[i].write(appender, reader.buffer(), offsets[nPos], lengths[nPos]);
                 }
                 appender.endRow();
+                writtenRows++;
             } catch (SQLException sqlException) {
                 // 还原给调用方，保持与改造前一致的 SQLException 处理路径
                 throw new RuntimeException(sqlException);
             } finally {
                 fieldCount = 0;
             }
-        }
-
-        /** 直接从字节区间取值写入 Appender（数值不经过中间 String）。 */
-        private void appendValue(int typeCode, int off, int len) throws SQLException {
-            byte[] buf = reader.buffer();
-            switch (typeCode) {
-                case TYPE_SMALLINT -> appender.append(CopyCsvReader.parseShort(buf, off, len));
-                case TYPE_INTEGER -> appender.append(CopyCsvReader.parseInt(buf, off, len));
-                case TYPE_BIGINT -> appender.append(CopyCsvReader.parseLong(buf, off, len));
-                case TYPE_VARCHAR ->
-                        appender.append(new String(buf, off, len, StandardCharsets.UTF_8));
-                case TYPE_FLOAT ->
-                        appender.append(Float.parseFloat(text(buf, off, len)));
-                case TYPE_DOUBLE ->
-                        appender.append(Double.parseDouble(text(buf, off, len)));
-                case TYPE_DECIMAL ->
-                        appender.append(new BigDecimal(text(buf, off, len)));
-                case TYPE_TIMESTAMP ->
-                        appender.append(LocalDateTime.parse(text(buf, off, len), COPY_TIMESTAMP_FORMATTER));
-                case TYPE_BOOLEAN ->
-                        appender.append(Boolean.parseBoolean(text(buf, off, len)));
-                default -> throw new IllegalStateException("unsupported column type code " + typeCode);
-            }
-        }
-
-        private static String text(byte[] buf, int off, int len) {
-            return new String(buf, off, len, StandardCharsets.US_ASCII);
         }
 
         /** 用于列数不符时的错误信息（把该行各字段拼出来）。 */
@@ -205,7 +191,7 @@ public class CopyDoneRequest extends PostgresRequest {
                 if (i > 0) {
                     sb.append(',');
                 }
-                if (lengths[i] == 0 && !quoted[i]) {
+                if (nulls[i]) {
                     sb.append("<null>");
                 } else {
                     sb.append(new String(reader.buffer(), offsets[i], lengths[i], StandardCharsets.UTF_8));
@@ -255,11 +241,14 @@ public class CopyDoneRequest extends PostgresRequest {
     /**
      * 发送错误响应以及ReadyForQuery。
      * BINARY分支中各类型的数据长度校验失败、以及列类型不支持时，收尾动作完全相同，统一由此方法处理。
+     *
+     * <p>默认给 {@code 22P04}（bad_copy_file_format）：这些调用点都是"数据流本身不合规"
+     * （二进制长度不符、列数不符、列类型不支持）。</p>
      */
     private void sendErrorAndReady(ChannelHandlerContext ctx, Object request, ByteArrayOutputStream out, String message)
             throws IOException
     {
-        sendErrorAndReady(ctx, request, out, "SLACKER-0099", message);
+        sendErrorAndReady(ctx, request, out, "22P04", message);
     }
 
     /**
@@ -346,18 +335,37 @@ public class CopyDoneRequest extends PostgresRequest {
         // 避免在内层循环里为每个单元格反复查找会话。
         DBSession session = this.dbInstance.getSession(getCurrentSessionId(ctx));
 
+        // 本次 COPY 已经判失败（例如缓冲超过 CopyProtocolHandler.maxPayloadBytes）：
+        // 错误与 ReadyForQuery 当时就发过了，这里只做清理，**绝不**能回 CommandComplete ——
+        // 那会让客户端看到 "COPY 0" 的"成功"，把失败当成功。
+        if (session.copyAborted) {
+            session.discardUncommittedCopy();
+            session.resetCopyState();
+            this.dbInstance.logger.debug(
+                    "[SERVER][COPY       ] CopyDone after an aborted COPY is ignored (no CommandComplete).");
+            resetSessionExecutionState(ctx);
+            out.close();
+            return;
+        }
+
         long nCopiedRows = 0;
         // 本次 COPY 是否已经失败。PG 协议里 CommandComplete 与 ErrorResponse 互斥：
         // 失败时既要跳过 CommandComplete，又要把本次已写入的部分行整体丢弃（否则留下"半截数据"）。
         boolean copyFailed = false;
-        String errorCode = "SLACKER-0099";
+        String errorCode = SqlStateMapper.INTERNAL_ERROR;
         String errorMessage = null;
         if (session.copyLastRemained.size() != 0) {
             try {
-                if (session.copyTableFormat.equalsIgnoreCase("CSV")) {
+                // 文本类格式（TEXT / CSV）共用同一个解析器，方言（分隔符/引号/转义/NULL 串/表头）
+                // 来自 COPY 语句的选项。改造前只认 CSV，且分隔符/引号/NULL 全是硬编码，
+                // 连 "FORMAT text"（PG 默认格式）都进不来。
+                CopyDialect dialect = session.copyDialect;
+                String formatName = (dialect == null) ? session.copyTableFormat
+                        : dialect.format;
+                if (dialect != null && dialect.isRowBased()) {
                     // 用字节级解析器替换 commons-csv：不再把整段载荷 toString()、不再为每行构造
                     // CSVRecord/String[]、不再为数值字段生成中间 String。
-                    // 注意 CopyCsvReader(byte[],int) 是"接管"语义（会就地展开 "" 转义），
+                    // 注意 CopyCsvReader(byte[],int,dialect) 是"接管"语义（会就地展开转义），
                     // 而 toByteArray() 返回的是新数组，因此这里安全。
                     byte[] payload = session.copyLastRemained.toByteArray();
                     session.copyLastRemained.reset();
@@ -366,35 +374,32 @@ public class CopyDoneRequest extends PostgresRequest {
                     List<Integer> copyTableDbColumnMapPos = session.copyTableDbColumnMapPos;
                     // COPY数据中每行的字段数量应该和COPY语句中指定的列数量保持一致
                     int expectedColumnCount = session.copyColumnCount;
-                    // 每一列的列类型只解析一次，逐单元格循环里不再查询会话、不再做字符串比较
+                    // 每个表列一个写入器：按 DuckDB 列类型名构造一次，逐行复用。
+                    // 块 Appender 不做隐式转换，文本 -> Java 值的解析全部由写入器负责。
                     List<String> copyTableDbColumnType = session.copyTableDbColumnType;
                     int mappedColumnCount = copyTableDbColumnMapPos.size();
-                    int[] columnTypeCodes = new int[mappedColumnCount];
+                    CopyValueWriters.ColumnWriter[] columnWriters =
+                            new CopyValueWriters.ColumnWriter[mappedColumnCount];
                     for (int i = 0; i < mappedColumnCount; i++) {
-                        int nPos = copyTableDbColumnMapPos.get(i);
-                        if (nPos != -1) {
-                            // 循环变量 i 是"该列在表中的位置"，所以类型按 i 取值；
-                            // 取值时用 nPos 去 COPY 的数据里找对应的那一列。
-                            String columnType = copyTableDbColumnType.get(i);
-                            int typeCode = columnTypeCode(columnType);
-                            if (typeCode == TYPE_UNSUPPORTED) {
-                                // 快速失败：不支持的列类型在任何数据到达之前就报错，
-                                // 而不是解析到第 N 行该列时才失败（此时 Appender 已写入部分行）。
-                                sendErrorAndReady(ctx, request, out,
-                                        "CSV Format error (column type not support) . " + columnType);
+                        if (copyTableDbColumnMapPos.get(i) != -1) {
+                            try {
+                                columnWriters[i] = CopyValueWriters.writer(copyTableDbColumnType.get(i));
+                            }
+                            catch (SQLException unsupportedType) {
+                                // 类型名识别不了（例如需要扩展的类型）：在任何数据写入之前快速失败
+                                sendErrorAndReady(ctx, request, out, "0A000", unsupportedType.getMessage());
                                 return;
                             }
-                            columnTypeCodes[i] = typeCode;
                         }
                     }
 
-                    CopyCsvReader reader = new CopyCsvReader(payload, payload.length);
+                    CopyCsvReader reader = new CopyCsvReader(payload, payload.length, dialect);
                     reader.markEof();
-                    CsvRowSink sink = new CsvRowSink(reader, duckDBAppender, copyTableDbColumnMapPos,
-                            columnTypeCodes, expectedColumnCount);
+                    CopyRowSink sink = new CopyRowSink(reader, duckDBAppender, columnWriters,
+                            copyTableDbColumnMapPos, expectedColumnCount, dialect.header ? 1 : 0);
                     try {
                         while (reader.nextRow(sink)) {
-                            nCopiedRows++;
+                            // 行数由 sink 统计：HEADER 跳过的表头不计入
                         }
                     } catch (StopParsing stopParsing) {
                         // 列数不符，由下面统一报错
@@ -405,19 +410,21 @@ public class CopyDoneRequest extends PostgresRequest {
                         }
                         throw runtimeException;
                     }
+                    nCopiedRows = sink.writtenRows;
                     if (sink.mismatchActualCount != -1) {
-                        // CSV字段数量不对等。
+                        // 字段数量不对等。
                         // 必须走 sendErrorAndReady：它会先丢弃本次 COPY 已写入的部分行再回错误。
                         // （不能在这里就地拼一个 ErrorResponse 后直接 return——那样前面已 append
                         //   的行会被 Appender 的 close() 提交，留下"半截数据"。）
-                        sendErrorAndReady(ctx, request, out, "SLACKER-0099",
-                                "CSV Format error (column size not match." +
+                        sendErrorAndReady(ctx, request, out, "22P04",
+                                formatName + " Format error (column size not match." +
                                         " [" + sink.mismatchActualCount + "] vs [" + expectedColumnCount + "])." +
                                         " [" + sink.mismatchRowText + "].");
                         return;
                     }
-                } // CSV
+                } // TEXT / CSV
                 else if (session.copyTableFormat.equalsIgnoreCase("BINARY")) {
+                    // BINARY 通道按 PG 二进制逐类型解码（与 CSV 的文本解析是两回事，见 columnTypeCode）
                     List<Object[]> data = PostgresSQLUtil.convertPGByteToRow(session.copyLastRemained.toByteArray());
                     session.copyLastRemained.reset();
                     DuckDBAppender duckDBAppender = session.copyTableAppender;
@@ -545,7 +552,7 @@ public class CopyDoneRequest extends PostgresRequest {
                                 }
                                 else
                                 {
-                                    sendErrorAndReady(ctx, request, out,
+                                    sendErrorAndReady(ctx, request, out, "0A000",
                                             "Binary Format error (column type not support) . " + columnType);
                                     return;
                                 }
@@ -570,11 +577,12 @@ public class CopyDoneRequest extends PostgresRequest {
                 copyFailed = true;
                 if (ex instanceof SQLException sqlEx) {
                     // 数据库/Appender 报出的写入错误同样走统一的信息整理(不按错误类型特判)
-                    errorCode = String.valueOf(sqlEx.getErrorCode());
+                    errorCode = SqlStateMapper.fromException(sqlEx);
                     errorMessage = copyWriteErrorMessage(sqlEx.getMessage());
                 } else {
-                    // 解析类异常(数据流被截断、CSV畸形等)的信息本来就是自解释的，原样返回
-                    errorCode = "SLACKER-0099";
+                    // 解析类异常(数据流被截断、CSV畸形等)：属于"COPY 数据格式不对"，
+                    // 用 22P04（bad_copy_file_format），而不是 XX000（那意味着服务端自身出错）
+                    errorCode = "22P04";
                     errorMessage = ex.getMessage();
                 }
             }
@@ -608,7 +616,7 @@ public class CopyDoneRequest extends PostgresRequest {
         }
         catch (SQLException se) {
             copyFailed = true;
-            errorCode = String.valueOf(se.getErrorCode());
+            errorCode = SqlStateMapper.fromException(se);
             errorMessage = copyWriteErrorMessage(se.getMessage());
             // flush 已经失败，Appender 不再可用，这里只做资源释放（close() 会再次吞掉错误）
             if (session.copyTableAppender != null) {
@@ -635,7 +643,7 @@ public class CopyDoneRequest extends PostgresRequest {
                 this.dbInstance.logger.warn("[SERVER] Finish COPY transaction failed.", se);
                 if (!copyFailed) {
                     copyFailed = true;
-                    errorCode = String.valueOf(se.getErrorCode());
+                    errorCode = SqlStateMapper.fromException(se);
                     errorMessage = se.getMessage();
                 }
                 // COMMIT 失败时事务可能仍是打开/已中止状态，尽力回滚，
@@ -649,6 +657,12 @@ public class CopyDoneRequest extends PostgresRequest {
                 }
             }
         }
+
+        // 审计收尾：把 COPY 的最终结果写回历史表（成功记行数，失败记 SQLSTATE + 原因）。
+        // 必须放在发送 CommandComplete/ErrorResponse 之前，且在任何 discardUncommittedCopy() 之前，
+        // 否则会被那条更笼统的收尾路径抢先（closeCopySqlHistory 是幂等的）。
+        session.closeCopySqlHistory(copyFailed ? 0 : nCopiedRows,
+                copyFailed ? (errorCode + ":" + errorMessage) : null);
 
         // 发送CommandComplete —— 仅在成功时发出。
         // 协议规定后端结束 copy-in 后「要么 CommandComplete（成功），要么 ErrorResponse（失败）」，

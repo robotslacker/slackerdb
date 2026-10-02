@@ -312,12 +312,19 @@ public class InstanceXBasicServiceTest {
         JSONObject status = JSONObject.parseObject(response.body());
         JSONObject usage = status.getJSONObject("usage");
         assert usage != null : "usage section is missing in /status";
-        assert usage.containsKey("droppedSqlHistory");
-        assert usage.containsKey("droppedApiHistory");
+        assert usage.containsKey("queuedSqlHistory");
+        assert usage.containsKey("queuedApiHistory");
+        assert usage.containsKey("capacitySqlHistory");
+        assert usage.containsKey("capacityApiHistory");
+        assert usage.containsKey("blockedSqlHistory");
+        assert usage.containsKey("blockedApiHistory");
         assert usage.containsKey("sqlHistoryThreadAlive");
         assert usage.containsKey("apiHistoryThreadAlive");
-        assert usage.getLongValue("droppedSqlHistory") >= 0;
-        assert usage.getLongValue("droppedApiHistory") >= 0;
+        // 队列上限与当前占用必须自洽（满了生产者会阻塞等待，不会丢数据）
+        assert usage.getIntValue("capacitySqlHistory") > 0;
+        assert usage.getIntValue("capacityApiHistory") > 0;
+        assert usage.getIntValue("queuedSqlHistory") <= usage.getIntValue("capacitySqlHistory");
+        assert usage.getIntValue("queuedApiHistory") <= usage.getIntValue("capacityApiHistory");
         // 本用例开启了 data_service_history，API 历史消费线程应当存活
         assert usage.getBooleanValue("apiHistoryThreadAlive") : "API history consumer thread should be alive";
     }

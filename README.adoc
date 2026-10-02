@@ -3,11 +3,6 @@ image::robotslacker.jpg[RobotSlacker]
 
 == SlackerDB (DuckDB Postgres proxy)
 
-=== Quick Note
-
-This is an agile DuckDB extension that provides Java-based connectivity
-with network access and multiprocess support.
-
 ==== What is SlackerDB?
 
 SlackerDB is a powerful, Java‑based extension that transforms DuckDB from a local, single‑process database into a fully networked, multi‑process data service platform. It bridges the gap between DuckDB's exceptional analytical performance and the connectivity requirements of modern applications.
@@ -369,7 +364,7 @@ conn.setAutoCommit(false);
 *IDE Integration*
 
 You can connect to SlackerDB from database tools DBeaver. (For other tools, we have not verified it.) +
-*Use Postgresl driver* +
+*Use PostgreSQL driver* +
 Download postgresql server and connect database like a pg.
 
 *Use custom driver* +
@@ -431,7 +426,7 @@ Connection conn = DriverManager.getConnection(url, props);
 conn.setAutoCommit(false);
 ....
 
-The [`UnixDomainSocketFactory`](dbdriver/src/main/java/org/slackerdb/jdbc/UnixDomainSocketFactory.java) is included in the SlackerDB JDBC driver and uses Java's built-in `UnixDomainSocketAddress` API (Java 16+) to establish UDS connections.
+The `UnixDomainSocketFactory` class is included in the SlackerDB JDBC driver and uses Java's built-in `UnixDomainSocketAddress` API (Java 16+) to establish UDS connections.
 
 Key points:
 * The `socketFactory` parameter must be set to `org.slackerdb.jdbc.UnixDomainSocketFactory`
@@ -550,6 +545,398 @@ Returns comprehensive server status information, including server details, datab
 }
 ----
 
+==== PL/SQL Support
+
+SlackerDB ships a PL/SQL engine for **anonymous blocks**: declare variables, branch, loop, iterate
+cursors, fetch into variables and handle exceptions — all on top of DuckDB.
+
+===== Running a block
+
+Wrap the block in `DO $$ ... $$` (PostgreSQL style) and send it like any other statement:
+
+[source,sql]
+----
+DO $$
+DECLARE
+    CURSOR cur IS SELECT id, name FROM users WHERE active = true;
+    v_id   BIGINT;
+    v_name TEXT;
+    total  INTEGER := 0;
+BEGIN
+    OPEN cur;
+    LOOP
+        FETCH cur INTO v_id, v_name;
+        EXIT WHEN cur%NOTFOUND;
+
+        IF v_name IS NULL THEN
+            CONTINUE;
+        ELSIF length(v_name) > 20 THEN
+            UPDATE users SET name = substr(:v_name, 1, 20) WHERE id = :v_id;
+        ELSE
+            INSERT INTO audit(user_id, note) VALUES (:v_id, 'ok: ' || :v_name);
+        END IF;
+
+        total := total + 1;
+        EXIT WHEN total >= 1000;
+    END LOOP;
+    CLOSE cur;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        INSERT INTO audit(user_id, note) VALUES (NULL, 'no rows');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+$$;
+----
+
+Supported wrappers: `DO $$ ... $$`, `DO $tag$ ... $tag$`, bare `$$ ... $$`, and unwrapped
+`DECLARE ... BEGIN ... END;` scripts (the latter needs a client that does not split statements —
+see *Client notes* below). One query string may contain several statements; they run in order.
+
+===== Typical examples
+
+The four blocks below are **self-contained**: each one creates its own tables, so you can paste any
+of them into a client and run it as is. Two conventions to keep in mind: in the structural part
+(`IF`, `WHILE`, `FETCH INTO`, assignments) variables can be written bare; while **variables inside
+embedded SQL must be written as `:name`** (bind parameters).
+
+*Variables, `IF`/`ELSIF` branching and a `WHILE` loop*:
+
+[source,sql]
+----
+DO $$
+DECLARE
+    i     INTEGER := 1;
+    total INTEGER := 0;
+BEGIN
+    CREATE OR REPLACE TABLE demo_numbers(n INTEGER, kind TEXT);
+
+    WHILE i <= 6 LOOP
+        IF i % 2 = 0 THEN
+            INSERT INTO demo_numbers VALUES (:i, 'even');
+        ELSIF i % 3 = 0 THEN
+            INSERT INTO demo_numbers VALUES (:i, 'multiple of 3');
+        ELSE
+            INSERT INTO demo_numbers VALUES (:i, 'other');
+        END IF;
+        total := total + i;
+        i := i + 1;
+    END LOOP;
+
+    INSERT INTO demo_numbers VALUES (:total, 'sum');
+END;
+$$;
+----
+
+Result: `demo_numbers` holds six classified rows (`other` / `even` / `multiple of 3`) plus the
+summary row `(21, 'sum')`.
+
+*Walking a cursor with `%NOTFOUND`, plus an exception handler*:
+
+[source,sql]
+----
+DO $$
+DECLARE
+    CURSOR cur IS SELECT id, name FROM demo_emp ORDER BY id;
+    v_id    INTEGER;
+    v_name  TEXT;
+    v_total INTEGER := 0;
+BEGIN
+    CREATE OR REPLACE TABLE demo_emp(id INTEGER, name TEXT);
+    INSERT INTO demo_emp VALUES (1, 'alice'), (2, 'bob'), (3, 'carol');
+    CREATE OR REPLACE TABLE demo_audit(id INTEGER, note TEXT);
+
+    OPEN cur;
+    LOOP
+        FETCH cur INTO v_id, v_name;
+        EXIT WHEN cur%NOTFOUND;
+
+        IF v_name IS NULL THEN
+            CONTINUE;
+        END IF;
+
+        INSERT INTO demo_audit VALUES (:v_id, 'ok: ' || :v_name);
+        v_total := v_total + 1;
+    END LOOP;
+    CLOSE cur;
+
+    INSERT INTO demo_audit VALUES (0, 'count = ' || CAST(:v_total AS TEXT));
+EXCEPTION
+    WHEN OTHERS THEN
+        INSERT INTO demo_audit VALUES (-1, 'failed');
+END;
+$$;
+----
+
+Result: `demo_audit` receives three `ok: <name>` rows for ids `1/2/3`, plus `(0, 'count = 3')`.
+
+*`SELECT ... INTO` with an exception handler that branches on the error code*:
+
+[source,sql]
+----
+DO $$
+DECLARE
+    v_name TEXT;
+    v_cnt  INTEGER;
+BEGIN
+    CREATE OR REPLACE TABLE demo_dept(id INTEGER, name TEXT);
+    INSERT INTO demo_dept VALUES (1, 'sales'), (2, 'hr');
+
+    SELECT count(*) INTO v_cnt FROM demo_dept;
+
+    BEGIN
+        SELECT name INTO v_name FROM demo_dept WHERE id = 99;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            v_name := '(not found)';
+        WHEN TOO_MANY_ROWS THEN
+            v_name := '(too many rows)';
+    END;
+
+    CREATE OR REPLACE TABLE demo_result(cnt INTEGER, name TEXT);
+    INSERT INTO demo_result VALUES (:v_cnt, :v_name);
+END;
+$$;
+----
+
+Result: `demo_result` holds `(2, '(not found)')` — when the query matches no row, `SELECT INTO`
+raises `NO_DATA_FOUND`, which the inner block catches.
+
+*Dynamic SQL: `EXECUTE IMMEDIATE` with `USING` and `INTO`*:
+
+[source,sql]
+----
+DO $$
+DECLARE
+    v_table TEXT := 'demo_dyn';
+    v_id    INTEGER := 7;
+    v_cnt   INTEGER;
+BEGIN
+    EXECUTE IMMEDIATE 'CREATE OR REPLACE TABLE ' || v_table || '(id INTEGER)';
+    EXECUTE IMMEDIATE 'INSERT INTO ' || v_table || ' VALUES (?)' USING v_id;
+    EXECUTE IMMEDIATE 'SELECT count(*) FROM ' || v_table INTO v_cnt;
+    EXECUTE IMMEDIATE 'INSERT INTO ' || v_table || ' VALUES (?)' USING v_cnt * 10;
+END;
+$$;
+----
+
+Result: `demo_dyn` holds the two rows `7` and `10`; `USING` values bind to the placeholders in the
+order they appear (`?`, `:1` and `:name` all work, and `:name` also resolves from the current scope
+when there is no `USING` clause).
+
+===== What is supported
+
+[cols="22%,78%",options="header",]
+|===
+|Area |Supported
+
+|Declaration |`DECLARE` variables with `INTEGER`/`SMALLINT`/`BIGINT`/`DECIMAL(p,s)`/`REAL`/`DOUBLE`/`VARCHAR(n)`/`CHAR(n)`/`TEXT`/`BOOLEAN`/`DATE`/`TIME`/`TIMESTAMP [WITH TIME ZONE]`/`INTERVAL`, `NOT NULL`, defaults, and `CURSOR name [(params)] IS <query>`
+
+|Assignment |`x := expr;` and `LET x = expr;`
+
+|Conditionals |`IF / ELSIF / ELSE / END IF` (also `ELSEIF`, `ENDIF`, `==`, `!=`, `&&`, `!`)
+
+|Loops |`LOOP`, `WHILE cond LOOP`, `FOR i IN [REVERSE] a..b LOOP` (inclusive), `FOR i IN [v1, v2] LOOP`, `EXIT [WHEN cond]`, `CONTINUE [WHEN cond]`, labelled loops
+
+|Cursors |`OPEN` / `FETCH ... INTO` / `CLOSE`, `%FOUND`, `%NOTFOUND`, `%ROWCOUNT`, `%ISOPEN`
+
+|Queries |`SELECT ... INTO v1[, v2]` (exactly one row), any DuckDB SQL statement, `:name` bind variables in SQL text
+
+|Dynamic SQL |`EXECUTE IMMEDIATE <SQL text> [INTO targets...] [USING values...]`: the SQL text is evaluated at run time (build it with `\|\|`), placeholders may be `?` / `:1` / `:name`, and `USING` binds them in order of appearance; without `INTO` a result set is discarded, with `INTO` single-row semantics apply (`NO_DATA_FOUND` / `TOO_MANY_ROWS` / `24000`), and a placeholder/`USING` count mismatch raises `07001`
+
+|Exceptions |`EXCEPTION WHEN NO_DATA_FOUND / TOO_MANY_ROWS / ZERO_DIVIDE / OTHERS / <custom> THEN`, `RAISE`, `RAISE name`, re-raise inside a handler, nested blocks (legacy `EXCEPTION:` = `WHEN OTHERS`)
+
+|Expressions |Arithmetic, `\|\|` concatenation, comparisons, `IS [NOT] NULL`, `LIKE`, `IN`, `BETWEEN`, `CASE`, logical `AND`/`OR`/`NOT` with short-circuit, and any DuckDB function
+|===
+
+===== Semantics worth knowing
+
+* Variables start as `NULL` (not `0`).
+* `FOR i IN 1..5` iterates **1,2,3,4,5** (both bounds inclusive); `FOR i IN 5..1` iterates 0 times;
+  `FOR i IN REVERSE 5..1` iterates 5,4,3,2,1.
+* `EXIT` leaves only the innermost loop; `EXIT label` leaves the named loop.
+* `SELECT ... INTO` with 0 rows raises `NO_DATA_FOUND`, with more than one row `TOO_MANY_ROWS` —
+  it never silently picks a row.
+* `:name` inside **string literals** is not substituted (`'Hello :name'` is literal text; use `||`).
+* Expressions are evaluated with **bind parameters** — values are never spliced into SQL text.
+* Division by zero raises `ZERO_DIVIDE`, so `WHEN ZERO_DIVIDE` works.
+* A block never returns a result set; write results to tables instead.
+* Runaway loops are stopped by a statement budget (200000 statements) → `54000`.
+
+===== Error codes
+
+[cols="22%,78%",options="header",]
+|===
+|SQLSTATE |Meaning
+
+|`42601` |Syntax or semantic error (unknown variable/cursor, duplicate declaration, unsupported type) — reported with `line:column`
+|`P0002` / `P0003` |`NO_DATA_FOUND` / `TOO_MANY_ROWS`
+|`22012` |`ZERO_DIVIDE`
+|`22001` / `22003` / `22P02` / `22007` / `42804` |String too long / numeric out of range / bad numeric text / bad datetime / datatype mismatch
+|`24000` |Invalid cursor state; `INTO` target count mismatch
+|`P0001` |User `RAISE`
+|`57014` |Canceled by `CancelRequest` / `KILL SESSION` (long PL/SQL loops are interruptible)
+|`54000` |Statement budget exceeded (possible infinite loop)
+|===
+
+===== Client notes
+
+A PL/SQL block must reach the server **unsplit**. SlackerDB's own JDBC driver splits statements on
+top-level semicolons in the extended protocol; it understands dollar quoting, so `DO $$ ... $$` is
+sent as one statement while an unwrapped `DECLARE ... END;` block is not.
+
+[cols=",",options="header",]
+|===
+|Block form |Extended protocol (default) |Simple query protocol (`preferQueryMode=simple`, psql)
+
+|`DO $$ ... $$` |OK |OK
+|bare `$$ ... $$` |OK |OK
+|unwrapped `DECLARE ... END;` |split by the driver — use `DO $$` instead |OK
+|===
+
+===== Types and implicit conversion
+
+Variables are typed at declaration. Every assignment converts the value to the declared type with
+these rules:
+
+[cols="30%,70%",options="header",]
+|===
+|Source → target |Result
+
+|NULL → any |OK (stays NULL)
+|between numeric types |OK; widening is lossless, narrowing rounds half-up, **overflow raises `22003`**
+|string → numeric/date/time/timestamp |OK when the text parses as that literal, otherwise `22P02` (or `22007` for datetime)
+|numeric/date/time/timestamp → string |OK (standard text form)
+|string → `VARCHAR(n)`/`CHAR(n)` when longer than `n` |**`22001` — never silently truncated**
+|anything involving `BOOLEAN` (except NULL) |`42804` — use an explicit function or `CAST`
+|anything else |`42804`
+|===
+
+Identifiers are case-insensitive and folded to lower case unless quoted (`"Mixed"` keeps its case).
+An uninitialised variable is `NULL`; `NOT NULL` declarations reject NULL assignment (`22004`).
+
+===== Loop boundaries
+
+[cols="45%,55%",options="header",]
+|===
+|Form |Iterations
+
+|`FOR i IN 1..1` |1 (i = 1)
+|`FOR i IN 1..5` |5 — **both bounds inclusive**
+|`FOR i IN 1..0`, `FOR i IN 5..1` |0
+|`FOR i IN REVERSE 5..1` |5 → 5,4,3,2,1
+|`FOR i IN REVERSE 1..5` |0
+|`FOR i IN -3..-1` |3 → -3,-2,-1
+|`FOR i IN [v1, v2, v3]` |one iteration per list element (compatibility form)
+|`WHILE NULL LOOP` |0 (NULL counts as false)
+|`LOOP` that never exits |stopped by the statement budget → `54000`
+|===
+
+The loop variable is implicit, read-only, and invisible outside the loop. `EXIT` / `CONTINUE`
+affect only the innermost loop; `EXIT name` leaves the loop that carries that label:
+
+[source,sql]
+----
+<<outer_loop>>
+LOOP
+    ...
+    EXIT outer_loop WHEN done = 1;
+END LOOP outer_loop;
+----
+
+===== Expression semantics
+
+* Precedence, high to low: `**` → unary `-` / `NOT` → `* / %` → `+ -` → `||` → comparisons
+  (`= <> < <= > >=`, `IS [NOT] NULL`, `LIKE`, `IN`, `BETWEEN`) → `AND` → `OR`.
+* `NULL` in a condition counts as false; `AND`/`OR` short-circuit, so `false AND (1/0 = 1)` is fine.
+* `||` is **string concatenation** (SQL semantics) — write `OR` for logical or.
+* Every variable value is passed as a bind parameter; values are never spliced into SQL text.
+* Function calls are delegated to DuckDB, so any DuckDB scalar function works (qualified names such
+  as `schema.func` are accepted).
+
+Compatibility aliases kept from earlier versions:
+
+[cols="30%,70%",options="header",]
+|===
+|Alias |Equivalent
+
+|`LET x = e` |`x := e`
+|`PASS` |`NULL;`
+|`BREAK` |`EXIT`
+|`==` `!=` `&&` `!` |`=` `<>` `AND` `NOT`
+|`ELSEIF` / `ENDIF` |`ELSIF` / `END IF`
+|`EXCEPTION:` + statements |`EXCEPTION WHEN OTHERS THEN`
+|`FOR :i IN 1 TO 5` |`FOR i IN 1..5`
+|`FOR i IN [v1, v2]` |list iteration
+|`%notfound`, `%found`, `%rowcount`, `%isopen` |case-insensitive cursor attributes
+|===
+
+===== Cursor state machine
+
+|===
+|State \ operation |OPEN |FETCH |CLOSE |`%ISOPEN` |`%FOUND` |`%NOTFOUND` |`%ROWCOUNT`
+
+|Closed (declared, not opened) |OK |`24000` |`24000` |false |`24000` |`24000` |`24000`
+|Open, rows available |`24000` |OK, count+1 |OK |true |true |false |n
+|Open, no rows |`24000` |OK → EOF, notFound=true |OK |true |false |true |0
+|Open, after EOF |`24000` |OK (stays EOF, variables keep their values) |OK |true |false |true |n
+|Closed after fetching |OK |`24000` |`24000` |false |`24000` |`24000` |`24000`
+|===
+
+A cursor opened in a block is closed automatically when that block ends (including on the exception
+path); `CLOSE` followed by `OPEN` is allowed and resets `%ROWCOUNT`.
+
+===== Statement routing
+
+* Wrappers: `DO $$ … $$`, `DO $tag$ … $tag$`, bare `$$ … $$`, or an unwrapped `DECLARE … END;` script.
+* Dollar quoting follows PostgreSQL: there are no escapes inside, the matching tag ends the string —
+  use another tag (`$body$ … $body$`) when the body itself must contain `$$`.
+* In the simple query protocol one query string may contain several statements separated by
+  semicolons; they run in order and each returns its own `CommandComplete` (and result set).
+* A PL/SQL block itself returns no rows: `CommandComplete` reports `DO`. Use `DESCRIBE`-visible
+  statements (ordinary queries) or write into tables for output.
+* In the extended protocol a PL/SQL portal is described as `NoData` and bound without parameters.
+
+===== Limitations and known gaps
+
+Stored procedures, functions, triggers, packages, records/`%ROWTYPE`, collections, cursor `FOR`
+loops and `GOTO` are **not** supported. Unsupported constructs fail with an explicit error instead
+of being silently ignored.
+
+* `%FOUND` / `%NOTFOUND` applied to a name that is not a cursor is not rejected at compile time.
+* Division by zero is detected when the divisor can be resolved locally (literal, variable, cursor
+  attribute); a divisor computed by a query keeps the backend behaviour (`Infinity`).
+* `TIMESTAMP WITH TIME ZONE` keeps the backend representation; values are not normalised to UTC.
+* A block that fails does not roll back by itself — issue `ROLLBACK` in an `EXCEPTION` handler or
+  from the client, exactly as with PostgreSQL `DO`.
+
+===== How it works
+
+A block is compiled before anything runs:
+
+```
+source text
+  └─ detector          classify SQL / block / multi-statement script, unwrap DO $$ … $$
+       └─ preparer     replace embedded SQL with equal-length placeholders (line/column preserved)
+            └─ ANTLR    structure-only grammar (keywords, control flow, cursors, expressions)
+                 └─ AST   statements + expression tree
+                      └─ semantic check (unknown names, duplicates) before execution
+                           └─ interpreter (scopes, cursors, exceptions, budget, cancellation)
+```
+
+Embedded SQL is never guessed by the parser and never re-written; expressions are compiled to
+`SELECT <expr>` with bind parameters and cached per syntax node, while purely local expressions are
+evaluated in the JVM (that is why a tight loop costs about a microsecond per iteration instead of a
+database round trip).
+
+The grammars live under `src/main/antlr4` — `plsql/src/main/antlr4/org/slackerdb/plsql/block/` for
+the block structure and `dbserver/src/main/antlr4/org/slackerdb/dbserver/sql/antlr/` for `COPY`.
+Nothing has to be generated by hand: the `antlr4-maven-plugin` runs during `generate-sources` and
+writes the parsers into `target/generated-sources/antlr4`, which is registered as a compile source
+root automatically. That is ordinary build output — `mvn clean` removes it and git never sees it — so
+edit only the `.g4` files and let the next build regenerate the rest.
+
 ==== Data Service
 
 * Data service work with port_x, please make sure you have enabled it in
@@ -629,7 +1016,7 @@ set context
 |Attribute |Value
 |Protocol |HTTP
 |Method |POST
-|Path |`+/api/setContxt+`
+|Path |`+/api/setContext+`
 |===
 
 headers:
@@ -676,7 +1063,7 @@ remove context
 |Attribute |Value
 |Protocol |HTTP
 |Method |POST
-|Path |`+/api/removeContxt+`
+|Path |`+/api/removeContext+`
 |===
 
 headers:
@@ -756,7 +1143,7 @@ Request example:
     "serviceName": "queryTest1",
     "serviceVersion": "1.0",
     "serviceType": "GET",
-    "sql", "SELECT 1"
+    "sql": "SELECT 1"
   }
 ....
 
@@ -799,7 +1186,7 @@ Request example:
   {
     "serviceName": "queryTest1",
     "serviceVersion": "1.0",
-    "serviceType": "GET",
+    "serviceType": "GET"
   }
 ....
 
@@ -833,12 +1220,12 @@ Success response (200)
 
   {
     "retCode": 0,
-    "retMsg": "Successful."
+    "retMsg": "Successful.",
     "services":
       {
         "Query1":
         {
-          "seviceName" : "Query1",
+          "serviceName" : "Query1",
           "serviceType" : "GET",
           ....
         }
@@ -898,8 +1285,8 @@ Success response (200)
 
   {
     "retCode": 0,
-    "retMsg": "Successful."
-    "description" "test 1",
+    "retMsg": "Successful.",
+    "description": "test 1",
     "cached": false,
     "timestamp": 17777700,
     "data":
@@ -1223,7 +1610,7 @@ Save MCP resource definitions to configuration file.
 |Attribute |Value
 |Protocol |HTTP
 |Method |POST
-|Path |`+/mcp/saveMCPResource+`
+|Path |`+/mcp/saveMCPSource+`
 |===
 
 Response example:
@@ -1247,7 +1634,7 @@ Dump MCP resource definitions as JSON for download.
 |Attribute |Value
 |Protocol |HTTP
 |Method |POST
-|Path |`+/mcp/dumpMCPResource+`
+|Path |`+/mcp/dumpMCPSource+`
 |===
 
 Response: JSON file download with Content-Disposition header.
@@ -1458,13 +1845,26 @@ Once connected, you can send JSON messages with the following general format:
 
 ....
 {
-  "id": "unique-request-id",   // used to match responses
+  "id": "unique-request-id",   // used to match responses, echoed back unchanged
   "type": "message-type",      // one of: start, exec, fetch, cancel, close
-  "data": { ... }              // payload specific to the message type
+  "data": { ... }              // payload specific to the message type; defaults to {}
 }
 ....
 
-The server will respond with a JSON message that mirrors the request `id` and includes a `retCode` (0 for success, non‑zero for error) and relevant data.
+The server replies with the same three fields: `id`, `type` (same as the request) and `data`.
+There is **no** `retCode` / `retMsg` — success or failure is reported by `data.status`.
+When a message fails validation or refers to an unknown session, the server replies with an error
+object that carries neither `id` nor `type`:
+
+....
+{ "error": "Field 'sessionId' must be a string" }
+....
+
+Validation errors you may see: `Field 'id' must be a string`, `Field 'type' must be a string`,
+`Field 'data' must be an object`, `Unknown type: <type>`, `Field 'sessionId' must be a string`,
+`Field 'sql' must be a string`, `Field 'fetchSize' must be a number`,
+`Field 'maxRows' must be a number`, `Invalid session`, `Invalid taskId`,
+`Another SQL is already running`.
 
 ===== Session Management
 
@@ -1485,13 +1885,15 @@ Response:
 ....
 {
   "id": "1",
-  "retCode": 0,
-  "retMsg": "Session created",
-  "sessionId": "session-123"
+  "type": "start",
+  "data": { "sessionId": "session-123" }
 }
 ....
 
 All further messages for this session must include `"sessionId": "session-123"` in their `data` field.
+
+A session owns its own backend connection and can run **one task at a time**; sending `exec` while a
+task is still running answers `{"error": "Another SQL is already running"}`.
 
 ===== Execute SQL (async)
 
@@ -1506,24 +1908,27 @@ Message:
   "data": {
     "sessionId": "session-123",
     "sql": "SELECT * FROM large_table",
-    "fetchSize": 1000   // optional, default is 1000
+    "fetchSize": 100   // optional, default 100; applied to the underlying Statement
   }
 }
 ....
 
-Response:
+Response (returned as soon as the task is accepted, while it is still running):
 
 ....
 {
   "id": "2",
-  "retCode": 0,
-  "retMsg": "Task submitted",
-  "taskId": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "running"   // or "completed" if result fits in first page
+  "type": "exec",
+  "data": {
+    "taskId": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "running"
+  }
 }
 ....
 
-If the SQL execution fails immediately (e.g., syntax error), the response will contain `retCode` != 0 and an error message.
+If the SQL fails while executing, the task status becomes `error` and `fetch` reports it as
+`data.status = "error"` with the message in `data.error` (the `exec` response itself only means the
+task was accepted).
 
 ===== Fetch Results
 
@@ -1548,29 +1953,39 @@ Response:
 ....
 {
   "id": "3",
-  "retCode": 0,
-  "retMsg": "Success",
-  "taskId": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "completed",   // "running", "completed", or "error"
-  "hasMore": false,        // true if there are more rows to fetch
-  "columns": ["id", "name"],
-  "rows": [
-    {"id": 1, "name": "Alice"},
-    {"id": 2, "name": "Bob"}
-  ],
-  "fetched": 2
+  "type": "fetch",
+  "data": {
+    "status": "completed",
+    "columns": ["id", "name"],
+    "rows": [
+      {"id": 1, "name": "Alice"},
+      {"id": 2, "name": "Bob"}
+    ],
+    "hasMore": false,     // true while there are more rows
+    "fetched": 2          // rows read so far for this task
+  }
 }
 ....
 
-If the task is still running (status = "running"), `rows` may be empty and `hasMore` will be true.
-If the task has completed and all rows have been fetched, `status` becomes "completed" and `hasMore` false.
-If an error occurs during execution, `status` becomes "error" and `retMsg` contains the error details.
+The values of `data.status` and the payload that comes with them:
+
+* `running` — the task is still executing; the payload is **only** `{"status": "running"}`
+  (there are no `rows` / `hasMore` yet);
+* `error` — execution failed: `{"status": "error", "error": "<message>"}`;
+* `completed` with a result set — `columns`, `rows`, `hasMore` and `fetched`; keep calling `fetch`
+  while `hasMore` is true;
+* `completed` without a result set (INSERT/UPDATE/DDL) — `{"status": "completed", "updateCount": <n>}`,
+  with no `rows`;
+* `idle` — the task has finished and its result set/statement have been closed (all rows consumed);
+  a later `fetch` answers with this status.
 
 You can send multiple `fetch` messages until `hasMore` becomes false. Each call returns the next page of rows.
 
 ===== Cancel Task
 
-Cancels an ongoing SQL task. If no taskId is provided, cancels the current session's active task.
+Cancels the task that is currently running in the session. Only `sessionId` is read — `taskId` is
+ignored (a session has at most one running task): the server interrupts the executing thread and
+calls `Statement.cancel()`.
 
 Message:
 
@@ -1579,8 +1994,7 @@ Message:
   "id": "4",
   "type": "cancel",
   "data": {
-    "sessionId": "session-123",
-    "taskId": "550e8400-e29b-41d4-a716-446655440000"   // optional, omit to cancel the session's active task
+    "sessionId": "session-123"
   }
 }
 ....
@@ -1590,10 +2004,18 @@ Response:
 ....
 {
   "id": "4",
-  "retCode": 0,
-  "retMsg": "Task cancelled"
+  "type": "cancel",
+  "data": {
+    "status": "canceled",   // "no-running-statement" when there was nothing to cancel
+    "detail": "statement canceled"
+  }
 }
 ....
+
+When `status` is `canceled`, `detail` is either `"future canceled"` (the executing thread was
+interrupted) or `"statement canceled"` (the running statement was cancelled); when there was nothing
+to cancel, `status` is `no-running-statement` and `detail` is an empty string. A successful cancel
+resets the task, so a later `fetch` with the old `taskId` answers `Invalid taskId`.
 
 ===== Close Session
 
@@ -1616,8 +2038,10 @@ Response:
 ....
 {
   "id": "5",
-  "retCode": 0,
-  "retMsg": "Session closed"
+  "type": "close",
+  "data": {
+    "status": "closed"
+  }
 }
 ....
 
@@ -1676,7 +2100,7 @@ ws.send(JSON.stringify({
 
 5. Fetch subsequent pages until `hasMore` becomes false.
 
-6. Optionally cancel if needed:
+6. Optionally cancel (only `sessionId` is read — it cancels the session's current task):
 +
 [source,javascript]
 ----
@@ -1684,8 +2108,7 @@ ws.send(JSON.stringify({
   id: "4",
   type: "cancel",
   data: {
-    sessionId: "session-123",
-    taskId: "abc123"
+    sessionId: "session-123"
   }
 }));
 ----
@@ -1751,14 +2174,14 @@ The console is built with plain HTML/JavaScript and requires no additional insta
 ....
   // create configuration,  and update as your need
   ServerConfiguration serverConfiguration = new ServerConfiguration();
-  serverConfiguration1.setPort(4309);
-  serverConfiguration1.setData("data1");
+  serverConfiguration.setPort(4309);
+  serverConfiguration.setData("data1");
 
   // init database
-  DBInstance dbInstance= new DBInstance(serverConfiguration1);
+  DBInstance dbInstance = new DBInstance(serverConfiguration);
 
   // startup database
-  dbInstance1.start();
+  dbInstance.start();
 
   // shutdown database
   dbInstance.stop();
@@ -1804,10 +2227,9 @@ you can fill anything as you like, it doesn’t make sense.
 ==== 2. Limited support for duckdb datatype
 
 Only some duckdb data types are supported, mainly simple types, such as
-int, number, double, varchar, … For complex types, some are still under
-development, and some are not supported by the PG protocol, such as
-blob, list, map… You can refer to sanity01.java to see what we currently
-support.
+int, number, double, varchar, … Complex types are either still under
+development or cannot be represented in the PG protocol (blob, list, map…),
+and they are rejected with an explicit error rather than silently converted.
 
 ==== 3. postgresql-fdw
 
@@ -1977,16 +2399,19 @@ If the plugin registered an HTTP endpoint, you can access it at `http://localhos
 
 ==== Plugin Example
 
-The `plugin‑example` module in the project provides a complete, working plugin example that demonstrates the basic structure, resource access methods, and plugin lifecycle. Developers can refer to this example to understand how to create their own plugins.
+This section shows a complete, working plugin: its basic structure, resource access methods and
+lifecycle. It is reproduced in full here so you can copy the files it describes.
 
 ===== Module Structure
 
 The plugin‑example module contains the following key components:
 
-* *PluginExample.java* – The main plugin class that extends `DBPlugin` and implements all lifecycle methods.
-* *SimplePluginRunner.java* – A standalone runner that demonstrates how to execute a plugin without the full PF4J framework.
-* *plugin.properties* – The plugin descriptor file that defines the plugin's metadata.
-* *pom.xml* – Maven configuration with dependencies on `slackerdb‑plugin`.
+* *The main plugin class* – extends `DBPlugin` and implements all lifecycle methods. Its full source
+  is reproduced in this section.
+* *A standalone runner* – demonstrates how to execute a plugin without the full PF4J framework
+  (also reproduced below).
+* *The plugin descriptor* – a `plugin.properties` file that defines the plugin's metadata.
+* *The Maven build* – configuration with a dependency on `slackerdb‑plugin`.
 
 ===== PluginExample Class Overview
 
@@ -2121,7 +2546,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 
 public class SimplePluginRunner {
-    static void main(String[] args) throws Exception {
+    public static void main(String[] args) throws Exception {
         // 1. Create database connection
         Connection conn = DriverManager.getConnection("jdbc:duckdb:memory:");
         

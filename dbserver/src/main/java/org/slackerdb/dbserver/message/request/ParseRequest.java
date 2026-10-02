@@ -2,6 +2,7 @@ package org.slackerdb.dbserver.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.dbserver.entity.ParsedStatement;
+import org.slackerdb.dbserver.sql.CopyProtocolHandler;
 import org.slackerdb.dbserver.entity.SQLHistoryRecord;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
@@ -9,7 +10,10 @@ import org.slackerdb.dbserver.message.response.ErrorResponse;
 import org.slackerdb.dbserver.message.response.ParseComplete;
 import org.slackerdb.dbserver.sql.SQLReplacer;
 import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.dbserver.sql.SqlStateMapper;
 import org.slackerdb.common.utils.Utils;
+import org.slackerdb.plsql.detect.PlSqlDetector;
+import org.slackerdb.plsql.detect.PlSqlScript;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -24,8 +28,6 @@ public class ParseRequest extends PostgresRequest {
     private String      preparedStmtName = "";
     private String      sql = "";
     private int[]       parameterDataTypeIds;
-    private static final Pattern plsqlPattern =
-            Pattern.compile("(.*)(DO)?(\\s+)?\\$\\$(.*)\\$\\$.*",Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
 
     public ParseRequest(DBInstance pDbInstance) {
         super(pDbInstance);
@@ -100,7 +102,8 @@ public class ParseRequest extends PostgresRequest {
                     // 生成一个错误消息
                     ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
                     errorResponse.setErrorFile("ParseRequest");
-                    errorResponse.setErrorResponse("Encrypt-Error", "Encrypted database [" + alterDatabaseName + "] dose not exist!");
+                    // SQLSTATE 也用标准码：这个分支的语义就是"这个库不存在"
+                    errorResponse.setErrorResponse("3D000", "Encrypted database [" + alterDatabaseName + "] dose not exist!");
                     errorResponse.process(ctx, request, out);
 
                     // 即使是空语句，也要更新缓存中记录的语句信息
@@ -129,11 +132,58 @@ public class ParseRequest extends PostgresRequest {
             }
         }
 
-        // 处理PLSQL语句
-        Matcher matcher = plsqlPattern.matcher(parseRequest.sql);
-        if (matcher.matches())
-        {
-            // 这是一个PLSQL语句，不再解析，直接返回，等待Execute执行
+        // 处理 COPY ... FROM STDIN 语句。
+        // 与 PLSQL 同样的处理方式：这类语句不能交给 JDBC 的 prepareStatement ——
+        // DuckDB 不认识 PG 的 "FROM STDIN"，会把 STDIN 当文件路径，直接报
+        // "IO Error: No files found that match the pattern \"/dev/stdin\""。
+        // 因此这里只记录语句文本并回 ParseComplete，真正的 COPY 子协议在 Execute 阶段
+        // 由 CopyProtocolHandler 建立（见 ExecuteRequest）。
+        if (CopyProtocolHandler.isCopyFromStdin(sql)) {
+            ParseComplete parseComplete = new ParseComplete(this.dbInstance);
+            parseComplete.process(ctx, request, out);
+            PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out, this.dbInstance.logger);
+            out.close();
+
+            ParsedStatement parsedCopyStatement = new ParsedStatement();
+            parsedCopyStatement.sql = sql.trim();
+            parsedCopyStatement.originalSql = parseRequest.sql;
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+                    "PreparedStatement" + "-" + preparedStmtName, parsedCopyStatement);
+            return;
+        }
+
+        // 统一检测：PL/SQL 匿名块、多语句脚本，或普通 SQL（取代历史正则）
+        PlSqlScript plsqlScript = PlSqlDetector.analyze(parseRequest.sql);
+
+        if (plsqlScript.hasError()) {
+            // 词法层面的错误（未闭合字符串/注释/$$ 等）在这里就能定性，不必等数据库报错
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).markTransactionFailed();
+            ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+            errorResponse.setErrorFile("ParseRequest");
+            errorResponse.setErrorResponse("42601", plsqlScript.error());
+            errorResponse.process(ctx, request, out);
+            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+            out.close();
+            return;
+        }
+
+        if (plsqlScript.isEmpty()) {
+            // 空脚本 / 只有注释：与"改写后为空"同样处理
+            ParseComplete parseComplete = new ParseComplete(this.dbInstance);
+            parseComplete.process(ctx, request, out);
+            PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out, this.dbInstance.logger);
+            out.close();
+
+            ParsedStatement emptyStatement = new ParsedStatement();
+            emptyStatement.sql = "";
+            emptyStatement.originalSql = parseRequest.sql;
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
+                    "PreparedStatement" + "-" + preparedStmtName, emptyStatement);
+            return;
+        }
+
+        if (plsqlScript.isSingleBlock() || plsqlScript.isScript()) {
+            // 匿名块 / 多语句脚本：不交给数据库 prepare，等 Execute 阶段执行
             ParseComplete parseComplete = new ParseComplete(this.dbInstance);
             parseComplete.process(ctx, request, out);
 
@@ -143,9 +193,15 @@ public class ParseRequest extends PostgresRequest {
 
             // 记录SQL语句
             ParsedStatement parsedPrepareStatement = new ParsedStatement();
-            // 前面三个部分可能是注释、DO，也可能是空白换行
-            parsedPrepareStatement.sql = matcher.group(4).trim();
+            parsedPrepareStatement.sql = plsqlScript.isSingleBlock()
+                    ? plsqlScript.first().body()
+                    : parseRequest.sql.trim();
+            parsedPrepareStatement.originalSql = parseRequest.sql;
             parsedPrepareStatement.isPlSql = true;
+            if (plsqlScript.isScript()) {
+                // 多语句脚本：携带完整语句列表，Execute 阶段顺序执行（旧实现会丢掉包装外的语句）
+                parsedPrepareStatement.plSqlScript = plsqlScript.statements();
+            }
             this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
                     "PreparedStatement" + "-" + preparedStmtName, parsedPrepareStatement);
             return;
@@ -167,6 +223,8 @@ public class ParseRequest extends PostgresRequest {
             // 一些第三方工具用发送空语句解析来检测数据库状态
             ParsedStatement parsedPrepareStatement = new ParsedStatement();
             parsedPrepareStatement.sql = "";
+            // 改写后为空（SET/SHOW 等）：审计只能靠原文，否则历史表里只剩一条空语句
+            parsedPrepareStatement.originalSql = parseRequest.sql;
             parsedPrepareStatement.isPlSql = false;
             this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
                     "PreparedStatement" + "-" + preparedStmtName, parsedPrepareStatement);
@@ -188,6 +246,7 @@ public class ParseRequest extends PostgresRequest {
             // 记录PreparedStatement,以及对应的参数类型
             ParsedStatement parsedPrepareStatement = new ParsedStatement();
             parsedPrepareStatement.sql = executeSQL.trim();
+            parsedPrepareStatement.originalSql = parseRequest.sql;
             parsedPrepareStatement.preparedStatement = preparedStatement;
             parsedPrepareStatement.parameterDataTypeIds = parameterDataTypeIds;
             this.dbInstance.getSession(getCurrentSessionId(ctx)).saveParsedStatement(
@@ -196,6 +255,13 @@ public class ParseRequest extends PostgresRequest {
             PostgresMessage.writeAndFlush(ctx, ParseComplete.class.getSimpleName(), out, this.dbInstance.logger);
         }
         catch (SQLException e) {
+            // 事务块内的语句失败必须让事务块进入 aborted 状态（PG 语义），
+            // 与 QueryRequest / ExecuteRequest 的处理保持一致。
+            // 改造前只有后两条路径会标记，于是"在 Parse 阶段就失败"的语句（例如表不存在 ——
+            // DuckDB 在 prepare 时就报错）不会中止事务块：ReadyForQuery 仍报 'T'，
+            // 后续语句也不会被 25P02 拒绝，而是照常执行。
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).markTransactionFailed();
+
             // 清空PreparedStatement
             try {
                 this.dbInstance.getSession(getCurrentSessionId(ctx)).clearParsedStatement(
@@ -228,7 +294,7 @@ public class ParseRequest extends PostgresRequest {
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
             errorResponse.setErrorFile("ParseRequest");
-            errorResponse.setErrorResponse(String.valueOf(e.getErrorCode()), e.getMessage());
+            errorResponse.setErrorResponse(SqlStateMapper.fromException(e), e.getMessage());
             errorResponse.process(ctx, request, out);
 
             // 发送并刷新返回消息

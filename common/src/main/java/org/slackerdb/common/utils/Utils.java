@@ -373,17 +373,12 @@ public class Utils {
      *   <li>各部分之间用下划线分隔</li>
      * </ol>
      *
-     * <p>实现说明：这里刻意保留已废弃的 {@code Locale} 构造器，因为它是唯一能<b>完整保留任意
-     * 变体字符串</b>的 Java 17 API，可用替代品都会带来行为变化：</p>
      * <ul>
      *   <li>{@link Locale#forLanguageTag(String)}——会把不合规的变体<b>静默丢弃</b>，
      *       例如 {@code en__JP} 变成 {@code en_JP}、{@code en_US_JP} 变成 {@code en_US}；</li>
      *   <li>{@link Locale.Builder}——对不合规变体直接抛 {@code IllformedLocaleException}
      *       （如 {@code setVariant("JP")}），把参数错误变成了异常。</li>
      * </ul>
-     *
-     * <p>待项目语言级别提升到 19 及以上时，可整体替换为 {@code Locale.of(...)} 并移除
-     * {@code @SuppressWarnings}。</p>
      *
      * @param str Locale字符串
      * @return 对应的Locale对象，如果输入为null则返回null

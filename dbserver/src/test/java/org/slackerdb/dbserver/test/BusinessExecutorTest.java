@@ -22,13 +22,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * 在 conn0 上跑一条数秒的重查询，同时让其余 15 个连接<b>同时</b>各发一条 {@code SELECT 1}，
  * 观察它们的延迟。</p>
  *
- * <p>两个用例构成正负对照：</p>
- * <ul>
- *   <li>{@code withoutBusinessExecutor_longQueryBlocksSameEventLoop}（负对照）：
- *       {@code business_threads=0}（旧行为）—— 与长查询同 event loop 的连接会被拖满整个查询时长；</li>
- *   <li>{@code businessExecutor_preventHeadOfLineBlocking}（正例）：
- *       业务线程数 ≥ 连接数 —— 没有任何连接被拖累。</li>
- * </ul>
+ * <p>业务线程数取 ≥ 连接数，期望结果是没有任何连接被拖累。
+ * （{@code business_threads=0} 表示自动跟随 max_connections，业务线程组恒为启用状态，
+ * 因此不存在"关闭业务线程组"的对照组。）</p>
  *
  * <p>为避免机器快慢导致断言失效，判定用的是"探针延迟占长查询时长的比例"而不是绝对毫秒数。</p>
  */
@@ -40,18 +36,6 @@ public class BusinessExecutorTest {
     /** 一条可压满 DuckDB、持续数秒的重查询。 */
     private static final String LONG_QUERY =
             "SELECT count(*) FROM range(15000) a, range(15000) b WHERE (a.range + b.range) % 7 = 0";
-
-    @Test
-    void withoutBusinessExecutor_longQueryBlocksSameEventLoop() throws Exception {
-        ProbeResult r = runProbe(0);   // 0 = 关闭业务线程组，回到旧行为
-        System.out.println("BIZEXEC disabled: longQueryMs=" + r.longQueryMs
-                + " maxProbeMs=" + r.maxProbeUs / 1000 + " blocked=" + r.blockedCount);
-        assert r.longQueryMs > 300 : "长查询太短，用例无效：" + r.longQueryMs + "ms";
-        assert r.blockedCount > 0
-                : "旧行为下应当有连接被拖累，但没有任何探针超过 1s（max=" + r.maxProbeUs / 1000 + "ms）";
-        assert r.maxProbeUs > r.longQueryMs * 1000 / 2
-                : "被拖累的探针延迟(" + r.maxProbeUs / 1000 + "ms)应接近长查询时长(" + r.longQueryMs + "ms)";
-    }
 
     @Test
     void businessExecutor_preventHeadOfLineBlocking() throws Exception {
@@ -81,7 +65,7 @@ public class BusinessExecutorTest {
         cfg.setLog_level("INFO");
         cfg.setSqlHistory("OFF");
         cfg.setMax_workers(IO_THREADS);
-        cfg.setBusiness_threads(businessThreads);
+        cfg.setBusiness_threads(businessThreads);   // > 0：显式指定的业务线程数
         int dbPort = cfg.getPort();
 
         DBInstance dbInstance = new DBInstance(cfg);

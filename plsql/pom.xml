@@ -18,11 +18,19 @@
             <artifactId>slackerdb-common</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!-- DuckDB 数据库驱动 -->
+        <!-- DuckDB 数据库驱动：仅测试使用（plsql 的 main 只依赖 JDBC API，必须保持后端无关） -->
         <dependency>
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
-            <version>1.5.5.1</version>
+            <version>1.5.6.0</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- 数据驱动一致性测试（@ParameterizedTest） -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-params</artifactId>
+            <version>5.12.2</version>
+            <scope>test</scope>
         </dependency>
         <!-- PLSQL语法解析 -->
         <dependency>
@@ -33,13 +41,11 @@
     </dependencies>
 
     <build>
+        <!--
+            历史上这里把 src/main/java 整体当资源复制，于是 .g4 / .java / 2.1MB 的
+            antlr 工具 jar 都被打进产物。现在只保留真正的资源目录。
+        -->
         <resources>
-            <resource>
-                <directory>src/main/java</directory>
-                <includes>
-                    <include>**/*</include>
-                </includes>
-            </resource>
             <resource>
                 <directory>src/main/resources</directory>
                 <includes>
@@ -48,6 +54,37 @@
             </resource>
         </resources>
         <plugins>
+            <!--
+                ANTLR 文法生成（P4 起）：
+                源是 src/main/antlr4 下的 .g4（combined grammar，词法+语法同一文件），
+                官方插件在 generate-sources 阶段生成到 target/generated-sources/antlr4/
+                （并自动注册为源码根），因此 mvn clean 天然会清掉，git 也不会看到生成物。
+                改完 .g4 直接 mvn 即可，生成物不要手工维护。
+                visitor 关闭：AstBuilder 直接使用生成的 Context 类，不需要 Visitor。
+            -->
+            <plugin>
+                <groupId>org.antlr</groupId>
+                <artifactId>antlr4-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>antlr-generate-block</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>antlr4</goal>
+                        </goals>
+                        <configuration>
+                            <sourceDirectory>${project.basedir}/src/main/antlr4</sourceDirectory>
+                            <outputDirectory>${project.build.directory}/generated-sources/antlr4</outputDirectory>
+                            <visitor>false</visitor>
+                            <listener>false</listener>
+                            <arguments>
+                                <argument>-package</argument>
+                                <argument>org.slackerdb.plsql.block</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-deploy-plugin</artifactId>
@@ -68,8 +105,11 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
+                    <!-- 按命名约定自动纳入：所有以 Test 结尾的测试类都会被执行，
+                         新增测试（GrammarTest / ConformanceTest / SpiContractTest ...）
+                         无需再改 pom —— 历史上这里写死 PlSqlTest.java 会让新测试被静默跳过。 -->
                     <includes>
-                        <include>**/PlSqlTest.java</include>
+                        <include>**/*Test.java</include>
                     </includes>
                     <parallel>none</parallel> <!-- Disable parallel execution -->
                     <forkCount>1</forkCount>  <!-- Execute tests in a single process -->

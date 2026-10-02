@@ -4,16 +4,20 @@ import io.netty.channel.Channel;
 import org.duckdb.DuckDBAppender;
 import org.duckdb.DuckDBConnection;
 import org.slackerdb.dbserver.entity.ParsedStatement;
+import org.slackerdb.dbserver.entity.SQLHistoryRecord;
+import org.slackerdb.dbserver.sql.CopyDialect;
 
 import java.io.ByteArrayOutputStream;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class DBSession {
@@ -100,11 +104,11 @@ public class DBSession {
     // 必须是并发容器：CancelRequest 与 KILL SESSION 会从**别的线程**遍历它
     // （取消请求走的是新建连接，与目标会话不在同一个线程上）。
     public final Map<String, ParsedStatement> parsedStatements = new ConcurrentHashMap<>();
-    // 标记客户端是否请求了描述信息（如果请求需要返回RowDescription, 反之不返回)
-    public boolean hasDescribeRequest = false;
 
-    // 记录当前COPY的文件格式
+    // 记录当前COPY的文件格式（TEXT / CSV / BINARY）
     public String copyTableFormat = "";
+    // 记录当前COPY的格式与选项（分隔符/引号/转义/NULL 串/表头），由 COPY 语句解析得到
+    public CopyDialect copyDialect = null;
     // 记录当前COPY的Appender
     public DuckDBAppender copyTableAppender = null;
     // 记录这个目标表在数据库的实际列名
@@ -120,6 +124,56 @@ public class DBSession {
     public int copyColumnCount = 0;
     // 上次由于不完整而没有复制的Copy剩余命令
     public ByteArrayOutputStream copyLastRemained = new ByteArrayOutputStream();
+    /**
+     * 本次 COPY IN 是否已被判定失败（例如缓冲超过上限）。
+     *
+     * <p>PG 的错误语义是"报错后丢弃到同步点"：失败一旦发出，后续的 CopyData 必须被忽略，
+     * 否则那些字节会被当成下一次 COPY 的数据，或者让 CopyDone 误报成功（{@code COPY 0}）。</p>
+     */
+    public boolean copyAborted = false;
+
+    /**
+     * 进行中的 COPY 在 SQL 历史表里的记录 ID（{@code <= 0} 表示没有登记的 COPY）。
+     *
+     * <p>COPY 是一条横跨多个报文的语句（CopyInResponse → 若干 CopyData → CopyDone/CopyFail），
+     * 所以它的审计记录在 {@code CopyProtocolHandler.beginCopyIn} 里开，
+     * 在 {@link #closeCopySqlHistory(long, String)} 里收尾 —— 由 CopyDone / CopyFail / 会话清理调用。
+     * 三条协议路径（简单查询、扩展协议、COPY）共用同一份历史实现，保证审计口径一致。</p>
+     */
+    public volatile long copySqlHistoryId = -1;
+
+    /**
+     * 收尾进行中的 COPY 审计记录（把结果写回 SQL 历史表）。
+     *
+     * <p>幂等：正常收尾与防御性清理都会调用，只有第一次生效。</p>
+     *
+     * @param affectedRows 成功时的写入行数（失败传 0）
+     * @param errorMsg     失败原因（成功传 {@code null}）；建议带上 SQLSTATE 前缀
+     */
+    public void closeCopySqlHistory(long affectedRows, String errorMsg) {
+        long historyId = copySqlHistoryId;
+        if (historyId <= 0) {
+            return;
+        }
+        copySqlHistoryId = -1;
+        if (dbInstance.serverConfiguration.getAccess_mode().equals("READ_ONLY")
+                || !dbInstance.serverConfiguration.getSqlHistory().equalsIgnoreCase("ON")) {
+            return;
+        }
+        dbInstance.sqlHistoryList.offer(new SQLHistoryRecord(
+                "UPDATE",
+                historyId,
+                0,
+                0,
+                null,
+                null,
+                0,
+                null,
+                LocalDateTime.now(),
+                0,
+                affectedRows,
+                errorMsg));
+    }
 
     // Binary模式进行Copy的时候需要知道目标表结构, 包括列字段名称，列字段类型
     public List<String> copyTableDbColumnType = null;
@@ -180,6 +234,9 @@ public class DBSession {
      * 第二次调用是空操作。</p>
      */
     public void discardUncommittedCopy() {
+        // 被放弃的 COPY 也要在审计里收尾，否则那条记录会永远停在"进行中"
+        closeCopySqlHistory(0, "COPY did not complete: uncommitted data was discarded");
+
         if (copyTableAppender != null) {
             try {
                 copyTableAppender.close();
@@ -201,6 +258,26 @@ public class DBSession {
             catch (SQLException se) {
                 dbInstance.logger.warn("[SERVER] Rollback for failed COPY failed.", se);
             }
+        }
+    }
+
+    /**
+     * 清除与本次 COPY 相关的全部会话状态（COPY 正常收尾、失败、被中止时都走这里）。
+     *
+     * <p>必须在 {@link #discardUncommittedCopy()} <b>之后</b>调用：丢弃动作依赖
+     * {@code copyTableAppender} 与 {@code copyOwnTransaction}。</p>
+     */
+    public void resetCopyState() {
+        copyTableFormat = "";
+        copyDialect = null;
+        copyColumnCount = 0;
+        copyTableDbColumnMapPos = null;
+        copyTableDbColumnType = null;
+        copyTableDbColumnName = null;
+        copyOwnTransaction = false;
+        copyAborted = false;
+        if (copyLastRemained != null) {
+            copyLastRemained.reset();
         }
     }
 
@@ -229,6 +306,22 @@ public class DBSession {
     }
 
     /**
+     * 本会话是否已收到取消请求。
+     *
+     * <p>为什么除了 {@link #runningStatements} 还需要它：PL/SQL 块内部会执行成百上千条小语句，
+     * 而 {@code PreparedStatement.cancel()} 只能命中"此刻正在执行的那一条"。
+     * 引擎在每条语句前与每次循环回边轮询本标志，长循环才能被真正打断。</p>
+     *
+     * <p>由取消方（跨线程）置位，由执行方在开始新请求时清零。</p>
+     */
+    public final AtomicBoolean cancelRequested = new AtomicBoolean(false);
+
+    /** 执行方在开始处理新请求前清零取消标志。 */
+    public void clearCancelRequested() {
+        cancelRequested.set(false);
+    }
+
+    /**
      * 取消本会话当前正在执行的语句。
      *
      * <p>允许被其它线程调用（CancelRequest 与 KILL SESSION 都是跨会话操作）。
@@ -240,6 +333,8 @@ public class DBSession {
      * 再兼容性地处理 {@link #parsedStatements}（历史行为，避免既有调用方回归）。</p>
      */
     public void cancelRunningStatements() {
+        // 置会话级标志：PL/SQL 之类的"语句序列"执行器靠它退出（单条语句的 cancel() 命中不了循环）
+        cancelRequested.set(true);
         for (PreparedStatement preparedStatement : runningStatements.values()) {
             cancelStatementQuietly(preparedStatement);
         }
@@ -311,6 +406,9 @@ public class DBSession {
         runningStatements.clear();
         executingPreparedStatement = null;
 
+        // COPY 若没等到 CopyDone 就断开，审计记录也要收尾
+        closeCopySqlHistory(0, "COPY did not complete: session closed before CopyDone");
+
         if (copyTableAppender != null)
         {
             copyTableAppender.close();
@@ -359,6 +457,8 @@ public class DBSession {
         // 跨线程关闭语句违反 JDBC 的线程安全约定，清理交给那条线程自己的 finally。
         runningStatements.clear();
         executingPreparedStatement = null;
+        // COPY 若没等到 CopyDone 就断开，审计记录也要收尾
+        closeCopySqlHistory(0, "COPY did not complete: session aborted before CopyDone");
         if (copyTableAppender != null)
         {
             copyTableAppender.close();
@@ -391,15 +491,47 @@ public class DBSession {
         parsedStatements.put(portalName, parsedPrepareStatement);
     }
 
+    /**
+     * 关闭并摘除一个语句（{@code PreparedStatement-<名字>}）缓存项。
+     *
+     * <p>除了 {@link PreparedStatement}，还必须关闭 {@link ParsedStatement#resultSet}：
+     * 门户被挂起（收到过 PortalSuspended）时结果集是<b>开着</b>的，
+     * 只关语句会让它在会话结束前一直占着资源（驱动关闭语句时就会走到这里）。</p>
+     */
     public void clearParsedStatement(String portalName) throws SQLException
     {
-        if (parsedStatements.containsKey(portalName))
-        {
-            PreparedStatement preparedStatement = parsedStatements.get(portalName).preparedStatement;
-            if (preparedStatement != null && !preparedStatement.isClosed()) {
-                preparedStatement.close();
-            }
-            parsedStatements.remove(portalName);
+        ParsedStatement parsedStatement = parsedStatements.remove(portalName);
+        if (parsedStatement == null) {
+            return;
+        }
+        closeResultSet(parsedStatement.resultSet);
+        PreparedStatement preparedStatement = parsedStatement.preparedStatement;
+        if (preparedStatement != null && !preparedStatement.isClosed()) {
+            preparedStatement.close();
+        }
+    }
+
+    /**
+     * 关闭并摘除一个门户（{@code Portal-<名字>}）缓存项。
+     *
+     * <p>与 {@link #clearParsedStatement(String)} 的区别：<b>不关闭</b>底层的
+     * {@link PreparedStatement}。门户与语句共享同一个句柄（见 {@code BindRequest}，
+     * 门户对象直接复用语句对象里的引用），按 PG 语义关闭门户也不应牵连语句 ——
+     * 否则对同名语句的下一次 Bind/Execute 会直接打在已关闭的句柄上。</p>
+     */
+    public void closePortal(String portalName) throws SQLException
+    {
+        ParsedStatement parsedStatement = parsedStatements.remove(portalName);
+        if (parsedStatement == null) {
+            return;
+        }
+        closeResultSet(parsedStatement.resultSet);
+    }
+
+    private static void closeResultSet(ResultSet resultSet) throws SQLException
+    {
+        if (resultSet != null && !resultSet.isClosed()) {
+            resultSet.close();
         }
     }
 

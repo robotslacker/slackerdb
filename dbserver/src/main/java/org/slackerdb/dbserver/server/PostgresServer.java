@@ -43,7 +43,8 @@ public class PostgresServer {
     private EventLoopGroup workerGroup;
     private EventLoopGroup udsBossGroup;
     private EventLoopGroup udsWorkerGroup;
-    // 业务处理线程组。为 null 时业务处理跑在 I/O 线程上（旧行为，见 businessThreads=0）
+    // 业务处理线程组：把业务处理从 Netty I/O 线程上摘下来。
+    // 恒不为 null —— 业务线程数由配置解析而来，最小也会取到 1（见 resolveBusiness_threads）。
     private EventExecutorGroup businessGroup;
 
     private Logger logger;
@@ -90,7 +91,9 @@ public class PostgresServer {
     }
 
     /**
-     * 设置业务处理线程数。&lt;= 0 表示不使用业务线程组（业务处理跑在 I/O 线程上，即旧行为）。
+     * 设置业务处理线程数，取值必须 &gt; 0。
+     * 配置里的 0 表示"自动跟随 max_connections"，应由
+     * {@link org.slackerdb.dbserver.configuration.ServerConfiguration#resolveBusiness_threads()} 解析后再传入。
      */
     public void setBusinessThreads(int pBusinessThreads)
     {
@@ -98,7 +101,7 @@ public class PostgresServer {
     }
 
     /**
-     * 把 PostgresServerHandler 挂到业务线程组上（如果启用了的话）。
+     * 把 PostgresServerHandler 挂到业务线程组上。
      *
      * <p>Netty 会为每个 channel 从这个组里固定分配一个 executor，因此
      * <b>同一连接内的消息仍然串行有序</b>（这也是不自己做排队的原因），
@@ -107,11 +110,7 @@ public class PostgresServer {
      */
     private void addBusinessHandler(ChannelPipeline pipeline)
     {
-        if (businessGroup != null) {
-            pipeline.addLast(businessGroup, new PostgresServerHandler(dbInstance, logger));
-        } else {
-            pipeline.addLast(new PostgresServerHandler(dbInstance, logger));
-        }
+        pipeline.addLast(businessGroup, new PostgresServerHandler(dbInstance, logger));
     }
 
     public void setDBInstance(DBInstance pDbInstance)
@@ -450,6 +449,27 @@ public class PostgresServer {
                         lastRequestCommand = CancelRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                     }
+                    case 'f' -> {
+                        // CopyFail：客户端在 COPY IN 期间放弃本次导入。
+                        // 必须回 ErrorResponse（随后由客户端的 Sync 触发 ReadyForQuery），
+                        // 否则客户端会一直等一个永不到来的报文。
+                        CopyFailRequest copyFailRequest = new CopyFailRequest(dbInstance);
+                        copyFailRequest.decode(data);
+
+                        // 处理消息
+                        pushMsgObject(out, copyFailRequest);
+
+                        // 标记当前步骤
+                        lastRequestCommand = CopyFailRequest.class.getSimpleName();
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
+                    }
+                    case 'H' -> {
+                        // Flush：只把已缓冲的输出推出去，不产生任何响应报文，
+                        // 也不推进协议阶段（因此不更新 SessionLastRequestCommand）。
+                        FlushRequest flushRequest = new FlushRequest(dbInstance);
+                        flushRequest.decode(data);
+                        pushMsgObject(out, flushRequest);
+                    }
                     case '!' -> {
                         AdminClientRequest adminClientRequest = new AdminClientRequest(dbInstance);
                         adminClientRequest.decode(data);
@@ -461,7 +481,17 @@ public class PostgresServer {
                         lastRequestCommand = AdminClientRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                     }
-                    default -> logger.error("[SERVER] Unknown message type: {}", messageType);
+                    default -> {
+                        // 未识别的消息类型：绝不静默丢弃。
+                        // 静默丢弃会让客户端等一条永不到来的报文，最终挂到空闲超时（默认 600s），
+                        // 这是最难排查的一类故障。这里统一"回错误 + 关闭连接"：
+                        // 能走到 default 说明客户端与服务端的协议状态机已经脱节，重连是唯一安全的恢复方式。
+                        logger.warn("[SERVER] Unsupported message type '{}' (0x{}), closing connection. "
+                                        + "The protocol state machine is out of sync.",
+                                messageType, Integer.toHexString(messageType));
+                        pushMsgObject(out, new UnsupportedMessageRequest(dbInstance,
+                                "Unsupported frontend message type '" + messageType + "'"));
+                    }
                 }
             }
         }
@@ -502,14 +532,9 @@ public class PostgresServer {
         // 业务处理线程组：把 JDBC 调用从 I/O 线程上摘下来。
         // Netty 的线程是首次派发任务时才真正创建，因此实际线程数约等于并发连接数，而非配置值。
         // 另外 Netty 会关闭这些线程上的 FastThreadLocal，无需额外维护。
-        if (businessThreads > 0) {
-            businessGroup = new DefaultEventExecutorGroup(businessThreads, new DefaultThreadFactory("pg-biz"));
-            logger.info("[SERVER] Business executor enabled with {} threads. " +
-                    "Connection requests will be processed off the I/O threads.", businessThreads);
-        } else {
-            businessGroup = null;
-            logger.info("[SERVER] Business executor disabled. Connection requests run on I/O threads.");
-        }
+        businessGroup = new DefaultEventExecutorGroup(businessThreads, new DefaultThreadFactory("pg-biz"));
+        logger.info("[SERVER] Business executor enabled with {} threads. " +
+                "Connection requests will be processed off the I/O threads.", businessThreads);
 
         try {
             // 启动TCP服务（如果端口不为-1）

@@ -14,19 +14,28 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.TimeZone;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 /**
- * H8 回归测试：历史记录队列的"阻塞式背压"与"消费线程异常退出"。
+ * 历史记录队列的两条契约：
  *
- * <p>改造前的两个缺陷：</p>
  * <ol>
- *   <li>{@code BoundedQueue.offer} 内部使用 {@code queue.put}，队列满时会<b>永久阻塞调用线程</b>。
- *       而调用点运行在 Netty EventLoop / Jetty 线程上；</li>
- *   <li>历史消费线程的 {@code catch (SQLException)} 写在 while 循环之外，
- *       任何一次写库失败都会让线程直接退出。此后队列不再被排空，
- *       第 10001 条记录起生产者会被永久阻塞 —— 整个 PG 端口停止响应。</li>
+ *   <li><b>绝不丢弃</b>：{@code BoundedQueue.offer} 在队列满时阻塞等待空位，元素最终一定会入队
+ *       —— 包括等待期间被中断的情况（见 {@link #producerBlocksInsteadOfDroppingWhenQueueIsFull}
+ *       与 {@link #interruptedProducerStillEnqueuesAndKeepsInterruptFlag}）。
+ *       "记录不下审计就阻塞业务"是刻意的设计要求。</li>
+ *   <li><b>消费线程自愈</b>：历史写库失败不能让消费线程退出，否则队列不再被排空、
+ *       生产者会被背压永久挂住（{@link #historyThreadSurvivesBackendFailureAndRecovers}）。</li>
  * </ol>
+ *
+ * <p><b>关于第 1 条的历史</b>：本队列一度改成"满了就丢弃 + 计数"，那是在消费线程还无法自愈时的
+ * 临时降级；现在消费线程已改为在循环内捕获异常、回滚并退避重试，且审计不可丢是硬要求，
+ * 因此入队恢复为阻塞式，并且<b>不再提供任何丢弃入口</b>（没有 tryOffer、没有带超时的入队）。
+ * 代价是生产者（请求处理线程）会被慢消费端拖慢，所以 {@code getBlockedTotal()} /
+ * {@code getBlockedMillis()} 是需要观测的背压信号。</p>
  */
 public class HistoryQueueTest {
     static int dbPort;
@@ -76,32 +85,100 @@ public class HistoryQueueTest {
     }
 
     /**
-     * 队列满时 offer 必须立刻返回 false，绝不阻塞调用线程 —— 这是"整库挂死"的根因。
+     * 队列满时 {@code offer} 必须<b>阻塞等待空位，不丢弃元素</b>；消费端腾出空位后该元素必须入队。
+     *
+     * <p>契约说明：这里锁定的是"背压、不丢数据"。历史上本用例断言的是相反的行为
+     * （满了立刻返回 false 并计数丢弃），那是 H8 的临时降级方案 —— 当时的真正缺陷是
+     * 消费线程一次写库失败就退出（现已改为循环内捕获 + 退避重试），
+     * 因此不再需要用"丢历史"来换取"业务线程不挂"。</p>
      */
     @Test
-    void producerNeverBlocksWhenQueueIsFull() {
-        final int capacity = 100;
+    void producerBlocksInsteadOfDroppingWhenQueueIsFull() throws Exception {
+        final int capacity = 4;
         BoundedQueue<String> queue = new BoundedQueue<>(capacity);
-
+        assertEquals(capacity, queue.getCapacity(), "容量应为构造时指定的值");
         for (int i = 0; i < capacity; i++) {
             assert queue.offer("item-" + i) : "队列未满时必须入队成功";
         }
+        assertEquals(0, queue.remainingCapacity(), "队列应已填满");
 
-        long startNano = System.nanoTime();
-        for (int i = 0; i < 10_000; i++) {
-            assert !queue.offer("overflow-" + i) : "队列已满时必须返回 false";
+        // 队列已满：这次 offer 必须挂住，而不是返回 false 把元素丢掉
+        AtomicReference<String> offeredResult = new AtomicReference<>("NOT-RETURNED");
+        Thread producer = new Thread(() -> offeredResult.set("returned:" + queue.offer("overflow")),
+                "blocked-producer");
+        producer.start();
+        producer.join(500);
+        assert producer.isAlive() : "队列已满时 offer 必须阻塞，实际立刻返回了 " + offeredResult.get();
+        assertEquals(capacity, queue.size(), "阻塞期间队列内容不应发生变化（本队列没有丢弃路径）");
+
+        // 消费一个 → 被挂住的 offer 立即完成，且入队的是它自己的元素（没有丢、也没有串）
+        assertEquals("item-0", queue.poll());
+        producer.join(5_000);
+        assert !producer.isAlive() : "腾出空位后 offer 应当立即返回";
+        assert "returned:true".equals(offeredResult.get())
+                : "腾出空位后 offer 应当入队成功，实际 " + offeredResult.get();
+
+        // 全部元素都在：容量 4 + 后来那个 = 5 个，一个不少
+        java.util.List<String> drained = new java.util.ArrayList<>();
+        String value;
+        while ((value = queue.poll()) != null) {
+            drained.add(value);
         }
-        long elapsedMs = (System.nanoTime() - startNano) / 1_000_000L;
+        assertEquals(java.util.List.of("item-1", "item-2", "item-3", "overflow"), drained,
+                "被背压暂存的元素必须一个不少地按序保留");
+        assertEquals(5L, queue.getOfferedTotal(), "入队尝试次数不符");
+        assertEquals(1L, queue.getBlockedTotal(), "应记录到一次\"因满而等待\"");
+        assert queue.getBlockedMillis() >= 400L
+                : "等待时长应被累计，实际 " + queue.getBlockedMillis() + "ms";
+    }
 
-        assert queue.getOfferedTotal() == capacity + 10_000L;
-        assert queue.getDroppedTotal() == 10_000L;
-        assert queue.size() == capacity;
-        assert elapsedMs < 1_000L : "队列满时 offer 不应阻塞，实际耗时 " + elapsedMs + "ms";
+    /**
+     * 中断也不能丢审计：等待空位时被 {@link Thread#interrupt()} 打断，
+     * 必须继续等待并入队，同时把中断状态还原给调用方。
+     *
+     * <p>这是"任何情况都不丢"里最容易实现错的一条：{@code BlockingQueue.put} 一被打断就抛异常，
+     * 顺势返回就会把这条审计丢掉（本仓库历史上就是"满了就丢弃 + 计数"）。</p>
+     */
+    @Test
+    void interruptedProducerStillEnqueuesAndKeepsInterruptFlag() throws Exception {
+        final int capacity = 2;
+        BoundedQueue<String> queue = new BoundedQueue<>(capacity);
+        assert queue.offer("a");
+        assert queue.offer("b");
 
-        // 消费一个之后又能重新入队
-        assert "item-0".equals(queue.poll());
-        assert queue.offer("after-drain");
-        assert queue.getDroppedTotal() == 10_000L : "成功入队不应增加丢弃计数";
+        AtomicReference<String> result = new AtomicReference<>("NOT-RETURNED");
+        AtomicReference<Boolean> interruptFlagAfterReturn = new AtomicReference<>(null);
+        Thread producer = new Thread(() -> {
+            result.set("returned:" + queue.offer("must-not-be-lost"));
+            interruptFlagAfterReturn.set(Thread.currentThread().isInterrupted());
+        }, "interrupted-producer");
+        producer.start();
+
+        // 等它真的卡在 put 上，然后连续中断两次
+        Thread.sleep(300);
+        assert producer.isAlive() : "队列已满时 offer 必须阻塞";
+        producer.interrupt();
+        Thread.sleep(200);
+        assert producer.isAlive() : "被中断后不允许放弃入队（否则这条审计就丢了）";
+        producer.interrupt();
+        Thread.sleep(200);
+        assert producer.isAlive() : "重复中断同样不允许丢数据";
+
+        // 腾出空位 → 它必须把元素交出来
+        assertEquals("a", queue.poll());
+        producer.join(5_000);
+        assert !producer.isAlive() : "腾出空位后被中断的生产者也应当完成入队";
+        assert "returned:true".equals(result.get()) : "入队结果异常：" + result.get();
+        assert Boolean.TRUE.equals(interruptFlagAfterReturn.get())
+                : "入队后必须把中断状态还原给调用方（不能悄悄吃掉）";
+
+        java.util.List<String> drained = new java.util.ArrayList<>();
+        String value;
+        while ((value = queue.poll()) != null) {
+            drained.add(value);
+        }
+        assertEquals(java.util.List.of("b", "must-not-be-lost"), drained,
+                "被中断过的那条审计必须仍在队列里，一条都不能少");
     }
 
     /**
