@@ -88,7 +88,8 @@ public class QuartzJobListener implements JobListener {
         if (meta != null) {
             try {
                 TaskHistory history = new TaskHistory();
-                history.setTaskId(System.currentTimeMillis()); // Use timestamp as unique ID
+                // task_id 由存储层分配（同毫秒完成多个任务也不会主键冲突）
+                history.setTaskId(0L);
                 history.setRunId(runId);
                 history.setTaskName(taskName);
                 history.setRunIdRef(runId);
@@ -97,7 +98,10 @@ public class QuartzJobListener implements JobListener {
                         ? exitMsg.substring(0, 1000) : exitMsg);
                 history.setStartTime(QuartzJobStatusManager.getStartTime(jobKey));
                 history.setEndTime(LocalDateTime.now());
-                history.setLogFile(jobData.getString("logFile"));
+                // 优先记录执行期解析出的绝对路径
+                String resolved = jobData.getString("logFileResolved");
+                history.setLogFile(resolved != null && !resolved.isBlank()
+                        ? resolved : jobData.getString("logFile"));
                 meta.insertTaskHistory(history);
             } catch (Exception e) {
                 logger.warn("[SCHEDULER] Failed to persist task history for {}/{}: {}",

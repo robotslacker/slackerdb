@@ -7,13 +7,6 @@ import java.util.regex.Pattern;
 
 /**
  * PL/SQL 的结构化错误。
- *
- * <p>与历史实现（只有字符串消息、SQLSTATE 恒为 42601）不同，本异常携带：</p>
- * <ul>
- *   <li>{@link #getSqlState()} —— 供协议层直接映射到 ErrorResponse；</li>
- *   <li>{@link #getLine()}/{@link #getColumn()} —— 能定位时给出行列（0 表示未知）；</li>
- *   <li>{@link #getSqlText()} —— 出错语句原文（能定位时给出）。</li>
- * </ul>
  */
 public class PlSqlException extends RuntimeException {
 
@@ -33,12 +26,8 @@ public class PlSqlException extends RuntimeException {
     public static final String PROGRAM_LIMIT_EXCEEDED = "54000";
     /** 用户 RAISE / 未捕获自定义异常。 */
     public static final String RAISE_ERROR = "P0001";
-    /** 嵌套过深 / 表达式过于复杂。 */
-    public static final String STATEMENT_TOO_COMPLEX = "54001";
     /** 内部错误（后端未给出 SQLSTATE 时）。 */
     public static final String INTERNAL_ERROR = "XX000";
-    /** 功能不支持。 */
-    public static final String FEATURE_NOT_SUPPORTED = "0A000";
     /** EXECUTE IMMEDIATE：USING 的个数与动态 SQL 占位符不匹配。 */
     public static final String INVALID_BIND_COUNT = "07001";
 
@@ -89,9 +78,6 @@ public class PlSqlException extends RuntimeException {
     /**
      * 把引擎抛出的任意异常归一化为 {@link PlSqlException}。
      *
-     * <p>过渡期保持历史行为：非取消类错误一律 {@code 42601}
-     * （旧实现把一切都包装成 ParseSQLException）；P6 起解释器会直接抛出
-     * 携带精确 SQLSTATE 的 {@link PlSqlException}，此处原样透传。</p>
      */
     public static PlSqlException from(Throwable error) {
         if (error instanceof PlSqlException plSqlException) {
@@ -114,7 +100,6 @@ public class PlSqlException extends RuntimeException {
                 column = Integer.parseInt(matcher.group(2));
             } catch (NumberFormatException ignored) {
                 line = 0;
-                column = 0;
             }
         }
         return new PlSqlException(message, SYNTAX_ERROR, line, column, null, error);

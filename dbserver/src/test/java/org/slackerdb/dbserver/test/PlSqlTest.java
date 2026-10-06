@@ -269,4 +269,223 @@ public class PlSqlTest {
             assert error != null : "未捕获的动态 SQL 错误必须返回给客户端";
         }
     }
+
+    // ------------------------------------------------------------------
+    // README 里的 PL/SQL 示例：这里用**文档原文**（含 DO $$ 包裹）经真实连接跑一遍。
+    // 改动 README.adoc / README-CN.adoc 的示例时必须同步改这里（反之亦然）。
+    // ------------------------------------------------------------------
+
+    /** README「运行一个块 / Running a block」：游标遍历 + 条件 + 异常段。 */
+    @Test
+    void readmeRunningABlock() throws SQLException {
+        try (Connection pgConn = connect(); Statement stmt = pgConn.createStatement()) {
+            stmt.execute("CREATE OR REPLACE TABLE users(id BIGINT, name TEXT, active BOOLEAN)");
+            stmt.execute("CREATE OR REPLACE TABLE audit(user_id BIGINT, note TEXT)");
+            stmt.execute("INSERT INTO users VALUES (1, 'a very long user name over 20', true),"
+                    + " (2, 'bob', true), (3, 'carol', false)");
+
+            stmt.execute("""
+                    DO $$
+                    DECLARE
+                        CURSOR cur IS SELECT id, name FROM users WHERE active = true;
+                        v_id   BIGINT;
+                        v_name TEXT;
+                        total  INTEGER := 0;
+                    BEGIN
+                        OPEN cur;
+                        LOOP
+                            FETCH cur INTO v_id, v_name;
+                            EXIT WHEN cur%NOTFOUND;
+
+                            IF v_name IS NULL THEN
+                                CONTINUE;
+                            ELSIF length(v_name) > 20 THEN
+                                UPDATE users SET name = substr(:v_name, 1, 20) WHERE id = :v_id;
+                            ELSE
+                                INSERT INTO audit(user_id, note) VALUES (:v_id, 'ok: ' || :v_name);
+                            END IF;
+
+                            total := total + 1;
+                            EXIT WHEN total >= 1000;
+                        END LOOP;
+                        CLOSE cur;
+                    EXCEPTION
+                        WHEN NO_DATA_FOUND THEN
+                            INSERT INTO audit(user_id, note) VALUES (NULL, 'no rows');
+                        WHEN OTHERS THEN
+                            ROLLBACK;
+                            RAISE;
+                    END;
+                    $$;
+                    """);
+
+            try (ResultSet rs = stmt.executeQuery("SELECT length(name) FROM users WHERE id = 1")) {
+                assert rs.next();
+                assert rs.getInt(1) == 20 : "长的名字应被截断到 20";
+            }
+            try (ResultSet rs = stmt.executeQuery("SELECT count(*) FROM audit")) {
+                assert rs.next();
+                assert rs.getInt(1) == 1 : "只有 active 且名字不长的行会写审计";
+            }
+        }
+    }
+
+    /** README 典型示例 1：变量 + IF/ELSIF + WHILE 循环。 */
+    @Test
+    void readmeExample1VariablesAndLoop() throws SQLException {
+        try (Connection pgConn = connect(); Statement stmt = pgConn.createStatement()) {
+            stmt.execute("""
+                    DO $$
+                    DECLARE
+                        i     INTEGER := 1;
+                        total INTEGER := 0;
+                    BEGIN
+                        CREATE OR REPLACE TABLE demo_numbers(n INTEGER, kind TEXT);
+
+                        WHILE i <= 6 LOOP
+                            IF i % 2 = 0 THEN
+                                INSERT INTO demo_numbers VALUES (:i, 'even');
+                            ELSIF i % 3 = 0 THEN
+                                INSERT INTO demo_numbers VALUES (:i, 'multiple of 3');
+                            ELSE
+                                INSERT INTO demo_numbers VALUES (:i, 'other');
+                            END IF;
+                            total := total + i;
+                            i := i + 1;
+                        END LOOP;
+
+                        INSERT INTO demo_numbers VALUES (:total, 'sum');
+                    END;
+                    $$;
+                    """);
+
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT kind FROM demo_numbers ORDER BY n")) {
+                String[] expected = {"other", "even", "multiple of 3", "even", "other", "even", "sum"};
+                for (String kind : expected) {
+                    assert rs.next();
+                    assert kind.equals(rs.getString(1)) : "期望 " + kind + "，实际 " + rs.getString(1);
+                }
+                assert !rs.next();
+            }
+            try (ResultSet rs = stmt.executeQuery("SELECT n FROM demo_numbers WHERE kind = 'sum'")) {
+                assert rs.next();
+                assert rs.getInt(1) == 21 : "1+2+3+4+5+6 = 21";
+            }
+        }
+    }
+
+    /** README 典型示例 2：游标遍历 + %NOTFOUND + 异常处理。 */
+    @Test
+    void readmeExample2CursorLoop() throws SQLException {
+        try (Connection pgConn = connect(); Statement stmt = pgConn.createStatement()) {
+            stmt.execute("""
+                    DO $$
+                    DECLARE
+                        CURSOR cur IS SELECT id, name FROM demo_emp ORDER BY id;
+                        v_id    INTEGER;
+                        v_name  TEXT;
+                        v_total INTEGER := 0;
+                    BEGIN
+                        CREATE OR REPLACE TABLE demo_emp(id INTEGER, name TEXT);
+                        INSERT INTO demo_emp VALUES (1, 'alice'), (2, 'bob'), (3, 'carol');
+                        CREATE OR REPLACE TABLE demo_audit(id INTEGER, note TEXT);
+
+                        OPEN cur;
+                        LOOP
+                            FETCH cur INTO v_id, v_name;
+                            EXIT WHEN cur%NOTFOUND;
+
+                            IF v_name IS NULL THEN
+                                CONTINUE;
+                            END IF;
+
+                            INSERT INTO demo_audit VALUES (:v_id, 'ok: ' || :v_name);
+                            v_total := v_total + 1;
+                        END LOOP;
+                        CLOSE cur;
+
+                        INSERT INTO demo_audit VALUES (0, 'count = ' || CAST(:v_total AS TEXT));
+                    EXCEPTION
+                        WHEN OTHERS THEN
+                            INSERT INTO demo_audit VALUES (-1, 'failed');
+                    END;
+                    $$;
+                    """);
+
+            try (ResultSet rs = stmt.executeQuery("SELECT note FROM demo_audit ORDER BY id")) {
+                assert rs.next();
+                assert "count = 3".equals(rs.getString(1)) : "实际 " + rs.getString(1);
+                assert rs.next() && "ok: alice".equals(rs.getString(1));
+                assert rs.next() && "ok: bob".equals(rs.getString(1));
+                assert rs.next() && "ok: carol".equals(rs.getString(1));
+                assert !rs.next();
+            }
+        }
+    }
+
+    /** README 典型示例 3：SELECT ... INTO 与按错误码分支的异常处理。 */
+    @Test
+    void readmeExample3SelectInto() throws SQLException {
+        try (Connection pgConn = connect(); Statement stmt = pgConn.createStatement()) {
+            stmt.execute("""
+                    DO $$
+                    DECLARE
+                        v_name TEXT;
+                        v_cnt  INTEGER;
+                    BEGIN
+                        CREATE OR REPLACE TABLE demo_dept(id INTEGER, name TEXT);
+                        INSERT INTO demo_dept VALUES (1, 'sales'), (2, 'hr');
+
+                        SELECT count(*) INTO v_cnt FROM demo_dept;
+
+                        BEGIN
+                            SELECT name INTO v_name FROM demo_dept WHERE id = 99;
+                        EXCEPTION
+                            WHEN NO_DATA_FOUND THEN
+                                v_name := '(not found)';
+                            WHEN TOO_MANY_ROWS THEN
+                                v_name := '(too many rows)';
+                        END;
+
+                        CREATE OR REPLACE TABLE demo_result(cnt INTEGER, name TEXT);
+                        INSERT INTO demo_result VALUES (:v_cnt, :v_name);
+                    END;
+                    $$;
+                    """);
+
+            try (ResultSet rs = stmt.executeQuery("SELECT cnt, name FROM demo_result")) {
+                assert rs.next();
+                assert rs.getInt(1) == 2;
+                assert "(not found)".equals(rs.getString(2));
+            }
+        }
+    }
+
+    /** README 典型示例 4：动态 SQL（EXECUTE IMMEDIATE + USING + INTO）。 */
+    @Test
+    void readmeExample4DynamicSql() throws SQLException {
+        try (Connection pgConn = connect(); Statement stmt = pgConn.createStatement()) {
+            stmt.execute("""
+                    DO $$
+                    DECLARE
+                        v_table TEXT := 'demo_dyn';
+                        v_id    INTEGER := 7;
+                        v_cnt   INTEGER;
+                    BEGIN
+                        EXECUTE IMMEDIATE 'CREATE OR REPLACE TABLE ' || v_table || '(id INTEGER)';
+                        EXECUTE IMMEDIATE 'INSERT INTO ' || v_table || ' VALUES (?)' USING v_id;
+                        EXECUTE IMMEDIATE 'SELECT count(*) FROM ' || v_table INTO v_cnt;
+                        EXECUTE IMMEDIATE 'INSERT INTO ' || v_table || ' VALUES (?)' USING v_cnt * 10;
+                    END;
+                    $$;
+                    """);
+
+            try (ResultSet rs = stmt.executeQuery("SELECT id FROM demo_dyn ORDER BY id")) {
+                assert rs.next() && rs.getInt(1) == 7;
+                assert rs.next() && rs.getInt(1) == 10;
+                assert !rs.next();
+            }
+        }
+    }
 }

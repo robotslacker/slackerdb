@@ -2,6 +2,8 @@ package org.slackerdb.plugins.scheduler.quartz;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -142,6 +144,19 @@ public class QuartzJobStatusManager {
      */
     public static void clear(String jobKey) {
         jobStatusMap.remove(jobKey);
+    }
+
+    /** 当前 jobKey 的完整运行态快照（供 API 汇总展示）；不存在时返回空快照。 */
+    public static Map<String, Object> snapshot(String jobKey) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        JobStatus status = jobStatusMap.get(jobKey);
+        result.put("running", status != null && status.isRunning.get());
+        result.put("queued", status != null && status.isQueued.get());
+        result.put("lastRetCode", status != null ? status.previousExitCode.get() : null);
+        result.put("lastStartTime", status != null ? status.previousStartTime.get() : null);
+        result.put("lastEndTime", status != null ? status.previousEndTime.get() : null);
+        result.put("logFile", status != null ? status.logFile.get() : null);
+        return result;
     }
 
     /**

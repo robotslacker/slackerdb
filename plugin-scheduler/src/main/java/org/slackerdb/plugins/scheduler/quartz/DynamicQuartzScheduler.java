@@ -98,11 +98,11 @@ public class DynamicQuartzScheduler {
      *
      * @param runId            the run ID (used as group name)
      * @param taskName         the task name (used as job key name)
-     * @param scriptType       the script type (SQL, HOP, SHELL)
-     * @param script           the script path or content
-     * @param logFile          the log file path
+     * @param scriptType       the script type (HOP, SHELL, COMMAND)
+     * @param script           HOP: workflow file name relative to PROJECT_HOME; SHELL/COMMAND: command line
+     * @param logFile          the log file path (relative to the run home is allowed)
      * @param taskRunPolicy    RUN_ONCE, CRONTAB, INTERVAL
-     * @param taskFailPolicy   STOP, CONTINUE, RETRY
+     * @param taskFailPolicy   STOP, CONTINUE
      * @param taskInterval     interval in seconds (for INTERVAL policy)
      * @param taskParallelPolicy PARALLEL, SERIAL_DISCARD, SERIAL_DELAY, SERIAL_CATCHUP
      * @param taskCrontabExpr  cron expression (for CRONTAB policy)
@@ -110,53 +110,9 @@ public class DynamicQuartzScheduler {
      * @param taskGroup        task group name
      * @param taskStartupOrder startup order within group
      * @param configJson       additional JSON configuration
-     * @param workDir          working directory for execution
-     */
-    public void scheduleJob(
-            String runId,
-            String taskName,
-            String scriptType,
-            String script,
-            String logFile,
-            String taskRunPolicy,
-            String taskFailPolicy,
-            int taskInterval,
-            String taskParallelPolicy,
-            String taskCrontabExpr,
-            int taskTimeout,
-            String taskGroup,
-            int taskStartupOrder,
-            String configJson,
-            String workDir
-    ) throws SchedulerException {
-        scheduleJob(runId, taskName, scriptType, script, logFile,
-                taskRunPolicy, taskFailPolicy, taskInterval,
-                taskParallelPolicy, taskCrontabExpr, taskTimeout,
-                taskGroup, taskStartupOrder, configJson, workDir,
-                null, null);
-    }
-
-    /**
-     * Schedule a job for a specific run with full task configuration,
-     * including Hop environment settings.
-     *
-     * @param runId            the run ID (used as group name)
-     * @param taskName         the task name (used as job key name)
-     * @param scriptType       the script type (SQL, HOP, SHELL)
-     * @param script           the script path or content
-     * @param logFile          the log file path
-     * @param taskRunPolicy    RUN_ONCE, CRONTAB, INTERVAL
-     * @param taskFailPolicy   STOP, CONTINUE, RETRY
-     * @param taskInterval     interval in seconds (for INTERVAL policy)
-     * @param taskParallelPolicy PARALLEL, SERIAL_DISCARD, SERIAL_DELAY, SERIAL_CATCHUP
-     * @param taskCrontabExpr  cron expression (for CRONTAB policy)
-     * @param taskTimeout      timeout in seconds (0 = no timeout)
-     * @param taskGroup        task group name
-     * @param taskStartupOrder startup order within group
-     * @param configJson       additional JSON configuration
-     * @param workDir          working directory for execution
-     * @param hopWorkDir       Hop 工作目录（用于嵌入式 HopService，null 则使用外部命令）
-     * @param hopPluginDir     Hop 插件目录
+     * @param workDir          the run home (working directory for execution)
+     * @param jobDataExtras    附加 JobData：projectType / variablesJson / hopRunScript / hopJavaHome /
+     *                         hopProjectName / hopEnvironmentName / hopRunConfig（方案 A：HOP 走命令行）
      */
     public void scheduleJob(
             String runId,
@@ -174,13 +130,12 @@ public class DynamicQuartzScheduler {
             int taskStartupOrder,
             String configJson,
             String workDir,
-            String hopWorkDir,
-            String hopPluginDir
+            java.util.Map<String, String> jobDataExtras
     ) throws SchedulerException {
         JobKey jobKey = new JobKey(taskName, runId);
 
         // Build job detail with all task data
-        JobDetail jobDetail = JobBuilder.newJob(QuartzJob.class)
+        JobBuilder jobBuilder = JobBuilder.newJob(QuartzJob.class)
                 .withIdentity(jobKey)
                 .storeDurably(true)
                 .usingJobData("runId", runId)
@@ -197,10 +152,21 @@ public class DynamicQuartzScheduler {
                 .usingJobData("taskGroup", taskGroup != null ? taskGroup : "")
                 .usingJobData("taskStartupOrder", taskStartupOrder)
                 .usingJobData("configJson", configJson != null ? configJson : "")
-                .usingJobData("workDir", workDir != null ? workDir : "")
-                .usingJobData("hopWorkDir", hopWorkDir != null ? hopWorkDir : "")
-                .usingJobData("hopPluginDir", hopPluginDir != null ? hopPluginDir : "")
-                .build();
+                .usingJobData("workDir", workDir != null ? workDir : "");
+        if (jobDataExtras != null) {
+            for (java.util.Map.Entry<String, String> entry : jobDataExtras.entrySet()) {
+                if (entry.getKey() == null || entry.getValue() == null) {
+                    continue;
+                }
+                if ("taskRetryTimes".equals(entry.getKey()) || "taskRetryInterval".equals(entry.getKey())) {
+                    continue;   // 数值型，统一在下面按 int 写入（JobData 的 getInt 需要数值类型）
+                }
+                jobBuilder.usingJobData(entry.getKey(), entry.getValue());
+            }
+            jobBuilder.usingJobData("taskRetryTimes", parseInt(jobDataExtras.get("taskRetryTimes"), 0));
+            jobBuilder.usingJobData("taskRetryInterval", parseInt(jobDataExtras.get("taskRetryInterval"), 60));
+        }
+        JobDetail jobDetail = jobBuilder.build();
 
         // Add job to scheduler (replace if exists)
         quartzScheduler.addJob(jobDetail, true);
@@ -243,6 +209,10 @@ public class DynamicQuartzScheduler {
 
     /**
      * Create a cron trigger with misfire handling based on parallel policy.
+     *
+     * <p>触发器必须用 {@code forJob} 绑定到作业，否则 {@code scheduleJob(trigger)} 会抛
+     * {@code Trigger's related Job's name cannot be null} —— 历史实现漏了这一句，
+     * 导致 CRONTAB/INTERVAL 任务在编排阶段就直接失败。</p>
      */
     private CronTrigger createCronTrigger(String runId, String taskName,
                                            String cronExpression, String parallelPolicy) {
@@ -269,16 +239,16 @@ public class DynamicQuartzScheduler {
 
         return TriggerBuilder.newTrigger()
                 .withIdentity(taskName + "_trigger", runId)
+                .forJob(new JobKey(taskName, runId))
                 .withSchedule(scheduleBuilder)
                 .build();
     }
 
-    /**
-     * Create a simple interval trigger.
-     */
+    /** Create a simple interval trigger. */
     private SimpleTrigger createIntervalTrigger(String runId, String taskName, int intervalSeconds) {
         return TriggerBuilder.newTrigger()
                 .withIdentity(taskName + "_trigger", runId)
+                .forJob(new JobKey(taskName, runId))
                 .withSchedule(SimpleScheduleBuilder.simpleSchedule()
                         .repeatForever()
                         .withIntervalInSeconds(intervalSeconds))
@@ -286,41 +256,162 @@ public class DynamicQuartzScheduler {
     }
 
     /**
-     * Start a specific job (resume from paused state).
-     * For RUN_ONCE jobs, this also binds a one-time trigger.
+     * 启动/激活一个已编排的任务。
+     *
+     * <p><b>按策略分支</b>（修正历史实现的缺陷：以前只处理 RUN_ONCE 与 CRONTAB，INTERVAL 永远
+     * 停留在暂停态；且 RUN_ONCE 用 {@code addJob(replace=true)} 覆盖定义，会连带删掉周期触发器）：</p>
+     * <ul>
+     *   <li>{@code CRONTAB} / {@code INTERVAL}：{@code resumeJob} —— 恢复其周期触发器；</li>
+     *   <li>{@code RUN_ONCE}：{@code triggerJob} —— 只触发一次，<b>不动</b>任务定义与触发器。</li>
+     * </ul>
      */
-    public void startJob(String runId, String taskName) throws SchedulerException {
+    public void startJob(String runId, String taskName, String taskRunPolicy) throws SchedulerException {
         JobKey jobKey = new JobKey(taskName, runId);
-
         if (!quartzScheduler.checkExists(jobKey)) {
-            logger.warn("[SCHEDULER] Cannot start job {}/{} - not found.", runId, taskName);
+            logger.warn("[SCHEDULER] 任务 {}/{} 尚未编排，无法启动", runId, taskName);
             return;
         }
+        String policy = taskRunPolicy == null ? "" : taskRunPolicy.trim().toUpperCase();
+        if ("RUN_ONCE".equals(policy)) {
+            quartzScheduler.triggerJob(jobKey);
+            logger.info("[SCHEDULER] 一次性触发任务 {}/{}", runId, taskName);
+        } else {
+            quartzScheduler.resumeJob(jobKey);
+            logger.info("[SCHEDULER] 恢复周期任务 {}/{} (policy={})", runId, taskName, policy);
+        }
+    }
 
-        JobDetail jobDetail = quartzScheduler.getJobDetail(jobKey);
-        JobDataMap jobData = jobDetail.getJobDataMap();
-        String taskRunPolicy = jobData.getString("taskRunPolicy");
+    private static int parseInt(String value, int fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
 
-        if ("RUN_ONCE".equalsIgnoreCase(taskRunPolicy)) {
-            // For RUN_ONCE, create a one-time trigger that fires immediately
-            Trigger onceTrigger = TriggerBuilder.newTrigger()
-                    .withIdentity(taskName + "_trigger-once", runId)
-                    .forJob(jobKey)
-                    .startNow()
+    /**
+     * 延迟触发的 JobKey 里包含的标记（用于区分"任务本体"与"延迟重试/排队"实例）。
+     */
+    public static final String DEFERRED_MARK = "#defer#";
+
+    /**
+     * 安排一次延迟触发（RETRY 重试 / SERIAL_DELAY 排队用）。
+     *
+     * <p>为什么不用 {@code Thread.sleep} 等待：历史实现是在 Quartz 工作线程里 sleep 轮询，
+     * 10 个排队任务就能把线程池占满，导致全局调度停摆。这里改为"登记一个延迟触发器后立即返回"，
+     * 工作线程立刻释放；延迟实例执行时会重新做并发判定，因此仍然保证串行。</p>
+     *
+     * <p>同一任务最多存在一个延迟实例（等价于"队列深度 1"），已在排队时返回 false。</p>
+     *
+     * @param retryAttempt 重试序号（写回 JobData，供下次判定用尽次数）；非重试场景传 -1
+     * @return 是否成功登记
+     */
+    public static boolean scheduleDeferred(org.quartz.Scheduler scheduler, String runId, String taskName,
+                                           org.quartz.JobDataMap sourceData, long delayMillis,
+                                           String reason, int retryAttempt, Logger logger) {
+        try {
+            JobKey sourceKey = new JobKey(taskName, runId);
+            if (!scheduler.checkExists(sourceKey)) {
+                logger.warn("[SCHEDULER] 延迟触发失败：任务 {}/{} 未编排", runId, taskName);
+                return false;
+            }
+            for (JobKey existing : scheduler.getJobKeys(GroupMatcher.groupEquals(runId))) {
+                if (existing.getName().startsWith(taskName + DEFERRED_MARK)) {
+                    logger.info("[SCHEDULER] 任务 {}/{} 已有延迟实例（{}），本次不再登记", runId, taskName, reason);
+                    return false;
+                }
+            }
+
+            JobDataMap data = new JobDataMap(sourceData);
+            data.put("deferredReason", reason == null ? "" : reason);
+            if (retryAttempt >= 0) {
+                data.put("retryAttempt", retryAttempt);
+            }
+
+            JobKey deferredKey = new JobKey(taskName + DEFERRED_MARK + System.nanoTime(), runId);
+            JobDetail detail = JobBuilder.newJob(QuartzJob.class)
+                    .withIdentity(deferredKey)
+                    .usingJobData(data)
+                    .build();
+            Trigger trigger = TriggerBuilder.newTrigger()
+                    .withIdentity(deferredKey.getName() + "_trigger", runId)
+                    .forJob(deferredKey)
+                    .startAt(new java.util.Date(System.currentTimeMillis() + Math.max(delayMillis, 0)))
                     .withSchedule(SimpleScheduleBuilder.simpleSchedule().withRepeatCount(0))
                     .build();
-
-            TriggerKey oldTriggerKey = onceTrigger.getKey();
-            if (quartzScheduler.checkExists(oldTriggerKey)) {
-                quartzScheduler.unscheduleJob(oldTriggerKey);
-            }
-            quartzScheduler.scheduleJob(onceTrigger);
-            logger.info("[SCHEDULER] Started RUN_ONCE job {}/{}", runId, taskName);
-        } else {
-            // For CRONTAB/INTERVAL, resume the paused job
-            quartzScheduler.resumeJob(jobKey);
-            logger.info("[SCHEDULER] Resumed job {}/{}", runId, taskName);
+            scheduler.scheduleJob(detail, trigger);
+            logger.info("[SCHEDULER] 任务 {}/{} 已登记延迟触发：{}，延迟 {}ms", runId, taskName, reason, delayMillis);
+            return true;
+        } catch (SchedulerException e) {
+            logger.error("[SCHEDULER] 登记延迟触发失败 {}/{}: {}", runId, taskName, e.getMessage(), e);
+            return false;
         }
+    }
+
+    /**
+     * 暂停一个 run 下的全部任务（保留定义与触发器，可再次 start）。
+     */
+    public void pauseAllJobs(String runId) throws SchedulerException {
+        Set<JobKey> jobKeys = quartzScheduler.getJobKeys(GroupMatcher.groupEquals(runId));
+        for (JobKey jobKey : jobKeys) {
+            quartzScheduler.pauseJob(jobKey);
+        }
+        logger.info("[SCHEDULER] 已暂停 run {} 下的 {} 个任务", runId, jobKeys.size());
+    }
+
+    /** 该任务是否有待执行的延迟实例（重试/排队）。 */
+    public boolean hasDeferred(String runId, String taskName) throws SchedulerException {
+        for (JobKey jobKey : quartzScheduler.getJobKeys(GroupMatcher.groupEquals(runId))) {
+            if (jobKey.getName().startsWith(taskName + DEFERRED_MARK)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 暂停任务（保留定义与触发器，可再次 start）。 */
+    public void pauseJob(String runId, String taskName) throws SchedulerException {
+        JobKey jobKey = new JobKey(taskName, runId);
+        if (quartzScheduler.checkExists(jobKey)) {
+            quartzScheduler.pauseJob(jobKey);
+            logger.info("[SCHEDULER] 任务 {}/{} 已暂停", runId, taskName);
+        }
+    }
+
+    /** 触发一个一次性执行并等待其结束（编排器按组顺序推进时使用）。 */
+    public boolean triggerAndWait(String runId, String taskName, long timeoutMillis) throws SchedulerException {
+        JobKey jobKey = new JobKey(taskName, runId);
+        if (!quartzScheduler.checkExists(jobKey)) {
+            return false;
+        }
+        quartzScheduler.triggerJob(jobKey);
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        boolean observed = false;
+        while (System.currentTimeMillis() < deadline) {
+            boolean executing = false;
+            for (JobExecutionContext context : quartzScheduler.getCurrentlyExecutingJobs()) {
+                if (context.getJobDetail().getKey().equals(jobKey)) {
+                    executing = true;
+                    break;
+                }
+            }
+            if (executing) {
+                observed = true;
+            } else if (observed) {
+                return true;    // 已观察到执行且已结束
+            }
+            try {
+                Thread.sleep(200L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        logger.warn("[SCHEDULER] 等待任务 {}/{} 结束超时({}ms)", runId, taskName, timeoutMillis);
+        return false;
     }
 
     /**
@@ -446,6 +537,9 @@ public class DynamicQuartzScheduler {
         Set<JobKey> jobKeys = quartzScheduler.getJobKeys(GroupMatcher.groupEquals(runId));
 
         for (JobKey jobKey : jobKeys) {
+            if (jobKey.getName().contains(DEFERRED_MARK)) {
+                continue;   // 延迟实例不进任务列表
+            }
             JobDetail jobDetail = quartzScheduler.getJobDetail(jobKey);
             List<? extends Trigger> triggers = quartzScheduler.getTriggersOfJob(jobKey);
             JobDataMap jobData = jobDetail.getJobDataMap();

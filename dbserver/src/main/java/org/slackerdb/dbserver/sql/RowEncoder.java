@@ -57,7 +57,15 @@ public final class RowEncoder {
     public static final int T_INTEGER = 2;
     /** BIGINT：二进制 8 字节 / 文本十进制 */
     public static final int T_BIGINT = 3;
-    /** VARCHAR / INTERVAL，文本 UTF-8 */
+    /**
+     * 文本原样返回（UTF-8）的类型：VARCHAR / INTERVAL，以及 UUID / JSON / JSONB / TIMETZ。
+     *
+     * <p>后四个的文本形式与 PG 的文本表示一致（UUID 是规范小写十六进制、JSON 就是原文、
+     * TIMETZ 是 {@code HH:mm:ss+HH:MM}），因此按文本发值即可被客户端正确解析。
+     * 把它们显式登记在这里、而不是落进 {@link #T_UNKNOWN}，是为了让"类型名 → OID"与
+     * "类型名 → 值编码"两套映射保持一致：否则会出现"RowDescription 声称 UUID(2950)、
+     * 值却走未识别分支"的组合，并且每次查询都刷一条 WARN 把真问题淹掉。</p>
+     */
     public static final int T_VARCHAR = 4;
     /** DATE：二进制 4 字节（距 2000-01-01 的天数）/ 文本 ISO yyyy-MM-dd */
     public static final int T_DATE = 5;
@@ -411,6 +419,11 @@ public final class RowEncoder {
             case "INTEGER" -> T_INTEGER;
             case "BIGINT" -> T_BIGINT;
             case "VARCHAR", "INTERVAL" -> T_VARCHAR;
+            // 文本形式与 PG 一致的类型：显式登记，避免落进 T_UNKNOWN 触发误报 WARN。
+            // OID 侧（PostgresTypeOids）早就认识它们（2950 / 114 / 3802 / 1266），这里补齐值编码侧。
+            // TIMETZ 两种写法都收：DuckDB 的 getColumnTypeName 给的是 "TIME WITH TIME ZONE"，
+            // 而映射表里的键是 "TIMETZ"，两侧名字不一致会让告警继续出现。
+            case "UUID", "JSON", "JSONB", "TIMETZ", "TIME WITH TIME ZONE" -> T_VARCHAR;
             case "DATE" -> T_DATE;
             case "BOOLEAN" -> T_BOOLEAN;
             case "FLOAT" -> T_FLOAT;

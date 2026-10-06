@@ -3,11 +3,11 @@ image::robotslacker.jpg[RobotSlacker]
 
 == SlackerDB (DuckDB Postgres proxy)
 
-==== What is SlackerDB?
+=== What is SlackerDB?
 
 SlackerDB is a powerful, Java‑based extension that transforms DuckDB from a local, single‑process database into a fully networked, multi‑process data service platform. It bridges the gap between DuckDB's exceptional analytical performance and the connectivity requirements of modern applications.
 
-===== Capabilities
+==== Capabilities
 
 * *Network‑Enabled DuckDB* – Breaks DuckDB's local‑only limitation by providing full TCP/IP network access, allowing remote clients to connect via standard PostgreSQL wire protocol.
 * *Multi‑Process Support* – Enables concurrent access from multiple processes and applications, overcoming DuckDB's single‑process restriction.
@@ -19,14 +19,14 @@ SlackerDB is a powerful, Java‑based extension that transforms DuckDB from a lo
 * *Plugin System* – Extensible PF4J‑based plugin framework for custom functionality, HTTP endpoints, and integration with external systems.
 * *Data Encryption* – Leverages DuckDB's native encryption for secure data‑at‑rest protection.
 
-===== Data Service Platform
+==== Data Service Platform
 
 * *RESTful Data APIs* – Exposes database operations through comprehensive REST APIs, enabling integration with web applications, microservices, and serverless architectures.
 * *Self‑Managed Services* – Allows dynamic registration and management of data services at runtime without server restarts.
 * *SQL‑as‑a‑Service* – Transform SQL queries into reusable, parameterized API endpoints with built‑in caching and security controls.
 
 
-===== Use Cases
+==== Use Cases
 
 * *Analytical Application Backends* – Serve as the data engine for BI tools, dashboards, and reporting applications.
 * *Edge Computing* – Lightweight, embeddable database for edge devices and IoT OLAP applications.
@@ -45,10 +45,15 @@ SlackerDB combines DuckDB's analytical prowess with network connectivity, making
     cd slackerdb
     mvn clean compile package -Dmaven.test.skip=true
 
-    # All compiled results will be placed in the dist directory.
-    #    compiled Jar packages,
-    #    source jar packages
-    #    default configuration files.
+    # All compiled results will be placed in the dist directory:
+    #    slackerdb-dist_0.2.1.zip
+    #        distribution package - standalone jar packages, plugin jar,
+    #        default configuration files and start/stop scripts.
+    #    slackerdb-src_0.2.1.zip
+    #        source package - the complete multi-module Maven project, the same
+    #        content a shallow clone would give you (no git history, no build
+    #        output). Unzip it and run the very same maven command inside to
+    #        rebuild everything from source.
 ....
 
 ==== Start db server
@@ -2514,7 +2519,7 @@ plugin.version=0.2.1
 plugin.requires=*
 ----
 
-* `plugin.id` must match the JAR filename (without the `.jar` extension).
+* `plugin.id` is the unique plugin identifier and is read from `plugin.properties` by PF4J (in practice the JAR filename does not have to match it, though keeping them consistent is recommended for clarity).
 * `plugin.class` must be the fully qualified name of the plugin main class.
 * `plugin.version` follows semantic versioning.
 * `plugin.requires` specifies plugin dependencies (`*` means no specific dependency).
@@ -2600,6 +2605,193 @@ public class SimplePluginRunner {
 * *No Hot Reload* – Plugins cannot be reloaded dynamically; you must restart the application.
 * *Manual Resource Management* – You must handle resource creation, injection, and cleanup.
 * *No Plugin Manager Features* – Features like dependency resolution, version management, and plugin discovery are not available.
+
+==== Job Scheduler Plugin (plugin-scheduler)
+
+SlackerDB can load a job scheduler plugin that **runs HOP workflows or scripts on a schedule, driven by project templates**.
+
+Typical usage: put a HOP project (`.hwf`/`.hpl` files, including the steps that execute SQL) into a "project template",
+create an instance and bring it online with one call — the plugin first runs the one-off initialization tasks
+in order, then automatically runs the main flow on its cron schedule, recording logs and history for every run.
+
+It is an **optional plugin**: whether it is loaded is decided by the server's `plugins_dir` setting.
+
+===== Quick Start
+
+. *Prepare HOP*: the plugin does not bundle HOP. Prepare a HOP distribution and note the path of `hop-run.bat`/`hop-run.sh`.
+. *Deploy the plugin*: put the plugin JAR into the plugin directory and enable it in the server configuration file:
++
+[source,properties]
+----
+plugins_dir=plugins
+plugin-scheduler.home=data/scheduler
+plugin-scheduler.projectHome=data/scheduler/projects
+plugin-scheduler.hop.runScript=D:/hop/hop-run.bat
+plugin-scheduler.hop.javaHome=D:/jdk17
+----
+. *Prepare a template*: create a directory named after the template under `data/scheduler/projects/` (see the next section).
+. *Create and start an instance* (`<management port>` is the server's management port):
++
+[source,bash]
+----
+# Create an instance: projectType is the template directory name
+curl -X POST http://127.0.0.1:<management port>/scheduler/run/create \
+     -H "Content-Type: application/json" \
+     -d '{"projectType":"jtls"}'
+
+# Start it (orchestrated in template order: one-off tasks first, then periodic ones)
+curl -X POST http://127.0.0.1:<management port>/scheduler/run/<runId>/start
+
+# Check task status and the next fire time
+curl http://127.0.0.1:<management port>/scheduler/run/<runId>/task/list
+
+# Read the tail of a task log
+curl "http://127.0.0.1:<management port>/scheduler/run/<runId>/log?taskName=main&tail=200"
+----
+
+===== Preparing a Project Template
+
+Each template is a directory whose name is the template name (`projectType`).
+**The template directory itself is the HOP project directory**:
+
+[source]
+----
+data/scheduler/projects/                 ← template root (projectHome)
+├── default/                             ← HOP "parent project" (optional, shared configuration)
+│   ├── project-config.json
+│   └── metadata/
+└── jtls/                                ← template name, also the HOP project directory
+    ├── conf/
+    │   ├── defaultSchedulerTask.json     ← task list
+    │   └── variables.properties          ← variables (optional, see next section)
+    ├── project-config.json               ← HOP project configuration
+    ├── metadata/                         ← HOP metadata (database connections, run configurations)
+    ├── sql/                              ← SQL scripts referenced by the workflows
+    └── *.hwf / *.hpl                     ← workflows and pipelines
+----
+
+The task list `conf/defaultSchedulerTask.json` is **keyed by task name**:
+
+[source,json]
+----
+{
+  "groups": ["SETUP_GROUP", "MAIN_GROUP"],
+  "setup": {
+    "taskScript": "setup.hwf",
+    "taskRunPolicy": "RUN_ONCE",
+    "taskTimeout": 600,
+    "taskGroup": "SETUP_GROUP",
+    "taskMandatory": true
+  },
+  "main": {
+    "taskScript": "main.hwf",
+    "taskRunPolicy": "CRONTAB",
+    "taskCrontabExpr": "0 1/2 * * * ? *",
+    "taskParallelPolicy": "SERIAL_DISCARD",
+    "taskFailPolicy": "CONTINUE",
+    "taskTimeout": 600,
+    "taskGroup": "MAIN_GROUP"
+  }
+}
+----
+
+[cols="1,3"]
+|===
+| Field | Description
+
+| `taskScript` | For `HOP` tasks: the `.hwf`/`.hpl` file name; for `SHELL`/`COMMAND` tasks: the command line
+| `taskScriptType` | `HOP` (default) / `SHELL` / `COMMAND`
+| `taskRunPolicy` | `RUN_ONCE` run once (default) / `CRONTAB` on a cron schedule / `INTERVAL` at a fixed interval
+| `taskCrontabExpr` | Quartz cron (6 or 7 fields, e.g. `0 1/2 * * * ? *`); validate it with the `describeCrontabExpr` endpoint
+| `taskInterval` | Interval in seconds for `INTERVAL`
+| `taskTimeout` | Timeout in seconds, 0 means unlimited; on timeout the task (including its child processes) is terminated
+| `taskGroup` / `taskStartupOrder` | Grouping and order inside a group; `groups` declares the order of the groups
+| `taskMandatory` | Mandatory task: if it fails the instance is marked failed and later stages are not started
+| `taskParallelPolicy` | Re-entrancy policy: `PARALLEL` / `SERIAL_DISCARD` skip this fire / `SERIAL_DELAY`, `SERIAL_CATCHUP` queue it
+| `taskFailPolicy` | `CONTINUE` (default) / `STOP` pause the task on failure / `RETRY` retry (with `taskRetryTimes`, `taskRetryInterval`)
+| `taskEnabled` | Whether the task is enabled, default `true`
+| `variables` | Task-specific variables (optional)
+|===
+
+The task list may also be placed at the template root (`projects/conf/defaultSchedulerTask.json`) and shared by all
+templates; a missing task list is not an error — the instance simply has no pre-configured tasks. Tasks can also be
+supplied directly through the `tasks` parameter of the create-instance endpoint.
+
+===== Variables: Passing Connection Information to HOP
+
+Both the `${XXX}` placeholders inside HOP workflows and the HOP connection metadata (`${HOST}`, `${PORT}`, ... in
+`metadata/rdbms/*.json`) are resolved from these variables. They can be defined in four places; later ones win:
+
+. `data/scheduler/variables.properties` (global)
+. template directory `jtls/conf/variables.properties`
+. the `configJson` field of the create-instance request
+. the `variables` object of a specific task in the task list
+
+[source,properties]
+----
+DB_HOST=10.0.0.5
+DB_PORT=5432
+DB_USER=main
+DB_PASSWORD=******
+----
+
+A variable value may reference other variables, for example `EXERCISE_CODE=${RUN_ID}` (built-in variables such as
+`RUN_ID`, `PROJECT_TYPE` and `TASK_NAME` are available). The built-in variables are `PROJECT_HOME`, `RUN_HOME`,
+`RUN_ID`, `PROJECT_TYPE`, `TASK_NAME`, `LOG_DIR` and `AUDIT_DIR`.
+`GET /scheduler/run/{runId}/variables` shows the currently effective values (secrets are masked).
+
+===== Instance and Task Lifecycle
+
+[cols="1,3"]
+|===
+| Operation | Description
+
+| Create instance | Creates an isolated run directory (`runs/<runId>/`) from the template and loads its task list
+| Start | Orchestrates by group and order: runs one-off tasks one after another, then activates that group's periodic tasks
+| Stop | Pauses all tasks (definitions are kept, the instance can be started again)
+| Abort | Interrupts running tasks and pauses everything
+| Drop | Deletes the instance, its task definitions and its run directory
+| After a server restart | Instances are put into the "stopped" state; one-off tasks are **not** re-run automatically — start the instance manually to resume
+|===
+
+Individual tasks can also be scheduled, started, paused and aborted on their own.
+
+Logs and history: every run writes to `runs/<runId>/logs/<taskName>.log` and is recorded in the history, which can be
+queried through the API; expired history rows and log files are cleaned up automatically after the configured number of days.
+
+===== API Reference
+
+[cols="1,1"]
+|===
+| Endpoint | Description
+
+| `GET /scheduler/status` | Scheduler status
+| `GET /scheduler/project/list`, `GET /scheduler/project/{projectType}` | Template list / template details (including the parsed task list and warnings)
+| `POST /scheduler/run/create` | Create an instance
+| `GET /scheduler/run/list`, `GET /scheduler/run/{runId}` | Instance list / details
+| `POST /scheduler/run/{runId}/start\|stop\|abort\|drop` | Start / stop / abort / drop an instance
+| `POST /scheduler/run/{runId}/task/schedule` | Schedule a single task
+| `POST /scheduler/run/{runId}/task/start\|stop\|abort` | Start / pause / abort a single task
+| `GET /scheduler/run/{runId}/task/list` | Task list: state, next fire time, last result, whether it is running
+| `GET /scheduler/run/{runId}/task/history` | Execution history
+| `GET /scheduler/run/{runId}/log?taskName=&tail=200` | Read task logs; without `taskName` it lists the log files
+| `GET /scheduler/run/{runId}/variables?taskName=` | Show variables (secrets masked)
+| `GET /scheduler/describeCrontabExpr?expr=` | Validate a cron expression and return the next 5 fire times
+|===
+
+===== Notes
+
+* HOP is **not** bundled with the plugin; provide a HOP distribution and configure `plugin-scheduler.hop.runScript`.
+  HOP runs as a separate process, so no JVM parameters of the database server need to be changed
+* The HOP project must satisfy the following (the plugin self-checks this when an instance is created and warns):
+  **if the template's `project-config.json` declares `"parentProjectName": "default"`, a `default/` project must exist
+  under the template root and its own `parentProjectName` must be empty** (a parent project is optional — in that case
+  leave `parentProjectName` empty in the template itself);
+  **`metadata/workflow-run-configuration/local.json` must exist** (it corresponds to the default runconfig `local`)
+* Termination is best-effort: timeouts and aborts terminate `hop-run` and its child processes, but long-running
+  transactions inside HOP are not guaranteed to roll back immediately
+* Single-node scheduling only; multiple nodes are not supported
+* The plugin has no built-in authentication — expose the management port only on trusted networks
 
 ==== Plugin Management API
 

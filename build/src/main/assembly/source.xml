@@ -1,0 +1,121 @@
+<!--
+    源码发行包描述符：dist/slackerdb-src_<version>.zip
+
+    目标 —— 解开后等同于一次浅克隆（只取一层历史的 clone）后的工作区：
+    只有代码、构建脚本与文档，没有编译产物、IDE 配置和 .git 历史。解压后可以立即：
+
+        cd slackerdb-0.2.1
+        mvn clean package -Dmaven.test.skip=true
+
+    编译产物会落在解压目录自己的 dist/ 下（含发布包 slackerdb-dist_<version>.zip）。
+
+    与 deployment.xml 的分工：
+      * deployment.xml —— 面向“拿来就跑”的使用者：standalone jar + conf + bin + 插件。
+      * source.xml     —— 面向“拿来就改”的开发者：完整的多模块 Maven 工程。
+    两者互不嵌套，平级放在 dist/ 下；发布包里不再塞各模块的 -sources.jar。
+
+    约束与取舍：
+      1. 只列白名单（而不是排除 .git/.idea/backup 等），新增的临时目录、IDE 目录、
+         本地日志目录因此不会被无意打进发行版；列进白名单的目录内部再排除 target/。
+      2. build 模块必须保留：根 pom.xml 把它列为 <module>，缺了它 mvn package 直接失败。
+      3. 根目录的 pom.xml/LICENSE/README/*.jpg 与 imgs/ 必须保留：前两者是构建入口与授权，
+         README 与 imgs 是 build 模块生成 PDF 的输入（见 build/pom.xml 的 asciidoctor 配置）。
+      4. .gitignore 也保留（该 fileSet 关掉了默认排除，否则 .gitignore 会被 plexus 默认规则吃掉）：
+         开发者重新 git init 时能直接复用，避免把 target/ 与 dist/ 提交进去。
+      5. 顶层目录带版本号，多个版本解压到同一父目录时不会互相覆盖。
+-->
+<assembly>
+    <id>source</id>
+    <formats>
+        <format>zip</format>
+    </formats>
+    <includeBaseDirectory>true</includeBaseDirectory>
+    <baseDirectory>slackerdb-${project.version}</baseDirectory>
+
+    <fileSets>
+        <!-- 仓库根：构建入口、授权、文档与文档用图片 -->
+        <fileSet>
+            <directory>${project.basedir}/..</directory>
+            <outputDirectory>/</outputDirectory>
+            <useDefaultExcludes>false</useDefaultExcludes>
+            <includes>
+                <include>pom.xml</include>
+                <include>README.adoc</include>
+                <include>README-CN.adoc</include>
+                <include>LICENSE</include>
+                <include>.gitignore</include>
+                <include>robotslacker.jpg</include>
+                <include>imgs/**</include>
+            </includes>
+        </fileSet>
+
+        <!--
+            各模块：整个模块目录（src、pom.xml，以及 dbproxy/dbserver 的 conf 与 bin ——
+            它们是运行期配置与启停脚本的模板，deployment.xml 也直接取自这里）。
+            target/ 一律排除：源码包里不放编译产物，保持与浅克隆一致的“干净检出”。
+        -->
+        <fileSet>
+            <directory>${project.basedir}/../common</directory>
+            <outputDirectory>/common</outputDirectory>
+            <excludes>
+                <exclude>target/**</exclude>
+            </excludes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../plsql</directory>
+            <outputDirectory>/plsql</outputDirectory>
+            <excludes>
+                <exclude>target/**</exclude>
+            </excludes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../dbdriver</directory>
+            <outputDirectory>/dbdriver</outputDirectory>
+            <excludes>
+                <exclude>target/**</exclude>
+            </excludes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../dbserver</directory>
+            <outputDirectory>/dbserver</outputDirectory>
+            <excludes>
+                <exclude>target/**</exclude>
+            </excludes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../dbproxy</directory>
+            <outputDirectory>/dbproxy</outputDirectory>
+            <excludes>
+                <exclude>target/**</exclude>
+            </excludes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../plugin</directory>
+            <outputDirectory>/plugin</outputDirectory>
+            <excludes>
+                <exclude>target/**</exclude>
+            </excludes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../plugin-example</directory>
+            <outputDirectory>/plugin-example</outputDirectory>
+            <excludes>
+                <exclude>target/**</exclude>
+            </excludes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../plugin-scheduler</directory>
+            <outputDirectory>/plugin-scheduler</outputDirectory>
+            <excludes>
+                <exclude>target/**</exclude>
+            </excludes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../build</directory>
+            <outputDirectory>/build</outputDirectory>
+            <excludes>
+                <exclude>target/**</exclude>
+            </excludes>
+        </fileSet>
+    </fileSets>
+</assembly>

@@ -13,12 +13,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>用途：</p>
  * <ul>
  *   <li>离线单元测试 / 一致性语料（{@code jdbc:duckdb::memory:}）；</li>
- *   <li>把 plsql 作为库嵌入到自己的程序里；</li>
- *   <li>过渡期兼容入口 {@code PlSqlVisitor.runPlSql(Connection, String)}。</li>
+ *   <li>把 plsql 作为库嵌入到自己的程序里：{@code PlSqlEngine.execute(new DefaultJdbcHost(conn), script)}。</li>
  * </ul>
- *
- * <p>它<b>不</b>提供 dbserver 的横切能力（审计、会话取消、SQL 改写）——
- * 那是 {@code org.slackerdb.dbserver.sql.PlSqlHostImpl} 的职责。</p>
  */
 public class DefaultJdbcHost implements PlSqlHost {
 

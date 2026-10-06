@@ -1,0 +1,38 @@
+# 简体中文 PDF 主题（README-CN.adoc 专用）。
+#
+# 为什么需要单独一份主题：asciidoctor-pdf 自带的 default-with-font-fallbacks 只把 M+ 1p 当回退字体，
+# 而 M+ 1p 是**日文字体**（其自带说明也只承诺 Japanese）。实测 README-CN.adoc 的 767 个不同码位里，
+# 有 224 个简体字（"说/这/简/单/为/么"……）它没有字形，直接渲染就是缺字。
+#
+# 做法：把 Noto Sans SC 加到回退链**最前面**——拉丁字母与代码仍由主题自带的 Noto Serif 渲染
+# （与英文 PDF 观感一致），汉字交给 Noto Sans SC。顺序不能反：M+ 1p 在前会把大部分汉字
+# 按日文字形渲染，造成"简体字缺字 + 中日字形混排"。
+#
+# 字体必须是 TrueType(glyf) 轮廓：Prawn 只会把字体嵌成 /FontFile2 + /Subtype /TrueType 的简单字体，
+# CFF/OTTO 轮廓的 .otf（例如 noto-cjk 的 SubsetOTF）会被错嵌成 FontFile2，产出的 PDF 里汉字是坏字形。
+# 本目录的 NotoSansSC-Regular.ttf 就是为此转换过的静态 TTF——来源与转换命令见同目录 README.md。
+#
+# 字体文件的搜索路径：当 pdf-theme 指向自定义主题文件时，asciidoctor-pdf 默认在
+# 「主题文件所在目录 + gem 自带的 GEM_FONTS_DIR」里找字体（见 asciidoctor-pdf converter.rb
+# 的 register_fonts 调用），所以下面直接写裸文件名即可，无需再配 pdf-fontsdir。
+extends: default-with-font-fallbacks
+
+# 中文正文改用左对齐（ragged right）：默认主题是 base.text_align: justify，
+# 而中文行内几乎没有空格——两端对齐会把每一行的富余量全部塞进拉丁词两侧那几个空格里，
+# 渲染出「网络化的        DuckDB        ——        突破        DuckDB」这种大洞。
+# 英文 PDF 继续用默认主题的 justify（拉丁文两端对齐观感正常，且与既有产物一致）。
+base:
+  text_align: left
+
+font:
+  catalog:
+    merge: true
+    # 四个字重都指向同一份 Regular：本项目只需要它兜住汉字。汉字粗体本可以再入库
+    # NotoSansSC-Bold.ttf（约 10MB），但收益只是标题更黑一点，暂不做；缺粗体时
+    # 汉字会退化成常规字重，不会缺字。
+    Noto Sans SC:
+      normal: NotoSansSC-Regular.ttf
+      bold: NotoSansSC-Regular.ttf
+      italic: NotoSansSC-Regular.ttf
+      bold_italic: NotoSansSC-Regular.ttf
+  fallbacks: [Noto Sans SC, M+ 1p Fallback, Noto Emoji]

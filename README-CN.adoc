@@ -3,13 +3,13 @@ image::robotslacker.jpg[RobotSlacker]
 
 == SlackerDB（DuckDB PostgreSQL 代理）
 
-==== 什么是 SlackerDB？
+=== 什么是 SlackerDB？
 
 SlackerDB 是一个强大的、基于 Java 的 DuckDB 扩展，它把 DuckDB 从一个本地的、单进程数据库
 转变为一个支持网络访问、可多进程连接的数据服务平台。它弥合了 DuckDB 卓越的分析性能
 与现代应用连接性需求之间的差距。
 
-===== 能力
+==== 能力
 
 * *网络化的 DuckDB* —— 突破 DuckDB 仅限本地的限制，提供完整的 TCP/IP 网络访问，允许远程客户端通过标准的 PostgreSQL 线路协议连接。
 * *多进程支持* —— 支持来自多个进程和应用的并发访问，克服 DuckDB 的单进程限制。
@@ -21,14 +21,14 @@ SlackerDB 是一个强大的、基于 Java 的 DuckDB 扩展，它把 DuckDB 从
 * *插件系统* —— 基于 PF4J 的可扩展插件框架，用于自定义功能、HTTP 端点以及与外部系统的集成。
 * *数据加密* —— 利用 DuckDB 原生加密实现静态数据保护。
 
-===== 数据服务平台
+==== 数据服务平台
 
 * *RESTful 数据 API* —— 通过全面的 REST API 暴露数据库操作，可与 Web 应用、微服务和无服务器架构集成。
 * *自管理服务* —— 允许在运行时动态注册和管理数据服务，而无需重启服务器。
 * *SQL 即服务* —— 将 SQL 查询转变为可复用、参数化的 API 端点，内置缓存和安全控制。
 
 
-===== 使用场景
+==== 使用场景
 
 * *分析型应用后端* —— 作为 BI 工具、仪表盘和报表应用的数据引擎。
 * *边缘计算* —— 面向边缘设备和 IoT OLAP 应用的轻量级、可嵌入数据库。
@@ -48,10 +48,14 @@ SlackerDB 将 DuckDB 的分析能力与网络连接性结合在一起，使其�
     cd slackerdb
     mvn clean compile package -Dmaven.test.skip=true
 
-    # 所有编译结果都会放在 dist 目录中。
-    #    编译后的 Jar 包，
-    #    源码 jar 包
-    #    默认配置文件。
+    # 所有编译结果都会放在 dist 目录中：
+    #    slackerdb-dist_0.2.1.zip
+    #        发布包 —— standalone 形式的 Jar 包、插件 Jar 包、
+    #        默认配置文件以及启停脚本。
+    #    slackerdb-src_0.2.1.zip
+    #        源码包 —— 完整的多模块 Maven 工程，内容等同于一次浅克隆
+    #        （不含 git 历史，也不含任何编译产物）。解开后在该目录里
+    #        执行同样的 maven 命令，即可从源码重新构建全部产物。
 ....
 
 ==== 启动数据库服务器
@@ -1076,7 +1080,7 @@ END LOOP outer_loop;
 
 |description |描述（可选，缺省为 `NO DESCRIPTION.`）
 
-|category |服务分类（可选，用于按分类分组保存；不能包含 `\ / : * ? " < > |` 等字符）
+|category |服务分类（可选，用于按分类分组保存；不能包含 `\ / : * ? " < > \|` 等字符）
 
 |snapshotLimit |查询结果缓存时长（可选），例如 `3 hours` / `30 minutes` / `45 seconds`
 
@@ -2469,7 +2473,7 @@ plugin.version=0.2.1
 plugin.requires=*
 ----
 
-* `plugin.id` 必须与 JAR 文件名一致（不含 `.jar` 扩展名）。
+* `plugin.id` 是插件的唯一标识，PF4J 以 `plugin.properties` 中的取值为准（实测：JAR 文件名不必与之一致，但建议保持一致以便识别）。
 * `plugin.class` 必须是插件主类的全限定名。
 * `plugin.version` 遵循语义化版本规范。
 * `plugin.requires` 指定插件依赖（`*` 表示没有特定依赖）。
@@ -2556,6 +2560,188 @@ public class SimplePluginRunner {
 * *手动资源管理* —— 你必须自行处理资源的创建、注入和清理。
 * *无插件管理器特性* —— 依赖解析、版本管理和插件发现等特性不可用。
 
+==== 作业调度器插件（plugin-scheduler）
+
+SlackerDB 可以加载一个作业调度插件，用于**按项目模板定时执行 HOP 工作流或脚本**。
+
+典型用法：把一个 HOP 工程（`.hwf`/`.hpl`，其中包含执行 SQL 的步骤）放进"项目模板"，
+创建实例后一键上线 —— 插件先串行执行初始化类任务，成功后自动按 cron 周期运行主流程，
+并记录每次执行的日志与历史。
+
+它是**可选插件**：是否加载由服务器配置的 `plugins_dir` 决定。
+
+===== 快速开始
+
+. *准备 HOP*：插件包内不含 HOP，需要单独准备一份 HOP 发行版，记下 `hop-run.bat`/`hop-run.sh` 的路径。
+. *部署插件*：把插件 JAR 放进插件目录，并在服务器配置文件中启用：
++
+[source,properties]
+----
+plugins_dir=plugins
+plugin-scheduler.home=data/scheduler
+plugin-scheduler.projectHome=data/scheduler/projects
+plugin-scheduler.hop.runScript=D:/hop/hop-run.bat
+plugin-scheduler.hop.javaHome=D:/jdk17
+----
+. *准备模板*：在 `data/scheduler/projects/` 下建一个以模板名命名的目录（见下一节）。
+. *创建并启动实例*（`<管理端口>` 为服务器管理端口）：
++
+[source,bash]
+----
+# 创建实例：projectType 就是模板目录名
+curl -X POST http://127.0.0.1:<管理端口>/scheduler/run/create \
+     -H "Content-Type: application/json" \
+     -d '{"projectType":"jtls"}'
+
+# 启动（按模板顺序编排：先跑一次性任务，成功后激活周期任务）
+curl -X POST http://127.0.0.1:<管理端口>/scheduler/run/<runId>/start
+
+# 查看任务状态与下次触发时间
+curl http://127.0.0.1:<管理端口>/scheduler/run/<runId>/task/list
+
+# 查看某个任务的日志尾部
+curl "http://127.0.0.1:<管理端口>/scheduler/run/<runId>/log?taskName=主流程&tail=200"
+----
+
+===== 准备项目模板
+
+每个模板是一个目录，名字就是模板名（`projectType`）。**模板目录本身就是 HOP 工程目录**：
+
+[source]
+----
+data/scheduler/projects/                 ← 模板根（projectHome）
+├── default/                             ← HOP 的"父项目"（可选，供多个模板共用公共配置）
+│   ├── project-config.json
+│   └── metadata/
+└── jtls/                                ← 模板名，同时就是 HOP 工程目录
+    ├── conf/
+    │   ├── defaultSchedulerTask.json     ← 任务清单
+    │   └── variables.properties          ← 变量（可选，见下一节）
+    ├── project-config.json               ← HOP 项目配置
+    ├── metadata/                         ← HOP 元数据（数据库连接、run configuration）
+    ├── sql/                              ← 工作流引用的 SQL 脚本
+    └── *.hwf / *.hpl                     ← 工作流与管道
+----
+
+任务清单 `conf/defaultSchedulerTask.json` 用**任务名作为键**，示例：
+
+[source,json]
+----
+{
+  "groups": ["SETUP_GROUP", "MAIN_GROUP"],
+  "演习初始化": {
+    "taskScript": "演习初始化.hwf",
+    "taskRunPolicy": "RUN_ONCE",
+    "taskTimeout": 600,
+    "taskGroup": "SETUP_GROUP",
+    "taskMandatory": true
+  },
+  "主流程": {
+    "taskScript": "主流程.hwf",
+    "taskRunPolicy": "CRONTAB",
+    "taskCrontabExpr": "0 1/2 * * * ? *",
+    "taskParallelPolicy": "SERIAL_DISCARD",
+    "taskFailPolicy": "CONTINUE",
+    "taskTimeout": 600,
+    "taskGroup": "MAIN_GROUP"
+  }
+}
+----
+
+[cols="1,3"]
+|===
+| 字段 | 说明
+
+| `taskScript` | `HOP` 任务填 `.hwf`/`.hpl` 文件名；`SHELL`/`COMMAND` 任务填命令行
+| `taskScriptType` | `HOP`（默认）/ `SHELL` / `COMMAND`
+| `taskRunPolicy` | `RUN_ONCE` 只跑一次（默认）/ `CRONTAB` 按 cron / `INTERVAL` 按固定间隔
+| `taskCrontabExpr` | Quartz cron（6 或 7 段，如 `0 1/2 * * * ? *`）；可用 `describeCrontabExpr` 接口校验
+| `taskInterval` | `INTERVAL` 的间隔秒数
+| `taskTimeout` | 超时秒数，0 表示不限；超时会终止该任务（含其子进程）
+| `taskGroup` / `taskStartupOrder` | 分组与组内顺序；`groups` 声明组的先后
+| `taskMandatory` | 必选任务：失败则实例被标记为失败并停止后续推进
+| `taskParallelPolicy` | 同一任务重入策略：`PARALLEL` 并发 / `SERIAL_DISCARD` 丢弃本次 / `SERIAL_DELAY`、`SERIAL_CATCHUP` 排队
+| `taskFailPolicy` | `CONTINUE` 继续（默认）/ `STOP` 失败即暂停该任务 / `RETRY` 重试（配 `taskRetryTimes`、`taskRetryInterval`）
+| `taskEnabled` | 是否启用，默认 `true`
+| `variables` | 该任务专属变量（可选）
+|===
+
+清单文件也可以放在模板根目录（`projects/conf/defaultSchedulerTask.json`）供所有模板共用；
+找不到清单不会报错，实例就是没有预置任务。任务列表也可以用创建实例接口的 `tasks` 参数直接传入。
+
+===== 变量：给 HOP 传连接信息
+
+HOP 工作流里的 `${XXX}` 与 HOP 连接元数据（`metadata/rdbms/*.json` 中的 `${HOST}`、`${PORT}` 等）
+都由这里取值。可以写在四个地方，后面的覆盖前面的：
+
+. `data/scheduler/variables.properties`（全局）
+. 模板目录 `jtls/conf/variables.properties`
+. 创建实例时请求体的 `configJson`
+. 任务清单里该任务的 `variables`
+
+[source,properties]
+----
+DB_HOST=10.0.0.5
+DB_PORT=5432
+DB_USER=main
+DB_PASSWORD=******
+----
+
+变量值可以引用其它变量，例如 `EXERCISE_CODE=${RUN_ID}`（引用 `RUN_ID`、`PROJECT_TYPE`、`TASK_NAME` 等内置变量）。
+内置变量包括 `PROJECT_HOME`、`RUN_HOME`、`RUN_ID`、`PROJECT_TYPE`、`TASK_NAME`、`LOG_DIR`、`AUDIT_DIR`。
+`GET /scheduler/run/{runId}/variables` 可查看当前生效的变量（口令类自动打码）。
+
+===== 实例与任务的生命周期
+
+[cols="1,3"]
+|===
+| 操作 | 说明
+
+| 创建实例 | 按模板生成独立运行目录（`runs/<runId>/`）并读取模板任务清单
+| 启动 | 按组与顺序编排：先串行执行一次性任务，成功后激活该组的周期任务
+| 停止 | 暂停所有任务（定义保留，可再次启动）
+| 中止 | 中断正在执行的任务并暂停
+| 删除 | 删除实例、任务定义与运行目录
+| 服务器重启后 | 实例被置为"已停止"，不会自动重跑一次性任务；人工启动即可恢复
+|===
+
+单个任务也可以单独操作：编排、启动、暂停、中止。
+
+日志与历史：每次执行写入 `runs/<runId>/logs/<taskName>.log`，历史记录可通过接口查询；
+插件可按配置的保留天数自动清理过期历史与日志。
+
+===== 接口一览
+
+[cols="1,1"]
+|===
+| 端点 | 说明
+
+| `GET /scheduler/status` | 调度器状态
+| `GET /scheduler/project/list`、`GET /scheduler/project/{projectType}` | 模板列表 / 模板详情（含解析后的任务清单与告警）
+| `POST /scheduler/run/create` | 创建实例
+| `GET /scheduler/run/list`、`GET /scheduler/run/{runId}` | 实例列表 / 详情
+| `POST /scheduler/run/{runId}/start\|stop\|abort\|drop` | 启动 / 停止 / 中止 / 删除实例
+| `POST /scheduler/run/{runId}/task/schedule` | 编排单个任务
+| `POST /scheduler/run/{runId}/task/start\|stop\|abort` | 启动 / 暂停 / 中止单个任务
+| `GET /scheduler/run/{runId}/task/list` | 任务列表：状态、下次触发时间、上次结果、是否运行中
+| `GET /scheduler/run/{runId}/task/history` | 执行历史
+| `GET /scheduler/run/{runId}/log?taskName=&tail=200` | 查看任务日志；不传 `taskName` 返回日志文件清单
+| `GET /scheduler/run/{runId}/variables?taskName=` | 查看变量（口令已打码）
+| `GET /scheduler/describeCrontabExpr?expr=` | 校验 cron 表达式并给出未来 5 次触发时间
+|===
+
+===== 注意事项
+
+* 插件包内**不含 HOP**，必须单独提供 HOP 发行版并配置 `plugin-scheduler.hop.runScript`；
+  HOP 以独立进程运行，因此不需要为数据库服务器调整任何 JVM 参数
+* HOP 工程需要满足（创建实例时会自检并提示）：
+  **若模板的 `project-config.json` 写了 `"parentProjectName": "default"`，则模板根下必须有 `default/` 项目，
+  且它的 `project-config.json` 里 `parentProjectName` 留空**（也可以不用父项目，此时模板自己的
+  `parentProjectName` 直接留空）；
+  **`metadata/workflow-run-configuration/local.json` 必须存在**（对应默认 runconfig `local`）
+* 任务是"尽力终止"：超时/中止会终止 `hop-run` 及其子进程，但 HOP 内部的长事务不保证立即回滚
+* 当前为单实例调度，不支持多节点
+* 该插件未内置鉴权，请只在受信网络暴露管理端口
 ==== 插件管理 API
 
 SlackerDB 提供一组用于在运行时管理插件的 HTTP 端点。这些端点允许你在不重启服务器的情况下加载、卸载、启动、停止和列出插件。所有端点都返回标准格式的 JSON 响应：`{"retCode": 0/-1, "retMsg": "message"}`。

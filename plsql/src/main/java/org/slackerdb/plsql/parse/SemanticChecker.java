@@ -1,6 +1,5 @@
 package org.slackerdb.plsql.parse;
 
-import org.slackerdb.plsql.PlSqlException;
 import org.slackerdb.plsql.ast.Expr;
 import org.slackerdb.plsql.ast.PlSqlAst;
 

@@ -14,18 +14,7 @@ import java.util.Locale;
 
 /**
  * 隐式类型转换。
- *
- * <p>策略（冻结）：</p>
- * <ul>
- *   <li>NULL 与所有类型兼容；</li>
- *   <li>数值族之间可转换：收窄按后端语义四舍五入，溢出/精度超限报 {@code 22003}；</li>
- *   <li>字符串 ↔ 数值/日期时间可双向转换：字符串必须能按目标类型解析，
- *       否则 {@code 22P02} / {@code 22007}；</li>
- *   <li>字符串写入 {@code VARCHAR(n)}/{\@code CHAR(n)} 超长报 {@code 22001}（<b>不截断</b>）；</li>
- *   <li>涉及 BOOLEAN 的隐式转换（除 NULL）一律报 {@code 42804}；</li>
- *   <li>其余组合报 {@code 42804}。</li>
- * </ul>
- */
+ * */
 public final class Coercions {
 
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -159,7 +148,7 @@ public final class Coercions {
         if (value instanceof String text) {
             return text;
         }
-        if (value instanceof Boolean bool) {
+        if (value instanceof Boolean) {
             throw PlSqlTypeException.mismatch(value, target);
         }
         if (value instanceof BigDecimal decimal) {

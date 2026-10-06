@@ -93,7 +93,7 @@ public final class CaseRunner {
 
     /**
      * 引擎入口（唯一入口，便于替换）：经 SPI 门面执行。
-     * 旧实现直连 JDBC（{@code PlSqlVisitor.runPlSql(conn, script)}）已在 P2 被门面取代，
+     * 旧实现直连 JDBC（已删除的 {@code PlSqlVisitor}）已在 P2 被门面取代，
      * 这样一致性语料同时验证了 dbserver 将要走的那条路径（宿主实现方见
      * {@code org.slackerdb.dbserver.sql.PlSqlHostImpl}）。
      */

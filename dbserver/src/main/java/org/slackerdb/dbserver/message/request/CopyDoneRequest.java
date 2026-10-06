@@ -19,13 +19,13 @@ import org.slackerdb.dbserver.sql.PostgresSQLUtil;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.math.BigInteger;
+import java.math.BigDecimal;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.List;
 
 public class CopyDoneRequest extends PostgresRequest {
@@ -201,6 +201,386 @@ public class CopyDoneRequest extends PostgresRequest {
         }
     }
 
+    // ==================================================================
+    //  BINARY 路径：单遍流式解码
+    // ==================================================================
+
+    /** BINARY 载荷本身不合规（长度不符、列数不足、流被截断）。统一映射为 22P04。 */
+    private static final class BinaryFormatException extends RuntimeException {
+        BinaryFormatException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * "载荷被截断"的统一错误文案。
+     *
+     * <p>校验阶段（{@link #validateBinaryColumnCounts}）与写入阶段（{@link BinaryRowSink}）都用它，
+     * 保证同一种损坏在两条路径上报出完全相同的消息 —— 客户端不该因为服务端内部把校验拆成两步
+     * 就看到两种说法。文案固定包含 {@code invalid binary COPY data} 与 {@code truncated}。</p>
+     */
+    private static String binaryTruncatedMessage(String where, int bytesLeft) {
+        return "invalid binary COPY data: stream truncated at " + where
+                + " (" + Math.max(bytesLeft, 0) + " bytes left)";
+    }
+
+    /** 该列类型在 BINARY 通道下不支持（对应原来就地回 0A000 的分支）。 */
+    private static final class BinaryUnsupportedTypeException extends RuntimeException {
+        BinaryUnsupportedTypeException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * 单列的解码策略。
+     *
+     * <p>为什么要有它：改造前是"先整段解析成 {@code List<Object[]>}（每格一个 {@code byte[]}），
+     * 再按 {@code columnTypeCode(列类型名)} 逐格做字符串比较决定怎么 append"。那条路径每个单元格
+     * 都要付一次 {@code byte[]} 分配、一次 {@code Object[]} 装箱、一次字符串比较和一次列表更新，
+     * 而其中只有"解析"和"append"是必需的。</p>
+     *
+     * <p>现在把"列类型 → 怎么解码"在建流时算一次（{@link #kind} 是编译期常量，JIT 能把它变成
+     * 直接分派），结构上也退化成"边解析边 append"，与 CSV 路径的 {@code CopyRowSink} 一致。</p>
+     *
+     * <p><b>两个"位置"必须分清</b>（{@code COPY t(CNT, ID, ...)} 这种重排列清单下二者不同）：</p>
+     * <ul>
+     *   <li>{@link #copyPos}：该表列在 <b>COPY 数据流</b>（即一行里的第几个字段）中的下标；</li>
+     *   <li>{@link #tablePos}：该表列在 <b>目标表</b> 里的物理下标。</li>
+     * </ul>
+     * <p>写入必须按 {@code tablePos} 递增的顺序进行（Appender 要求按表的物理列序写满一行），
+     * 而取值要用 {@code copyPos} 去数据流里找。改造前正是 {@code row[nPos]} 完成这件事，
+     * 这里等价地保留。</p>
+     */
+    private static final class BinaryColumnDecoder {
+        /** 该表列在 COPY 数据流中的字段下标；-1 表示该列不在 COPY 列清单里（走表默认值）。 */
+        final int copyPos;
+        /** 该表列在目标表里的物理下标，仅用于错误信息与调试。 */
+        final int tablePos;
+        /** 该表列名，只说错误信息时用。 */
+        final String columnName;
+        final String columnType;
+        /** 见 TYPE_* 常量。 */
+        final int kind;
+        /** 定长类型期望的字节数；变长类型为 -1。 */
+        final int expectedLength;
+
+        private BinaryColumnDecoder(int copyPos, int tablePos, String columnName, String columnType,
+                                    int kind, int expectedLength) {
+            this.copyPos = copyPos;
+            this.tablePos = tablePos;
+            this.columnName = columnName;
+            this.columnType = columnType;
+            this.kind = kind;
+            this.expectedLength = expectedLength;
+        }
+    }
+
+    /**
+     * 校验 BINARY 载荷里"每行的列数"是否与目标表列数一致。
+     *
+     * <p><b>为什么要在建流之前先扫一遍</b>：改造前是"先把整段载荷解析成 {@code List<Object[]>}，
+     * 再逐行校验列数、再写入"，所以报"列数不符"时 <b>Appender 还没有写过任何一行</b>。
+     * 若改成"边解析边写、遇到不符再报"，报错那一刻 Appender 里已经留了半行数据，
+     * 随后统一的 {@code flush()} 会抛出第二个错误（"all columns must be appended to before calling
+     * 'endRow'"），把真正的"列数不符"顶掉，客户端拿到的是看不懂的消息。</p>
+     *
+     * <p>因此解析与写入必须分成两步：先只读地校验列数（不碰 Appender），再进入写入。
+     * 代价是多扫一遍行头（只读 2 字节并跳过列数据），远比"错误信息被顶掉"划算。</p>
+     *
+     * @throws BinaryFormatException 存在列数少于目标表列数的行（只报第一处，与改造前一致）
+     */
+    private static void validateBinaryColumnCounts(byte[] payload, int expectedColumnCount) {
+        if (payload.length < 19) {
+            throw new BinaryFormatException(binaryTruncatedMessage(
+                    "header (19 bytes expected)", payload.length));
+        }
+
+        int pos = 19;
+        long rowNumber = 1;
+        while (true) {
+            if (payload.length - pos < 2) {
+                throw new BinaryFormatException(binaryTruncatedMessage(
+                        "row " + rowNumber + " (missing column count)", payload.length - pos));
+            }
+            // int16 列数。注意这里用"无符号聚合 + 与 0xFFFF 比较"来识别 -1 终止符：
+            // 若按签名读成 -1 再比较，读法必须一致，否则 0xFFFF 会被当成"列数 65535 的行"。
+            int columnCount = ((payload[pos] & 0xFF) << 8) | (payload[pos + 1] & 0xFF);
+            pos += 2;
+            if (columnCount == 0xFFFF) {
+                // 行尾结束标志：本次 COPY 数据流到此为止
+                return;
+            }
+            if (columnCount < expectedColumnCount) {
+                throw new BinaryFormatException(binaryColumnCountMismatchMessage(
+                        rowNumber, columnCount, expectedColumnCount));
+            }
+
+            // 跳过这一行的全部列。注意：数据列数多于期望时维持既有宽松行为（多余的列被忽略），
+            // 但这里必须把它们全部消费掉，否则后面的行头会被错位读取。
+            for (int i = 0; i < columnCount; i++) {
+                if (payload.length - pos < 4) {
+                    throw new BinaryFormatException(binaryTruncatedMessage(
+                            "row " + rowNumber + " column " + i + " (missing column length)",
+                            payload.length - pos));
+                }
+                int length = ((payload[pos] & 0xFF) << 24) | ((payload[pos + 1] & 0xFF) << 16)
+                        | ((payload[pos + 2] & 0xFF) << 8) | (payload[pos + 3] & 0xFF);
+                pos += 4;
+                if (length == -1) {
+                    continue;
+                }
+                if (length < 0 || payload.length - pos < length) {
+                    throw new BinaryFormatException(binaryTruncatedMessage(
+                            "row " + rowNumber + " column " + i + " (need " + length + " bytes)",
+                            payload.length - pos));
+                }
+                pos += length;
+            }
+            rowNumber++;
+        }
+    }
+
+    /**
+     * 把 PG BINARY COPY 载荷<b>一次遍历</b>写进 {@link DuckDBAppender}。
+     *
+     * <p>与 {@link CopyRowSink}（CSV/TEXT 路径）的分工一致：这里只管 BINARY，字段语义完全按
+     * PG 的二进制格式解，不做任何文本解析。</p>
+     *
+     * <p><b>语义必须与改造前逐条对齐</b>：</p>
+     * <ul>
+     *   <li>只写 COPY 语句列清单里的列，表里其余列用 {@code appendDefault()}；</li>
+     *   <li>列长度不符 / 列数不足 → 明确报错（不再出现裸越界异常）；</li>
+     *   <li>数据列数"多于"期望时，多余的列被忽略（维持既有宽松行为）；</li>
+     *   <li>TIMESTAMP 的 int64 是"自 <b>2000-01-01</b> 的微秒"（PG 的 {@code timestamp_send} 约定）。
+     *       这里加上 {@link PostgresSQLUtil#PG_EPOCH_MICROS} 换成 epoch 微秒，
+     *       用 {@code appendEpochMicros} 直接写入，不再为每格构造
+     *       {@code Instant}/{@code ZoneId}/{@code LocalDateTime}。</li>
+     * </ul>
+     */
+    private static final class BinaryRowSink {
+        private final DuckDBAppender appender;
+        private final BinaryColumnDecoder[] decoders;
+        private final byte[] payload;
+        private final int end;
+        private int pos;
+        /** 一行里各列的 (起点, 长度)；每行复用，字段数超了才扩容。 */
+        private final int[] offsets = new int[16];
+        private final int[] lengths = new int[16];
+        /** VARCHAR / DECIMAL 的临时缓冲，只有真的遇到这两种列才会分配，并按需增长。 */
+        private byte[] scratch;
+
+        BinaryRowSink(DuckDBAppender appender,
+                      List<Integer> columnMapPos,
+                      List<String> columnTypes,
+                      List<String> columnNames,
+                      byte[] payload,
+                      int expectedColumnCount) {
+            this.appender = appender;
+            this.payload = payload;
+            this.expectedColumnCount = expectedColumnCount;
+            if (payload.length < 19) {
+                throw new BinaryFormatException(binaryTruncatedMessage(
+                        "header (19 bytes expected)", payload.length));
+            }
+            this.pos = 19;
+            this.end = payload.length;
+
+            int tableColumns = columnMapPos.size();
+            this.decoders = new BinaryColumnDecoder[tableColumns];
+            for (int tablePos = 0; tablePos < tableColumns; tablePos++) {
+                String columnType = columnTypes.get(tablePos);
+                String columnName = columnNames.get(tablePos);
+                int copyPos = columnMapPos.get(tablePos);
+                if (copyPos == -1) {
+                    // 列不在 COPY 清单里：不解析数据，写表默认值
+                    decoders[tablePos] = new BinaryColumnDecoder(-1, tablePos, columnName, columnType,
+                            TYPE_UNSUPPORTED, -1);
+                    continue;
+                }
+                switch (columnTypeCode(columnType)) {
+                    case TYPE_SMALLINT -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_SMALLINT, 2);
+                    case TYPE_INTEGER -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_INTEGER, 4);
+                    case TYPE_BIGINT -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_BIGINT, 8);
+                    case TYPE_FLOAT -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_FLOAT, 4);
+                    case TYPE_DOUBLE -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_DOUBLE, 8);
+                    case TYPE_TIMESTAMP -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_TIMESTAMP, 8);
+                    case TYPE_BOOLEAN -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_BOOLEAN, 1);
+                    case TYPE_VARCHAR -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_VARCHAR, -1);
+                    case TYPE_DECIMAL -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_DECIMAL, -1);
+                    default -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType,
+                                    TYPE_UNSUPPORTED, -1);
+                }
+            }
+        }
+
+        /**
+         * 遍历整个载荷并写入。
+         *
+         * @return 写入的行数
+         */
+        long writeAll() throws SQLException {
+            long rows = 0;
+            while (true) {
+                require(2, "row " + rows + " (missing column count)");
+                short columnCount = getShort();
+                if (columnCount == -1) {
+                    // 行尾的 -1 结束标志：本次 COPY 数据流到此结束。
+                    // 列数不足已由 validateBinaryColumnCounts 在建流前拦下，这里无需再判。
+                    return rows;
+                }
+                if (columnCount < expectedColumnCount) {
+                    // 防御：正常路径下 validateBinaryColumnCounts 已经拦下，走到这里说明两处判据不一致。
+                    // 明确报错而不是让下面的字段下标裸越界 —— 报错文案与建流校验保持完全一致。
+                    throw new BinaryFormatException(binaryColumnCountMismatchMessage(
+                            rows + 1, columnCount, expectedColumnCount));
+                }
+
+                for (int i = 0; i < columnCount; i++) {
+                    require(4, "row " + rows + " column " + i + " (missing column length)");
+                    int length = getInt();
+                    int start = pos;
+                    if (length != -1) {
+                        // 负数长度（-1 之外）与越界，改造前都落到"数据被截断"的报错上，这里同样处理
+                        if (length < 0 || end - pos < length) {
+                            throw new BinaryFormatException(binaryTruncatedMessage(
+                                    "row " + rows + " column " + i + " (need " + length + " bytes)",
+                                    end - pos));
+                        }
+                        pos += length;
+                    }
+                    // 先把这一行的每个字段的位置记下来（字段顺序 = COPY 列清单顺序），
+                    // 然后按"表列顺序"取用 —— 两者在 COPY 重排列清单时并不相同。
+                    if (i >= fieldStarts.length) {
+                        fieldStarts = java.util.Arrays.copyOf(fieldStarts, fieldStarts.length * 2);
+                        fieldLengths = java.util.Arrays.copyOf(fieldLengths, fieldLengths.length * 2);
+                    }
+                    fieldStarts[i] = start;
+                    fieldLengths[i] = length;
+                }
+                fieldCount = columnCount;
+
+                // 按表列顺序写满一行：不在 COPY 列清单里的列用表默认值
+                appender.beginRow();
+                for (BinaryColumnDecoder decoder : decoders) {
+                    if (decoder.copyPos == -1) {
+                        appender.appendDefault();
+                        continue;
+                    }
+                    if (decoder.copyPos >= fieldCount) {
+                        // 该字段缺失。列数不足已在建流前被 validateBinaryColumnCounts 拦下，
+                        // 这里只可能是"表列多于数据列"被别的路径放过，按默认值兜底而不是裸越界。
+                        appender.appendDefault();
+                        continue;
+                    }
+                    appendColumn(decoder, fieldLengths[decoder.copyPos], fieldStarts[decoder.copyPos], rows);
+                }
+                appender.endRow();
+                rows++;
+            }
+        }
+
+        /** 一行的字段位置/长度；每行复用，字段数超了才扩容。下标 = COPY 数据流里的字段序号。 */
+        private int[] fieldStarts = new int[16];
+        private int[] fieldLengths = new int[16];
+        /** 本行实际字段数。 */
+        private int fieldCount;
+        /**
+         * COPY 数据流里每行应有的字段数（= COPY 列清单长度；没有列清单时等于目标表列数）。
+         *
+         * <p>注意它<b>不等于</b>目标表的列数：{@code COPY t(a,b)} 写一张 6 列的表时，
+         * 数据行只有 2 个字段而 {@code decoders} 有 6 项。列数校验必须用本字段作为基准。</p>
+         */
+        private final int expectedColumnCount;
+
+        /** 把一列追加到 Appender（NULL 由 {@code length == -1} 判定）。 */
+        private void appendColumn(BinaryColumnDecoder decoder, int length, int start, long row)
+                throws SQLException {
+            if (length == -1) {
+                appender.appendNull();
+                return;
+            }
+            if (decoder.expectedLength >= 0 && length != decoder.expectedLength) {
+                throw new BinaryFormatException(binaryMismatchMessage(
+                        decoder.columnName, decoder.columnType, length,
+                        decoder.expectedLength == 1 ? "1 byte" : decoder.expectedLength + " bytes"));
+            }
+
+            switch (decoder.kind) {
+                case TYPE_SMALLINT -> appender.append((short) getShortAt(start));
+                case TYPE_INTEGER -> appender.append(getIntAt(start));
+                case TYPE_BIGINT -> appender.append(getLongAt(start));
+                case TYPE_FLOAT -> appender.append(Float.intBitsToFloat(getIntAt(start)));
+                case TYPE_DOUBLE -> appender.append(Double.longBitsToDouble(getLongAt(start)));
+                case TYPE_BOOLEAN -> appender.append(payload[start] == 0x01);
+                case TYPE_TIMESTAMP -> appender.appendEpochMicros(
+                        getLongAt(start) + PostgresSQLUtil.PG_EPOCH_MICROS);
+                case TYPE_VARCHAR -> appender.append(new String(payload, start, length, StandardCharsets.UTF_8));
+                case TYPE_DECIMAL -> appender.append(PostgresSQLUtil.convertPGByteToBigDecimal(
+                        slice(start, length)));
+                default -> throw new BinaryUnsupportedTypeException(
+                        "Binary Format error (column type not support) . " + decoder.columnType);
+            }
+        }
+
+        /** VARCHAR / DECIMAL 需要的连续字节切片；行内复用同一个缓冲，按需增长。 */
+        private byte[] slice(int start, int length) {
+            if (scratch == null || scratch.length < length) {
+                scratch = new byte[Math.max(16, length)];
+            }
+            System.arraycopy(payload, start, scratch, 0, length);
+            return scratch;
+        }
+
+        private short getShort() {
+            short v = getShortAt(pos);
+            pos += 2;
+            return v;
+        }
+
+        private int getInt() {
+            int v = getIntAt(pos);
+            pos += 4;
+            return v;
+        }
+
+        // ---- 大端读取：PG 的二进制格式是网络字节序，与 ByteBuffer 默认序一致 ----
+
+        private short getShortAt(int at) {
+            return (short) (((payload[at] & 0xFF) << 8) | (payload[at + 1] & 0xFF));
+        }
+
+        private int getIntAt(int at) {
+            return ((payload[at] & 0xFF) << 24)
+                    | ((payload[at + 1] & 0xFF) << 16)
+                    | ((payload[at + 2] & 0xFF) << 8)
+                    | (payload[at + 3] & 0xFF);
+        }
+
+        private long getLongAt(int at) {
+            long v = 0;
+            for (int i = 0; i < 8; i++) {
+                v = (v << 8) | (payload[at + i] & 0xFF);
+            }
+            return v;
+        }
+
+        private void require(int needed, String where) {
+            if (end - pos < needed) {
+                throw new BinaryFormatException(binaryTruncatedMessage(where, end - pos));
+            }
+        }
+    }
+
     public CopyDoneRequest(DBInstance pDbInstance) {
         super(pDbInstance);
     }
@@ -285,7 +665,6 @@ public class CopyDoneRequest extends PostgresRequest {
                 + "] vs [" + expectedColumnCount + "]). Row " + rowNumber + " has " + actualColumnCount
                 + " columns, but " + expectedColumnCount + " columns are expected.";
     }
-
     /**
      * 构造 Appender 写入失败的错误信息。
      *
@@ -424,153 +803,32 @@ public class CopyDoneRequest extends PostgresRequest {
                     }
                 } // TEXT / CSV
                 else if (session.copyTableFormat.equalsIgnoreCase("BINARY")) {
-                    // BINARY 通道按 PG 二进制逐类型解码（与 CSV 的文本解析是两回事，见 columnTypeCode）
-                    List<Object[]> data = PostgresSQLUtil.convertPGByteToRow(session.copyLastRemained.toByteArray());
+                    // BINARY：先把"每行列数"整体校验一遍（只读、不碰 Appender），再单遍流式写入。
+                    // 这样"列数不符"与"载荷不合规"都在 Appender 有机会写下任何一行之前就被拒绝，
+                    // 与改造前"整段解析后校验"的数据影响完全一致（失败的 COPY 整体不生效）。
+                    byte[] payload = session.copyLastRemained.toByteArray();
                     session.copyLastRemained.reset();
-                    DuckDBAppender duckDBAppender = session.copyTableAppender;
-                    List<Integer> copyTableDbColumnMapPos = session.copyTableDbColumnMapPos;
-                    // 列类型/名称同样提前取出，逐单元格循环里不再查询会话
-                    List<String> copyTableDbColumnType = session.copyTableDbColumnType;
-                    List<String> copyTableDbColumnName = session.copyTableDbColumnName;
-                    // COPY数据中每行的字段数量必须能覆盖COPY语句指定的列(没有指定列时就是目标表的列数)。
-                    // 数据列数不足时，下面 row[nPos] 会抛出 ArrayIndexOutOfBoundsException，
-                    // 客户端只能收到 "Index 6 out of bounds for length 6" 这种看不懂的裸异常；
-                    // 因此这里先显式校验，给出"第几行、实际几列、期望几列"的明确错误。
-                    // 注意：数据列数多于期望时维持既有行为(多余的列被忽略)，只有"不够"才报错。
-                    int expectedColumnCount = session.copyColumnCount;
-                    long rowNumber = 1;
-                    for (Object[] row : data) {
-                        if (row.length < expectedColumnCount) {
-                            // 与CSV路径一样走 sendErrorAndReady：先丢弃本次COPY已写入的部分行再回错误。
-                            sendErrorAndReady(ctx, request, out,
-                                    binaryColumnCountMismatchMessage(rowNumber, row.length, expectedColumnCount));
-                            return;
-                        }
-                        duckDBAppender.beginRow();
-                        for (int i=0; i<copyTableDbColumnMapPos.size(); i++) {
-                            int nPos = copyTableDbColumnMapPos.get(i);
-                            if (nPos == -1) {
-                                duckDBAppender.appendDefault();
-                            } else
-                            {
-                                // 数据内容
-                                Object cell = row[nPos];
 
-                                // 列名/类型都按"表列位置"取值。注意: nPos 是该数据在 COPY 数据流(即 row)中的下标，
-                                // 也就是"来源列序号"；i 才是表列位置。
-                                String columnType = copyTableDbColumnType.get(i);
-                                String columnName = copyTableDbColumnName.get(i);
-                                int columnTypeCode = columnTypeCode(columnType);
-                                if (cell == null)
-                                {
-                                    duckDBAppender.appendNull();
-                                }
-                                else if (columnTypeCode == TYPE_SMALLINT) {
-                                    // SMALLINT 期望 2 字节数据
-                                    if (((byte[]) cell).length != 2) {
-                                        sendErrorAndReady(ctx, request, out,
-                                                binaryMismatchMessage(columnName, columnType,
-                                                        ((byte[]) cell).length, "2 bytes"));
-                                        return;
-                                    }
-                                    duckDBAppender.append(Utils.bytesToInt16((byte[]) cell));
-                                }
-                                else if (columnTypeCode == TYPE_INTEGER) {
-                                    // INTEGER 期望 4 字节数据
-                                    if (((byte[]) cell).length != 4) {
-                                        sendErrorAndReady(ctx, request, out,
-                                                binaryMismatchMessage(columnName, columnType,
-                                                        ((byte[]) cell).length, "4 bytes"));
-                                        return;
-                                    }
-                                    duckDBAppender.append(Utils.bytesToInt32((byte[]) cell));
-                                }
-                                else if (columnTypeCode == TYPE_BIGINT) {
-                                    // BIGINT 期望 8 字节数据
-                                    if (((byte[]) cell).length != 8) {
-                                        sendErrorAndReady(ctx, request, out,
-                                                binaryMismatchMessage(columnName, columnType,
-                                                        ((byte[]) cell).length, "8 bytes"));
-                                        return;
-                                    }
-                                    duckDBAppender.append(BigInteger.valueOf(Utils.bytesToInt64((byte[]) cell)).longValue());
-                                }
-                                else if (columnTypeCode == TYPE_VARCHAR)
-                                {
-                                    // UTF-8是BINARY COPY唯一支持的字符集，不支持其他的
-                                    duckDBAppender.append(new String((byte[])cell, StandardCharsets.UTF_8));
-                                }
-                                else if (columnTypeCode == TYPE_FLOAT)
-                                {
-                                    // FLOAT 期望 4 字节数据
-                                    if (((byte[]) cell).length != 4) {
-                                        sendErrorAndReady(ctx, request, out,
-                                                binaryMismatchMessage(columnName, columnType,
-                                                        ((byte[]) cell).length, "4 bytes"));
-                                        return;
-                                    }
-                                    duckDBAppender.append(Utils.byteToFloat((byte [])cell));
-                                }
-                                else if (columnTypeCode == TYPE_DOUBLE)
-                                {
-                                    // DOUBLE 期望 8 字节数据
-                                    if (((byte[]) cell).length != 8) {
-                                        sendErrorAndReady(ctx, request, out,
-                                                binaryMismatchMessage(columnName, columnType,
-                                                        ((byte[]) cell).length, "8 bytes"));
-                                        return;
-                                    }
-                                    duckDBAppender.append(Utils.byteToDouble((byte [])cell));
-                                }
-                                else if (columnTypeCode == TYPE_DECIMAL)
-                                {
-                                    duckDBAppender.append(
-                                            PostgresSQLUtil.convertPGByteToBigDecimal((byte[]) cell));
-                                }
-                                else if (columnTypeCode == TYPE_TIMESTAMP)
-                                {
-                                    // TIMESTAMP 期望 8 字节数据
-                                    if (((byte[]) cell).length != 8) {
-                                        sendErrorAndReady(ctx, request, out,
-                                                binaryMismatchMessage(columnName, columnType,
-                                                        ((byte[]) cell).length, "8 bytes"));
-                                        return;
-                                    }
-                                    long epochMilli = Utils.bytesToInt64((byte[]) cell) / 1000;
-                                    duckDBAppender.append(Instant.ofEpochMilli(epochMilli).atZone(ZoneId.of("UTC")).toLocalDateTime());
-                                }
-                                else if (columnTypeCode == TYPE_BOOLEAN)
-                                {
-                                    // BOOLEAN 期望 1 字节数据
-                                    if (((byte[]) cell).length != 1) {
-                                        sendErrorAndReady(ctx, request, out,
-                                                binaryMismatchMessage(columnName, columnType,
-                                                        ((byte[]) cell).length, "1 byte"));
-                                        return;
-                                    }
-                                    duckDBAppender.append(((byte[]) cell)[0] == 0x01);
-                                }
-                                else
-                                {
-                                    sendErrorAndReady(ctx, request, out, "0A000",
-                                            "Binary Format error (column type not support) . " + columnType);
-                                    return;
-                                }
-                            }
-                        }
-                        duckDBAppender.endRow();
-                        nCopiedRows++;
-                        rowNumber++;
-                    }
+                    validateBinaryColumnCounts(payload, session.copyColumnCount);
+
+                    BinaryRowSink sink = new BinaryRowSink(
+                            session.copyTableAppender,
+                            session.copyTableDbColumnMapPos,
+                            session.copyTableDbColumnType,
+                            session.copyTableDbColumnName,
+                            payload,
+                            session.copyColumnCount);
+                    nCopiedRows = sink.writeAll();
                 } // BINARY
             }
             catch (SQLException | RuntimeException ex)
             {
                 // SQL异常: 用错误码作为返回码。
-                // RuntimeException: 例如BINARY数据流不完整时 convertPGByteToRow 抛出的
-                // IllegalArgumentException(缺少固定头/行数据被截断/缺少行尾结束标志)，
-                // 以及CSV解析异常。这类异常必须在这里消化掉并回应客户端，
-                // 否则会一路逃逸到Netty，客户端永远收不到响应(表现为copyIn永久挂起，且该会话不可再用)。
+                // RuntimeException: 例如BINARY数据流不完整时抛出的 IllegalArgumentException
+                // (缺少固定头/行数据被截断/缺少行尾结束标志)，以及CSV解析异常。这类异常必须在这里
+                // 消化掉并回应客户端，否则会一路逃逸到Netty，客户端永远收不到响应
+                // (表现为copyIn永久挂起，且该会话不可再用)。
+                //
                 // 这里只登记失败原因，不在这里回包也不回滚。
                 // 统一的收尾（丢弃已写入的部分行 → 回 ErrorResponse/CommandComplete → ReadyForQuery）
                 // 放在方法尾部，保证"告诉客户端失败"与"数据不落库"这两件事一起发生。
@@ -579,9 +837,17 @@ public class CopyDoneRequest extends PostgresRequest {
                     // 数据库/Appender 报出的写入错误同样走统一的信息整理(不按错误类型特判)
                     errorCode = SqlStateMapper.fromException(sqlEx);
                     errorMessage = copyWriteErrorMessage(sqlEx.getMessage());
+                } else if (ex instanceof BinaryUnsupportedTypeException) {
+                    // 列类型在 BINARY 通道下不支持：与改造前一致用 0A000（feature_not_supported）
+                    errorCode = "0A000";
+                    errorMessage = ex.getMessage();
+                } else if (ex instanceof BinaryFormatException) {
+                    // BINARY 载荷不合规（长度不符、列数不足、流被截断）：22P04（bad_copy_file_format）
+                    errorCode = "22P04";
+                    errorMessage = ex.getMessage();
                 } else {
-                    // 解析类异常(数据流被截断、CSV畸形等)：属于"COPY 数据格式不对"，
-                    // 用 22P04（bad_copy_file_format），而不是 XX000（那意味着服务端自身出错）
+                    // 其余解析类异常（CSV畸形等）：同样属于"COPY 数据格式不对"，
+                    // 用 22P04，而不是 XX000（那意味着服务端自身出错）
                     errorCode = "22P04";
                     errorMessage = ex.getMessage();
                 }

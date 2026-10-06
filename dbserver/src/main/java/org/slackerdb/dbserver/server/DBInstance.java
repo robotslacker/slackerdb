@@ -78,6 +78,23 @@ public class DBInstance {
     // SQL/API 历史记录队列的容量
     public static final int HISTORY_QUEUE_CAPACITY = 10 * 1000;
 
+    /**
+     * 对外声明的 PostgreSQL 兼容版本号。
+     *
+     * <p><b>只能有这一个来源。</b>同一个版本号会从两个地方报给客户端，两者必须一致：</p>
+     * <ul>
+     *   <li>{@code ParameterStatus.server_version}（握手期下发）—— libpq 的 {@code PQserverVersion}、
+     *       pgjdbc 的 {@code getServerVersion} 都用它做整数化的特性判定；</li>
+     *   <li>{@code select pg_catalog.version()}（由 {@code SQLReplacer} 改写后返回）——
+     *       SQLAlchemy 用 {@code ^(?:PostgreSQL|EnterpriseDB) (\d+)\.?(\d+)?} 解析它，
+     *       并据此决定反射 SQL 的形态（例如是否使用 {@code pg_index.indnullsnotdistinct}）。</li>
+     * </ul>
+     *
+     * <p>写成 {@code 15.0} 而不是 {@code 15}：libpq 解析 {@code server_version} 时要求至少
+     * "主版本.次版本" 两段，PG 自身也下发 {@code 15.4} 这种形式。</p>
+     */
+    public static final String PG_COMPAT_VERSION = "15.0";
+
     // SQL历史记录并不会直接操作，而是会放到队列中，由其他线程来完成处理
     public BoundedQueue<SQLHistoryRecord>  sqlHistoryList
             = new BoundedQueue<>(HISTORY_QUEUE_CAPACITY);
@@ -1148,11 +1165,22 @@ public class DBInstance {
             logger.info("[SERVER][PLUGIN     ] Will scan directory [{}] for plugin ...", Path.of(serverConfiguration.getPlugins_dir()));
             this.dbPluginManager = new DBPluginManager(Path.of(serverConfiguration.getPlugins_dir()), dbPluginContext);
 
-            dbPluginManager.loadPlugins();
+            try {
+                dbPluginManager.loadPlugins();
+            } catch (Exception e) {
+                logger.error("[SERVER][PLUGIN     ] load plugins failed: {}", e.getMessage(), e);
+            }
             for (int i=0; i< dbPluginManager.getPlugins().size(); i++)
             {
-                logger.info("[SERVER][PLUGIN     ] start plugin [{}] ...", dbPluginManager.getPlugins().get(i).getPluginId());
-                dbPluginManager.startPlugin(dbPluginManager.getPlugins().get(i).getPluginId());
+                String pluginId = dbPluginManager.getPlugins().get(i).getPluginId();
+                logger.info("[SERVER][PLUGIN     ] start plugin [{}] ...", pluginId);
+                try {
+                    dbPluginManager.startPlugin(pluginId);
+                } catch (Exception e) {
+                    // 插件启动失败（依赖缺失、配置错误等）由插件自己负责，
+                    // 不应连带把数据库服务器本身拖垮
+                    logger.error("[SERVER][PLUGIN     ] start plugin [{}] failed: {}", pluginId, e.getMessage(), e);
+                }
             }
         }
         else

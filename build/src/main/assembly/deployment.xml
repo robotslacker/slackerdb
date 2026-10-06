@@ -20,6 +20,7 @@
             <outputDirectory>/</outputDirectory>
             <includes>
                 <include>README.pdf</include>
+                <include>README-CN.pdf</include>
             </includes>
         </fileSet>
         <fileSet>
@@ -105,47 +106,27 @@
                 <include>slackerdb-plugin-*api.jar</include>
             </includes>
         </fileSet>
+        <!--
+            这里原先逐个收集各模块的 -sources.jar 放在 source/ 目录下。
+            现已改为合并出一份可直接编译的源码工程（source.xml ->
+            dist/slackerdb-src_<version>.zip），与本发布包平级，不再嵌套在包内。
+        -->
+        <!--
+            作业调度插件（可选）：随发行版放进 plugins/ 目录，但默认不会被加载 ——
+            需要部署方在 dbserver.conf 中把 plugins_dir 指向 plugins（或该插件所在目录）。
+            文件名无需与 plugin.properties 里的 plugin.id 一致（PF4J 以 plugin.properties 为准）。
+            HOP 运行环境不在发行包里：把 Hop 发行版放到任意目录，并用
+            plugin-scheduler.hop.runScript / hop.javaHome 指向它。
+        -->
         <fileSet>
-            <directory>${project.basedir}/../plugin/target</directory>
-            <outputDirectory>source</outputDirectory>
+            <directory>${project.basedir}/../plugin-scheduler/target</directory>
+            <outputDirectory>plugins</outputDirectory>
             <includes>
-                <include>slackerdb-plugin-*sources.jar</include>
+                <include>slackerdb-plugin-scheduler-*.jar</include>
             </includes>
-        </fileSet>
-        <fileSet>
-            <directory>${project.basedir}/../dbproxy/target</directory>
-            <outputDirectory>source</outputDirectory>
-            <includes>
-                <include>slackerdb-dbproxy-*sources.jar</include>
-            </includes>
-        </fileSet>
-        <fileSet>
-            <directory>${project.basedir}/../dbserver/target</directory>
-            <outputDirectory>source</outputDirectory>
-            <includes>
-                <include>slackerdb-dbserver-*sources.jar</include>
-            </includes>
-        </fileSet>
-        <fileSet>
-            <directory>${project.basedir}/../common/target</directory>
-            <outputDirectory>source</outputDirectory>
-            <includes>
-                <include>slackerdb-common-*sources.jar</include>
-            </includes>
-        </fileSet>
-        <fileSet>
-            <directory>${project.basedir}/../dbdriver/target</directory>
-            <outputDirectory>source</outputDirectory>
-            <includes>
-                <include>slackerdb-dbdriver-*sources.jar</include>
-            </includes>
-        </fileSet>
-        <fileSet>
-            <directory>${project.basedir}/../plugin-example/target</directory>
-            <outputDirectory>source</outputDirectory>
-            <includes>
-                <include>slackerdb-plugin-example-*-sources.jar</include>
-            </includes>
+            <excludes>
+                <exclude>*-sources.jar</exclude>
+            </excludes>
         </fileSet>
     </fileSets>
 

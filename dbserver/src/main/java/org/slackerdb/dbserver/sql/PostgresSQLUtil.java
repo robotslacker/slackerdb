@@ -7,11 +7,29 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 public class PostgresSQLUtil {
+
+    /**
+     * PG BINARY 里 TIMESTAMP / TIMESTAMPTZ 的基准点：<b>2000-01-01 00:00:00 UTC</b>。
+     *
+     * <p>线上值是"自该基准点的微秒数"（int64）。这一点由 PostgreSQL 的 {@code timestamp_send}
+     * 定义，PG 文档在 Binary Format 一节也把具体编码指向各类型的 {@code *send}/{@code *recv} 函数。</p>
+     *
+     * <p>注意这里<b>不是</b> Unix 纪元（1970-01-01）：两者相差本常量所示的微秒数。
+     * 曾经本类的编码与 {@code CopyDoneRequest} 的解码都按"自 1970 的微秒"处理，
+     * 两处一起偏离标准，因此用 PG 标准客户端发的 BINARY COPY 时间戳会整体偏移约 30 年。</p>
+     */
+    public static final long PG_EPOCH_MICROS = 946_684_800_000_000L;
+
+    /** 纳秒 → 微秒。PG 的 TIMESTAMP 精度就是微秒，多余的纳秒按向下取整丢弃。 */
+    private static final long NANOS_PER_MICRO = 1_000L;
+
     public static BigDecimal convertPGByteToBigDecimal(byte[] buf)
     {
         if (buf == null) {
@@ -48,7 +66,9 @@ public class PostgresSQLUtil {
                 result = result.add(digitValue.divide(base.pow(-exp), precisionScale, RoundingMode.HALF_UP));
             }
         }
-        if (sign == 1) {
+        if (sign == 0x4000) {
+            // PG 的 NUMERIC 用 0x4000 表示负数（NUMERIC_NEG），0x0000 表示正数/零。
+            // 这里曾经写成 sign == 1，与编码端和 PG 标准都不符：结果是负数被静默读成正数。
             result = result.negate();
         }
         // dScale 可能为负数（PG numeric 允许 scale 为负），此时 setScale 不接受负数参数
@@ -73,8 +93,9 @@ public class PostgresSQLUtil {
             return buffer.array();
         }
 
-        // 解析符号
-        short sign = (value.signum() < 0) ? (short)1 : (short)0x0000;
+        // 解析符号：PG 的 NUMERIC 用 0x4000 表示负数（NUMERIC_NEG），0x0000 表示正数/零。
+        // 这里曾经写成 1，与 PG 标准不符：负数会被任何标准客户端（包括本项目自己的解码器）读成正数。
+        short sign = (value.signum() < 0) ? (short)0x4000 : (short)0x0000;
         // 计算过程中不考虑正负数
         value = value.abs();
 
@@ -215,7 +236,7 @@ public class PostgresSQLUtil {
                     output.writeBytes(decimalBytes, 0, decimalBytes.length);
                 } else if (value instanceof Timestamp) {
                     output.writeInt(8);
-                    output.writeLong(((Timestamp) value).getTime() * 1000);
+                    output.writeLong(toPgTimestampMicros(((Timestamp) value).toInstant()));
                 } else if (value instanceof Boolean) {
                     output.writeInt(1);
                     output.writeByte((Boolean) value ? 0x01 : 0x00);
@@ -225,12 +246,10 @@ public class PostgresSQLUtil {
                 } else if (value instanceof Long) {
                     output.writeInt(8);
                     output.writeLong((Long) value);
-                } else if (value instanceof java.sql.Date) {
-                    output.writeInt(8);
-                    output.writeLong(((java.sql.Date) value).getTime() * 1000);
                 } else if (value instanceof java.util.Date) {
+                    // java.sql.Date / java.util.Date：同样按 PG 的 TIMESTAMP 二进制编码
                     output.writeInt(8);
-                    output.writeLong(((java.util.Date) value).getTime() * 1000);
+                    output.writeLong(toPgTimestampMicros(((java.util.Date) value).toInstant()));
                 } else {
                     throw new IllegalArgumentException("Unsupported type: " + value.getClass().getSimpleName());
                 }
@@ -241,6 +260,32 @@ public class PostgresSQLUtil {
         output.writeShort((short) -1);
 
         return output.toByteArray();
+    }
+
+    /**
+     * 把某一瞬间编码成 PG BINARY 的 TIMESTAMP：<b>自 2000-01-01 00:00:00 UTC 的微秒数</b>。
+     *
+     * <p>用 {@link java.time.Instant} 而不是 {@code Timestamp.getTime()}：后者的毫秒数依赖 JVM 默认时区，
+     * 会让同一时刻在不同时区的机器上编出不同字节；{@code Instant} 是与时区无关的绝对时刻。</p>
+     */
+    public static long toPgTimestampMicros(java.time.Instant instant) {
+        return instant.getEpochSecond() * 1_000_000L
+                + instant.getNano() / NANOS_PER_MICRO
+                - PG_EPOCH_MICROS;
+    }
+
+    /**
+     * {@link #toPgTimestampMicros} 的逆运算，得到的永远是 <b>UTC</b> 墙钟时间。
+     *
+     * <p>PG 的 TIMESTAMP 不带时区，其二进制值就是 UTC 下的微秒数，因此这里固定按 UTC 解读。</p>
+     *
+     * <p>注意：BINARY COPY 的解码路径（{@code CopyDoneRequest}）出于性能考虑没有用这个方法，
+     * 而是直接 {@code appendEpochMicros(micros + PG_EPOCH_MICROS)} 省掉 {@code LocalDateTime}
+     * 的构造；两者语义一致，这个方法保留给需要墙钟时间的调用方。</p>
+     */
+    public static LocalDateTime pgTimestampMicrosToLocalDateTime(long micros) {
+        return LocalDateTime.of(2000, 1, 1, 0, 0, 0)
+                .plus(Duration.ofNanos(micros * NANOS_PER_MICRO));
     }
 
     /**

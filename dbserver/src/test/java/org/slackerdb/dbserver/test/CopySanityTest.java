@@ -981,6 +981,109 @@ public class CopySanityTest {
         pgConn1.close();
     }
 
+    /**
+     * 手工构造的单行 PG BINARY 载荷，<b>刻意不复用</b> {@link PostgresSQLUtil#convertPGRowToByte}。
+     *
+     * <p>为什么必须独立构造：本项目的编码器与解码器出自同一处。只要两者一起偏离 PG 标准，
+     * "编码 → COPY → 读回"这类往返测试依然会自洽通过，测不出偏差 ——
+     * 历史上 TIMESTAMP 纪元（自 1970 而非 2000）和 NUMERIC 符号位（1 而非 0x4000）
+     * 就是这样长期隐藏的。要验证"是否遵守 PG 线格式"，判据必须来自标准本身。</p>
+     *
+     * @param typeOid   仅用于可读性，不参与编码
+     * @param fieldData 各字段的二进制内容；{@code null} 表示 SQL NULL
+     */
+    private static byte[] binaryPayloadOf(int typeOid, byte[]... fieldData) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        out.writeBytes(new byte[]{0x50, 0x47, 0x43, 0x4F, 0x50, 0x59, 0x0A, (byte) 0xFF, 0x0D, 0x0A, 0x00,
+                0, 0, 0, 0, 0, 0, 0, 0});
+        out.write((fieldData.length >>> 8) & 0xFF);
+        out.write(fieldData.length & 0xFF);
+        for (byte[] field : fieldData) {
+            if (field == null) {
+                out.writeBytes(new byte[]{(byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF});
+                continue;
+            }
+            out.write((field.length >>> 24) & 0xFF);
+            out.write((field.length >>> 16) & 0xFF);
+            out.write((field.length >>> 8) & 0xFF);
+            out.write(field.length & 0xFF);
+            out.writeBytes(field);
+        }
+        out.write(0xFF);
+        out.write(0xFF);
+        return out.toByteArray();
+    }
+
+    /** 大端 int64。 */
+    private static byte[] beLong(long v) {
+        byte[] b = new byte[8];
+        for (int i = 7; i >= 0; i--) {
+            b[i] = (byte) (v >>> (8 * (7 - i)));
+        }
+        return b;
+    }
+
+    /** 大端 int16。 */
+    private static byte[] beShort(int v) {
+        return new byte[]{(byte) (v >>> 8), (byte) v};
+    }
+
+    /**
+     * TIMESTAMP 的 BINARY 编码必须遵守 PG 标准：<b>自 2000-01-01 00:00:00 UTC 的微秒</b>。
+     *
+     * <p>判据刻意来自标准而不是本项目编码器：载荷独立构造。若服务端按 Unix 纪元解读，
+     * 读回值会偏移约 30 年 —— 这正是修复前的实际行为。</p>
+     */
+    @Test
+    void binaryTimestampFollowsPgEpoch() throws SQLException {
+        // 2020-01-05T23:50:50Z 相对 2000-01-01T00:00:00Z 的微秒数（即 PG 线上应出现的值）
+        long microsSincePgEpoch = 631_583_450_000_000L;
+        LocalDateTime expected = LocalDateTime.of(2020, 1, 5, 23, 50, 50);
+
+        try (Connection conn = connect()) {
+            conn.createStatement().execute("create or replace table t_bin_epoch(ts timestamp)");
+            copyIn(conn, "COPY t_bin_epoch FROM STDIN WITH (FORMAT BINARY)",
+                    binaryPayloadOf(1114, beLong(microsSincePgEpoch)));
+
+            try (Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery("select ts from t_bin_epoch")) {
+                assertTrue(rs.next(), "应当写入一行");
+                LocalDateTime actual = rs.getObject(1, LocalDateTime.class);
+                assertEquals(expected, actual,
+                        "BINARY TIMESTAMP 必须按 PG 的 2000 纪元解读；按 Unix 纪元会偏约 30 年");
+                assertTrue(!rs.next(), "只应有一行");
+            }
+        }
+    }
+
+    /**
+     * NUMERIC 的 BINARY 符号位必须是 {@code 0x4000}（PG 的 NUMERIC_NEG），负数才不会被读成正数。
+     */
+    @Test
+    void binaryNumericNegativeSignFollowsPgStandard() throws SQLException {
+        // -1234.5678 -> ndigits=2, weight=0, sign=0x4000, dscale=4, digits=1234,5678
+        java.io.ByteArrayOutputStream num = new java.io.ByteArrayOutputStream();
+        num.writeBytes(beShort(2));
+        num.writeBytes(beShort(0));
+        num.writeBytes(beShort(0x4000));
+        num.writeBytes(beShort(4));
+        num.writeBytes(beShort(1234));
+        num.writeBytes(beShort(5678));
+
+        try (Connection conn = connect()) {
+            conn.createStatement().execute("create or replace table t_bin_num_sign(v numeric(10,4))");
+            copyIn(conn, "COPY t_bin_num_sign FROM STDIN WITH (FORMAT BINARY)",
+                    binaryPayloadOf(1700, num.toByteArray()));
+
+            try (Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery("select v from t_bin_num_sign")) {
+                assertTrue(rs.next(), "应当写入一行");
+                assertEquals(new BigDecimal("-1234.5678"), rs.getBigDecimal(1),
+                        "符号位 0x4000 必须被解读为负数（写成 sign==1 会把负数读成正数）");
+            }
+        }
+    }
+
     // ============================================================
     // 二、CSV 方言语义与畸形输入（原 CopyCsvSemanticsTest）
     // ============================================================

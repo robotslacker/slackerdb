@@ -146,13 +146,21 @@ public class StartupRequest  extends PostgresRequest {
 
         // 返回一些参数信息
         ParameterStatus parameterStatus = new ParameterStatus(this.dbInstance);
-        parameterStatus.setKeyValue("server_version", "15");
+        parameterStatus.setKeyValue("server_version", DBInstance.PG_COMPAT_VERSION);
         parameterStatus.process(ctx, request, out);
 
         parameterStatus.setKeyValue("server_type", "JANUS");
         parameterStatus.process(ctx, request, out);
 
         parameterStatus.setKeyValue("client_encoding", "UTF8");
+        parameterStatus.process(ctx, request, out);
+
+        // libpq 系的客户端（psql / psycopg2 / 任何走 PQescapeStringConn 的库）靠这个参数决定
+        // 字符串怎么转义。不下发时 libpq 按 "standard_conforming_strings = off" 处理，把值里的
+        // 反斜杠转义成 "\\"，而 DuckDB 按字面量解释反斜杠 —— 于是 'a\b' 写进库里变成 'a\\b'
+        // （实测 length 3 -> 4，客户端无任何报错）。这里必须下发 on，且与 SQLReplacer 里
+        // "show standard_conforming_strings" 的改写结果保持一致。
+        parameterStatus.setKeyValue("standard_conforming_strings", "on");
         parameterStatus.process(ctx, request, out);
 
         parameterStatus.setKeyValue("DateStyle", "ISO, YMD");

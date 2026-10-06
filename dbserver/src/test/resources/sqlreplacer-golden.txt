@@ -151,3 +151,9 @@ SELECT * FROM tbl_x WHERE col_y LIKE '(.*)pg_catalog.pg_get_expr\\(.*?\\)(.*)%' 
 .*pg_catalog.pg_event_trigger.*	
 SELECT * FROM tbl_x WHERE col_y = '.*pg_catalog.pg_event_trigger.*'	
 SELECT * FROM tbl_x WHERE col_y LIKE '.*pg_catalog.pg_event_trigger.*%' ORDER BY 1	
+pg_catalog.version()	'PostgreSQL 15.0 (SlackerDB)'
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.version()'	SELECT * FROM tbl_x WHERE col_y = ''PostgreSQL 15.0 (SlackerDB)''
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.version()%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE ''PostgreSQL 15.0 (SlackerDB)'%' ORDER BY 1
+show standard_conforming_strings	select 'on' as standard_conforming_strings
+SELECT * FROM tbl_x WHERE col_y = 'show standard_conforming_strings'	SELECT * FROM tbl_x WHERE col_y = 'select 'on' as standard_conforming_strings'
+SELECT * FROM tbl_x WHERE col_y LIKE 'show standard_conforming_strings%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'select 'on' as standard_conforming_strings%' ORDER BY 1

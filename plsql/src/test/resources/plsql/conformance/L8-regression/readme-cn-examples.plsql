@@ -1,6 +1,7 @@
--- 与 README-CN.adoc「PL/SQL 支持 → 典型示例」中的例子逐字对应
+-- 与 README.adoc / README-CN.adoc「PL/SQL 支持 → 典型示例」中的例子逐字对应
 -- （正文去掉 README 里的 DO $$ 包裹：本语料直接跑引擎，解包由协议层负责）。
--- 目的：文档里的例子必须真的能跑；改动文档示例时同步改这里。
+-- 目的：文档里的例子必须真的能跑；改动文档示例时，这里与
+-- dbserver/src/test/java/org/slackerdb/dbserver/test/PlSqlTest.java（协议层同款用例）都要同步改。
 
 -- ---------- 示例 1：变量 + IF/ELSIF + WHILE 循环 ----------
 --! id: RDEX-001

@@ -91,31 +91,13 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- Apache Hop Core -->
-        <dependency>
-            <groupId>org.apache.hop</groupId>
-            <artifactId>hop-core</artifactId>
-            <version>${hop.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-nop</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <!-- Apache Hop Engine (包含 Pipeline/Workflow 执行引擎) -->
-        <dependency>
-            <groupId>org.apache.hop</groupId>
-            <artifactId>hop-engine</artifactId>
-            <version>${hop.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-nop</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
+        <!--
+            HOP 运行环境不在依赖里（方案 A：Hop 独立目录 + hop-run 命令行，非内嵌）。
+            内嵌 Hop 需要把 hop-core/hop-engine 及其全部插件打进插件包（数十~上百 MB），
+            并且会破坏 Hop 的插件发现（Jandex 索引在 shade 时被覆盖，实测会报
+            "Unable to find the plugin ... id: Local"），还会与数据库进程共用堆与故障域。
+            因此插件只依赖 JRE 的进程能力，HOP 由 <scheduler.home>/hop 下的发行版承担。
+        -->
     </dependencies>
 
     <build>
@@ -173,17 +155,35 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <!--
-                        SchedulerCrontabTester / SchedulerRunOnceTester 是带 main() 的独立端到端
-                        (End-to-End) 程序：它们会真实启动 Javalin + Quartz 并通过 HTTP 驱动调度、
-                        执行 shell 脚本，还各自占用固定端口，不适合放进 mvn test。
+                        SchedulerCrontabTester / SchedulerRunOnceTester / SchedulerHopEndToEndTester
+                        都是带 main() 的独立端到端 (End-to-End) 程序：它们会真实启动 Javalin + Quartz
+                        并通过 HTTP 驱动调度、执行脚本（后者还会真实调用本机 HOP），还各自占用固定端口，
+                        不适合放进 mvn test。
                         这里显式排除它们（并保留 surefire 默认的 *Test 命名约定），
                         以免将来误以为本模块的测试被 mvn test 覆盖，实际却被静默跳过。
-                        需要手工执行时请直接运行上述两个类的 main()。
+                        需要手工执行时请直接运行上述类的 main()（见 README 与各类的类注释）。
                     -->
                     <excludes>
                         <exclude>**/SchedulerCrontabTester.java</exclude>
                         <exclude>**/SchedulerRunOnceTester.java</exclude>
+                        <exclude>**/SchedulerHopEndToEndTester.java</exclude>
                     </excludes>
+                </configuration>
+            </plugin>
+            <!--
+                手动端到端验收程序（真实 HOP）：
+                  mvn -pl plugin-scheduler -am -DskipTests test-compile
+                  mvn -pl plugin-scheduler exec:java -Dexec.args="C:/Softwares/hop/hop-run.bat"
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.6.3</version>
+                <configuration>
+                    <mainClass>org.slackerdb.plugins.scheduler.SchedulerHopEndToEndTester</mainClass>
+                    <classpathScope>test</classpathScope>
+                    <!-- 固定工作目录，保证产物落在 plugin-scheduler/target/e2e-home -->
+                    <workingDirectory>${project.basedir}</workingDirectory>
                 </configuration>
             </plugin>
             <plugin>

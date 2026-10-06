@@ -4,14 +4,11 @@ import java.sql.SQLException;
 import java.util.List;
 
 /**
- * PL/SQL 引擎与宿主之间的唯一契约。
+ * PL/SQL 引擎与宿主之间的契约。
  *
  * <p>引擎<b>只能</b>通过本接口访问数据库：这样 dbserver 才能继续拥有
  * SQL 改写、取消登记、审计、事务状态与会话可观测性等横切能力，
  * 而 plsql 模块保持"后端无关 + 可离线单测"（{@link DefaultJdbcHost}）。</p>
- *
- * <p>演进规则：<b>只增不改</b>；新增能力一律提供 {@code default} 实现，
- * 并同步更新 {@code DefaultJdbcHost}、dbserver 的实现类与 L6 契约测试。</p>
  */
 public interface PlSqlHost {
 

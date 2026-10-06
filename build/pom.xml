@@ -51,13 +51,9 @@
                     </dependency>
                 </dependencies>
                 <configuration>
-                    <sourceDocumentName>README.adoc</sourceDocumentName>
                     <sourceDirectory>${project.basedir}/..</sourceDirectory>
                     <outputDirectory>${project.build.directory}/generated-docs</outputDirectory>
                     <backend>pdf</backend>
-                    <attributes>
-                        <icons>font</icons>
-                    </attributes>
                     <!--
                         只把 README 及其图片资源复制到输出目录。
                         如不限定 resources，插件会把整个 sourceDirectory（仓库根目录，
@@ -69,6 +65,7 @@
                             <directory>${project.basedir}/..</directory>
                             <includes>
                                 <include>README.adoc</include>
+                                <include>README-CN.adoc</include>
                                 <include>robotslacker.jpg</include>
                                 <include>imgs/**</include>
                             </includes>
@@ -76,28 +73,78 @@
                     </resources>
                 </configuration>
                 <executions>
+                    <!-- 英文 PDF：README.adoc -> README.pdf -->
                     <execution>
                         <id>generate-pdf-documentation</id>
                         <phase>prepare-package</phase>
                         <goals>
                             <goal>process-asciidoc</goal>
                         </goals>
+                        <configuration>
+                            <sourceDocumentName>README.adoc</sourceDocumentName>
+                            <attributes>
+                                <icons>font</icons>
+                            </attributes>
+                        </configuration>
+                    </execution>
+                    <!--
+                        中文 PDF：README-CN.adoc -> README-CN.pdf
+                        （文档名去掉 .adoc 后缀即输出文件名，两次执行互不覆盖）
+                        中文必须换用带 CJK 回退字体的主题，否则简体字会整片缺字——
+                        原因与字体来源见 src/main/resources/pdf/README-CN-theme.yml 的注释。
+                    -->
+                    <execution>
+                        <id>generate-pdf-documentation-cn</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>process-asciidoc</goal>
+                        </goals>
+                        <configuration>
+                            <sourceDocumentName>README-CN.adoc</sourceDocumentName>
+                            <attributes>
+                                <icons>font</icons>
+                                <pdf-theme>${project.basedir}/src/main/resources/pdf/README-CN-theme.yml</pdf-theme>
+                            </attributes>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
+            <!--
+                发行物一共两个，平级落在 dist/ 下（clean 插件已把整个 dist 清空）：
+
+                  slackerdb-dist_<version>.zip  发布包：standalone jar + conf + bin + 插件，拿来就跑
+                  slackerdb-src_<version>.zip   源码包：完整多模块 Maven 工程，解开即可编译
+
+                为什么源码包是单独一个描述符而不是往发布包里塞各模块的 -sources.jar：
+                -sources.jar 只是 IDE 挂源码用的编译单元切片，既拼不成可编译的工程
+                （缺根 pom、缺模块间相对路径、缺 conf/bin），又让使用者多解一层压缩包。
+                源码包按“浅克隆”的形态组织，解压后 `mvn clean package` 直接可用。
+            -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-assembly-plugin</artifactId>
                 <inherited>false</inherited>
                 <configuration>
-                    <descriptors>
-                        <descriptor>src/main/assembly/deployment.xml</descriptor>
-                    </descriptors>
                     <appendAssemblyId>false</appendAssemblyId>
-                    <finalName>slackerdb-dist_${project.version}</finalName>
                     <outputDirectory>${project.basedir}/../dist</outputDirectory>
                 </configuration>
                 <executions>
+                    <!-- 源码包：先打包，便于发布包构建失败时也能拿到源码 -->
+                    <execution>
+                        <id>make-source-assembly</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/main/assembly/source.xml</descriptor>
+                            </descriptors>
+                            <finalName>slackerdb-src_${project.version}</finalName>
+                            <attach>false</attach>
+                        </configuration>
+                    </execution>
+                    <!-- 发布包 -->
                     <execution>
                         <id>make-assembly</id>
                         <phase>package</phase>
@@ -105,6 +152,10 @@
                             <goal>single</goal>
                         </goals>
                         <configuration>
+                            <descriptors>
+                                <descriptor>src/main/assembly/deployment.xml</descriptor>
+                            </descriptors>
+                            <finalName>slackerdb-dist_${project.version}</finalName>
                             <attach>false</attach>
                         </configuration>
                     </execution>

@@ -1,5 +1,7 @@
 package org.slackerdb.plsql.types;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
@@ -8,16 +10,16 @@ import java.util.Locale;
 /**
  * PL/SQL 类型。
  *
- * <p>类型语义尽量贴近 PL/SQL：数值族内部可隐式转换（溢出报错），
- * 字符串与数值/时间可双向隐式转换，布尔不与其它类型隐式转换。</p>
  */
-public final class PlType {
+public record PlType(Kind kind, int precision, int scale, int length, boolean withTimeZone) {
 
     public enum Kind {
         INTEGER, SMALLINT, BIGINT, DECIMAL, REAL, DOUBLE,
         VARCHAR, CHAR, TEXT,
         BOOLEAN, DATE, TIME, TIMESTAMP, TIMESTAMP_TZ, INTERVAL,
-        /** 未确定类型（NULL 字面量、尚未赋值的场景）。 */
+        /**
+         * 未确定类型（NULL 字面量、尚未赋值的场景）。
+         */
         UNKNOWN
     }
 
@@ -35,20 +37,6 @@ public final class PlType {
     public static final PlType INTERVAL = new PlType(Kind.INTERVAL, 0, 0, 0, false);
     public static final PlType UNKNOWN = new PlType(Kind.UNKNOWN, 0, 0, 0, false);
 
-    private final Kind kind;
-    private final int precision;
-    private final int scale;
-    private final int length;
-    private final boolean withTimeZone;
-
-    private PlType(Kind kind, int precision, int scale, int length, boolean withTimeZone) {
-        this.kind = kind;
-        this.precision = precision;
-        this.scale = scale;
-        this.length = length;
-        this.withTimeZone = withTimeZone;
-    }
-
     public static PlType decimal(int precision, int scale) {
         return new PlType(Kind.DECIMAL, precision, scale, 0, false);
     }
@@ -65,26 +53,6 @@ public final class PlType {
         return withTimeZone ? TIMESTAMP_TZ : TIMESTAMP;
     }
 
-    public Kind kind() {
-        return kind;
-    }
-
-    public int precision() {
-        return precision;
-    }
-
-    public int scale() {
-        return scale;
-    }
-
-    public int length() {
-        return length;
-    }
-
-    public boolean withTimeZone() {
-        return withTimeZone;
-    }
-
     public boolean isNumeric() {
         return switch (kind) {
             case INTEGER, SMALLINT, BIGINT, DECIMAL, REAL, DOUBLE -> true;
@@ -95,13 +63,6 @@ public final class PlType {
     public boolean isString() {
         return switch (kind) {
             case VARCHAR, CHAR, TEXT -> true;
-            default -> false;
-        };
-    }
-
-    public boolean isTemporal() {
-        return switch (kind) {
-            case DATE, TIME, TIMESTAMP, TIMESTAMP_TZ -> true;
             default -> false;
         };
     }
@@ -149,7 +110,9 @@ public final class PlType {
         };
     }
 
-    /** 取括号内第 {@code index} 个参数（{@code index < 0} 表示第 0 个）；缺失时返回 {@code fallback}。 */
+    /**
+     * 取括号内第 {@code index} 个参数（{@code index < 0} 表示第 0 个）；缺失时返回 {@code fallback}。
+     */
     private static int arg(String text, int index, int fallback) {
         int open = text.indexOf('(');
         int close = text.indexOf(')', open + 1);
@@ -181,10 +144,10 @@ public final class PlType {
         if (value instanceof Short || value instanceof Integer) {
             return INTEGER;
         }
-        if (value instanceof Long || value instanceof java.math.BigInteger) {
+        if (value instanceof Long || value instanceof BigInteger) {
             return BIGINT;
         }
-        if (value instanceof java.math.BigDecimal) {
+        if (value instanceof BigDecimal) {
             return decimal(38, 10);
         }
         if (value instanceof Float) {
@@ -202,13 +165,12 @@ public final class PlType {
         if (value instanceof Timestamp) {
             return TIMESTAMP;
         }
-        if (value instanceof String) {
-            return TEXT;
-        }
         return TEXT;
     }
 
-    /** 用于错误消息与 SQL 转换的类型名。 */
+    /**
+     * 用于错误消息与 SQL 转换的类型名。
+     */
     public String displayName() {
         return switch (kind) {
             case DECIMAL -> "DECIMAL(" + precision + "," + scale + ")";
@@ -233,8 +195,4 @@ public final class PlType {
                 && length == that.length && withTimeZone == that.withTimeZone;
     }
 
-    @Override
-    public int hashCode() {
-        return java.util.Objects.hash(kind, precision, scale, length, withTimeZone);
-    }
 }

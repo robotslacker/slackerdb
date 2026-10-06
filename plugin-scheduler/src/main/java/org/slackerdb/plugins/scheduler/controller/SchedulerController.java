@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.LocalDateTime;
@@ -37,30 +38,37 @@ public class SchedulerController {
     /** 项目目录，存放项目模板（sql、hop 文件等） */
     private final String projectHome;
 
-    /** Hop 工作目录（用于嵌入式 HopService，null 则使用外部命令） */
-    private final String hopWorkDirectory;
+    /** Hop 运行环境配置（方案 A：Hop 独立目录 + 命令行执行）。 */
+    private final org.slackerdb.plugins.scheduler.runner.TaskRequest.HopConfig hopConfig;
 
-    /** Hop 插件目录 */
-    private final String hopPluginDirectory;
+    /** 全局变量层：{@code <scheduler.home>/variables.properties}。 */
+    private final java.util.Map<String, String> globalVariables;
+
+    /** run 启动编排器：组/顺序/必选项语义在这里落地。 */
+    private final org.slackerdb.plugins.scheduler.quartz.RunOrchestrator orchestrator;
 
     public SchedulerController(Javalin app, SchedulerMeta meta,
                                DynamicQuartzScheduler quartzScheduler,
                                Logger logger, String workHome, String projectHome) {
-        this(app, meta, quartzScheduler, logger, workHome, projectHome, null, null);
+        this(app, meta, quartzScheduler, logger, workHome, projectHome, null);
     }
 
     public SchedulerController(Javalin app, SchedulerMeta meta,
                                DynamicQuartzScheduler quartzScheduler,
                                Logger logger, String workHome, String projectHome,
-                               String hopWorkDirectory, String hopPluginDirectory) {
+                               org.slackerdb.plugins.scheduler.runner.TaskRequest.HopConfig hopConfig) {
         this.app = app;
         this.meta = meta;
         this.quartzScheduler = quartzScheduler;
         this.logger = logger;
         this.workHome = workHome;
         this.projectHome = projectHome;
-        this.hopWorkDirectory = hopWorkDirectory;
-        this.hopPluginDirectory = hopPluginDirectory;
+        this.hopConfig = hopConfig == null
+                ? new org.slackerdb.plugins.scheduler.runner.TaskRequest.HopConfig() : hopConfig;
+        this.globalVariables = org.slackerdb.plugins.scheduler.runner.VariableSet
+                .loadProperties(Paths.get(workHome, "variables.properties"));
+        this.orchestrator = new org.slackerdb.plugins.scheduler.quartz.RunOrchestrator(
+                quartzScheduler, meta, logger);
     }
 
     /**
@@ -95,6 +103,9 @@ public class SchedulerController {
         app.unsafe.routes.post("/scheduler/run/{runId}/task/abort", this::handleAbortTask);
         app.unsafe.routes.get("/scheduler/run/{runId}/task/list", this::handleListTasks);
         app.unsafe.routes.get("/scheduler/run/{runId}/task/history", this::handleTaskHistory);
+        app.unsafe.routes.get("/scheduler/run/{runId}/log", this::handleViewLog);
+        app.unsafe.routes.get("/scheduler/run/{runId}/variables", this::handleRunVariables);
+        app.unsafe.routes.get("/scheduler/describeCrontabExpr", this::handleDescribeCrontabExpr);
 
         logger.info("[SCHEDULER] REST routes registered.");
     }
@@ -166,26 +177,25 @@ public class SchedulerController {
      */
     private void handleGetProject(Context ctx) {
         String projectType = ctx.pathParam("projectType");
-        String configPath = projectHome + File.separator
-                + projectType + File.separator + "conf"
-                + File.separator + "defaultSchedulerTask_" + projectType + ".json";
-
-        File configFile = new File(configPath);
-        if (!configFile.exists()) {
-            ctx.status(404).json(Map.of("error", "Project not found: " + projectType));
-            return;
-        }
-
+        Path projectDir = Paths.get(projectHome, projectType);
         try {
-            String content = new String(Files.readAllBytes(configFile.toPath()));
-            JSONObject config = JSON.parseObject(content);
+            org.slackerdb.plugins.scheduler.meta.TaskTemplateLoader.Loaded loaded =
+                    org.slackerdb.plugins.scheduler.meta.TaskTemplateLoader
+                            .load(Paths.get(projectHome), projectType, null);
+            if (!Files.isDirectory(projectDir) && loaded.file() == null) {
+                ctx.status(404).json(Map.of("error", "Project not found: " + projectType));
+                return;
+            }
             ctx.json(Map.of(
                     "projectType", projectType,
-                    "config", config
+                    "projectDir", projectDir.toString(),
+                    "taskListFile", loaded.fileText(),
+                    "warnings", loaded.warnings(),
+                    "tasks", loaded.tasks()
             ));
-        } catch (IOException e) {
+        } catch (Exception e) {
             logger.error("[SCHEDULER] Error reading project config: {}", e.getMessage());
-            ctx.status(500).json(Map.of("error", "Failed to read project config"));
+            ctx.status(500).json(Map.of("error", "Failed to read project config: " + e.getMessage()));
         }
     }
 
@@ -260,10 +270,10 @@ public class SchedulerController {
             String runDir = workHome + File.separator + "runs" + File.separator + runId;
             createRunDirectory(runDir);
 
-            // Copy flow files from project template (from projectHome)
-            String projectFlowDir = projectHome + File.separator
-                    + projectType + File.separator + "flow";
-            copyFlowFiles(projectFlowDir, runDir + File.separator + "flow");
+            // 拷贝 HOP 工程到实例的 flow 目录：
+            //   hop-config.json / project-config.json / default/ / <projectType>/
+            // 这样 HOP_CONFIG_FOLDER=<runHome>/flow 才能解析 --project 与 --environment
+            copyHopProject(projectType, Paths.get(runDir, "flow"));
 
             // Create run record
             SchedulerRun run = new SchedulerRun();
@@ -337,7 +347,9 @@ public class SchedulerController {
 
     /**
      * POST /scheduler/run/{runId}/start
-     * Start a Run (schedule all enabled tasks).
+     * 启动 Run：按组/顺序编排（RUN_ONCE 串行执行，成功后激活该组的周期任务）。
+     *
+     * <p>编排在后台线程进行，接口立即返回；run 状态会迁移为 STARTING → STARTED（或 FAILED）。</p>
      */
     private void handleStartRun(Context ctx) {
         String runId = ctx.pathParam("runId");
@@ -347,19 +359,24 @@ public class SchedulerController {
                 ctx.status(404).json(Map.of("error", "Run not found: " + runId));
                 return;
             }
+            if (orchestrator.isRunning(runId)) {
+                ctx.status(409).json(Map.of("error", "Run is starting: " + runId));
+                return;
+            }
 
             List<SchedulerTask> tasks = meta.getTasksByRunId(runId);
-            int scheduled = 0;
+            int enabled = 0;
             for (SchedulerTask task : tasks) {
                 if (task.isTaskEnabled()) {
-                    scheduleTask(run, task);
-                    scheduled++;
+                    scheduleTask(run, task);   // 只登记定义（保持暂停），启动交给编排器
+                    enabled++;
                 }
             }
 
-            meta.updateRunStatus(runId, "STARTED");
-            logger.info("[SCHEDULER] Run started: runId={}, tasksScheduled={}", runId, scheduled);
-            ctx.json(Map.of("message", "Run started", "runId", runId, "tasksScheduled", scheduled));
+            orchestrator.start(runId, tasks);
+            logger.info("[SCHEDULER] Run started: runId={}, tasksEnabled={}", runId, enabled);
+            ctx.json(Map.of("message", "Run starting", "runId", runId,
+                    "status", "STARTING", "tasksEnabled", enabled));
         } catch (Exception e) {
             logger.error("[SCHEDULER] Error starting run: {}", e.getMessage(), e);
             ctx.status(500).json(Map.of("error", "Failed to start run: " + e.getMessage()));
@@ -368,7 +385,7 @@ public class SchedulerController {
 
     /**
      * POST /scheduler/run/{runId}/stop
-     * Stop a Run (unschedule all tasks).
+     * 停止 Run：暂停全部任务（保留定义，可再次 start）。
      */
     private void handleStopRun(Context ctx) {
         String runId = ctx.pathParam("runId");
@@ -379,7 +396,8 @@ public class SchedulerController {
                 return;
             }
 
-            quartzScheduler.unscheduleAllJobs(runId);
+            orchestrator.cancel(runId);
+            quartzScheduler.pauseAllJobs(runId);         // 暂停（不删除，可再次 start）
             meta.updateRunStatus(runId, "STOPPED");
             logger.info("[SCHEDULER] Run stopped: runId={}", runId);
             ctx.json(Map.of("message", "Run stopped", "runId", runId));
@@ -391,7 +409,7 @@ public class SchedulerController {
 
     /**
      * POST /scheduler/run/{runId}/abort
-     * Abort a Run (force stop).
+     * 中止 Run：中断正在执行的任务并暂停全部任务。
      */
     private void handleAbortRun(Context ctx) {
         String runId = ctx.pathParam("runId");
@@ -402,8 +420,9 @@ public class SchedulerController {
                 return;
             }
 
-            quartzScheduler.unscheduleAllJobs(runId);
-            meta.updateRunStatus(runId, "FAILED");
+            orchestrator.cancel(runId);
+            quartzScheduler.abortAllJobs(runId);         // 中断 + 暂停
+            meta.updateRunStatus(runId, "ABORTED");
             logger.info("[SCHEDULER] Run aborted: runId={}", runId);
             ctx.json(Map.of("message", "Run aborted", "runId", runId));
         } catch (Exception e) {
@@ -491,9 +510,9 @@ public class SchedulerController {
 
     /**
      * POST /scheduler/run/{runId}/task/start
-     * Start a specific task immediately (one-time execution).
+     * 启动单个任务：周期任务恢复调度；一次性任务立即触发一次。
      *
-     * Body: { "taskName": "..." }
+     * <p>不会改写任务定义（历史实现用 RUN_ONCE 覆盖同一 JobKey，会连带删掉周期触发器）。</p>
      */
     private void handleStartTask(Context ctx) {
         String runId = ctx.pathParam("runId");
@@ -512,42 +531,24 @@ public class SchedulerController {
                 return;
             }
 
-            // Get task definition from DB
-            List<SchedulerTask> tasks = meta.getTasksByRunId(runId);
-            SchedulerTask task = tasks.stream()
-                    .filter(t -> t.getTaskName().equals(taskName))
-                    .findFirst().orElse(null);
-
+            SchedulerTask task = findTask(runId, taskName);
             if (task == null) {
                 ctx.status(404).json(Map.of("error", "Task not found: " + taskName));
                 return;
             }
 
-            // Schedule as RUN_ONCE and start immediately
-            quartzScheduler.scheduleJob(
-                    runId,
-                    taskName,
-                    task.getTaskScriptType() != null ? task.getTaskScriptType() : "SQL",
-                    task.getTaskScript() != null ? task.getTaskScript() : "",
-                    "logs/" + taskName + ".log",
-                    "RUN_ONCE",
-                    task.getTaskFailPolicy() != null ? task.getTaskFailPolicy() : "CONTINUE",
-                    task.getTaskInterval(),
-                    task.getTaskParallelPolicy() != null ? task.getTaskParallelPolicy() : "PARALLEL",
-                    task.getTaskCrontabExpr(),
-                    task.getTaskTimeout(),
-                    task.getTaskGroup() != null ? task.getTaskGroup() : "",
-                    task.getTaskStartupOrder(),
-                    task.getConfigJson() != null ? task.getConfigJson() : "",
-                    run.getWorkDir(),
-                    hopWorkDirectory,
-                    hopPluginDirectory
-            );
+            // 若尚未编排（例如服务重启后），先登记定义再启动
+            if (!quartzScheduler.isJobScheduled(runId, taskName)) {
+                scheduleTask(run, task);
+            }
+            String policy = task.getTaskRunPolicy() == null ? "RUN_ONCE" : task.getTaskRunPolicy();
+            quartzScheduler.startJob(runId, taskName, policy);
 
-            // Start the job immediately
-            quartzScheduler.startJob(runId, taskName);
-
-            ctx.json(Map.of("message", "Task started", "runId", runId, "taskName", taskName));
+            String action = "RUN_ONCE".equalsIgnoreCase(policy) ? "triggered once" : "resumed";
+            logger.info("[SCHEDULER] Task started: runId={}, taskName={}, policy={} ({})",
+                    runId, taskName, policy, action);
+            ctx.json(Map.of("message", "Task started", "runId", runId,
+                    "taskName", taskName, "policy", policy, "action", action));
         } catch (Exception e) {
             logger.error("[SCHEDULER] Error starting task: {}", e.getMessage(), e);
             ctx.status(500).json(Map.of("error", "Failed to start task: " + e.getMessage()));
@@ -556,9 +557,7 @@ public class SchedulerController {
 
     /**
      * POST /scheduler/run/{runId}/task/stop
-     * Stop a specific task.
-     *
-     * Body: { "taskName": "..." }
+     * 停止单个任务：暂停（保留定义与触发器，可再次 start）。
      */
     private void handleStopTask(Context ctx) {
         String runId = ctx.pathParam("runId");
@@ -571,12 +570,21 @@ public class SchedulerController {
                 return;
             }
 
-            quartzScheduler.unscheduleJob(runId, taskName);
+            quartzScheduler.pauseJob(runId, taskName);
             ctx.json(Map.of("message", "Task stopped", "runId", runId, "taskName", taskName));
         } catch (Exception e) {
             logger.error("[SCHEDULER] Error stopping task: {}", e.getMessage(), e);
             ctx.status(500).json(Map.of("error", "Failed to stop task: " + e.getMessage()));
         }
+    }
+
+    private SchedulerTask findTask(String runId, String taskName) throws Exception {
+        for (SchedulerTask task : meta.getTasksByRunId(runId)) {
+            if (taskName.equals(task.getTaskName())) {
+                return task;
+            }
+        }
+        return null;
     }
 
     /**
@@ -608,20 +616,25 @@ public class SchedulerController {
      * GET /scheduler/run/{runId}/task/list
      * List all tasks for a run.
      */
+    /**
+     * GET /scheduler/run/{runId}/task/list
+     * 任务列表：DB 里的定义 + Quartz 运行态（触发器状态/下次触发/上次结果/是否运行中）。
+     */
     private void handleListTasks(Context ctx) {
         String runId = ctx.pathParam("runId");
         try {
             List<SchedulerTask> tasks = meta.getTasksByRunId(runId);
-            List<Map<String, Object>> scheduledJobs = quartzScheduler.getJobsForRun(runId);
+            Map<String, Map<String, Object>> scheduled = new HashMap<>();
+            for (Map<String, Object> job : quartzScheduler.getJobsForRun(runId)) {
+                Object taskName = job.get("taskName");
+                if (taskName != null) {
+                    scheduled.put(String.valueOf(taskName), job);
+                }
+            }
 
-            // Build a set of scheduled task names
-            Set<String> scheduledNames = scheduledJobs.stream()
-                    .map(j -> (String) j.get("taskName"))
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toSet());
-
-            List<Map<String, Object>> result = tasks.stream().map(task -> {
-                Map<String, Object> item = new HashMap<>();
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (SchedulerTask task : tasks) {
+                Map<String, Object> item = new LinkedHashMap<>();
                 item.put("taskName", task.getTaskName());
                 item.put("taskScript", task.getTaskScript());
                 item.put("taskScriptType", task.getTaskScriptType());
@@ -632,12 +645,23 @@ public class SchedulerController {
                 item.put("taskInterval", task.getTaskInterval());
                 item.put("taskTimeout", task.getTaskTimeout());
                 item.put("taskEnabled", task.isTaskEnabled());
+                item.put("taskMandatory", task.isTaskMandatory());
                 item.put("taskGroup", task.getTaskGroup());
                 item.put("taskStartupOrder", task.getTaskStartupOrder());
                 item.put("taskDescription", task.getTaskDescription());
-                item.put("scheduled", scheduledNames.contains(task.getTaskName()));
-                return item;
-            }).collect(Collectors.toList());
+
+                Map<String, Object> job = scheduled.get(task.getTaskName());
+                item.put("scheduled", job != null);
+                if (job != null) {
+                    item.put("triggerState", job.get("state"));
+                    item.put("nextFireTime", job.get("nextFireTime"));
+                    item.put("previousFireTime", job.get("previousFireTime"));
+                }
+                // 运行态与上次结果（来自任务执行器）
+                item.putAll(org.slackerdb.plugins.scheduler.quartz.QuartzJobStatusManager
+                        .snapshot(runId + ":" + task.getTaskName()));
+                result.add(item);
+            }
 
             ctx.json(Map.of("runId", runId, "tasks", result));
         } catch (Exception e) {
@@ -645,6 +669,158 @@ public class SchedulerController {
             ctx.status(500).json(Map.of("error", "Failed to list tasks: " + e.getMessage()));
         }
     }
+
+    /**
+     * GET /scheduler/run/{runId}/log?taskName=xxx&tail=200
+     * 查看某个任务最近的执行日志（不传 taskName 时返回该实例全部日志文件清单）。
+     */
+    private void handleViewLog(Context ctx) {
+        String runId = ctx.pathParam("runId");
+        try {
+            SchedulerRun run = meta.getRun(runId);
+            if (run == null) {
+                ctx.status(404).json(Map.of("error", "Run not found: " + runId));
+                return;
+            }
+            Path logDir = Paths.get(run.getWorkDir(), "logs");
+            String taskName = ctx.queryParam("taskName");
+            int tail = parseIntOrDefault(ctx.queryParam("tail"), 200);
+
+            if (taskName == null || taskName.isBlank()) {
+                ctx.json(Map.of("runId", runId, "logDir", logDir.toString(),
+                        "files", listLogFiles(logDir)));
+                return;
+            }
+
+            Path latest = latestLogFile(logDir, taskName);
+            if (latest == null) {
+                ctx.status(404).json(Map.of("error", "No log file for task: " + taskName,
+                        "logDir", logDir.toString()));
+                return;
+            }
+            List<String> lines = Files.readAllLines(latest, StandardCharsets.UTF_8);
+            int from = Math.max(0, lines.size() - tail);
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("runId", runId);
+            body.put("taskName", taskName);
+            body.put("file", latest.toString());
+            body.put("totalLines", lines.size());
+            body.put("lines", lines.subList(from, lines.size()));
+            ctx.json(body);
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] Error viewing log: {}", e.getMessage(), e);
+            ctx.status(500).json(Map.of("error", "Failed to read log: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * GET /scheduler/run/{runId}/variables?taskName=xxx
+     * 查看实例（可选叠加任务级）的变量，口令类键已脱敏。
+     */
+    private void handleRunVariables(Context ctx) {
+        String runId = ctx.pathParam("runId");
+        try {
+            SchedulerRun run = meta.getRun(runId);
+            if (run == null) {
+                ctx.status(404).json(Map.of("error", "Run not found: " + runId));
+                return;
+            }
+            String taskName = ctx.queryParam("taskName");
+            SchedulerTask task = (taskName == null || taskName.isBlank()) ? null : findTask(runId, taskName);
+
+            Path runHome = Paths.get(run.getWorkDir());
+            Map<String, String> templateVars = org.slackerdb.plugins.scheduler.runner.VariableSet
+                    .loadProperties(runHome.resolve("conf").resolve("variables.properties"));
+            Map<String, String> runParams = parseFlatJson(run.getConfigJson(), "run.configJson");
+            Map<String, String> taskVars = task == null ? Map.of()
+                    : parseFlatJson(task.getVariablesJson(), "task.variables");
+
+            org.slackerdb.plugins.scheduler.runner.VariableSet merged =
+                    org.slackerdb.plugins.scheduler.runner.VariableSet
+                            .resolve(globalVariables, templateVars, runParams, taskVars);
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("runId", runId);
+            body.put("taskName", taskName);
+            body.put("variables", merged.masked());
+            body.put("frameworkVariables", org.slackerdb.plugins.scheduler.runner.VariableSet.FRAMEWORK_KEYS);
+            ctx.json(body);
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] Error reading variables: {}", e.getMessage(), e);
+            ctx.status(500).json(Map.of("error", "Failed to read variables: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * GET /scheduler/describeCrontabExpr?expr=0+1/2+*+*+*+%3F+*
+     * 校验 cron 表达式并给出未来若干次触发时间（Quartz 6/7 段格式）。
+     */
+    private void handleDescribeCrontabExpr(Context ctx) {
+        String expr = ctx.queryParam("expr");
+        if (expr == null || expr.isBlank()) {
+            ctx.status(400).json(Map.of("error", "expr is required"));
+            return;
+        }
+        try {
+            org.quartz.CronExpression cron = new org.quartz.CronExpression(expr.trim());
+            List<String> next = new ArrayList<>();
+            java.util.Date cursor = new java.util.Date();
+            java.time.format.DateTimeFormatter formatter =
+                    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            for (int i = 0; i < 5; i++) {
+                cursor = cron.getNextValidTimeAfter(cursor);
+                if (cursor == null) {
+                    break;
+                }
+                next.add(formatter.format(java.time.LocalDateTime.ofInstant(
+                        cursor.toInstant(), java.time.ZoneId.systemDefault())));
+            }
+            ctx.json(Map.of("expr", expr.trim(), "valid", true, "nextFireTimes", next));
+        } catch (java.text.ParseException e) {
+            ctx.json(Map.of("expr", expr.trim(), "valid", false, "error", String.valueOf(e.getMessage())));
+        }
+    }
+
+    private static int parseIntOrDefault(String value, int fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static List<String> listLogFiles(Path logDir) throws IOException {
+        if (!Files.isDirectory(logDir)) {
+            return List.of();
+        }
+        try (var stream = Files.list(logDir)) {
+            return stream.filter(Files::isRegularFile)
+                    .map(p -> p.getFileName().toString())
+                    .sorted()
+                    .collect(java.util.stream.Collectors.toList());
+        }
+    }
+
+    /** 该任务最近的日志文件：优先 `logs/<taskName>.log`，其次 `logs/<taskName>_<ts>.log` 里最新的。 */
+    private static Path latestLogFile(Path logDir, String taskName) throws IOException {
+        if (!Files.isDirectory(logDir)) {
+            return null;
+        }
+        Path exact = logDir.resolve(taskName + ".log");
+        if (Files.isRegularFile(exact)) {
+            return exact;
+        }
+        try (var stream = Files.list(logDir)) {
+            return stream.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().startsWith(taskName + "_"))
+                    .max(java.util.Comparator.comparingLong(p -> p.toFile().lastModified()))
+                    .orElse(null);
+        }
+    }
+
 
     /**
      * GET /scheduler/run/{runId}/task/history
@@ -662,6 +838,70 @@ public class SchedulerController {
     }
 
     // ========== Helper Methods ==========
+
+    /**
+     * 组装随 JobData 下发的附加字段：项目类型、变量快照、Hop 运行环境。
+     *
+     * <p>变量按框架契约分层覆盖：全局 {@code <scheduler.home>/variables.properties}
+     * → 模板 {@code <runHome>/conf/variables.properties} → 实例 {@code configJson}（run params）
+     * → 任务级 {@code variables}。框架变量（PROJECT_HOME/RUN_ID/...）在执行期由 QuartzJob 注入
+     * （优先级最高，业务不可覆盖）。</p>
+     */
+    private java.util.Map<String, String> jobDataExtras(SchedulerRun run, SchedulerTask task) {
+        java.util.Map<String, String> extras = new java.util.LinkedHashMap<>();
+        extras.put("projectType", run.getProjectType() == null ? "" : run.getProjectType());
+        extras.put("variablesJson", resolveVariablesJson(run, task));
+        extras.put("hopRunScript", hopConfig.runScript == null ? "" : hopConfig.runScript);
+        extras.put("hopJavaHome", hopConfig.javaHome == null ? "" : hopConfig.javaHome);
+        extras.put("hopProjectName", hopConfig.projectName == null ? "" : hopConfig.projectName);
+        extras.put("hopEnvironmentName", hopConfig.environmentName == null ? "" : hopConfig.environmentName);
+        extras.put("hopRunConfig", hopConfig.runConfig == null ? "" : hopConfig.runConfig);
+        extras.put("taskRetryTimes", String.valueOf(task.getTaskRetryTimes()));
+        extras.put("taskRetryInterval", String.valueOf(task.getTaskRetryInterval()));
+        return extras;
+    }
+
+    /** 业务变量层合并结果（JSON 对象字符串）。 */
+    private String resolveVariablesJson(SchedulerRun run, SchedulerTask task) {
+        java.nio.file.Path runHome = Paths.get(run.getWorkDir());
+        java.util.Map<String, String> templateVars = org.slackerdb.plugins.scheduler.runner.VariableSet
+                .loadProperties(runHome.resolve("conf").resolve("variables.properties"));
+
+        java.util.Map<String, String> runParams = parseFlatJson(run.getConfigJson(),
+                "run[" + run.getRunId() + "].configJson");
+        java.util.Map<String, String> taskVars = task == null ? java.util.Map.of()
+                : parseFlatJson(task.getVariablesJson(), "task[" + task.getTaskName() + "].variables");
+
+        org.slackerdb.plugins.scheduler.runner.VariableSet merged =
+                org.slackerdb.plugins.scheduler.runner.VariableSet
+                        .resolve(globalVariables, templateVars, runParams, taskVars);
+        return JSON.toJSONString(merged.asMap());
+    }
+
+    /** 把 JSON 对象字符串摊平成变量层（跳过嵌套结构）；非法 JSON 只记日志不抛。 */
+    private java.util.Map<String, String> parseFlatJson(String json, String what) {
+        java.util.Map<String, String> result = new java.util.LinkedHashMap<>();
+        if (json == null || json.isBlank()) {
+            return result;
+        }
+        try {
+            JSONObject object = JSON.parseObject(json);
+            if (object == null) {
+                return result;
+            }
+            for (String key : object.keySet()) {
+                Object value = object.get(key);
+                if (value == null || value instanceof JSONObject
+                        || value instanceof com.alibaba.fastjson2.JSONArray) {
+                    continue;
+                }
+                result.put(key, String.valueOf(value));
+            }
+        } catch (Exception e) {
+            logger.warn("[SCHEDULER] {} 不是有效 JSON 对象，已忽略: {}", what, e.getMessage());
+        }
+        return result;
+    }
 
     /**
      * Create tasks from API-provided task definitions.
@@ -706,77 +946,169 @@ public class SchedulerController {
     }
 
     /**
-     * Copy flow files from project template to run directory.
+     * 把模板的 HOP 工程拷进实例的 flow 目录。
+     *
+     * <p>布局与 HOP 的"配置根 + 项目目录"模型一致：</p>
+     * <pre>
+     * &lt;runHome&gt;/flow/
+     * ├── hop-config.json          ← 配置根（框架执行时写入本项目与环境条目）
+     * ├── project-config.json
+     * ├── default/                 ← 父项目
+     * └── &lt;projectType&gt;/           ← 项目本身（*.hwf/*.hpl、metadata/、sql/、project-config.json）
+     * </pre>
+     *
+     * <p>同时把模板级变量 {@code conf/variables.properties} 快照到 {@code <runHome>/conf/}，
+     * 使实例目录自包含（变量解析只读实例目录，不再回读模板）。</p>
      */
-    private void copyFlowFiles(String sourceDir, String targetDir) {
-        File source = new File(sourceDir);
-        if (!source.exists() || !source.isDirectory()) {
-            logger.warn("[SCHEDULER] Project flow directory not found: {}", sourceDir);
-            return;
+    private void copyHopProject(String projectType, Path targetFlow) throws IOException {
+        Path root = Paths.get(projectHome);
+        Files.createDirectories(targetFlow);
+
+        for (String name : new String[]{"hop-config.json", "project-config.json"}) {
+            Path source = root.resolve(name);
+            if (Files.isRegularFile(source)) {
+                Files.copy(source, targetFlow.resolve(name), StandardCopyOption.REPLACE_EXISTING);
+            }
         }
 
-        try {
-            Files.walkFileTree(source.toPath(), new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Path targetFile = Paths.get(targetDir, source.toPath().relativize(file).toString());
-                    Files.createDirectories(targetFile.getParent());
-                    Files.copy(file, targetFile, StandardCopyOption.REPLACE_EXISTING);
-                    return FileVisitResult.CONTINUE;
+        Path defaultProjectDir = root.resolve("default");
+        if (Files.isDirectory(defaultProjectDir)) {
+            copyDirectory(defaultProjectDir, targetFlow.resolve("default"));
+        }
+
+        Path typeDir = root.resolve(projectType);
+        if (!Files.isDirectory(typeDir)) {
+            throw new IOException("模板目录不存在: " + typeDir
+                    + "（scheduler.projectHome 下应有 <projectType>/ 目录）");
+        }
+        copyDirectory(typeDir, targetFlow.resolve(projectType));
+
+        // 模板级变量快照（项目目录优先，其次模板根）
+        Path targetConf = targetFlow.getParent().resolve("conf");
+        Files.createDirectories(targetConf);
+        for (Path candidate : new Path[]{
+                typeDir.resolve("conf").resolve("variables.properties"),
+                root.resolve("conf").resolve("variables.properties")}) {
+            if (Files.isRegularFile(candidate)) {
+                Files.copy(candidate, targetConf.resolve("variables.properties"),
+                        StandardCopyOption.REPLACE_EXISTING);
+                break;
+            }
+        }
+        logger.info("[SCHEDULER] 已拷贝 HOP 工程到 {}", targetFlow);
+
+        // 模板自检：default 项目不能把 default 声明为自己的父项目，否则 Hop 会报
+        // "There is a loop in the parent projects hierarchy: project default references itself"
+        Path defaultProjectConfig = targetFlow.resolve("default").resolve("project-config.json");
+        if (Files.isRegularFile(defaultProjectConfig)) {
+            try {
+                JSONObject config = JSON.parseObject(Files.readString(defaultProjectConfig, StandardCharsets.UTF_8));
+                String parent = config == null ? null : config.getString("parentProjectName");
+                if (parent != null && !parent.isBlank() && "default".equalsIgnoreCase(parent.trim())) {
+                    logger.warn("[SCHEDULER] 模板自检失败: {} 的 parentProjectName=[default]，"
+                            + "会导致 Hop 父项目自引用死循环，请改为空字符串", defaultProjectConfig);
                 }
-            });
-            logger.info("[SCHEDULER] Copied flow files from {} to {}", sourceDir, targetDir);
-        } catch (IOException e) {
-            logger.error("[SCHEDULER] Error copying flow files: {}", e.getMessage());
+            } catch (Exception e) {
+                logger.warn("[SCHEDULER] 模板自检无法解析 {}: {}", defaultProjectConfig, e.getMessage());
+            }
+        }
+    }
+
+    /** 递归拷贝目录（文件覆盖写）。 */
+    private void copyDirectory(Path source, Path target) throws IOException {
+        Files.walkFileTree(source, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                Files.createDirectories(target.resolve(source.relativize(dir).toString()));
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Path targetFile = target.resolve(source.relativize(file).toString());
+                Files.createDirectories(targetFile.getParent());
+                Files.copy(file, targetFile, StandardCopyOption.REPLACE_EXISTING);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    /**
+     * 重启 reconcile。
+     *
+     * <p>Quartz 使用 RAMJobStore，重启后调度状态全部丢失，但数据库里 run 仍是 {@code STARTED}。</p>
+     *
+     * <p><b>策略</b>：把处于 {@code STARTING}/{@code STARTED} 的 run 一律置为 {@code STOPPED}，
+     * 并把其启用任务的定义重新登记为"暂停"（不自动重跑 RUN_ONCE —— 一次性任务重跑通常是有害的）。
+     * 人工 {@code run/start} 后由编排器按组与顺序重新推进。</p>
+     */
+    public void reconcileAfterRestart() {
+        try {
+            List<SchedulerRun> runs = meta.listRunsByStatus(List.of("STARTING", "STARTED"));
+            if (runs.isEmpty()) {
+                logger.info("[SCHEDULER] 重启 reconcile: 无需处理的 run");
+                return;
+            }
+            for (SchedulerRun run : runs) {
+                List<SchedulerTask> tasks = meta.getTasksByRunId(run.getRunId());
+                int restored = 0;
+                for (SchedulerTask task : tasks) {
+                    if (!task.isTaskEnabled()) {
+                        continue;
+                    }
+                    try {
+                        scheduleTask(run, task);
+                        restored++;
+                    } catch (Exception e) {
+                        logger.warn("[SCHEDULER] 重启 reconcile: run[{}] 任务[{}] 登记失败: {}",
+                                run.getRunId(), task.getTaskName(), e.getMessage());
+                    }
+                }
+                meta.updateRunStatus(run.getRunId(), "STOPPED");
+                logger.warn("[SCHEDULER] 重启 reconcile: run[{}] 原状态[{}] → STOPPED，"
+                                + "任务定义已重新登记 {} 个（保持暂停，需人工 start）",
+                        run.getRunId(), run.getStatus(), restored);
+            }
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] 重启 reconcile 失败: {}", e.getMessage(), e);
         }
     }
 
     /**
-     * Load default task configuration from project template and create task records.
+     * 从模板清单载入任务到实例。
+     *
+     * <p>清单文件名与格式见 {@link org.slackerdb.plugins.scheduler.meta.TaskTemplateLoader}；
+     * <b>没有清单是正常状态</b>（该实例不带预置任务）。清单里校验不通过的任务会被跳过并记日志，
+     * 不影响其它任务。</p>
      */
     private int loadDefaultTasks(String runId, String projectType) {
-        String configPath = projectHome + File.separator
-                + projectType + File.separator + "conf"
-                + File.separator + "defaultSchedulerTask_" + projectType + ".json";
-
-        File configFile = new File(configPath);
-        if (!configFile.exists()) {
-            logger.warn("[SCHEDULER] Default task config not found: {}", configPath);
+        org.slackerdb.plugins.scheduler.meta.TaskTemplateLoader.Loaded loaded;
+        try {
+            loaded = org.slackerdb.plugins.scheduler.meta.TaskTemplateLoader
+                    .load(Paths.get(projectHome), projectType, runId);
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] 模板任务清单解析失败: {}", e.getMessage(), e);
+            return 0;
+        }
+        for (String warning : loaded.warnings()) {
+            logger.warn("[SCHEDULER] 模板任务清单: {}", warning);
+        }
+        if (loaded.isEmpty()) {
+            logger.info("[SCHEDULER] 实例[{}]未载入任务（{}）", runId, loaded.fileText());
             return 0;
         }
 
         int count = 0;
         try {
-            String content = new String(Files.readAllBytes(configFile.toPath()));
-            JSONObject config = JSON.parseObject(content);
-
-            // Parse tasks array from config
-            List<JSONObject> tasks = config.getJSONArray("tasks").toList(JSONObject.class);
-            for (JSONObject taskConfig : tasks) {
-                SchedulerTask task = new SchedulerTask();
-                task.setRunId(runId);
-                task.setTaskName(taskConfig.getString("taskName"));
-                task.setTaskScript(taskConfig.getString("taskScript"));
-                task.setTaskScriptType(taskConfig.getString("taskScriptType"));
-                task.setTaskRunPolicy(taskConfig.getString("taskRunPolicy"));
-                task.setTaskFailPolicy(taskConfig.getString("taskFailPolicy"));
-                task.setTaskParallelPolicy(taskConfig.getString("taskParallelPolicy"));
-                task.setTaskCrontabExpr(taskConfig.getString("taskCrontabExpr"));
-                task.setTaskInterval(taskConfig.getIntValue("taskInterval", 0));
-                task.setTaskTimeout(taskConfig.getIntValue("taskTimeout", 0));
-                task.setTaskEnabled(taskConfig.getBooleanValue("taskEnabled", true));
-                task.setTaskGroup(taskConfig.getString("taskGroup"));
-                task.setTaskStartupOrder(taskConfig.getIntValue("taskStartupOrder", 0));
-                task.setTaskDescription(taskConfig.getString("taskDescription"));
-                task.setConfigJson(taskConfig.getString("configJson"));
+            for (SchedulerTask task : loaded.tasks()) {
                 task.setCreateTime(LocalDateTime.now());
                 task.setUpdateTime(LocalDateTime.now());
                 meta.insertTask(task);
                 count++;
             }
-            logger.info("[SCHEDULER] Loaded {} default tasks for run {} from project {}", count, runId, projectType);
+            logger.info("[SCHEDULER] 实例[{}]从 {} 载入 {} 个任务", runId, loaded.file(), count);
         } catch (Exception e) {
-            logger.error("[SCHEDULER] Error loading default tasks: {}", e.getMessage());
+            logger.error("[SCHEDULER] 任务写入失败: {}", e.getMessage(), e);
         }
         return count;
     }
@@ -791,7 +1123,7 @@ public class SchedulerController {
 
         String runId = run.getRunId();
         String taskName = task.getTaskName();
-        String scriptType = task.getTaskScriptType() != null ? task.getTaskScriptType() : "SQL";
+        String scriptType = task.getTaskScriptType() != null ? task.getTaskScriptType() : "HOP";
         String script = task.getTaskScript() != null ? task.getTaskScript() : "";
         String logFile = "logs/" + taskName + ".log";
         String taskRunPolicy = task.getTaskRunPolicy() != null ? task.getTaskRunPolicy() : "RUN_ONCE";
@@ -804,21 +1136,15 @@ public class SchedulerController {
         int taskStartupOrder = task.getTaskStartupOrder();
         String configJson = task.getConfigJson() != null ? task.getConfigJson() : "";
 
-        // Schedule the job with full parameters including workDir and Hop environment
+        // 只登记定义（保持暂停态）；启动由 RunOrchestrator 按组/顺序推进
         quartzScheduler.scheduleJob(
                 runId, taskName, scriptType, script, logFile,
                 taskRunPolicy, taskFailPolicy, taskInterval,
                 taskParallelPolicy, taskCrontabExpr, taskTimeout,
                 taskGroup, taskStartupOrder, configJson,
                 run.getWorkDir(),
-                hopWorkDirectory,
-                hopPluginDirectory
+                jobDataExtras(run, task)
         );
-
-        // For RUN_ONCE, start immediately
-        if ("RUN_ONCE".equalsIgnoreCase(taskRunPolicy)) {
-            quartzScheduler.startJob(runId, taskName);
-        }
     }
 
     /**

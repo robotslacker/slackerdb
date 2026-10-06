@@ -3,15 +3,9 @@ grammar PlSqlBlock;
 options { caseInsensitive = true; }
 
 // ============================================================================
-// PL/SQL 结构文法（combined grammar：词法 + 语法写在同一个文件里）。
+// PL/SQL 结构文法
 //
-// 为什么用 combined：单一 .g4 一次生成 PlSqlBlockLexer / PlSqlBlockParser，
-// 不再引用 PlSqlBlockLexer.tokens。IDE（IDEA 的 ANTLR 插件按单个文件
-// 独立生成）与 Maven 都不会再报
-//   error(114): PlSqlBlockParser.g4: cannot find tokens file .\PlSqlBlockLexer.tokens
-// 生成类名与拆分写法完全一致，Java 侧无需任何改动（Parser/Context 类名不变）。
-//
-// 设计要点：**只描述结构**。内嵌 SQL 由 PlSqlSourcePreparer 遮罩成
+// **只描述结构**。内嵌 SQL 由 PlSqlSourcePreparer 遮罩成
 // SQL_SEGMENT 占位符后再喂给词法器，因此这里永远不需要理解 SQL 语法
 // （CASE..END、$$、字符串里的分号、任意 SQL 关键字都不会干扰结构解析）。
 //

@@ -267,6 +267,34 @@ public class SQLReplacer {
                 )
         );
 
+        // SQLAlchemy（psycopg2 / psycopg / asyncpg 任一驱动）在建立连接的第一条语句就会执行
+        // "select pg_catalog.version()"，并用 ^(?:PostgreSQL|EnterpriseDB) (\d+)\.?(\d+)? 解析结果；
+        // 解析不出来直接抛 AssertionError("Could not determine version from string")。
+        // DuckDB 没有 pg_catalog.version()，原样发过去是 "Referenced column pg_catalog was not found"，
+        // 结果是 SQLAlchemy 根本连不上（engine.connect() 就失败）。
+        //
+        // 只改写带 pg_catalog. 前缀的写法：裸 version() 仍返回 DuckDB 自己的版本串，
+        // 免得改变 pgjdbc / DBeaver 依据 getDatabaseProductVersion() 做的 haveMinimumServerVersion() 判定。
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.version()",
+                        "'PostgreSQL " + DBInstance.PG_COMPAT_VERSION + " (SlackerDB)'",
+                        false, true
+                )
+        );
+
+        // 同一个连接阶段还会执行 "show standard_conforming_strings"（SQLAlchemy 用它决定
+        // 反斜杠转义策略），DuckDB 没有这个配置项，会报 "Table with name
+        // standard_conforming_strings does not exist"。
+        // 取值必须与 StartupRequest 下发的 ParameterStatus 一致（都是 on）。
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "show standard_conforming_strings",
+                        "select 'on' as standard_conforming_strings",
+                        false, true
+                )
+        );
+
         // 编译成不可变快照：规则级的常量工作只在这里做一次
         List<ReplacerRule> compiled = new ArrayList<>(SQLReplaceItems.size());
         for (QueryReplacerItem item : SQLReplaceItems) {

@@ -49,15 +49,19 @@ public class SchedulerMeta {
                 "task_script_type VARCHAR DEFAULT 'SQL', " +
                 "task_run_policy VARCHAR DEFAULT 'RUN_ONCE', " +
                 "task_fail_policy VARCHAR DEFAULT 'STOP', " +
+                "task_retry_times INTEGER DEFAULT 0, " +
+                "task_retry_interval INTEGER DEFAULT 60, " +
                 "task_parallel_policy VARCHAR DEFAULT 'PARALLEL', " +
                 "task_crontab_expr VARCHAR, " +
                 "task_interval INTEGER DEFAULT 0, " +
                 "task_timeout INTEGER DEFAULT 0, " +
                 "task_enabled BOOLEAN DEFAULT true, " +
+                "task_mandatory BOOLEAN DEFAULT false, " +
                 "task_group VARCHAR, " +
                 "task_startup_order INTEGER DEFAULT 0, " +
                 "task_description VARCHAR, " +
                 "config_json VARCHAR, " +
+                "variables_json VARCHAR, " +
                 "create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
                 "update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
                 "PRIMARY KEY (run_id, task_name)" +
@@ -79,6 +83,22 @@ public class SchedulerMeta {
             stmt.execute(createRunTable);
             stmt.execute(createTaskTable);
             stmt.execute(createHistoryTable);
+
+            // 增量迁移：老库补齐新增列（DuckDB 支持 ADD COLUMN IF NOT EXISTS）
+            for (String migration : new String[]{
+                    "ALTER TABLE sysaux.v$scheduler_task ADD COLUMN IF NOT EXISTS task_mandatory BOOLEAN DEFAULT false",
+                    "ALTER TABLE sysaux.v$scheduler_task ADD COLUMN IF NOT EXISTS variables_json VARCHAR",
+                    "ALTER TABLE sysaux.v$scheduler_task ADD COLUMN IF NOT EXISTS task_retry_times INTEGER DEFAULT 0",
+                    "ALTER TABLE sysaux.v$scheduler_task ADD COLUMN IF NOT EXISTS task_retry_interval INTEGER DEFAULT 60",
+                    "ALTER TABLE sysaux.v$scheduler_run ADD COLUMN IF NOT EXISTS started_at TIMESTAMP",
+                    "ALTER TABLE sysaux.v$scheduler_run ADD COLUMN IF NOT EXISTS stopped_at TIMESTAMP",
+            }) {
+                try {
+                    stmt.execute(migration);
+                } catch (SQLException e) {
+                    logger.warn("[SCHEDULER] 元数据迁移跳过[{}]: {}", migration, e.getMessage());
+                }
+            }
             logger.info("[SCHEDULER] Scheduler metadata tables initialized successfully.");
         }
     }
@@ -104,16 +124,64 @@ public class SchedulerMeta {
     }
 
     /**
-     * Update run status.
+     * 更新 run 状态，并维护 {@code started_at}/{@code stopped_at}。
+     *
+     * <p>状态取值（框架约定）：{@code CREATED / STARTING / STARTED / STOPPED / ABORTED / FAILED}。</p>
      */
     public void updateRunStatus(String runId, String status) throws SQLException {
-        String sql = "UPDATE sysaux.v$scheduler_run SET status = ?, update_time = ? WHERE run_id = ?";
-        try (PreparedStatement ps = dbConnection.prepareStatement(sql)) {
-            ps.setString(1, status);
-            ps.setObject(2, LocalDateTime.now());
-            ps.setString(3, runId);
+        boolean started = "STARTED".equalsIgnoreCase(status);
+        boolean stopped = "STOPPED".equalsIgnoreCase(status)
+                || "ABORTED".equalsIgnoreCase(status)
+                || "FAILED".equalsIgnoreCase(status);
+        StringBuilder sql = new StringBuilder(
+                "UPDATE sysaux.v$scheduler_run SET status = ?, update_time = ?");
+        if (started) {
+            sql.append(", started_at = ?");
+        }
+        if (stopped) {
+            sql.append(", stopped_at = ?");
+        }
+        sql.append(" WHERE run_id = ?");
+
+        try (PreparedStatement ps = dbConnection.prepareStatement(sql.toString())) {
+            int index = 1;
+            ps.setString(index++, status);
+            LocalDateTime now = LocalDateTime.now();
+            ps.setObject(index++, now);
+            if (started) {
+                ps.setObject(index++, now);
+            }
+            if (stopped) {
+                ps.setObject(index++, now);
+            }
+            ps.setString(index, runId);
             ps.executeUpdate();
         }
+    }
+
+    /** 按状态列出 run（启动时 reconcile 用）。 */
+    public List<SchedulerRun> listRunsByStatus(java.util.Collection<String> statuses) throws SQLException {
+        List<SchedulerRun> runs = new ArrayList<>();
+        if (statuses == null || statuses.isEmpty()) {
+            return runs;
+        }
+        StringBuilder sql = new StringBuilder("SELECT * FROM sysaux.v$scheduler_run WHERE status IN (");
+        for (int i = 0; i < statuses.size(); i++) {
+            sql.append(i == 0 ? "?" : ", ?");
+        }
+        sql.append(") ORDER BY create_time DESC");
+        try (PreparedStatement ps = dbConnection.prepareStatement(sql.toString())) {
+            int index = 1;
+            for (String status : statuses) {
+                ps.setString(index++, status);
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    runs.add(mapRun(rs));
+                }
+            }
+        }
+        return runs;
     }
 
     /**
@@ -178,10 +246,11 @@ public class SchedulerMeta {
     public void insertTask(SchedulerTask task) throws SQLException {
         String sql = "INSERT INTO sysaux.v$scheduler_task (" +
                 "run_id, task_name, task_script, task_script_type, task_run_policy, " +
-                "task_fail_policy, task_parallel_policy, task_crontab_expr, task_interval, " +
-                "task_timeout, task_enabled, task_group, task_startup_order, task_description, " +
-                "config_json, create_time, update_time) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "task_fail_policy, task_retry_times, task_retry_interval, task_parallel_policy, " +
+                "task_crontab_expr, task_interval, " +
+                "task_timeout, task_enabled, task_mandatory, task_group, task_startup_order, task_description, " +
+                "config_json, variables_json, create_time, update_time) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (PreparedStatement ps = dbConnection.prepareStatement(sql)) {
             ps.setString(1, task.getRunId());
             ps.setString(2, task.getTaskName());
@@ -189,17 +258,21 @@ public class SchedulerMeta {
             ps.setString(4, task.getTaskScriptType());
             ps.setString(5, task.getTaskRunPolicy());
             ps.setString(6, task.getTaskFailPolicy());
-            ps.setString(7, task.getTaskParallelPolicy());
-            ps.setString(8, task.getTaskCrontabExpr());
-            ps.setInt(9, task.getTaskInterval());
-            ps.setInt(10, task.getTaskTimeout());
-            ps.setBoolean(11, task.isTaskEnabled());
-            ps.setString(12, task.getTaskGroup());
-            ps.setInt(13, task.getTaskStartupOrder());
-            ps.setString(14, task.getTaskDescription());
-            ps.setString(15, task.getConfigJson());
-            ps.setObject(16, task.getCreateTime());
-            ps.setObject(17, task.getUpdateTime());
+            ps.setInt(7, task.getTaskRetryTimes());
+            ps.setInt(8, task.getTaskRetryInterval());
+            ps.setString(9, task.getTaskParallelPolicy());
+            ps.setString(10, task.getTaskCrontabExpr());
+            ps.setInt(11, task.getTaskInterval());
+            ps.setInt(12, task.getTaskTimeout());
+            ps.setBoolean(13, task.isTaskEnabled());
+            ps.setBoolean(14, task.isTaskMandatory());
+            ps.setString(15, task.getTaskGroup());
+            ps.setInt(16, task.getTaskStartupOrder());
+            ps.setString(17, task.getTaskDescription());
+            ps.setString(18, task.getConfigJson());
+            ps.setString(19, task.getVariablesJson());
+            ps.setObject(20, task.getCreateTime());
+            ps.setObject(21, task.getUpdateTime());
             ps.executeUpdate();
         }
     }
@@ -240,15 +313,19 @@ public class SchedulerMeta {
         task.setTaskScriptType(rs.getString("task_script_type"));
         task.setTaskRunPolicy(rs.getString("task_run_policy"));
         task.setTaskFailPolicy(rs.getString("task_fail_policy"));
+        task.setTaskRetryTimes(rs.getInt("task_retry_times"));
+        task.setTaskRetryInterval(rs.getInt("task_retry_interval"));
         task.setTaskParallelPolicy(rs.getString("task_parallel_policy"));
         task.setTaskCrontabExpr(rs.getString("task_crontab_expr"));
         task.setTaskInterval(rs.getInt("task_interval"));
         task.setTaskTimeout(rs.getInt("task_timeout"));
         task.setTaskEnabled(rs.getBoolean("task_enabled"));
+        task.setTaskMandatory(rs.getBoolean("task_mandatory"));
         task.setTaskGroup(rs.getString("task_group"));
         task.setTaskStartupOrder(rs.getInt("task_startup_order"));
         task.setTaskDescription(rs.getString("task_description"));
         task.setConfigJson(rs.getString("config_json"));
+        task.setVariablesJson(rs.getString("variables_json"));
         task.setCreateTime(rs.getObject("create_time", LocalDateTime.class));
         task.setUpdateTime(rs.getObject("update_time", LocalDateTime.class));
         return task;
@@ -259,21 +336,38 @@ public class SchedulerMeta {
     /**
      * Insert a task history record.
      */
+    /**
+     * 插入任务历史。
+     *
+     * <p>{@code task_id} 由数据库在同一语句内取 {@code max(task_id)+1} —— 避免多任务在同一毫秒
+     * 完成时主键冲突（历史静默丢失），也不依赖表上是否已有序列或自增默认值。</p>
+     */
     public void insertTaskHistory(TaskHistory history) throws SQLException {
         String sql = "INSERT INTO sysaux.v$scheduler_task_history (" +
                 "task_id, run_id, task_name, run_id_ref, ret_code, ret_msg, start_time, end_time, log_file) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "VALUES ((SELECT coalesce(max(task_id), 0) + 1 FROM sysaux.v$scheduler_task_history), " +
+                "?, ?, ?, ?, ?, ?, ?, ?)";
         try (PreparedStatement ps = dbConnection.prepareStatement(sql)) {
-            ps.setLong(1, history.getTaskId());
-            ps.setString(2, history.getRunId());
-            ps.setString(3, history.getTaskName());
-            ps.setString(4, history.getRunIdRef());
-            ps.setInt(5, history.getRetCode());
-            ps.setString(6, history.getRetMsg());
-            ps.setObject(7, history.getStartTime());
-            ps.setObject(8, history.getEndTime());
-            ps.setString(9, history.getLogFile());
+            ps.setString(1, history.getRunId());
+            ps.setString(2, history.getTaskName());
+            ps.setString(3, history.getRunIdRef());
+            ps.setInt(4, history.getRetCode());
+            ps.setString(5, history.getRetMsg());
+            ps.setObject(6, history.getStartTime());
+            ps.setObject(7, history.getEndTime());
+            ps.setString(8, history.getLogFile());
             ps.executeUpdate();
+        }
+    }
+
+    /**
+     * 删除指定时间之前的历史记录（保留策略用），返回删除行数。
+     */
+    public int deleteHistoryBefore(LocalDateTime before) throws SQLException {
+        String sql = "DELETE FROM sysaux.v$scheduler_task_history WHERE coalesce(end_time, start_time) < ?";
+        try (PreparedStatement ps = dbConnection.prepareStatement(sql)) {
+            ps.setObject(1, before);
+            return ps.executeUpdate();
         }
     }
 

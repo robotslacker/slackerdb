@@ -229,6 +229,25 @@
                     <reuseForks>false</reuseForks>
                 </configuration>
             </plugin>
+            <!--
+                COPY BINARY 入库性能基准的入口（手工执行，不属于 mvn test 套件）。
+
+                基准类刻意不叫 *Test.java：性能数字必须能前后对比，写成用例既会让 mvn test
+                每次都跑百万行，又会把机器噪声变成断言。用法（须用 JDK 17）：
+
+                  mvn -o -q -pl dbserver test-compile
+                  mvn -o -pl dbserver exec:java -Dexec.classpathScope=test \
+                      -Dexec.mainClass=org.slackerdb.dbserver.test.CopyBinaryPerf \
+                      -DcopyPerf.rows=1000000 -DcopyPerf.rounds=3
+
+                结果打印到控制台并写入 dbserver/target/copy-binary-perf/。
+                优化前后的实测对比与边界语义记录见 src/test/resources/copy-binary-perf.md。
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.6.3</version>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>

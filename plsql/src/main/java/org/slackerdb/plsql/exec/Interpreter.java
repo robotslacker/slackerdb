@@ -85,10 +85,14 @@ public final class Interpreter {
             throw new PlSqlException("EXIT/CONTINUE used outside of a loop",
                     PlSqlException.SYNTAX_ERROR, null);
         } catch (Signals.RaisedException raised) {
-            // 未被任何 handler 捕获：冒泡给协议层
+            // 未被任何 handler 捕获：冒泡给协议层。
+            // 位置仍只用于编译期错误（不改动客户端消息后缀），但把底层语句原文带出去，
+            // 便于客户端/日志定位是哪条内嵌 SQL 或动态 SQL 失败（见 PlSqlException#getSqlText）。
+            PlSqlException original = raised.getCause() instanceof PlSqlException pl ? pl : null;
             throw new PlSqlException("Unhandled PL/SQL exception [" + raised.name + "]"
                     + (raised.message == null ? "" : ": " + raised.message),
-                    raised.sqlState, raised);
+                    raised.sqlState, 0, 0,
+                    original == null ? null : original.getSqlText(), raised);
         }
     }
 
@@ -402,7 +406,7 @@ public final class Interpreter {
         try {
             handle = host.execute(bound.sql(), bound.values());
         } catch (SQLException e) {
-            throw wrapSqlException(e);
+            throw wrapSqlException(e, sql);
         } finally {
             if (handle != null) {
                 handle.close();
@@ -422,7 +426,7 @@ public final class Interpreter {
             handle = host.execute(bound.sql(), bound.values());
             assignSingleRow(handle, selectInto.targets(), scope, selectInto.line(), "SELECT INTO");
         } catch (SQLException e) {
-            throw wrapSqlException(e);
+            throw wrapSqlException(e, sql);
         } finally {
             if (handle != null) {
                 handle.close();
@@ -460,7 +464,7 @@ public final class Interpreter {
             }
             assignSingleRow(handle, dynamic.targets(), scope, dynamic.line(), "EXECUTE IMMEDIATE INTO");
         } catch (SQLException e) {
-            throw wrapSqlException(e);
+            throw wrapSqlException(e, text);
         } finally {
             if (handle != null) {
                 handle.close();
@@ -547,7 +551,7 @@ public final class Interpreter {
                 cursor.notFound = true;
             }
         } catch (SQLException e) {
-            throw wrapSqlException(e);
+            throw wrapSqlException(e, cursor.query);
         }
     }
 
@@ -563,7 +567,7 @@ public final class Interpreter {
         try {
             cursor.handle = host.execute(bound.sql(), bound.values());
         } catch (SQLException e) {
-            throw wrapSqlException(e);
+            throw wrapSqlException(e, cursor.query);
         }
         cursor.opened = true;
         cursor.found = false;
@@ -630,9 +634,19 @@ public final class Interpreter {
     }
 
     private static PlSqlException wrapSqlException(SQLException e) {
+        return wrapSqlException(e, null);
+    }
+
+    /**
+     * 包装后端 SQL 错误。
+     *
+     * @param sqlText 出错语句原文（供 {@link PlSqlException#getSqlText()} 定位）；拿不到时传 null
+     */
+    private static PlSqlException wrapSqlException(SQLException e, String sqlText) {
         String sqlState = e.getSQLState();
         return new PlSqlException(e.getMessage(),
-                sqlState == null || sqlState.isBlank() ? PlSqlException.INTERNAL_ERROR : sqlState, e);
+                sqlState == null || sqlState.isBlank() ? PlSqlException.INTERNAL_ERROR : sqlState,
+                0, 0, sqlText, e);
     }
 
     /** 供审计/调试：已执行语句数。 */

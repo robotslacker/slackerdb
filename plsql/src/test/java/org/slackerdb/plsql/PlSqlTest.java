@@ -1,6 +1,8 @@
 package org.slackerdb.plsql;
 
 import org.junit.jupiter.api.Test;
+import org.slackerdb.plsql.spi.DefaultJdbcHost;
+
 import java.math.BigDecimal;
 import java.sql.*;
 
@@ -12,7 +14,7 @@ public class PlSqlTest {
         Connection pgConn = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
-        PlSqlEngine.runPlSql(pgConn,
+        PlSqlEngine.execute(new DefaultJdbcHost(pgConn),
                 """
                         Declare
                            x  int;
@@ -32,7 +34,7 @@ public class PlSqlTest {
         stmt.execute("Create or replace Table testDeclareVariables(" +
                 "col1 int, col2 text, col3 double, col4 bigint," +
                 "col5 date, col6 timestamp, col7 float)");
-        PlSqlEngine.runPlSql(pgConn,
+        PlSqlEngine.execute(new DefaultJdbcHost(pgConn),
                 """
                         Declare
                            x  int;
@@ -78,7 +80,7 @@ public class PlSqlTest {
         stmt.execute("Create or replace Table testVariablesCompute(" +
                 "col1 int, col2 text, col3 double, col4 bigint," +
                 "col5 date, col6 timestamp, col7 float)");
-        PlSqlEngine.runPlSql(pgConn,
+        PlSqlEngine.execute(new DefaultJdbcHost(pgConn),
                 """
                         Declare
                            x  int;
@@ -180,7 +182,7 @@ public class PlSqlTest {
                     end if;
                 end;
                 """;
-        PlSqlEngine.runPlSql(pgConn, plSql);
+        PlSqlEngine.execute(new DefaultJdbcHost(pgConn), plSql);
 
         Statement stmt = pgConn.createStatement();
         ResultSet rs = stmt.executeQuery("select * from tab1 order by 1");
@@ -220,7 +222,7 @@ public class PlSqlTest {
                         Exception:
                            pass;
                         End;""";
-        PlSqlEngine.runPlSql(pgConn, sql);
+        PlSqlEngine.execute(new DefaultJdbcHost(pgConn), sql);
         Statement stmt = pgConn.createStatement();
         ResultSet rs = stmt.executeQuery("select * from testException order by 1");
         while (rs.next())
@@ -236,7 +238,7 @@ public class PlSqlTest {
                 Exception:
                    Update testException set num = 6;
                 End;""";
-        PlSqlEngine.runPlSql(pgConn, sql);
+        PlSqlEngine.execute(new DefaultJdbcHost(pgConn), sql);
         stmt = pgConn.createStatement();
         rs = stmt.executeQuery("select * from testException order by 1");
         while (rs.next())
@@ -253,7 +255,7 @@ public class PlSqlTest {
                    Rollback;
                    Update testException set num = 6;
                 End;""";
-        PlSqlEngine.runPlSql(pgConn, sql);
+        PlSqlEngine.execute(new DefaultJdbcHost(pgConn), sql);
         stmt = pgConn.createStatement();
         rs = stmt.executeQuery("select * from testException order by 1");
         while (rs.next())
@@ -268,7 +270,7 @@ public class PlSqlTest {
                 Exception:
                    Pass;
                 End;""";
-        PlSqlEngine.runPlSql(pgConn, sql);
+        PlSqlEngine.execute(new DefaultJdbcHost(pgConn), sql);
         stmt = pgConn.createStatement();
         rs = stmt.executeQuery("select * from testException order by 1");
         while (rs.next())
@@ -287,7 +289,7 @@ public class PlSqlTest {
                        Pass;
                    End;
                 End;""";
-        PlSqlEngine.runPlSql(pgConn, sql);
+        PlSqlEngine.execute(new DefaultJdbcHost(pgConn), sql);
         stmt = pgConn.createStatement();
         rs = stmt.executeQuery("select * from testException order by 1");
         while (rs.next())
@@ -305,7 +307,7 @@ public class PlSqlTest {
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
         pgConn.createStatement().execute("create table main.tab1 (id int)");
-        PlSqlEngine.runPlSql(pgConn,
+        PlSqlEngine.execute(new DefaultJdbcHost(pgConn),
                 """
                         Declare
                            x  int;
@@ -322,7 +324,7 @@ public class PlSqlTest {
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
         pgConn.createStatement().execute("create table main.testEnvIdentifier (id int, col1 text)");
-        PlSqlEngine.runPlSql(pgConn,
+        PlSqlEngine.execute(new DefaultJdbcHost(pgConn),
                 """
                         Declare
                             x   int;
@@ -354,7 +356,7 @@ public class PlSqlTest {
         Connection pgConn = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
-        PlSqlEngine.runPlSql(pgConn,
+        PlSqlEngine.execute(new DefaultJdbcHost(pgConn),
                 """
                         Declare
                             Cursor mCur Is select unnest(generate_series(DATE '2020-01-01', DATE '2021-01-01', INTERVAL 1 HOUR));
@@ -390,7 +392,7 @@ public class PlSqlTest {
         Connection pgConn = DriverManager.getConnection(
                 connectURL, "", "");
         pgConn.setAutoCommit(false);
-        PlSqlEngine.runPlSql(pgConn,
+        PlSqlEngine.execute(new DefaultJdbcHost(pgConn),
                 """
                         declare
                             current int;
