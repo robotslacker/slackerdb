@@ -23,7 +23,10 @@ import java.util.TimeZone;
  * </ul>
  */
 public class PlSqlTest {
-    static final int dbPort=4309;
+    // 不使用固定端口：4309 曾与 TPCDSTest 等类共用，一旦本机已有 SlackerDB 实例
+    // （手工启动的开发实例、上一次没退干净的测试 JVM）就会 bind 失败。
+    // 0 表示由配置生成一个空闲端口，随后回读实际端口（与 ClientTest 等一致）。
+    static int dbPort;
     static DBInstance dbInstance ;
 
     @BeforeAll
@@ -33,8 +36,9 @@ public class PlSqlTest {
 
         // 修改默认的db启动端口
         ServerConfiguration serverConfiguration = new ServerConfiguration();
-        serverConfiguration.setPort(dbPort);
+        serverConfiguration.setPort(0);
         serverConfiguration.setData("mem");
+        dbPort = serverConfiguration.getPort();
 
         // 启动数据库
         dbInstance = new DBInstance(serverConfiguration);

@@ -1,4 +1,22 @@
+<!--
+    发布包描述符：dist/slackerdb-dist_<version>.zip
 
+    面向“拿来就跑”的使用者：standalone jar + conf + bin + 插件，加工程说明与许可声明。
+    布局说明：
+      README.adoc / README-CN.adoc  工程说明（AsciiDoc 源；同内容的 PDF 由 build 模块生成）
+      README.pdf / README-CN.pdf    编译出来的工程说明
+      LICENSE                       许可声明
+      jlib/                         可执行 jar（dbserver/dbproxy standalone、dbdriver、plugin api）
+      conf/                         运行期配置
+      bin/                          启停脚本
+      plugins/                      随包分发的可选插件（默认不加载）
+
+    说明：
+      * LICENSE 是发行物的一部分：源码包与发布包都必须带上，否则再分发时缺少许可声明。
+        早先这里只收 README.md —— 文档改为 .adoc（提交 3695c54）后该 include 已匹配不到
+        任何文件，结果是发布包里既没有工程说明源文件也没有 LICENSE，故一并修正。
+      * 各模块 target/ 下的产物由本描述符逐个点名收取，不整目录拷贝。
+-->
 <assembly>
     <id>deployment</id>
     <formats>
@@ -8,11 +26,14 @@
     <baseDirectory>/</baseDirectory>
 
     <fileSets>
+        <!-- 工程说明与许可声明 -->
         <fileSet>
             <directory>${project.basedir}/../</directory>
             <outputDirectory>/</outputDirectory>
             <includes>
-                <include>README.md</include>
+                <include>README.adoc</include>
+                <include>README-CN.adoc</include>
+                <include>LICENSE</include>
             </includes>
         </fileSet>
         <fileSet>

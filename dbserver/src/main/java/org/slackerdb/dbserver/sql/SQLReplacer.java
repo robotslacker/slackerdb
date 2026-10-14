@@ -40,6 +40,246 @@ public class SQLReplacer {
     private static volatile List<ReplacerRule> compiledRules = List.of();
 
     // "set search_path = ..." 需要去掉中间的空格和双引号，DuckDB 不支持
+    /**
+     * {@code 'schema.table'::pg_catalog.regclass} → 真正的 oid 查询（B4）。
+     *
+     * <p>{@code postgres_fdw} 的 {@code ANALYZE} 会发（见 {@code deparse.c} 的
+     * {@code deparseAnalyzeSizeSql} / {@code deparseAnalyzeInfoSql}）：</p>
+     *
+     * [source,sql]
+     * ----
+     * SELECT pg_catalog.pg_relation_size('main.t'::pg_catalog.regclass) / 8192
+     * SELECT reltuples, relkind FROM pg_catalog.pg_class WHERE oid = 'main.t'::pg_catalog.regclass
+     * ----
+     *
+     * <p>DuckDB 没有 {@code regclass} 类型（旧行为直接报 {@code Type with name regclass does not exist}）。
+     * 这里把它翻译成**真正的 oid 查询**而不是删掉转换留下裸名字：后面的 {@code pg_relation_size} 与
+     * {@code pg_class} 都是按 oid 取值的，翻译后整套现有机制直接可用。</p>
+     *
+     * <p>之所以不走 {@code SQLReplaceItems}：规则表里的 {@code REGEX} 规则要求<b>整条语句</b>匹配
+     * （见 {@code ReplacerRule}），而这里需要的是"语句片段 + 捕获组"的替换。</p>
+     */
+    private static final Pattern REGCLASS_CAST_PATTERN = Pattern.compile(
+            "'([^']*)'\\s*::\\s*pg_catalog\\s*\\.\\s*regclass", Pattern.CASE_INSENSITIVE);
+
+    private static final String REGCLASS_CAST_REPLACEMENT =
+            "(select coalesce("
+                    + "(select table_oid from duckdb_tables "
+                    + "where database_name = getvariable('current_database') "
+                    + "and (schema_name || '.' || table_name = '$1' or table_name = '$1')), "
+                    + "(select view_oid from duckdb_views "
+                    + "where database_name = getvariable('current_database') "
+                    + "and (schema_name || '.' || view_name = '$1' or view_name = '$1'))))";
+
+    /** 把语句里出现的 {@code 'x'::pg_catalog.regclass} 片段替换成 oid 子查询（没有则原样返回）。 */
+    private static String rewriteRegclassCast(String sql) {
+        Matcher matcher = REGCLASS_CAST_PATTERN.matcher(sql);
+        if (!matcher.find()) {
+            return sql;
+        }
+        return matcher.replaceAll(REGCLASS_CAST_REPLACEMENT);
+    }
+
+    /**
+     * PG 的 {@code bytea} 十六进制字面量 → DuckDB 的 {@code from_hex()}。
+     *
+     * <p>PG 把 {@code '\x414243'::bytea} 定义为"把 \x 后面的十六进制串解码成字节"，
+     * 也就是 3 个字节 {@code 41 42 43}。DuckDB 收到同一个字面量时是按<b>文本</b>处理：
+     * 把字符 {@code \ x 4 1 4 2 4 3} 本身编码成 UTF-8 字节，于是得到 5 个字节
+     * {@code 4134323433} —— 即 {@code '\x414243'::bytea} 实测 {@code octet_length} 为 5
+     * 而不是 3，二进制数据被静默损坏。</p>
+     *
+     * <p>改写目标 {@code from_hex('414243')} 实测返回恰好 3 个字节的 BLOB
+     * （{@code hex()} = {@code 414243}），是 DuckDB 原生函数，不依赖 fake catalog。
+     * 只改写"显式写了 {@code \x} 前缀且内容全是十六进制"的字面量：其它写法
+     * （{@code 'abc'::bytea}、{@code '\xZZ'::bytea}）保持原样，由 DuckDB 自己报错，
+     * 避免把本来合法的写法改坏。</p>
+     */
+    private static final Pattern BYTEA_HEX_LITERAL_PATTERN = Pattern.compile(
+            "'\\\\x([0-9A-Fa-f]*)'\\s*(::\\s*(?:pg_catalog\\s*\\.\\s*)?bytea)",
+            Pattern.CASE_INSENSITIVE);
+
+    private static String rewriteByteaHexLiteral(String sql) {
+        Matcher matcher = BYTEA_HEX_LITERAL_PATTERN.matcher(sql);
+        if (!matcher.find()) {
+            return sql;
+        }
+        return matcher.replaceAll("from_hex('$1')");
+    }
+
+    /**
+     * 把 PG 的 {@code OPERATOR(pg_catalog.~)} / {@code OPERATOR(pg_catalog.!~)} 以及
+     * {@code COLLATE pg_catalog.default} 改写成 DuckDB 能接受的等价形式。
+     *
+     * <p>psql 的 {@code \d <表>} 生成的是</p>
+     * [source,sql]
+     * ----
+     * WHERE c.relname OPERATOR(pg_catalog.~) '^(t)$' COLLATE pg_catalog.default
+     * ----
+     * <p>DuckDB 会把 {@code OPERATOR(pg_catalog.~)} 里的 {@code pg_catalog} 当成<b>函数名</b>
+     * 解析，报 {@code Scalar Function with name pg_catalog does not exist}；{@code COLLATE
+     * pg_catalog.default} 则报 {@code Collation with name pg_catalog does not exist}。
+     * 两者都无法靠 {@code SET search_path} 绕过（报错发生在函数/排序规则解析阶段）。</p>
+     *
+     * <p>特别注意：<b>不能用 DuckDB 的 {@code ~} 替代</b>。DuckDB 里 {@code ~} 是<b>按位取反</b>
+     * （实测 {@code 'abc' ~ 'b'} 返回 {@code false}，且 {@code duckdb_functions()} 里 {@code ~}
+     * 的参数是整型），语义完全不同。PG 的 {@code ~} 是正则匹配，对应 DuckDB 的
+     * {@code regexp_matches(string, regex)}。{@code !~} 则对应 {@code NOT regexp_matches(...)}。</p>
+     */
+    private static final Pattern PG_DEFAULT_COLLATE_PATTERN = Pattern.compile(
+            "\\s+COLLATE\\s+(?:pg_catalog\\s*\\.\\s*)?(?:default|\"default\"|C)\\b",
+            Pattern.CASE_INSENSITIVE);
+
+    private static String rewritePgCatalogOperatorAndCollate(String sql) {
+        // 中缀写法：A OPERATOR(pg_catalog.~) 'pattern'  →  regexp_matches(A, 'pattern')
+        String result = rewriteInfixRegexMatch(sql);
+        // COLLATE pg_catalog.default：DuckDB 没有 PG 的排序规则命名空间，
+        // 默认排序即其唯一行为，直接剥掉。
+        // 同样先做廉价预筛：这个模式以 \s+ 开头，也会在每个位置尝试并吃掉整段空白再回溯，
+        // 长文本参数里若有大段空白同样会退化。
+        if (containsIgnoreCase(result, "collate")) {
+            Matcher collateMatcher = PG_DEFAULT_COLLATE_PATTERN.matcher(result);
+            if (collateMatcher.find()) {
+                result = collateMatcher.replaceAll("");
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 大小写不敏感的"包含"判断，且不分配整串的小写副本。
+     *
+     * <p>用于给昂贵的正则做廉价预筛。之所以不用
+     * {@code sql.toLowerCase(Locale.ROOT).contains(...)}：这条路径上可能出现几十 KB 的
+     * 语句文本（客户端会把长参数内联进 SQL），少一次整串复制就少一次大对象分配。</p>
+     */
+    private static boolean containsIgnoreCase(String haystack, String needleLower) {
+        int limit = haystack.length() - needleLower.length();
+        for (int i = 0; i <= limit; i++) {
+            if (haystack.regionMatches(true, i, needleLower, 0, needleLower.length())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 把 {@code <左> OPERATOR(pg_catalog.~) <右>} 这种中缀写法转成
+     * {@code regexp_matches(<左>, <右>)} 的匹配模式。
+     *
+     * <p>左操作数按 PG 的 {@code OPERATOR(...)} 语法只允许"限定名/列引用"（psql 生成的是
+     * {@code c.relname} 这类），不做通用表达式解析 —— 宁可漏改也不要误改，漏改会照旧报错，
+     * 误改会静默改变语义。右操作数同样只吃单引号字符串字面量（psql 的 pattern 就是字面量）。</p>
+     *
+     * <p><b>为什么锚在 OPERATOR 上、而不是从左边开始写。</b>左操作数的字符集是
+     * {@code [A-Za-z_0-9$.]}，如果把它放在模式开头，正则引擎会在**每一个位置**尝试匹配，
+     * 而且量词贪婪无上界：遇到长的"标识符样"串（客户端把长文本参数内联进 SQL 时就是如此）
+     * 每个起始位置都要吞掉整段再逐字符回溯，总代价 O(n²)（实测 64KB 字面量 133 秒）。
+     * 这里改为只匹配罕见的 {@code OPERATOR(...)} 关键字本身，左操作数用一次**向回扫描**
+     * 得出（见 {@link #rewriteInfixRegexMatch}），整体是 O(n)。</p>
+     *
+     * <p>组的含义：{@code 1} = {@code ~} 或 {@code !~}；{@code 2} = 单引号字符串字面量。</p>
+     */
+    private static final Pattern PG_INFIX_REGEX_OPERATOR_PATTERN = Pattern.compile(
+            "OPERATOR\\s*\\(\\s*pg_catalog\\s*\\.\\s*(!?~)\\s*\\)\\s*('(?:[^']|'')*')",
+            Pattern.CASE_INSENSITIVE);
+
+    /** PG {@code \s} 的含义（未开启 UNICODE_CHARACTER_CLASS 时）。 */
+    private static boolean isPgWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == 0x0B || c == '\f' || c == '\r';
+    }
+
+    /** 与模式里左操作数的 {@code [A-Za-z_0-9$.]} 保持一致。 */
+    private static boolean isIdentifierChar(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                || (c >= '0' && c <= '9') || c == '_' || c == '$' || c == '.';
+    }
+
+    /** 与模式里左操作数的首字符 {@code [A-Za-z_]} 保持一致。 */
+    private static boolean isIdentifierStart(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+    }
+
+    private static String rewriteInfixRegexMatch(String sql) {
+        // 廉价预筛：连 OPERATOR 这个**必需**关键字都没有，规则必然不命中，直接返回。
+        // 绝大多数语句（尤其是内联了长文本参数的语句）走到这里就结束了。
+        if (!containsIgnoreCase(sql, "operator")) {
+            return sql;
+        }
+
+        Matcher matcher = PG_INFIX_REGEX_OPERATOR_PATTERN.matcher(sql);
+        if (!matcher.find()) {
+            return sql;
+        }
+
+        StringBuilder out = new StringBuilder(sql.length());
+        int last = 0;
+        do {
+            // 向回找左操作数：先跳过空白，再吃掉最长的一段标识符字符。
+            int identEnd = matcher.start();
+            while (identEnd > 0 && isPgWhitespace(sql.charAt(identEnd - 1))) {
+                identEnd--;
+            }
+            int runStart = identEnd;
+            while (runStart > 0 && isIdentifierChar(sql.charAt(runStart - 1))) {
+                runStart--;
+            }
+            // 与原来的 "([A-Za-z_][A-Za-z_0-9$.]*)\s*OPERATOR" 等价：
+            // 最左的合法起始位置决定左操作数（例如 "1abc" 要取 "abc"，而不是整段 "1abc"）。
+            int operandStart = runStart;
+            while (operandStart < identEnd && !isIdentifierStart(sql.charAt(operandStart))) {
+                operandStart++;
+            }
+            // 左操作数必须是"限定名/列引用"：非空、首字符是字母/下划线，且不能与前一次改动重叠；
+            // 否则按原样保留 —— 宁可漏改（照旧报错），也不要误改（静默改变语义）。
+            if (operandStart >= identEnd || operandStart < last) {
+                continue;
+            }
+
+            out.append(sql, last, operandStart);
+            String left = sql.substring(operandStart, identEnd);
+            String op = matcher.group(1);
+            String right = matcher.group(2);
+            String call = "regexp_matches(" + left + ", " + right + ")";
+            out.append("!~".equals(op) ? "NOT " + call : call);
+            last = matcher.end();
+        } while (matcher.find());
+        out.append(sql, last, sql.length());
+        return out.toString();
+    }
+
+    /**
+     * 把 {@code ::pg_catalog.<类型>} 的 schema 限定去掉，只留类型名。
+     *
+     * <p>psql 的 {@code \d <表>} 第二条查询里有</p>
+     * [source,sql]
+     * ----
+     * CASE WHEN c.reloftype = 0 THEN '' ELSE c.reloftype::pg_catalog.regtype::pg_catalog.text END
+     * ----
+     * <p>DuckDB 的 cast 语法只接受<b>不带 catalog/schema 限定</b>的类型名，
+     * {@code ::pg_catalog.text} 直接 {@code Parser Error: syntax error at or near "text"}。
+     * 而 PG 的内置类型（text/int4/varchar…）本来就总在搜索路径里，去掉限定完全等价 ——
+     * 这与 DuckDB 自己 {@code ::text} 可用、{@code ::pg_catalog.text} 不可用的实测一致。</p>
+     *
+     * <p>安全性：{@code ::pg_catalog.} 这个字面序列只可能出现在类型转换处
+     * （表名/函数名前面不会带 {@code ::}），因此这条改写不会误伤别的构造。
+     * 类型名后的长度/精度修饰（{@code varchar(10)}）与多词类型（{@code timestamp with time zone}）
+     * 都保留原样传给 DuckDB；DuckDB 不认的伪类型（restype 等）由已有的
+     * {@code ::regclass}/{@code ::regproc} 规则继续兜底。</p>
+     */
+    private static final Pattern PG_CATALOG_CAST_TYPE_PATTERN = Pattern.compile(
+            "::\\s*pg_catalog\\s*\\.\\s*([A-Za-z_][A-Za-z_0-9]*(?:\\s*\\([^)]*\\))?"
+                    + "(?:\\s+with\\s+time\\s+zone|\\s+without\\s+time\\s+zone)?)",
+            Pattern.CASE_INSENSITIVE);
+
+    private static String rewritePgCatalogCastType(String sql) {
+        Matcher matcher = PG_CATALOG_CAST_TYPE_PATTERN.matcher(sql);
+        if (!matcher.find()) {
+            return sql;
+        }
+        return matcher.replaceAll("::$1");
+    }
+
     private static final Pattern SEARCH_PATH_STRIP_PATTERN = Pattern.compile("[ \"']");
 
     // 获取预编译的正则Pattern，相同规则只编译一次
@@ -61,15 +301,17 @@ public class SQLReplacer {
     {
         SQLReplaceItems.clear();
 
-        String   catalogName;
-
-        if (dbInstance.serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:"))
-        {
+        // fake catalog（duck_catalog）所在的 catalog 名。
+        //
+        // 唯一来源是 DBInstance.catalogName（见其字段说明）。历史上这里自己按
+        // data_dir / data 推导，而 StartupRequest 那边写死 "memory"，两者会在 data 为空时
+        // 分叉：这里得到空串，于是 pg_catalog.pg_type 被改写成非法的 ".duck_catalog.pg_type"，
+        // 任何触发 INTERVAL/类型元数据查询的客户端都直接报
+        // "Parser Error: syntax error at or near \".\""。
+        String   catalogName = dbInstance.catalogName;
+        if (catalogName == null || catalogName.isBlank()) {
+            // 兜底：后端连接串固定是 jdbc:duckdb:memory:db<UUID>，DuckDB 的默认 catalog 就叫 memory
             catalogName = "memory";
-        }
-        else
-        {
-            catalogName = dbInstance.serverConfiguration.getData().trim().toLowerCase();
         }
         SQLReplaceItems.add(
                 new QueryReplacerItem(
@@ -149,6 +391,18 @@ public class SQLReplacer {
                         "pg_catalog.pg_inherits", catalogName + ".duck_catalog.pg_inherits",
                         true, true)
         );
+        // pg_get_userbyid：SlackerCatalog 里已经建好了宏
+        // （`create or replace macro duck_catalog.pg_get_userbyid(a) as (select 'system')`），
+        // 但**当时漏了这条改写规则**，于是客户端发来的显式限定名 pg_catalog.pg_get_userbyid(...)
+        // 原样落到 DuckDB —— 而 DuckDB 的 pg_catalog 里没有这个函数，报
+        // "Scalar Function with name pg_get_userbyid does not exist"。
+        // psql 的 \dt / \dv / \di / \ds / \dm / \l / \db / \dn / \d / \dS 等元命令都要取 Owner
+        // 列，全部因此失败。补上这一条即可让这批元命令恢复。
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_get_userbyid", catalogName + ".duck_catalog.pg_get_userbyid",
+                        true, true)
+        );
 
         // 以下的这几个set， Duck都不支持，但是第三方IDE工具总是查询，所以指向空语句
         SQLReplaceItems.add(
@@ -218,6 +472,34 @@ public class SQLReplacer {
                         "::regproc", "", false,true
                 )
         );
+        // regtype：DuckDB 既没有这个类型也没有对应函数（实测 "Type with name regtype does not exist"）。
+        // psql 只在 `\d <表>` 里用它来显示列的默认类型名（`c.reloftype::pg_catalog.regtype::pg_catalog.text`），
+        // 去掉 cast 不会造成静默错误 —— DuckDB 少了这层"类型名格式化"，但 format_type 那条规则
+        // 已经把等价信息补上了。
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "::regtype", "", false,true
+                )
+        );
+        // pg_table_size：DuckDB 没有，用已有的 pg_relation_size 语义顶替
+        // （psql 的 `\dt+` 要显示 Size 列，走 pg_size_pretty(pg_table_size(oid))；pg_size_pretty 是 DuckDB 原生函数）。
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_table_size", catalogName + ".duck_catalog.pg_table_size",
+                        true, true)
+        );
+        // pg_encoding_to_char / pg_tablespace_location：SlackerCatalog 早已建好同名宏，
+        // 这里同样只是补上漏掉的改写规则（`\l` `\l+` 要 encoding，`\db` 要 tablespace location）。
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_encoding_to_char", catalogName + ".duck_catalog.pg_encoding_to_char",
+                        true, true)
+        );
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_tablespace_location", catalogName + ".duck_catalog.pg_tablespace_location",
+                        true, true)
+        );
         SQLReplaceItems.add(
                 new QueryReplacerItem(
                         "SHOW search_path",
@@ -243,6 +525,15 @@ public class SQLReplacer {
         SQLReplaceItems.add(
                 new QueryReplacerItem(
                         "SHOW datestyle", "SELECT 'ISO, MDY' as DateStyle",
+                        false,true
+                )
+        );
+        // SHOW timezone：DuckDB 里 TimeZone 是真实参数（`SET timezone` 会透传给 DuckDB），
+        // 但 `SHOW timezone` 这种写法 DuckDB 不认（当表名 → 42P01）。
+        // 改写成读真实参数，保证与 SET 的结果一致 —— 这里**不能**用固定答案，否则就是撒谎。
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "SHOW timezone", "SELECT current_setting('TimeZone') as \"TimeZone\"",
                         false,true
                 )
         );
@@ -378,7 +669,11 @@ public class SQLReplacer {
                 // 空语句，不再执行
                 continue;
             }
-            String newSql = applyRules(rules, oldSql);
+            String newSql = applyRules(rules,
+                    rewritePgCatalogCastType(
+                            rewritePgCatalogOperatorAndCollate(
+                                    rewriteByteaHexLiteral(
+                                            rewriteRegclassCast(oldSql)))));
             // PG的查询路径需要特殊处理，以去掉中间的空格和双引号。DUCK不支持空格和双引号
             if (newSql.startsWith("set search_path ="))
             {

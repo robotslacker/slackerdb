@@ -8,18 +8,24 @@ import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.request.CopyDataRequest;
 import org.slackerdb.dbserver.message.request.CopyDoneRequest;
+import org.slackerdb.dbserver.message.response.CommandComplete;
+import org.slackerdb.dbserver.message.response.CopyDone;
 import org.slackerdb.dbserver.message.response.CopyInResponse;
+import org.slackerdb.dbserver.message.response.CopyOutResponse;
 import org.slackerdb.dbserver.message.response.ErrorResponse;
 import org.slackerdb.dbserver.message.response.ReadyForQuery;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.dbserver.server.DBSession;
+import org.slackerdb.dbserver.server.PooledConnection;
 import org.slackerdb.dbserver.sql.antlr.CopyVisitor;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -91,8 +97,8 @@ public final class CopyProtocolHandler {
             if (parsed.getInteger("errorCode") != 0) {
                 return false;
             }
-            return "FROM".equals(parsed.getString("copyDirection"))
-                    && "STDIN".equals(parsed.getString("copyFilePath"));
+            return "FROM".equalsIgnoreCase(parsed.getString("copyDirection"))
+                    && "STDIN".equalsIgnoreCase(parsed.getString("copyFilePath"));
         }
         catch (Exception e) {
             // 解析失败按"不是 COPY"处理，交给原有流程报语法错误
@@ -123,10 +129,35 @@ public final class CopyProtocolHandler {
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
-        // 只支持 COPY <table> FROM STDIN
-        if (!"FROM".equals(parseObject.getString("copyDirection"))
-                || !"STDIN".equals(parseObject.getString("copyFilePath"))
-                || !"table".equals(parseObject.getString("copyType"))) {
+        // COPY ... TO STDOUT 是**导出**方向，不属于本方法：直接让位给 beginCopyOut。
+        // 没有这一句的话，下面的方向校验会把它当成"不受支持的 COPY"回 0A000，
+        // 调用方随即结束本回合，beginCopyOut 根本轮不到执行。
+        if (isCopyToStdout(sql)) {
+            return Result.NOT_COPY;
+        }
+
+        // 只支持 COPY <table> FROM STDIN。
+        //
+        // 两个例外：
+        //  1) 文件路径形态（`COPY t TO '/f.csv'` / `FROM '/f.csv'`）直接让位。
+        //     这类"服务端读写文件"交给 DuckDB 自己执行 —— 它的导出（parquet/分区/压缩）比 PG 的 COPY 强，
+        //     我们没理由拦，也不该引入"客户端可写服务端任意路径"的安全面。
+        //     注意：历史上这里被 TO 方向的校验一并拦掉，所以文件导出一直是 0A000。
+        //  2) 其余情况（例如 `COPY t TO STDOUT` 已由上面提前让位；走到这里的 TO STDOUT 一定是
+        //     FROM/TO 之外的方向）按不支持处理。
+        String copyFilePathText = parseObject.getString("copyFilePath");
+        if (copyFilePathText != null
+                && !"STDIN".equalsIgnoreCase(copyFilePathText)
+                && !"STDOUT".equalsIgnoreCase(copyFilePathText)) {
+            return Result.NOT_COPY;
+        }
+
+        // 比较一律用 equalsIgnoreCase：PG 的关键字不分大小写，`copy t from stdin` 必须与
+        // `COPY t FROM STDIN` 等价（否则用户拿到的是"Only support COPY .. FROM STDIN"这种
+        // 自己打自己脸的报错）。
+        if (!"FROM".equalsIgnoreCase(parseObject.getString("copyDirection"))
+                || !"STDIN".equalsIgnoreCase(copyFilePathText)
+                || !"table".equalsIgnoreCase(parseObject.getString("copyType"))) {
             sendErrorAndReady(request, ctx, out, "0A000",
                     "Feature not supported. Only support COPY .. FROM STDIN");
             return Result.REJECTED;
@@ -170,11 +201,16 @@ public final class CopyProtocolHandler {
                     copyDialect.getIgnoredOptions());
         }
 
-        if (!(session.dbConnection instanceof DuckDBConnection conn)) {
-            sendErrorAndReady(request, ctx, out, "0A000",
-                    "COPY is not available on the current connection");
-            return Result.REJECTED;
+        if (!(session.dbConnection instanceof DuckDBConnection)) {
+            // 会话连接由连接池发放，是对外句柄（PooledConnection），不是 DuckDBConnection。
+            // 先经 unwrap 取回底层物理连接再做类型判定，否则 COPY 会被误判成"当前连接不可用"。
+            if (!(PooledConnection.unwrapOrSame(session.dbConnection) instanceof DuckDBConnection)) {
+                sendErrorAndReady(request, ctx, out, "0A000",
+                        "COPY is not available on the current connection");
+                return Result.REJECTED;
+            }
         }
+        DuckDBConnection conn = (DuckDBConnection) PooledConnection.unwrapOrSame(session.dbConnection);
 
         // DuckDB 不支持只插入部分列的 Appender，所以要把表中不存在的列映射为 -1
         List<Integer> copyTableDbColumnMapPos = new ArrayList<>();
@@ -303,6 +339,210 @@ public final class CopyProtocolHandler {
         session.copySqlHistoryId = request.insertSqlHistory(ctx);
 
         return Result.COPY_STARTED;
+    }
+
+    /**
+     * 判断语句是否为 {@code COPY ... TO STDOUT}（用于 Parse 阶段决定"不要交给 JDBC prepare"）。
+     *
+     * <p><b>只认 STDOUT</b>：{@code COPY t TO '/path/f.csv'} 这类"服务端写文件"的导出
+     * 一律返回 false，交给 DuckDB 自己执行 —— DuckDB 原生导出（含 parquet/分区/压缩）比
+     * PG 的 COPY 强，我们没有理由拦住它，也不该引入"客户端可写服务端任意路径"的安全面。</p>
+     *
+     * <p>{@code COPY (query) TO STDOUT} 同样返回 true：语法里 {@code copyType} 是 {@code query}，
+     * 历史上完全没被识别，语句被直接丢给 DuckDB 并报
+     * {@code IO Error: Cannot open file "/dev/stdout"}。</p>
+     */
+    public static boolean isCopyToStdout(String sql) {
+        if (sql == null || sql.isEmpty()) {
+            return false;
+        }
+        try {
+            JSONObject parsed = CopyVisitor.parseCopyStatement(sql);
+            if (parsed.getInteger("errorCode") != 0) {
+                return false;
+            }
+            return "TO".equalsIgnoreCase(parsed.getString("copyDirection"))
+                    && "STDOUT".equalsIgnoreCase(parsed.getString("copyFilePath"));
+        }
+        catch (Exception e) {
+            // 解析失败按"不是 COPY TO STDOUT"处理，交给原有流程报语法错误
+            return false;
+        }
+    }
+
+    /**
+     * 执行一条 {@code COPY ... TO STDOUT} 并**同步**把全部数据推给客户端。
+     *
+     * <p>与 COPY IN 不同，COPY OUT 是服务端单向推流（客户端在这一阶段只接收），
+     * 因此不需要子协议状态机：本方法从 CopyOutResponse 一直写到 CommandComplete 就结束了，
+     * 之后由调用方补 ReadyForQuery。</p>
+     *
+     * <p>报文序列：{@code CopyOutResponse('H')} → {@code CopyData('d')} × N →
+     * {@code CopyDone('c')} → {@code CommandComplete("COPY n")}。</p>
+     *
+     * <p><b>内存</b>：逐行编码、累计到 {@link PostgresMessage#FLUSH_THRESHOLD_BYTES} 就 flush，
+     * 绝不整表缓冲 —— 大表导出不能靠内存兜。</p>
+     *
+     * @return {@link Result#COPY_STARTED}：本回合已完整结束（含 CommandComplete），
+     *         调用方<b>不要</b>再追加 CommandComplete；{@link Result#REJECTED}：错误与
+     *         ReadyForQuery 已发出；{@link Result#NOT_COPY}：不是 COPY TO STDOUT。
+     */
+    public static Result beginCopyOut(PostgresRequest request, ChannelHandlerContext ctx, ByteArrayOutputStream out,
+                                      String sql) throws IOException {
+
+        if (!isCopyToStdout(sql)) {
+            return Result.NOT_COPY;
+        }
+
+        DBInstance dbInstance = request.getDbInstance();
+        DBSession session = dbInstance.getSession(request.getCurrentSessionId(ctx));
+        if (session == null) {
+            return Result.NOT_COPY;
+        }
+
+        JSONObject parseObject = CopyVisitor.parseCopyStatement(sql);
+        String copyType = parseObject.getString("copyType");
+
+        // 选项解析与 COPY IN 共用同一份实现，两个方向的语义不会分叉
+        CopyDialect copyDialect;
+        try {
+            copyDialect = CopyDialect.fromOptions(parseObject.getJSONObject("options"));
+        }
+        catch (CopyDialect.InvalidOptionException e) {
+            sendErrorAndReady(request, ctx, out, "22023", e.getMessage());
+            return Result.REJECTED;
+        }
+
+        if (copyDialect.binary) {
+            // 二进制 COPY OUT 尚未实现（需要按 DuckDB 实际类型逐列编码）。
+            // 显式报错，而不是发一段客户端解不开的字节。
+            sendErrorAndReady(request, ctx, out, "0A000",
+                    "COPY ... TO STDOUT with FORMAT binary is not supported yet; use text or csv");
+            return Result.REJECTED;
+        }
+
+        // 组出等价的结果集查询：表形态 → SELECT（可带列清单）；子查询形态 → 去掉最外层括号的原文
+        String querySql;
+        if ("table".equalsIgnoreCase(copyType)) {
+            String table = parseObject.getString("table");
+            JSONArray columnsJson = parseObject.getJSONArray("columns");
+            StringBuilder select = new StringBuilder("SELECT ");
+            if (columnsJson == null || columnsJson.isEmpty()) {
+                select.append('*');
+            } else {
+                for (int i = 0; i < columnsJson.size(); i++) {
+                    if (i > 0) {
+                        select.append(", ");
+                    }
+                    select.append(columnsJson.get(i).toString().trim());
+                }
+            }
+            select.append(" FROM ").append(table);
+            querySql = select.toString();
+        } else {
+            // CopyVisitor 存的是含最外层括号的文本（grammar 的 query 规则捕获了括号）
+            querySql = stripOuterParentheses(parseObject.getString("query"));
+        }
+
+        long sqlHistoryId = request.insertSqlHistory(ctx);
+        long exportedRows = 0;
+        int pendingBytes = 0;
+
+        try {
+            try (PreparedStatement ps = session.dbConnection.prepareStatement(querySql)) {
+                long handleId = session.registerRunningStatement(ps);
+                try (ResultSet rs = ps.executeQuery()) {
+                    // 列数必须先于 CopyOutResponse 拿到（报文里就要带），
+                    // 因此这里先读一次元数据，再据此构造编码器。
+                    CopyOutEncoder encoder = new CopyOutEncoder(rs.getMetaData(), copyDialect);
+
+                    CopyOutResponse copyOutResponse = new CopyOutResponse(dbInstance);
+                    copyOutResponse.copyColumnCount = (short) encoder.getColumnCount();
+                    copyOutResponse.binary = false;
+                    copyOutResponse.process(ctx, request, out);
+                    PostgresMessage.writeAndFlush(ctx, CopyOutResponse.class.getSimpleName(),
+                            out, dbInstance.logger);
+
+                    // 只有 CSV 支持 HEADER（PG 语义，CopyDialect 已把关）
+                    if (copyDialect.csv && copyDialect.header) {
+                        encoder.encodeHeader(out);
+                        pendingBytes += writeCopyData(ctx, out, dbInstance);
+                    }
+
+                    while (rs.next()) {
+                        encoder.encodeRow(rs, out);
+                        pendingBytes += writeCopyData(ctx, out, dbInstance);
+                        exportedRows++;
+                        if (pendingBytes >= PostgresMessage.FLUSH_THRESHOLD_BYTES) {
+                            ctx.flush();
+                            pendingBytes = 0;
+                        }
+                    }
+                }
+                finally {
+                    session.unregisterRunningStatement(handleId);
+                }
+            }
+        }
+        catch (SQLException se) {
+            // 结果集还没推（或只推了一部分）就失败：错误响应与 ReadyForQuery 必须发出，
+            // 否则客户端会一直等数据。审计也要收尾。
+            request.updateSqlHistory(sqlHistoryId, -1, 0,
+                    SqlStateMapper.fromException(se) + ":" + se.getMessage());
+            sendErrorAndReady(request, ctx, out, SqlStateMapper.fromException(se), se.getMessage());
+            return Result.REJECTED;
+        }
+
+        // CopyDone → CommandComplete（COPY n）→ ReadyForQuery。
+        // 客户端靠 CopyDone 确认数据流结束，靠 ReadyForQuery 确认"本回合结束、可以发下一条语句"。
+        // 最后那个 Z 必须在这里发：调用方拿到 COPY_STARTED 就结束本回合（不会自己补 Z）。
+        CopyDone copyDone = new CopyDone(dbInstance);
+        copyDone.process(ctx, request, out);
+        PostgresMessage.writeAndFlush(ctx, CopyDone.class.getSimpleName(), out, dbInstance.logger);
+
+        CommandComplete commandComplete = new CommandComplete(dbInstance);
+        commandComplete.setCommandResult("COPY " + exportedRows);
+        commandComplete.process(ctx, request, out);
+        PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, dbInstance.logger);
+
+        ReadyForQuery copyOutReady = new ReadyForQuery(dbInstance);
+        copyOutReady.process(ctx, request, out);
+        PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, dbInstance.logger);
+
+        request.updateSqlHistory(sqlHistoryId, 0, exportedRows, null);
+
+        dbInstance.logger.debug("[SERVER][COPY       ] COPY OUT finished: type=[{}] rows={} format=[{}]",
+                copyType, exportedRows, copyDialect.format);
+
+        return Result.COPY_STARTED;
+    }
+
+    /**
+     * 把 {@code out} 里已编码好的一行包装成 {@code CopyData('d')} 报文发出。
+     *
+     * @return 本次写出的字节数（供调用方累计 flush 阈值）
+     */
+    private static long writeCopyData(ChannelHandlerContext ctx, ByteArrayOutputStream out, DBInstance dbInstance)
+            throws IOException {
+        byte[] payload = out.toByteArray();
+        out.reset();
+        out.write((byte)'d');
+        out.write(org.slackerdb.common.utils.Utils.int32ToBytes(4 + payload.length));
+        out.writeBytes(payload);
+        return PostgresMessage.write(ctx, "CopyData", out, dbInstance.logger);
+    }
+
+    /** 去掉子查询文本最外层的一对圆括号（{@code (SELECT ...)} → {@code SELECT ...}）。 */
+    private static String stripOuterParentheses(String query) {
+        if (query == null) {
+            return "";
+        }
+        String trimmed = query.trim();
+        if (trimmed.length() >= 2 && trimmed.charAt(0) == '('
+                && trimmed.charAt(trimmed.length() - 1) == ')') {
+            return trimmed.substring(1, trimmed.length() - 1).trim();
+        }
+        return trimmed;
     }
 
     /** 发错误 + ReadyForQuery（COPY 尚未进入子协议，需要自己收尾这一回合）。 */

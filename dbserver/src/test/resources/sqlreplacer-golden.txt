@@ -94,6 +94,9 @@ SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_extension%' ORDER BY 1	SELEC
 pg_catalog.pg_inherits	memory.duck_catalog.pg_inherits
 SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_inherits'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_inherits'
 SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_inherits%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_inherits%' ORDER BY 1
+pg_catalog.pg_get_userbyid	memory.duck_catalog.pg_get_userbyid
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_get_userbyid'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_get_userbyid'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_get_userbyid%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_get_userbyid%' ORDER BY 1
 set\\s+application_name.*	set\\s+application_name.*
 SELECT * FROM tbl_x WHERE col_y = 'set\\s+application_name.*'	SELECT * FROM tbl_x WHERE col_y = 'set\\s+application_name.*'
 SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+application_name.*%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'set\\s+application_name.*%' ORDER BY 1
@@ -127,6 +130,18 @@ SELECT * FROM tbl_x WHERE col_y LIKE '::regclass%' ORDER BY 1	SELECT * FROM tbl_
 ::regproc	
 SELECT * FROM tbl_x WHERE col_y = '::regproc'	SELECT * FROM tbl_x WHERE col_y = ''
 SELECT * FROM tbl_x WHERE col_y LIKE '::regproc%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE '%' ORDER BY 1
+::regtype	
+SELECT * FROM tbl_x WHERE col_y = '::regtype'	SELECT * FROM tbl_x WHERE col_y = ''
+SELECT * FROM tbl_x WHERE col_y LIKE '::regtype%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE '%' ORDER BY 1
+pg_catalog.pg_table_size	memory.duck_catalog.pg_table_size
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_table_size'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_table_size'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_table_size%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_table_size%' ORDER BY 1
+pg_catalog.pg_encoding_to_char	memory.duck_catalog.pg_encoding_to_char
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_encoding_to_char'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_encoding_to_char'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_encoding_to_char%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_encoding_to_char%' ORDER BY 1
+pg_catalog.pg_tablespace_location	memory.duck_catalog.pg_tablespace_location
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_tablespace_location'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_tablespace_location'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_tablespace_location%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_tablespace_location%' ORDER BY 1
 SHOW search_path	SELECT current_setting('search_path') as search_path
 SELECT * FROM tbl_x WHERE col_y = 'SHOW search_path'	SELECT * FROM tbl_x WHERE col_y = 'SELECT current_setting('search_path') as search_path'
 SELECT * FROM tbl_x WHERE col_y LIKE 'SHOW search_path%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'SELECT current_setting('search_path') as search_path%' ORDER BY 1
@@ -139,6 +154,9 @@ SELECT * FROM tbl_x WHERE col_y LIKE 'show transaction_isolation%' ORDER BY 1	SE
 SHOW datestyle	SELECT 'ISO, MDY' as DateStyle
 SELECT * FROM tbl_x WHERE col_y = 'SHOW datestyle'	SELECT * FROM tbl_x WHERE col_y = 'SELECT 'ISO, MDY' as DateStyle'
 SELECT * FROM tbl_x WHERE col_y LIKE 'SHOW datestyle%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'SELECT 'ISO, MDY' as DateStyle%' ORDER BY 1
+SHOW timezone	SELECT current_setting('TimeZone') as "TimeZone"
+SELECT * FROM tbl_x WHERE col_y = 'SHOW timezone'	SELECT * FROM tbl_x WHERE col_y = 'SELECT current_setting('TimeZone') as "TimeZone"'
+SELECT * FROM tbl_x WHERE col_y LIKE 'SHOW timezone%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'SELECT current_setting('TimeZone') as "TimeZone"%' ORDER BY 1
 .*pg_catalog.pg_get_keywords.*	
 SELECT * FROM tbl_x WHERE col_y = '.*pg_catalog.pg_get_keywords.*'	
 SELECT * FROM tbl_x WHERE col_y LIKE '.*pg_catalog.pg_get_keywords.*%' ORDER BY 1	

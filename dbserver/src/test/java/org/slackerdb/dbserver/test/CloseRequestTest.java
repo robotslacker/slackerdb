@@ -224,35 +224,40 @@ public class CloseRequestTest {
     // ================================================================
 
     /**
-     * 重复 Close、以及 Close 一个从未 Parse 过的名字，都必须有应答。
-     *
-     * <p>注意：这里<b>不</b>断言"未知名字回 CloseComplete"——PG 规范要求回
+     * 重复 Close、以及 Close 一个从未 Parse 过的名字：按 PG 规范回
      * {@code 26000 invalid_sql_statement_name} / {@code 34000 invalid_cursor_name}，
-     * 当前实现还回 CloseComplete。本用例只锁定"必须有应答、会话必须还能用"这条
-     * 在当前与未来实现下都成立的契约（不响应才是真正致命的：客户端会挂到空闲超时）。</p>
+     * 并且必须有应答（不响应才是真正致命的：客户端会挂到空闲超时）、会话必须还能用。
      */
     @Test
     void repeatedAndUnknownCloseAlwaysAnswersAndKeepsSessionUsable() throws Exception {
         try (PgWireClient client = newClient()) {
-            // 先 Parse 再连续关两次
+            // 先 Parse 再连续关两次：第一次成功（3Z），第二次按 PG 语义回 26000（EZ）
             client.sendParse("s5", "SELECT 1");
             client.sendSync();
             client.readUntilReadyForQuery();
 
-            for (int round = 0; round < 2; round++) {
-                client.sendClose('S', "s5");
-                client.sendSync();
-                assertEquals("3Z", PgWireClient.types(client.readUntilReadyForQuery()),
-                        "第 " + round + " 次重复 Close 的应答不符合预期");
-            }
+            client.sendClose('S', "s5");
+            client.sendSync();
+            assertEquals("3Z", PgWireClient.types(client.readUntilReadyForQuery()),
+                    "第一次 Close 应回 CloseComplete");
+
+            client.sendClose('S', "s5");
+            client.sendSync();
+            List<PgWireClient.Frame> twice = client.readUntilReadyForQuery();
+            assertEquals("EZ", PgWireClient.types(twice),
+                    "重复 Close 应回错误而不是 CloseComplete，实际=" + PgWireClient.types(twice));
+            assertEquals("26000", PgWireClient.errorField(twice, 'C'),
+                    "重复关闭已不存在的语句应回 26000 invalid_sql_statement_name");
 
             // 从未 Parse/Bind 过的名字：必须有应答（且不能把连接搞断）
             client.sendClose('S', "never_parsed_statement");
             client.sendClose('P', "never_bound_portal");
             client.sendSync();
             List<PgWireClient.Frame> frames = client.readUntilReadyForQuery();
-            assertEquals("33Z", PgWireClient.types(frames),
-                    "对未知名字的 Close 也必须有应答，实际序列=" + PgWireClient.types(frames));
+            // 第一条 Close('S') 报错 → 到 Sync 之前的那条 Close('P') 被丢弃（扩展协议语义）
+            assertEquals("EZ", PgWireClient.types(frames),
+                    "未知名字的 Close 应回错误并丢弃到 Sync，实际序列=" + PgWireClient.types(frames));
+            assertEquals("26000", PgWireClient.errorField(frames, 'C'));
 
             client.sendQuery("SELECT 'ok'");
             List<PgWireClient.Frame> query = client.readUntilReadyForQuery();

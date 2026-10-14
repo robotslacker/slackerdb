@@ -583,4 +583,30 @@ public class Utils {
 
         return result.toString().trim();
     }
+
+    /**
+     * 在异常原因链（cause chain）中查找指定类型的异常。
+     *
+     * <p>为什么需要它：Netty 的 {@code bootstrap.bind(...).sync()} 会把原生异常
+     * （如 {@code java.net.BindException}）包装成 {@code io.netty.channel.ChannelException}，
+     * 再被 {@code sync()} 包一层 {@code Exception}。想在调用处识别"端口被占用"，必须往下钻。</p>
+     *
+     * @param throwable 起始异常，可以为 {@code null}
+     * @param type      目标异常类型
+     * @return 找到的异常；找不到（或入参为 null）时返回 {@code null}
+     */
+    public static <T extends Throwable> T findCause(Throwable throwable, Class<T> type) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (type.isInstance(current)) {
+                return type.cast(current);
+            }
+            if (current.getCause() == current) {
+                // 自引用的 cause 链会导致死循环，防御性终止
+                break;
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
 }

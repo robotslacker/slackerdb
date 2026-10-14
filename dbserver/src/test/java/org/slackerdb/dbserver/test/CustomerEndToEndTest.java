@@ -361,12 +361,15 @@ public class CustomerEndToEndTest {
             // 即使返回-1，我们也可以继续测试
         }
 
-        // 验证MCP服务在列表中
-        System.out.println("步骤5: 验证MCP服务列表");
+        // 验证已注册的数据服务能被 agent 看到。
+        // MCP 2026-07-28 去掉了自定义的 services/list 方法：服务清单改为通过
+        // 资源 slackerdb://services 读取（可读上下文属于 resources）。
+        System.out.println("步骤5: 验证服务清单资源");
         String listRequestBody = JSON.toJSONString(Map.of(
                 "jsonrpc", "2.0",
                 "id", 1,
-                "method", "services/list"
+                "method", "resources/read",
+                "params", Map.of("uri", "slackerdb://services")
         ));
 
         HttpRequest listRequest = HttpRequest.newBuilder()
@@ -376,14 +379,17 @@ public class CustomerEndToEndTest {
                 .build();
 
         HttpResponse<String> listResponse = client.send(listRequest, HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, listResponse.statusCode(), "服务列表查询应该返回200");
+        assertEquals(200, listResponse.statusCode(), "服务清单资源查询应该返回200");
 
         JSONObject listResp = JSON.parseObject(listResponse.body());
         assertEquals("2.0", listResp.getString("jsonrpc"), "JSON-RPC版本应该是2.0");
         assertTrue(listResp.containsKey("result"), "应该有result字段");
 
-        JSONArray services = listResp.getJSONObject("result").getJSONArray("services");
-        assertTrue(services != null && !services.isEmpty(), "服务列表应该是数组");
+        JSONArray contents = listResp.getJSONObject("result").getJSONArray("contents");
+        assertTrue(contents != null && !contents.isEmpty(), "contents应该是非空数组");
+        JSONArray services = JSON.parseObject(contents.getJSONObject(0).getString("text"))
+                .getJSONArray("services");
+        assertTrue(services != null, "服务列表应该是数组");
         
         boolean foundCustomerService = false;
         for (int i = 0; i < services.size(); i++) {

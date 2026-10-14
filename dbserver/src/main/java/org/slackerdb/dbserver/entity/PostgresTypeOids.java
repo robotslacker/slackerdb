@@ -136,22 +136,140 @@ public class PostgresTypeOids {
         postgresOidAndType.put(2277, "ARRAY");
     }
 
-    public static int getTypeOidFromTypeName(String columnTypeName)
-    {
-        if (columnTypeName.startsWith("DECIMAL"))
-        {
-            columnTypeName = "DECIMAL";
-        }
+    /**
+     * PostgreSQL 内置数组类型的 OID：元素类型 OID → 数组类型 OID。
+     *
+     * <p>只登记 PG 标准数组 OID，这一点很重要：<b>客户端驱动的内置类型表里就有这些 OID</b>
+     * （数组→元素类型、数组→分隔符 ','、数组→{@code java.sql.Types.ARRAY} 都是写死的），
+     * 因此声明它们不需要 fake catalog 里额外建行；反过来，自己编一个非标准 OID 就会让
+     * 客户端"按 OID 反查类型名"的兜底查询落空——INTERVAL 当年就栽在这里（见本文件顶部注释）。</p>
+     */
+    private static final Map<Integer, Integer> postgresArrayOidOfElement = new HashMap<>();
 
-        if (postgresTypeAndOid.containsKey(columnTypeName)) {
-            return postgresTypeAndOid.get(columnTypeName);
-        }
-        else
+    static
+    {
+        postgresArrayOidOfElement.put(16, 1000);    // BOOLEAN   -> bool[]
+        postgresArrayOidOfElement.put(17, 1001);    // BYTEA     -> bytea[]
+        postgresArrayOidOfElement.put(20, 1016);    // BIGINT    -> int8[]
+        postgresArrayOidOfElement.put(21, 1005);    // SMALLINT  -> int2[]
+        postgresArrayOidOfElement.put(23, 1007);    // INTEGER   -> int4[]
+        postgresArrayOidOfElement.put(25, 1009);    // TEXT      -> text[]
+        postgresArrayOidOfElement.put(114, 199);    // JSON      -> json[]
+        postgresArrayOidOfElement.put(700, 1021);   // FLOAT     -> float4[]
+        postgresArrayOidOfElement.put(701, 1022);   // DOUBLE    -> float8[]
+        postgresArrayOidOfElement.put(1043, 1015);  // VARCHAR   -> varchar[]
+        postgresArrayOidOfElement.put(1082, 1182);  // DATE      -> date[]
+        postgresArrayOidOfElement.put(1083, 1183);  // TIME      -> time[]
+        postgresArrayOidOfElement.put(1114, 1115);  // TIMESTAMP -> timestamp[]
+        postgresArrayOidOfElement.put(1184, 1185);  // TIMESTAMPTZ -> timestamptz[]
+        postgresArrayOidOfElement.put(1186, 1187);  // INTERVAL  -> interval[]
+        postgresArrayOidOfElement.put(1266, 1270);  // TIMETZ    -> timetz[]
+        postgresArrayOidOfElement.put(1560, 1561);  // BIT       -> bit[]
+        postgresArrayOidOfElement.put(1700, 1231);  // DECIMAL   -> numeric[]
+        postgresArrayOidOfElement.put(2950, 2951);  // UUID      -> uuid[]
+
+        // 反向表（OID -> 类型名）也要认识这些数组 OID：BindRequest 会把客户端在 Parse 里
+        // 声明的参数类型 OID 翻译成类型名，不补的话会落到 getTypeNameFromTypeOid 的
+        // "Could not find postgres type" ERROR 分支。名字由元素类型的名字派生，避免两份表漂移。
+        for (Map.Entry<Integer, Integer> arrayEntry : postgresArrayOidOfElement.entrySet())
         {
-            // 对于不能识别的类型目前返回VARCHAR
-            return postgresTypeAndOid.get("VARCHAR");
+            String elementName = postgresOidAndType.get(arrayEntry.getKey());
+            if (elementName != null)
+            {
+                postgresOidAndType.put(arrayEntry.getValue(), elementName + "[]");
+            }
         }
     }
+
+    public static int getTypeOidFromTypeName(String columnTypeName)
+    {
+        if (columnTypeName == null)
+        {
+            return postgresTypeAndOid.get("VARCHAR");
+        }
+
+        // 列表 / 数组类型名是"<元素类型>[]"（INTEGER[]、DECIMAL(2,1)[]、VARCHAR[]…）。
+        // 元素类型在 PG 里有对应数组类型时，声明那个**真正的数组 OID**（客户端会按数组解码，
+        // 值也必须按 PG 数组字面量编码，见 RowEncoder）；否则退回文本。
+        if (columnTypeName.endsWith("[]"))
+        {
+            Integer arrayOid = getArrayTypeOidFromTypeName(columnTypeName);
+            if (arrayOid != null)
+            {
+                return arrayOid;
+            }
+            // 元素类型没有 PG 对应（STRUCT/MAP 元素、多层嵌套、未知类型）：
+            // 保持原有行为 —— 按字符串返回（与下面 "VARCHAR[]" -> 1043 的既有约定一致）。
+            //
+            // 注意：这里必须**早于** DECIMAL 前缀改写判断，否则 DECIMAL(2,1)[] 会被改写成
+            // "DECIMAL"，声明成 NUMERIC(1700) 却发文本，客户端会按 numeric 解析并失败。
+            return postgresTypeAndOid.get("VARCHAR");
+        }
+
+        Integer scalarOid = scalarTypeOidOf(columnTypeName);
+        return scalarOid != null ? scalarOid : postgresTypeAndOid.get("VARCHAR");
+    }
+
+    /**
+     * 标量类型名 → PG 类型 OID；不认识返回 {@code null}。
+     *
+     * <p>语义与改造前一致：带精度声明的 {@code DECIMAL(p,s)} 一律归到 DECIMAL，
+     * 其余按原样（大写）查表。</p>
+     */
+    private static Integer scalarTypeOidOf(String typeName)
+    {
+        if (typeName == null)
+        {
+            return null;
+        }
+        String name = typeName;
+        if (name.startsWith("DECIMAL"))
+        {
+            name = "DECIMAL";
+        }
+        return postgresTypeAndOid.get(name);
+    }
+
+    /**
+     * {@code <元素类型>[]} → PostgreSQL 数组类型 OID；不支持时返回 {@code null}。
+     *
+     * <p>本方法同时是"这一列能不能按 PG 数组发送"的<b>唯一判据</b>：
+     * {@code RowEncoder} 用它决定值的编码方式，{@link #getTypeOidFromTypeName} 用它决定
+     * RowDescription 里声明的 OID —— 两者共用同一个判断，永远不会出现"声明成数组却发文本"。</p>
+     *
+     * <p>当前只支持<b>一维</b>且元素类型有 PG 对应的列表：</p>
+     * <ul>
+     *   <li>{@code INTEGER[]}/{@code VARCHAR[]}/{@code DECIMAL(18,3)[]} … → 支持；</li>
+     *   <li>{@code STRUCT(...)[]}/{@code MAP(...)[]} → PG 没有对应元素类型，不支持（回退文本）；</li>
+     *   <li>{@code INTEGER[][]} 等多层嵌套 → PG 用同一个数组类型表示多维，但鸭子/锯齿语义
+     *       需要额外校验才能安全编码，本版先不做（回退文本）。</li>
+     * </ul>
+     */
+    public static Integer getArrayTypeOidFromTypeName(String columnTypeName)
+    {
+        if (columnTypeName == null)
+        {
+            return null;
+        }
+        String name = columnTypeName.trim();
+        if (!name.endsWith("[]"))
+        {
+            return null;
+        }
+        String elementName = name.substring(0, name.length() - 2).trim();
+        if (elementName.endsWith("[]"))
+        {
+            // 多层嵌套：暂不支持
+            return null;
+        }
+        Integer elementOid = scalarTypeOidOf(elementName);
+        if (elementOid == null)
+        {
+            return null;
+        }
+        return postgresArrayOidOfElement.get(elementOid);
+    }
+
 
     /**
      * 定长类型在 PG 里的内部宽度（{@code pg_type.typlen}）。

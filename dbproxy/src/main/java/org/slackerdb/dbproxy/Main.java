@@ -7,7 +7,7 @@ package org.slackerdb.dbproxy;
  */
 
 import ch.qos.logback.classic.Logger;
-import org.slackerdb.common.utils.OSUtil;
+import org.slackerdb.common.utils.AppDaemon;
 import org.slackerdb.dbproxy.server.ProxyInstance;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.logger.AppLogger;
@@ -16,10 +16,6 @@ import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -49,7 +45,8 @@ public class Main {
         System.out.println("  version   print server version.");
         System.out.println("Parameters:");
         System.out.println("  --conf              Configuration file.");
-        System.out.println("  --daemon            Run server in background. default is false.");
+        System.out.println("  --daemon            Run in background daemon mode: true|false (bare --daemon means true)."
+                + " Overrides daemon= in the config file. Default is false.");
         System.out.println("  --pid               process pid file, default is none.");
         System.out.println("  --locale            default language of the program.");
         System.out.println("  --log_level         log level, default is INFO.");
@@ -57,68 +54,35 @@ public class Main {
         System.out.println("  --bind              server bind ip address, default is 0.0.0.0");
         System.out.println("  --port              data service listener port. default is random");
         System.out.println("  --portX             management service listener port. default is random");
+        System.out.println("  --listener_address  Multicast group to discover backend databases from, as <group>:<port>"
+                + " (for example 239.255.66.66:46666)."
+                + " Must match the dbserver advertise_address. Default: none (discovery disabled).");
     }
 
     // 主程序
     public static void main(String[] args){
-        // 获得当前程序启动的JAVA_HOME
-        String javaHome = System.getProperty("java.home");
-
-        // 获取当前JAR包所在的目录
-        URL url = Main.class
-                .getProtectionDomain()
-                .getCodeSource()
-                .getLocation();
-        String jarPath;
-        jarPath = URLDecoder.decode(url.getPath(), StandardCharsets.UTF_8);
-        if (jarPath.contains("/!")) {
-            jarPath = jarPath.substring(0, jarPath.indexOf("/!"));
-        }
-        jarPath = jarPath.replace("nested:", "");
-        if (!jarPath.endsWith(".jar"))
-        {
-            jarPath = null;
+        // 处理应用程序参数。
+        // 参数解析统一交给 AppDaemon.parse，避免"Main 里一套、拉起后台副本时又拼一套"导致行为不一致：
+        // 它同时给出 1) 保留原始顺序的选项列表（拉起后台副本时原样搬运）2) 子命令 3) --daemon 意图。
+        AppDaemon.ParsedArguments parsedArguments;
+        try {
+            parsedArguments = AppDaemon.parse(args);
+        } catch (IllegalArgumentException iae) {
+            // 例如 --daemon maybe、或者给了两个子命令
+            System.err.println("Error: " + iae.getMessage());
+            showUsage();
+            System.exit(255);
+            return;
         }
 
-        // 处理应用程序参数
+        // 兼容既有代码：仍然按"选项名(小写) -> 取值"的 map 提供参数
         Map<String, String> appOptions = new HashMap<>();
-        // 参数-子命令
-        String subCommand = null;
-        String paramName = null;
-        String paramValue;
-        for (String arg : args) {
-            if (arg.startsWith("--")) {
-                // --开头的内容被认为是参数名称
-                paramName = arg.substring(2);
-            }
-            else
-            {
-                if (paramName == null)
-                {
-                    if (subCommand == null) {
-                        subCommand = arg;
-                    }
-                    else
-                    {
-                        // 最后只能有一个命令参数存在
-                        System.err.println(
-                                "Error: Only one subcommand is required. But you have more .. [" + subCommand + ", " + arg + " ...].");
-                        showUsage();
-                        System.exit(255);
-                    }
-                }
-                else
-                {
-                    paramValue = arg;
-                    appOptions.put(paramName.toLowerCase(), paramValue);
-                    paramName = null;
-                }
-            }
+        for (AppDaemon.Option option : parsedArguments.options()) {
+            appOptions.put(option.name().toLowerCase(), option.value());
         }
-        if (paramName != null)
-        {
-            appOptions.put(paramName.toLowerCase(), null);
-        }
+
+        List<AppDaemon.Option> orderedOptions = parsedArguments.options();
+        String subCommand = parsedArguments.subCommand();
 
         if (subCommand == null)
         {
@@ -129,73 +93,43 @@ public class Main {
             return;
         }
 
-        // 检查是否用后台方式启动
-        boolean daemonMode = appOptions.containsKey("daemon") && appOptions.get("daemon").equalsIgnoreCase("true");
+        // 检查是否用后台方式启动。
+        // 注意这里有两点与历史实现不同（都是"静默做错事"的坑，详见 AppDaemon 类注释）：
+        //   1. --daemon 的取值必须合法，写错（如 --daemon maybe）直接报错，而不是静默当前台运行；
+        //   2. 命令行里显式给出的 --daemon 优先于配置文件，否则配置文件里写着 daemon=true 时
+        //      子进程会重新读到它并再次 fork，形成无限递归。
+        AppDaemon.DaemonIntent daemonIntent = parsedArguments.intent();
 
-        // 如果有配置文件，用配置文件中数据进行更新
+        // 如果有配置文件，用配置文件中数据进行更新（命令行已经显式给出 --daemon 时以命令行为准）
         if (appOptions.containsKey("conf"))
         {
             ServerConfiguration serverConfiguration = new ServerConfiguration();
             serverConfiguration.loadConfigurationFile(appOptions.get("conf"));
-            if (serverConfiguration.getDaemonMode())
-            {
-                daemonMode = true;
-            }
+            daemonIntent = AppDaemon.resolve(daemonIntent, serverConfiguration.getDaemonMode());
         }
 
         // 只有start命令才支持daemon模式，其他情况下不支持
-        if (daemonMode && !subCommand.equalsIgnoreCase("start"))
+        daemonIntent = new AppDaemon.DaemonIntent(
+                AppDaemon.applySubCommandRestriction(daemonIntent, subCommand, null),
+                daemonIntent.fromCli());
+
+        if (daemonIntent.requested())
         {
-            System.out.println("Warn: [" + subCommand + "] does not support daemon mode, ignore it.");
-            daemonMode = false;
-        }
-
-        if (daemonMode)
-        {
-            if (jarPath != null) {
-                String javaCommand;
-                if (System.getProperty("os.name").toLowerCase().contains("win")) {
-                    javaCommand = Path.of(javaHome, "bin", "java.exe").toString();
-                } else {
-                    javaCommand = Path.of(javaHome, "bin", "java").toString();
-                }
-                List<String> daemonCommand = new ArrayList<>();
-                // JAVA_BIN
-                daemonCommand.add(javaCommand);
-                // JAR包
-                daemonCommand.add("-jar");
-                daemonCommand.add(jarPath);
-                // 复制其他参数
-                for (String paramKey : appOptions.keySet()) {
-                    if (paramKey.equalsIgnoreCase("daemon")) {
-                        continue;
-                    }
-                    daemonCommand.add("--" + paramKey);
-                    if (appOptions.get(paramKey) != null) {
-                        daemonCommand.add(appOptions.get(paramKey));
-                    }
-                }
-                // 子进程不能带有daemon参数，避免循环
-                daemonCommand.add("--daemon");
-                daemonCommand.add("false");
-
-                // 复制命令
-                daemonCommand.add(subCommand);
-
-                // 非阻塞执行
-                try {
-                    long pid = OSUtil.launchDaemon(daemonCommand.toArray(new String[0]));
-                    System.out.println("Daemon pid [" + pid + "] has successful started in background.");
+            // 先按命令行/配置文件里的日志设置把日志系统建起来：父进程只多打一条
+            // "Daemon started"，但这条恰恰是排查"到底是哪个进程在跑"时唯一需要的线索，
+            // 而子进程的启动日志本来就落在同一个文件里。
+            String logTarget = appOptions.get("log");
+            Logger daemonLogger = AppLogger.createLogger("SLACKER-PROXY", "INFO", logTarget);
+            try {
+                if (AppDaemon.startInBackground(Main.class, subCommand, orderedOptions,
+                        logTarget, "log", daemonLogger)) {
                     System.exit(0);
-                } catch (Exception se) {
-                    se.printStackTrace(System.err);
-                    System.exit(255);
                 }
+            } catch (Exception se) {
+                daemonLogger.error("[DAEMON] Failed to start daemon process.", se);
+                System.exit(255);
             }
-            else
-            {
-                System.err.println("Error: Daemon is not supported in dev mode. Ignored.");
-            }
+            // 返回 false 说明当前是开发模式（不是从 jar 启动），无法脱离当前进程，继续前台运行
         }
 
         // 从资源信息中读取系统的版本号
@@ -277,6 +211,10 @@ public class Main {
             if (appOptions.containsKey("portx"))
             {
                 serverConfiguration.setPortX(appOptions.get("portx"));
+            }
+            if (appOptions.containsKey("listener_address"))
+            {
+                serverConfiguration.setListenerAddress(appOptions.get("listener_address"));
             }
             if (appOptions.containsKey("pid"))
             {

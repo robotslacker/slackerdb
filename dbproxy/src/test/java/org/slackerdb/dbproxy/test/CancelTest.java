@@ -72,13 +72,12 @@ public class CancelTest {
             Sleeper.sleep(50);
         }
 
-        // 启动两个 dbserver，让它们向代理自注册（用于验证取消的多别名路由隔离）
+        // 启动两个 dbserver，并把它们登记到代理（用于验证取消的多别名路由隔离）
         org.slackerdb.dbserver.configuration.ServerConfiguration cfg1 =
                 new org.slackerdb.dbserver.configuration.ServerConfiguration();
         cfg1.setPort(0);
         cfg1.setData("mem1");
         cfg1.setLog_level("INFO");
-        cfg1.setRemoteListener("127.0.0.1:" + proxyPort);
         dbInstance1 = new DBInstance(cfg1);
         dbInstance1.start();
 
@@ -87,9 +86,12 @@ public class CancelTest {
         cfg2.setPort(0);
         cfg2.setData("mem2");
         cfg2.setLog_level("INFO");
-        cfg2.setRemoteListener("127.0.0.1:" + proxyPort);
         dbInstance2 = new DBInstance(cfg2);
         dbInstance2.start();
+
+        // 原来靠 dbserver 的 remote_listener 自注册，该参数已被组播发现取代并删除
+        LocalBackendRegistration.register(proxyInstance, dbInstance1);
+        LocalBackendRegistration.register(proxyInstance, dbInstance2);
 
         long deadline = System.currentTimeMillis() + 30_000;
         while (System.currentTimeMillis() < deadline

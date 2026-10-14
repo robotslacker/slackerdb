@@ -5,36 +5,35 @@ image::robotslacker.jpg[RobotSlacker]
 
 === 什么是 SlackerDB？
 
-SlackerDB 是一个强大的、基于 Java 的 DuckDB 扩展，它把 DuckDB 从一个本地的、单进程数据库
-转变为一个支持网络访问、可多进程连接的数据服务平台。它弥合了 DuckDB 卓越的分析性能
-与现代应用连接性需求之间的差距。
+SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。它说 PostgreSQL 线路协议，
+因此标准的 PostgreSQL 客户端无需任何专用驱动即可连接；同时它让多个客户端能够共用同一份
+DuckDB 库 —— 这是单进程的 DuckDB 做不到的。在此之上，它还提供了一层注册式 SQL，
+把查询变成可缓存的 HTTP 端点，以及一条用于装载数据的批量 COPY 通道。
+
+它既可以作为独立服务器（`dbserver`）运行，也可以直接嵌入 Java 应用。
 
 ==== 能力
 
-* *网络化的 DuckDB* —— 突破 DuckDB 仅限本地的限制，提供完整的 TCP/IP 网络访问，允许远程客户端通过标准的 PostgreSQL 线路协议连接。
-* *多进程支持* —— 支持来自多个进程和应用的并发访问，克服 DuckDB 的单进程限制。
-* *PostgreSQL 协议兼容* —— 实现 PostgreSQL 线路协议，使 DuckDB 可以通过任何兼容 PostgreSQL 的客户端（JDBC、ODBC、libpq、psql 等）访问。
-* *高性能数据导入* —— 支持 PostgreSQL COPY 语法进行批量数据加载，性能可与 DuckDB 原生导入相媲美。
-* *双层架构* —— 同时提供直接数据库服务器（`dbserver`）和连接代理（`dbproxy`）：前者对外提供数据库服务，后者按会话别名把客户端连接转发到后端服务器。
-* *可嵌入设计* —— 可以作为库直接嵌入 Java 应用，也可以作为独立服务器运行。
-* *灵活部署* —— 支持多种部署模式：独立服务器、嵌入式库。
-* *插件系统* —— 基于 PF4J 的可扩展插件框架，用于自定义功能、HTTP 端点以及与外部系统的集成。
+* *PostgreSQL 线路协议* —— 标准 PostgreSQL 客户端开箱即连：JDBC、ODBC、libpq、psql、Python，以及 DBeaver 这类数据库工具。系统目录兼容层（`pg_catalog` 仿真）保证第三方客户端的元数据查询可用。
+* *多会话访问* —— 一份 DuckDB 库同时服务多个并发客户端会话，具备连接池、会话级状态，SQL 在网络 I/O 线程之外执行。
+* *查询取消* —— 客户端取消与 `KILL SESSION` 能命中真正正在执行的那条语句。
+* *高性能数据导入* —— 支持 PostgreSQL `COPY … FROM STDIN` 的 CSV 与 BINARY 两种形式，流式解码路径实测约 0.6–2.3 百万行/秒（视数据形态而定）。
+* *注册式 SQL 服务* —— 在运行时把参数化 SQL 注册为具名 HTTP 端点，自带结果缓存、服务版本与按服务设定的搜索路径。
+* *服务器管理接口* —— 管理端口提供状态与指标、数据库备份、日志查看与文件上传下载。
+* *WebSocket 异步 SQL* —— 异步执行 SQL 并分页取回结果，适用于单次请求装不下或太慢的查询。
+* *可嵌入设计* —— 既可独立进程运行，也可嵌入 Java 代码；多个实例可在不同端口上并行运行。
+* *插件系统* —— 基于 PF4J 的可扩展插件框架，用于自定义功能、HTTP 端点与后台任务，支持运行时加载/启动/停止/卸载。
 * *数据加密* —— 利用 DuckDB 原生加密实现静态数据保护。
-
-==== 数据服务平台
-
-* *RESTful 数据 API* —— 通过全面的 REST API 暴露数据库操作，可与 Web 应用、微服务和无服务器架构集成。
-* *自管理服务* —— 允许在运行时动态注册和管理数据服务，而无需重启服务器。
-* *SQL 即服务* —— 将 SQL 查询转变为可复用、参数化的 API 端点，内置缓存和安全控制。
-
 
 ==== 使用场景
 
-* *分析型应用后端* —— 作为 BI 工具、仪表盘和报表应用的数据引擎。
-* *边缘计算* —— 面向边缘设备和 IoT OLAP 应用的轻量级、可嵌入数据库。
+* *分析型应用后端* —— 作为期待 PostgreSQL 连接的 BI 工具、仪表盘和报表应用的数据引擎。
+* *共享内部数据集* —— 把已有的 `.duckdb` 文件装载一次，让多个团队与工具并发查询，无需搬迁或更换平台。
+* *本地化数据处理* —— 在单机上完成批量导入、变换与查询，不必再起一套独立的数据库系统。
+* *Java 内嵌服务* —— 在 Java 应用内部提供一个可联网的分析型存储，并可用插件框架提供应用专属端点。
 
-SlackerDB 将 DuckDB 的分析能力与网络连接性结合在一起，使其成为既需要高性能
-又需要灵活访问模式的现代数据驱动应用的理想解决方案。
+SlackerDB 面向的是这样一类团队：想要 DuckDB 的分析性能，但需要它能通过网络访问、
+能被现有的 PostgreSQL 工具链使用、并且能在多个并发客户端之间共享。
 
 === 使用方式
 
@@ -119,6 +118,9 @@ extension_dir=
 plugins_dir=
 
 # 以后台守护进程方式运行（true/false）。默认是false
+# 命令行写法：--daemon true|false，裸写 --daemon 等价于 true。
+# 命令行上显式给出 --daemon 时以此为准，覆盖本配置项。
+# 只有 start 子命令支持后台运行。
 daemon=
 
 # PID 文件位置
@@ -156,10 +158,22 @@ bind=0.0.0.0
 # 客户端连接空闲超时（秒）
 client_timeout=600
 
-# 外部远程监听器注册中心端点
-# 格式：IP:PORT
-# 默认：无（禁用）
-remote_listener=
+# 组播服务发现：本服务向哪个组播组通报自己。
+# 格式：<组IP>:<端口>（IPv6 组需加方括号：[ff02::1]:46666）
+# IPv4 组必须在 224.0.0.0/4 之内，其中 224.0.0.0/24 为保留段会被拒绝。
+# 没有默认值：留空即彻底不启用服务发现。
+# 代理端必须在 listener_address 里配置**完全相同**的取值，否则什么都发现不了，
+# 而且本端也不会有任何报错。
+# 示例：239.255.66.66:46666
+advertise_address=
+
+# 发送组播通告所用的本机网卡。
+# 可填网卡名（eth0、Ethernet）或本机 IPv4 地址；留空则自动选择第一块可用网卡
+# （up、支持组播、非回环、且有非 link-local 的 IPv4 地址），选择规则是确定性的，
+# 同一台机器每次启动都会选中同一块。实际选中的网卡与地址会在启动日志里打印——
+# 发现不通时先看这里。
+# advertise_address 为空时本参数被忽略。
+advertise_nic=
 
 # 数据库打开模式。
 # 默认：READ_WRITE
@@ -245,12 +259,14 @@ data_service_history=
 # - Schema 文件应包含 JSON 格式的服务定义
 data_service_schema=
 
-# MCP 配置文件/路径
-# 指定用于动态加载工具/资源的 Model Context Protocol 配置文件。
+# 启动时加载的 MCP 定义
 # - 接受：
 #   * JSON 文件路径（单个配置）
-#   * 目录路径（加载所有 *.mcp 文件）
-# 默认：空（无 MCP 配置）
+#   * 目录路径（按名字顺序加载所有 *.mcp 与 *.service 文件）
+# - 每个工具条目可设置 "handler": "builtin:<名称>" 以绑定到真实实现
+#   （run_sql、list_tables、describe_table、sample_rows、list_services、
+#    open_session、close_session）。未设置 "handler" 的工具只会回显入参。
+# 默认：空（不加载 MCP 定义；内置工具始终可用）
 mcp_config=
 
 # MCP LLM 服务器配置
@@ -294,6 +310,9 @@ log=CONSOLE,logs/slackerdb-proxy.log
 log_level=INFO
 
 # 以后台守护进程方式运行（true/false）
+# 命令行写法：--daemon true|false，裸写 --daemon 等价于 true。
+# 命令行上显式给出 --daemon 时以此为准，覆盖本配置项。
+# 只有 start 子命令支持后台运行。
 daemon=
 
 # 主服务端口
@@ -310,6 +329,14 @@ port_x=
 # 网络绑定地址
 bind=0.0.0.0
 
+# 组播服务发现：从哪个组播组接收后端数据库的通告。
+# 格式：<组IP>:<端口>（IPv6 组需加方括号：[ff02::1]:46666）
+# 没有默认值：留空即不启用发现，此时后端只能通过遗留的 REGISTER 命令登记（已弃用）。
+# 必须与 dbserver 的 advertise_address **逐字一致**。两者不一致时：什么都发现不了，
+# 也不会报任何错——后端一直不出现就先查这个值。
+# 示例：239.255.66.66:46666
+listener_address=
+
 # 客户端连接空闲超时（秒）
 client_timeout=600
 
@@ -325,6 +352,67 @@ locale=
 注意：所有参数都是可选的。 +
 你可以只保留需要修改的参数。 +
 未配置的参数将使用默认值。
+
+==== 服务发现：从注册机制迁移到组播
+
+旧版本里，dbserver 通过 `remote_listener` 参数周期性地向一个固定的代理地址（`IP:PORT`）发送
+`REGISTER` 命令来完成登记，停止时发送 `UNREGISTER`。**该参数已被删除**，取而代之的是 UDP
+组播发现：dbserver 周期性向一个组播组喊"我在这儿"，代理加入同一个组收听，并据此维护
+别名到后端的映射。
+
+.参数映射
+[cols="1,1,2",options="header"]
+|===
+| 旧 | 新 | 说明
+| dbserver `remote_listener=IP:PORT` | dbserver `advertise_address=<组IP>:<端口>` | 语义变了：从"指向一台代理的单播地址"变成"一个网段内的组播组"
+| — | dbserver `advertise_nic=<网卡名或本机IP>` | 新增；留空自动选第一块可用网卡
+| — | dbproxy `listener_address=<组IP>:<端口>` | 新增；必须与 dbserver 的 `advertise_address` 逐字一致
+|===
+
+**没有默认值**：两端都不配置就是不启用，不会退回到某个"看起来能用"的组。
+**没有兜底通道**：旧的单播 `REGISTER` / `UNREGISTER` 命令已从代理删除，因此两端必须都升级到位。
+
+.升级方式
+[cols="1,3",options="header"]
+|===
+| 方式 | 说明
+| 停机整体升级（推荐） | 停掉两端 → 升级 → 改配置 → 启动。没有发现空窗
+| 滚动升级 | 会有空窗，且**先升哪一端都会空**：先升 dbserver，老代理收不到组播，新 dbserver 在窗口内不可见；先升代理，老 dbserver 的注册已无人接收，老 dbserver 在窗口内不可见。生产环境请安排维护窗口
+|===
+
+.升级步骤
+[cols="1,3",options="header"]
+|===
+| 步骤 | 操作
+| 1 | 停掉 dbserver 与 dbproxy
+| 2 | 升级 **dbproxy**，conf 里加上 `listener_address=<组IP>:<端口>`
+| 3 | 升级 dbserver：conf 里**删掉** `remote_listener=`，加上 `advertise_address=`（需要时再加 `advertise_nic=`）
+| 4 | 两端一起启动
+| 5 | 在代理上执行 `status`，确认别名已经出现（`Lease` 一栏应有剩余时间）
+|===
+
+WARNING: `remote_listener` 是**硬删除**。配置解析对未知参数是直接报错（`SLACKERDB-00004`），
+所以一份还留着 `remote_listener=` 的旧 conf 会让新版 dbserver **启动不起来**。这不是"注册不上"，
+而是进程退出。升级 dbserver 时必须同步改配置。
+
+WARNING: 回滚时两头都要回：先回滚 dbserver 与 dbproxy，配置文件也要一起回滚。
+
+.发现不通时的排查清单
+[cols="1,3",options="header"]
+|===
+| 现象 | 检查项
+| 代理上什么都没有 | 两端配置的组地址是否逐字一致；dbserver 的启动日志里有没有 `[DISCOVERY] Advertising ...` 这一行；代理的启动日志里有没有 `[DISCOVERY] Listening on ...`
+| dbserver 启动就失败 | 网卡名是否写错；本机是否有可用网卡（`advertise_nic=` 留空试试）
+| 代理日志出现 `Unknown admin command [REGISTER ...]` | 有 dbserver 还在用旧版本、旧的注册参数。它已经被发现机制无视，必须升级
+| 日志里有 `No announcement received ... for 60 seconds` | 防火墙是否放行了入站 UDP（默认端口 46666）；交换机是否开启了 IGMP snooping；是否跨了子网（组播 TTL 固定为 1，不出子网）
+| 别名出现过又消失 | 目标所在机器是否在 15 秒内都没有通告（进程被杀、机器休眠、网络抖动）
+| 容器 / Kubernetes 环境 | 多数 CNI 不转发组播，本机制在此类环境不可用，需要另行规划（例如宿主机网络模式或单播发现）
+|===
+
+NOTE: 别名默认等于数据库名，与旧的 `AS <数据库名>` 完全一致，因此**客户端连接串不需要修改**。
+
+NOTE: 主机的实际通告地址默认取"UDP 报文的源地址"而不是报文里自报的地址——源地址天然是从代理
+视角可达的那个。多网卡机器请用 `advertise_nic` 明确指定，或核对启动日志里打印的选中结果。
 
 ==== JDBC 支持
 
@@ -1265,9 +1353,213 @@ POST 请求示例：
   }
 ....
 
-==== MCP 工具
+请求未注册的服务时返回 **HTTP 404**，响应体为
+`{"retCode": 404, "retMsg": "GET /api/1.0/xxx is not registered."}`。
 
-MCP（Model Context Protocol，模型上下文协议）工具提供了通过 MCP 协议注册、管理和调用工具的方式。这些工具可供 AI 助手和其他支持 MCP 的客户端使用，以执行特定操作或查询。
+`${var}` 占位符**始终**会被校验：如果某个占位符取不到值（请求里没带、`parameters`
+里没有默认值、也没有对应的令牌上下文变量），请求会以 `retCode = -1`、
+`retMsg = "Missing required parameters: <名称列表>"` 被拒绝——SQL 绝不会带着字面量
+`${var}` 被执行。
+
+===== 返回值类型
+
+HTTP 数据服务与 SQL REPL 使用同一套 JSON 表示，客户端不需要了解驱动差异：
+
+[cols="1,2",options="header",]
+|===
+|值类型 |JSON 表示
+
+|INTEGER/BIGINT/HUGEINT/DECIMAL/DOUBLE |数字
+|VARCHAR/UUID/INTERVAL |字符串
+|BOOLEAN |true/false
+|DATE/TIME |ISO-8601 字符串（`2026-10-09`、`12:34:56`）
+|TIMESTAMP |不带时区的 ISO-8601 字符串（`2026-10-09T12:34:56`）
+|TIMESTAMP WITH TIME ZONE |带偏移量的 ISO-8601 字符串（`2026-10-09T20:34:56+08:00`）
+|BLOB |Base64 字符串
+|LIST/ARRAY |JSON 数组
+|STRUCT |以字段名为键的 JSON 对象
+|MAP |JSON 对象
+|JSON |真实 JSON 值（不是被转义的字符串，也不是驱动内部结构）
+|NULL |null
+|===
+
+结果集会一次性物化到单个响应里：数据服务 API 没有游标/流式变体，超大结果受内存限制。
+
+==== MCP 服务器
+
+SlackerDB 在管理端口上运行一个 Model Context Protocol（模型上下文协议，MCP）服务器，
+让 AI 助手与其他 MCP 客户端能够查看和查询数据库。
+
+本实现以规范的 **`2026-07-28`** 修订版为目标，同时接受更早的修订版（双代兼容），
+因为已安装的客户端普遍滞后于规范。
+
+===== 协议面
+
+[cols="1,3",options="header",]
+|===
+|项 |行为
+
+|传输 |Streamable HTTP：所有消息都是对 `/mcp` 的 `POST`（`/jsonrpc` 保留为兼容别名）。
+|会话 |**协议层面没有会话。** `initialize` 握手与 `Mcp-Session-Id` 已在 `2026-07-28` 中移除。
+每个请求都在 `params._meta` 里自带协议版本与客户端能力
+（`io.modelcontextprotocol/protocolVersion`、`.../clientCapabilities`）。
+版本不匹配返回 `UnsupportedProtocolVersionError`（`-32020`）。
+|`server/discover` |已按规范强制要求实现。公布支持的协议版本、能力、服务器身份与使用说明。
+以普通 `POST` 发送。
+|GET 请求 |返回 `405 Method Not Allowed`（并带 `Allow: POST`）。规范已移除 GET 端点，
+而已安装的客户端会探测它来判断服务端是否提供 SSE 流——405 正是文档规定的"不提供"答复，
+因此这样能让较旧的 SDK 客户端正常连上。
+|结果信封 |所有结果都带 `resultType`（`complete` 或 `input_required`）。
+|缓存 |`tools/list`、`prompts/list`、`resources/list`、`resources/read` 与
+`resources/templates/list` 都带 `ttlMs` 与 `cacheScope`。
+|`tools/list` |确定性顺序（按名字排序），以保证客户端缓存与 LLM 提示词缓存持续生效。
+|已移除的方法 |`ping` 与 `logging/setLevel` 会明确返回"已在 2026-07-28 移除"的错误，
+而不是被静默接受。`GET /sse` 端点已删除；日志级别改为按请求通过 `_meta` 指定。
+|===
+
+===== 内置工具
+
+[cols="1,3",options="header",]
+|===
+|工具 |说明
+
+|`open_session` |打开一个有状态的 SQL 会话并返回**服务端铸造的 handle**。把该 handle 传给
+`run_sql`，即可让临时表、事务与会话设置在多次调用之间存活。会话空闲后过期，也可由
+`close_session` 关闭。
+|`close_session` |关闭会话并立即释放其连接。
+|`run_sql` |执行只读 SQL，最多返回 `max_rows` 行，并通过 `truncated` 报告是否被截断。
+结果里还带 `read_only`、`statement_type`（`query`/`update`）与 `elapsed_ms`。
+|`list_tables` |以 `tables` 数组返回表与视图，每项为 `{schema, name, type}`，可按 schema 过滤。
+|`describe_table` |某个表或视图的列定义（名称、类型、是否可空、默认值），以 `columns` 结果网格返回，
+并带上解析后的 `schema`/`table`。
+|`sample_rows` |从表中取少量真实数据样本。
+|`list_services` |已注册的数据服务（见 *数据服务*），用于让 agent 优先使用受治理、可缓存、
+带版本的服务，而不是随手写 ad-hoc SQL。每条都会给出调用端点与其参数；服务的 SQL 文本刻意不下发。
+同一份清单也可以作为资源 `slackerdb://services` 读取，因为并非所有 MCP 客户端都会消费资源。
+|===
+
+由于协议级会话已不存在，跨调用状态按规范规定的方式表达：作为普通工具参数传递的**显式 handle**
+（规范自己的指导里举的动机案例就是"一个数据库事务"）。
+
+===== 强制策略：默认只读、行数上限、语句超时
+
+* **默认只读。** 写语句在**解析层**被拒绝，而不是靠把查询包进只读事务——`BEGIN TRANSACTION READ ONLY`
+  可以被 `WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x` 这类语句轻易绕过，所以判定发生在语句
+  进入引擎之前，并且默认拒绝。写权限需要显式开启会话：`open_session(read_only=false)`。
+  当服务器本身以 `access_mode=READ_ONLY` 运行时，该 opt-out 会被拒绝，因此 MCP 不会成为绕过
+  `access_mode` 的旁路。
+* **行数上限。** `run_sql` 最多返回 `max_rows` 行（默认 100，上限 5000），并报告 `truncated`。
+* **语句超时。** 每条语句都在超时约束下运行（默认 30 秒，上限 300 秒），在应用层强制，
+  因为 DuckDB 没有 per-query 超时。
+* **与其它入口同一条执行路径。** 工具调用从 dbserver 的普通连接池取连接，
+  因此连接数上限与会话处理对 agent 的作用与对其它客户端完全一致。
+
+===== 资源与提示词
+
+[cols="1,2",options="header",]
+|===
+|URI / 名称 |内容
+
+|`slackerdb://schema/tables` |所有表与视图及其 schema 和类型。
+|`slackerdb://schema/table/{table}` |某个表的列定义（资源模板）。
+|`slackerdb://services` |已注册的数据服务（见 *数据服务*），用于让 agent 优先使用受治理、
+可缓存、带版本的服务，而不是随手写 ad-hoc SQL。服务的 SQL 文本刻意不下发。
+|`answer_with_services`（提示词）|一条"优先使用服务"的作答策略，可直接交给模型。
+|===
+
+===== 配置
+
+定义可以在启动时从 `mcp_config` 加载（单个 JSON 文件，或一个包含 `*.mcp` / `*.service` 文件的目录）：
+
+[source,properties]
+----
+mcp_config=conf/mcp_config_example.service
+----
+
+工具条目可以绑定到内置实现，而不是挂一个回显桩：
+
+[source,json]
+----
+{
+  "name": "query",
+  "description": "Execute a read-only SQL query",
+  "handler": "builtin:run_sql"
+}
+----
+
+可识别的 `builtin:` handler 有 `run_sql`、`list_tables`、`describe_table`、`sample_rows`、
+`open_session`、`close_session` 与 `list_services`；旧别名 `query`、`sql`、`runquery`、`tables`、
+`show_tables`、`describe` 与 `sample` 会映射到对应实现。未指定 `handler` 的工具保留回显入参的旧行为，
+并在注册时的描述里写明这一点。
+
+发行包里的 `conf/mcp_config_example.service` 就是这样一份可用样例：一个回显桩、两个把内置工具挂到自定义
+名字下的绑定（`top_tables` -> `list_tables`、`peek_rows` -> `sample_rows`），以及一个静态资源。内置工具
+本身始终存在，永远不需要声明。带 `handler` 的条目无需自带 `inputSchema`：服务端改用内置实现的真实
+schema（含 `outputSchema`），声明因此不会与实现漂移。
+
+命名与保存另有两条规则。**内置工具已用的名字是保留的**：配置里这样的声明会在加载时被跳过，
+`/mcp/registerMCPTool` 与 `/mcp/loadMCPTool` 的单对象形式会以 `retCode = -1` 拒绝，数组形式则跳过该条
+——否则 `tools/list` 会同时列出两条同名工具，而调用永远落到内置实现上。绑定关系也能安全往返：`saveMCPTool` / `dumpMCPTool` 会把
+`"handler": "builtin:<名字>"` 写回文件，因此保存后重启，工具仍然挂在真实实现上，不会退化成回显桩。
+
+可选的 `mcp_llm_server` / `mcp_llm_key` 用于启用私有的 `/aichat` WebSocket 端点，
+它把自然语言问题路由到已注册的数据服务（`<service>:<ip>:<port>:<model>`；
+支持 `ollama` 与 `openai`）。它与 MCP 协议面相互独立。
+
+===== 接入 MCP 客户端（以 DeepSeek Harness 为例）
+
+端点在**管理端口**上，因此要启用管理接口（配置项 `port_x` / 命令行 `--portx`，默认 `-1` 表示关闭），
+并把端口写死——留空会随机分配，客户端配置无法指向它。
+
+**1. 带 MCP 启动服务端。**
+
+[source,shell]
+----
+java -jar slackerdb-dbserver-0.2.1-standalone.jar --conf conf/dbserver.conf \
+  --port 15432 --portx 18080 start
+----
+
+`--mcp-config` 这里刻意不写：它本就可选，内置工具无需任何配置即可使用，它只是用来额外声明自己的工具与资源
+（见上面的 `mcp_config` 配置项）。
+
+**2. 让客户端连到 `http://<host>:18080/mcp`**，传输方式选 Streamable HTTP。以 DeepSeek Harness 为例，
+在 profile 补丁（`$DSH_HOME/profiles/<profile>/cordis.patch.yml`）里加一行：
+
+[source,yaml]
+----
+- insert:
+    - id: mcp-slacker
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: slacker
+        transport: streamable-http
+        url: 'http://127.0.0.1:18080/mcp'
+----
+
+每台服务器要用不同的 `serverName`；该命名空间属于本地配置，不采用服务端自称的名字。
+
+**3. 在客户端里提问验证。** 服务器上的工具会以 `mcp__<serverName>__<工具名>` 的形式交给模型，
+直接点名工具最省事：
+
+[source,text]
+----
+用 mcp__slacker__run_sql 执行 SELECT 42 AS answer，把结果告诉我。
+----
+
+模型会调用 `mcp__slacker__run_sql`，拿到 `rows = [[42]]`。不点名也能用
+（"用 SlackerDB 的 MCP 工具查一下 SELECT 42 AS answer"），但把工具名写出来命中率最稳。
+
+两点使用提醒：
+
+* **先起服务端，再起客户端。** 客户端只在启动时连接一次：服务端缺席会让它重试若干次后放弃并注销全部
+  工具，这时必须重启客户端才能恢复（只重启服务端不够）。
+* **资源不会随这类桥接进入模型上下文。** 只承载 tools 的客户端看不到 `slackerdb://` 资源，
+  资源本身仍可通过 HTTP 读取。
+
+==== MCP 工具管理
+
+本节中的端点用于在运行时注册和管理 MCP 工具定义。它们是供脚本与 Web 控制台使用的管理操作，
+不属于 *MCP 服务器* 所描述的 MCP 协议面。
 
 ===== registerMCPTool
 
@@ -1286,47 +1578,29 @@ MCP（Model Context Protocol，模型上下文协议）工具提供了通过 MCP
 [width="100%",cols="20%,80%",options="header",]
 |===
 |属性 |值
-|name |工具名称（必填）
-
-|version |工具版本（必填）
+|name |工具名称（必填）。与内置工具同名的会被拒绝。
 
 |description |工具描述（必填）
 
-|category |工具分类（可选）
+|inputSchema |入参的 JSON Schema（此处必填；从 `mcp_config` 加载的条目在声明了 `handler` 时可省略）
 
-|capabilities |能力列表（可选数组）
-
-|use_cases |使用场景列表（可选数组）
-
-|parameters |参数列表（可选的对象数组，包含 name、type、required、description）
-
-|examples |示例列表（可选的对象数组，包含 user_query、parameters）
+|category |工具分类（可选）；保存到目录时用作文件名
 |===
+
+由此注册的工具是回显桩：没有 `handler`，调用时只会把入参回显回来。绑定真实实现的工具来自 `mcp_config`。
 
 请求示例：
 
 ....
   {
     "name": "queryDatabase",
-    "version": "1.0",
-    "description": "Execute SQL queries on the database",
+    "description": "Echo the request back, for connectivity checks",
     "category": "database",
-    "capabilities": ["query", "execute"],
-    "use_cases": ["data analysis", "report generation"],
-    "parameters": [
-      {
-        "name": "sql",
-        "type": "string",
-        "required": true,
-        "description": "SQL query to execute"
-      }
-    ],
-    "examples": [
-      {
-        "user_query": "Get all customers from the database",
-        "parameters": {"sql": "SELECT * FROM customers"}
-      }
-    ]
+    "inputSchema": {
+      "type": "object",
+      "properties": {"sql": {"type": "string"}},
+      "required": ["sql"]
+    }
   }
 ....
 
@@ -1392,7 +1666,8 @@ MCP（Model Context Protocol，模型上下文协议）工具提供了通过 MCP
 |路径 |`+/mcp/loadMCPTool+`
 |===
 
-请求体：工具定义的 JSON 数组或单个工具定义对象。
+请求体：工具定义的 JSON 数组或单个工具定义对象。名字已被内置工具占用的定义，在数组形式下会被跳过，
+在单对象形式下以 `retCode = -1` 拒绝。
 
 响应示例：
 
@@ -1408,6 +1683,9 @@ MCP（Model Context Protocol，模型上下文协议）工具提供了通过 MCP
 ===== saveMCPTool
 
 将 MCP 工具定义保存到配置文件。
+
+绑定到内置实现的工具会带着 `"handler": "builtin:<名字>"` 一起写回，因此加载保存后的文件仍保持绑定，
+不会退化成回显桩。
 
 [cols=",",options="header",]
 |===
@@ -1793,7 +2071,8 @@ MCP（Model Context Protocol，模型上下文协议）服务提供了通过 MCP
 ==== SQL REPL 服务器
 
 SQL REPL 服务器提供了一个异步 WebSocket 接口，用于执行 SQL 查询并分页获取结果。
-它适用于希望避免阻塞客户端的长时间运行查询，并且契合 MCP（Model Context Protocol）使用 WebSocket 进行双向通信的理念。
+它适用于希望避免阻塞客户端的长时间运行查询，并使用双向 WebSocket 通道，
+使客户端能够取消正在执行的语句并分页取回结果。
 
 要使用它，请确保在服务器配置中启用了数据服务 API 端口（port_x）。
 
@@ -1829,12 +2108,24 @@ SQL REPL 服务器提供了一个异步 WebSocket 接口，用于执行 SQL 查�
 可能出现的校验错误（都以这种不含 `id`/`type` 的形式返回）：`Field 'id' must be a string`、
 `Field 'type' must be a string`、`Field 'data' must be an object`、`Unknown type: <type>`、
 `Field 'sessionId' must be a string`、`Field 'sql' must be a string`、
-`Field 'fetchSize' must be a number`、`Field 'maxRows' must be a number`、`Invalid session`、
+`Field 'fetchSize' must be a number`、`Field 'maxRows' must be a number`、
+`Field 'maxRows' must be a positive number`、`Invalid session`、
 `Invalid taskId`、`Another SQL is already running`。
+
+`maxRows` 必须为正数：旧实现接受 `0` 并返回"空页 + `hasMore = true`"，
+客户端会永远停在一个不会前进的分页上。
 
 ===== 会话管理
 
 会话通过发送 `start` 消息创建。服务器会返回一个 `sessionId`，后续属于同一会话的消息都必须包含它。
+
+会话各自持有一条后端连接，回收路径有三条：
+
+* 显式发送 `close` 消息（该 `sessionId` 立即失效）；
+* 创建会话的连接消失——由 10 秒一次的心跳探活发现（当前使用的 Jetty/Javalin
+  组合不会回调 WebSocket 的 `onClose`，所以不能依赖关闭回调）；
+* 会话空闲（无 `start`/`exec`/`fetch`/`cancel`）超过 `client_timeout` 秒（默认 600）。
+  正在执行任务的会话不会被空闲回收。
 
 启动消息：
 
@@ -1894,6 +2185,17 @@ SQL REPL 服务器提供了一个异步 WebSocket 接口，用于执行 SQL 查�
 
 如果 SQL 执行失败，任务状态会变成 `error`，由 `fetch` 以 `data.status = "error"` 并附带
 `data.error` 返回错误信息（提交 `exec` 的响应本身只表示任务已受理）。
+
+`exec` 接受与 PostgreSQL 协议路径相同的 SQL，包括：
+
+* **PL/SQL 匿名块**：`DO $$ ... $$`、裸 `$$ ... $$`，以及不带包装的
+  `DECLARE ... BEGIN ... END;` 脚本，与 PG 路径使用同一个引擎执行；
+* **多语句脚本**：按顺序逐条执行；若最后一条语句产生结果集，则 `fetch` 分页读取的就是
+  该结果集，否则把脚本中 DML 的影响行数汇总为 `updateCount`。
+  前面语句的结果集会被丢弃，因此脚本不是"一次拿多个结果集"的手段。
+
+取值表示见上文 *返回值类型*（日期时间用 ISO-8601、BLOB 用 Base64、
+LIST 用 JSON 数组、STRUCT/MAP 用 JSON 对象）。
 
 ===== 获取结果
 
@@ -2192,8 +2494,92 @@ int、number、double、varchar…… 复杂类型要么仍在
 
 ==== 3. postgresql-fdw
 
-fdw 会使用 "`Declare CURSOR`" 来获取远程数据，而 DuckDB 不支持
-这一点。
+SlackerDB 说 PostgreSQL 线协议，因此可以用 `postgres_fdw` 把 SlackDB 实例挂成外部服务器。
+协议层已经能承接 fdw 的会话与语句流量，**包括它读取数据所依赖的游标通道**。
+
+PostgreSQL 17 的 `postgres_fdw` 实际会发的语句，以及当前状态：
+
+*已支持*
+
+* 连接初始化：`SET search_path`、`SET timezone`、`SET datestyle`、
+  `SET intervalstyle`、`SET extra_float_digits`；startup 包里的 `application_name` 与
+  `client_encoding`；`GSSENCRequest` 回 `N`。
+* 扩展协议：Parse / Bind / Describe / Execute / Close / Sync / Flush —— 命名与匿名语句/门户、
+  **逐列的结果格式协商**（Bind 里的 `Int16[R]` 被真正遵守，文本或二进制）、
+  `PortalSuspended` 分批、`RETURNING`、`DEALLOCATE ALL` / `DEALLOCATE <name>`、
+  `RESET ALL`、`DISCARD ALL`。
+* 游标：`DECLARE ... CURSOR [WITH HOLD] FOR`、`FETCH`（`NEXT` / `FORWARD n` / `ALL` / 裸计数）、
+  `MOVE`、`CLOSE [ALL]` —— 简单查询与扩展协议两条路径都可用。非 `WITH HOLD` 的游标与 PostgreSQL
+  一样随事务结束销毁；`WITH HOLD` 要跨 `COMMIT` 存活，因此声明时就物化到内存。
+  只支持向前方向：`BACKWARD` / `ABSOLUTE` / `RELATIVE` 明确回 `0A000`，
+  而不是悄悄给出错误结果（DuckDB 的 JDBC 结果集不能后退）。
+* 事务：`BEGIN` / `START TRANSACTION [ISOLATION LEVEL ...]` 会**真的**开启 DuckDB 事务，
+  `COMMIT` / `COMMIT TRANSACTION` / `END` / `ROLLBACK` / `ABORT` 结束它（失败事务里的 `COMMIT`
+  与 PostgreSQL 一样等价于回滚；没有事务时的 `COMMIT` 只回一条 NOTICE）。隔离级别：
+  `READ ONLY` 原样透传并由 DuckDB 真正强制；`READ COMMITTED` / `REPEATABLE READ` 视为已满足；
+  `SERIALIZABLE` / `DEFERRABLE` 接受但发 NOTICE 说明不受保证。
+  `SET TRANSACTION ...` 在事务块内接受（带 NOTICE），在事务块外回 `25P01`。
+* `SET <PostgreSQL 特有参数>`（例如 `statement_timeout`、`lock_timeout`、`server_version_num`）：
+  接受、按会话记录，并回一条 `NOTICE` 说明不会生效；DuckDB 自己的参数照常透传。
+* `ANALYZE <外部表>` 可用：PostgreSQL 为它发的两条语句
+  （`SELECT pg_catalog.pg_relation_size('schema.table'::pg_catalog.regclass) / 8192` 与
+  `SELECT reltuples, relkind FROM pg_catalog.pg_class WHERE oid = …`）都能回答 ——
+  `regclass` 转换被翻译成**真正的 oid 查询**；行采样走游标。
+  `relpages` 取自 DuckDB 自己的 `estimated_size`，因此小表会是 0；
+  远端那个除法在 DuckDB 里是浮点除法，`postgres_fdw` 用 `atoi` 截断，不影响页数。
+* 错误语义符合协议：扩展协议出错后会丢弃报文直到 `Sync`；`Describe`/`Close` 不存在的
+  语句/门户回 `26000`/`34000`；畸形 Bind 报文回 `08P01`，而不是让客户端挂到空闲超时。
+
+*尚未实现*
+
+* `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT`：DuckDB 没有子事务，
+  因此它们是**可预期的报错**而不是静默降级 —— 事务块外 `25P01`，事务块内 `0A000`（并说明原因）。
+  特别是 `ROLLBACK TO SAVEPOINT` **不会**把整个事务回滚掉。
+  对 fdw 的后果：只要远端语句处于本地子事务里，`postgres_fdw` 就会发 `SAVEPOINT sN`，
+  因此**子事务里不能用外部表**（显式 `SAVEPOINT`，或 PL/pgSQL 的 `EXCEPTION` 块），
+  而且这次失败还会让该 server 的连接在本事务内**彻底不可用**
+  （`connection to server "sdb" cannot be used due to abort cleanup failure`）。
+* `SELECT ... FOR UPDATE` / `FOR SHARE`：`postgres_fdw` 会把锁子句下推，而 DuckDB 直接拒绝
+  （`Parser Error: SELECT locking clause is not supported!`），所以这类查询不可用。
+  `ctid` 只有在外部表显式声明 `OPTIONS (rowid 'ctid')` 时才有意义；普通 `UPDATE`/`DELETE`
+  **不需要远端主键**就能工作 —— 已实测（包括远端存在重复行的表：整条谓词被下推，没用到 `ctid`）。
+* `SELECT ... FOR UPDATE` / `FOR SHARE`（DuckDB 没有行锁）以及
+  `UPDATE`/`DELETE ... WHERE ctid = $1`（DuckDB 没有 `ctid`）。
+* `IMPORT FOREIGN SCHEMA` 只有在 `import_collate 'false'` 时可用
+  （`pg_collation.collnamespace` 未暴露）；列默认值导不过来（没有 `pg_get_expr`）。
+
+*示例*
+
+[source,sql]
+----
+CREATE EXTENSION postgres_fdw;
+CREATE SERVER sdb FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '127.0.0.1', port '15499', dbname 'fdwdb',
+           use_remote_estimate 'false');
+CREATE USER MAPPING FOR CURRENT_USER SERVER sdb OPTIONS (user 'main', password 'main');
+CREATE FOREIGN TABLE orders (id integer, amount numeric(38,4))
+  SERVER sdb OPTIONS (schema_name 'main', table_name 'orders');
+
+-- 也可以直接把表导进来（需要 import_collate 'false'）
+IMPORT FOREIGN SCHEMA "main" FROM SERVER sdb INTO public
+  OPTIONS (import_collate 'false');
+----
+
+两个容易踩的坑：
+
+* `dbname` 是服务端启动时的**实例名**（`--data fdwdb`），不是 PostgreSQL 意义上的库名。
+  `memory` 等保留字不能当实例名，所以 `--data memory` 会在启动时就失败。
+* `import_collate` 是 `IMPORT FOREIGN SCHEMA` 的选项，**不能**写在 `CREATE SERVER` 里
+  （PostgreSQL 会直接拒绝：`invalid option "import_collate"`）。
+  `use_remote_estimate` 保持关闭：打开后 `postgres_fdw` 会去解析 PostgreSQL 的
+  `EXPLAIN (cost=... rows=... width=...)` 文本，而 DuckDB 不产出这种格式。
+
+*已端到端实测*：PostgreSQL 18.6 + `postgres_fdw` 1.2，同时挂两个 SlackDB 实例
+（本地一条查询 JOIN 了两个实例上的外部表），并跑通 `INSERT`/`UPDATE`/`DELETE ... RETURNING`、
+`EXPLAIN (VERBOSE)` 与 `IMPORT FOREIGN SCHEMA`。SlackDB 自己的 SQL 历史里能看到
+`postgres_fdw` 实际发的语句序列：`SET search_path = pg_catalog` …… 
+`START TRANSACTION ISOLATION LEVEL REPEATABLE READ`、`DECLARE c1 CURSOR FOR SELECT …`、
+`FETCH 100 FROM c1`、`CLOSE c1`、`COMMIT TRANSACTION`。
 
 === 插件系统
 

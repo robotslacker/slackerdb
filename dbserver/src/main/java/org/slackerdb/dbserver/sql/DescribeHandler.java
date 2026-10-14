@@ -8,6 +8,8 @@ import org.slackerdb.dbserver.message.response.NoData;
 import org.slackerdb.dbserver.message.response.ParameterDescription;
 import org.slackerdb.dbserver.message.response.RowDescription;
 import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.dbserver.server.DBSession;
+import org.slackerdb.dbserver.server.ServerCursor;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -58,7 +60,7 @@ public final class DescribeHandler {
      * <p>注意语句级 RowDescription 的 format 码按协议<b>固定为 0（文本）</b> ——
      * 此时还没 Bind，客户端尚未指定结果格式。</p>
      */
-    public static void describeStatement(DBInstance dbInstance, ChannelHandlerContext ctx,
+    public static void describeStatement(DBInstance dbInstance, ChannelHandlerContext ctx, DBSession session,
                                          ParsedStatement parsedStatement, int[] declaredParameterTypeOids)
             throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -70,8 +72,8 @@ public final class DescribeHandler {
         parameterDescription.process(ctx, null, out);
         PostgresMessage.writeAndFlush(ctx, ParameterDescription.class.getSimpleName(), out, dbInstance.logger);
 
-        // 2) RowDescription 或 NoData
-        writeRowDescriptionOrNoData(dbInstance, ctx, out, parsedStatement, false);
+        // 2) RowDescription 或 NoData（语句级描述的 format 码按协议固定为文本）
+        writeRowDescriptionOrNoData(dbInstance, ctx, out, session, parsedStatement, RowEncoder.ALL_TEXT);
 
         out.close();
     }
@@ -79,23 +81,28 @@ public final class DescribeHandler {
     /**
      * 处理 {@code Describe('P')}：只回 RowDescription/NoData。
      *
-     * @param binaryAllowed 门户级描述：结果格式在 Bind 时已确定，可带二进制格式码
+     * <p>门户级描述必须回报<b>客户端在 Bind 中请求的结果格式</b>（存在 portal 的
+     * {@link ParsedStatement#resultFormats} 上）：客户端按这个声明去解码随后的 DataRow，
+     * 声明与字节不一致会造成静默错值（历史上无论请求什么都声明二进制）。</p>
      */
-    public static void describePortal(DBInstance dbInstance, ChannelHandlerContext ctx,
-                                      ParsedStatement parsedStatement, boolean binaryAllowed)
+    public static void describePortal(DBInstance dbInstance, ChannelHandlerContext ctx, DBSession session,
+                                      ParsedStatement parsedStatement)
             throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        writeRowDescriptionOrNoData(dbInstance, ctx, out, parsedStatement, binaryAllowed);
+        short[] resultFormats = (parsedStatement == null || parsedStatement.resultFormats == null)
+                ? RowEncoder.ALL_TEXT
+                : parsedStatement.resultFormats;
+        writeRowDescriptionOrNoData(dbInstance, ctx, out, session, parsedStatement, resultFormats);
         out.close();
     }
 
     /** 写 RowDescription（有结果集列）或 NoData（无结果集 / 取不到元数据）。 */
     private static void writeRowDescriptionOrNoData(DBInstance dbInstance, ChannelHandlerContext ctx,
-                                                    ByteArrayOutputStream out,
+                                                    ByteArrayOutputStream out, DBSession session,
                                                     ParsedStatement parsedStatement,
-                                                    boolean binaryAllowed)
+                                                    short[] resultFormats)
             throws IOException {
-        List<Field> fields = describeColumns(parsedStatement, binaryAllowed, dbInstance);
+        List<Field> fields = describeColumns(parsedStatement, resultFormats, dbInstance, session);
         if (fields == null || fields.isEmpty()) {
             NoData noData = new NoData(dbInstance);
             noData.process(ctx, null, out);
@@ -118,10 +125,37 @@ public final class DescribeHandler {
      *
      * @return 列描述；无法取到、或语句本来就不返回结果集时返回 null（调用方回 NoData）
      */
-    private static List<Field> describeColumns(ParsedStatement parsedStatement, boolean binaryAllowed,
-                                               DBInstance dbInstance) {
+    private static List<Field> describeColumns(ParsedStatement parsedStatement, short[] resultFormats,
+                                               DBInstance dbInstance, DBSession session) {
         if (parsedStatement == null || parsedStatement.isPlSql) {
             return null;
+        }
+        // B1：FETCH 的行描述来自游标自身的列元数据（{@code DECLARE} 时已固定）。
+        // DECLARE / MOVE / CLOSE 不返回行 → null（NoData）。
+        CursorSql.CursorStatement cursorStatement = CursorSql.parse(parsedStatement.originalSql);
+        if (cursorStatement != null) {
+            if (cursorStatement.kind() != CursorSql.CursorStatement.Kind.FETCH) {
+                return null;
+            }
+            ServerCursor cursor = session == null ? null : session.getCursor(cursorStatement.step().name());
+            if (cursor == null) {
+                // 游标不存在：这里先回 NoData，由 Execute 阶段回 34000（与 PG 的"Describe 不执行语句"一致）
+                return null;
+            }
+            try {
+                return CursorHandler.describeCursor(dbInstance, cursor, resultFormats);
+            } catch (Exception e) {
+                dbInstance.logger.debug("[SERVER][DESCRIBE   ] Unable to describe cursor {}: {}",
+                        cursor.name, e.getMessage());
+                return null;
+            }
+        }
+        // T2：SHOW <本服务端能回答的参数> —— 这类语句在 Parse 阶段刻意不建 PreparedStatement
+        // （DuckDB 不认识这些参数名），结果集是服务端合成的一行一列。
+        // 必须在这里就报出列描述，且与 Execute 发出去的 DataRow 用同一份元数据。
+        String showTarget = SessionSettingSql.showTarget(parsedStatement.originalSql);
+        if (showTarget != null) {
+            return List.of(SessionSettingResponder.showField(showTarget));
         }
         PreparedStatement ps = parsedStatement.preparedStatement;
         if (ps == null) {
@@ -138,8 +172,8 @@ public final class DescribeHandler {
             if (metaData == null) {
                 return null;
             }
-            // 语句级描述固定文本格式；门户级按 binaryAllowed 决定
-            return new RowEncoder(metaData, binaryAllowed, dbInstance.logger).describe();
+            // 结果格式按客户端请求（语句级描述传 ALL_TEXT）
+            return new RowEncoder(metaData, resultFormats, dbInstance.logger).describe();
         }
         catch (Exception e) {
             dbInstance.logger.debug("[SERVER][DESCRIBE   ] Unable to read column metadata: {}", e.getMessage());

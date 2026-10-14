@@ -5,33 +5,31 @@ image::robotslacker.jpg[RobotSlacker]
 
 === What is SlackerDB?
 
-SlackerDB is a powerful, Java‑based extension that transforms DuckDB from a local, single‑process database into a fully networked, multi‑process data service platform. It bridges the gap between DuckDB's exceptional analytical performance and the connectivity requirements of modern applications.
+SlackerDB is a Java‑based service layer that puts DuckDB on the network. It speaks the PostgreSQL wire protocol, so standard PostgreSQL clients connect without any special driver, and it lets several clients use the same DuckDB database at once — something a plain DuckDB process cannot do. On top of that it adds a registered‑SQL layer that turns queries into cacheable HTTP endpoints, and a bulk COPY path for loading data.
+
+It runs either as a standalone server (`dbserver`) or embedded directly in a Java application.
 
 ==== Capabilities
 
-* *Network‑Enabled DuckDB* – Breaks DuckDB's local‑only limitation by providing full TCP/IP network access, allowing remote clients to connect via standard PostgreSQL wire protocol.
-* *Multi‑Process Support* – Enables concurrent access from multiple processes and applications, overcoming DuckDB's single‑process restriction.
-* *PostgreSQL Protocol Compatibility* – Implements the PostgreSQL wire protocol, making DuckDB accessible through any PostgreSQL‑compatible client (JDBC, ODBC, libpq, psql, etc).
-* *High‑Performance Data Import* – Supports PostgreSQL COPY syntax for bulk data loading with performance comparable to native DuckDB imports.
-* *Dual‑Layer Architecture* – Provides both a direct database server (`dbserver`) and a connection proxy (`dbproxy`) for load balancing and high availability.
-* *Embeddable Design* – Can be embedded directly into Java applications as a library, or run as standalone servers.
-* *Flexible Deployment* – Supports multiple deployment models: standalone server, embedded library.
-* *Plugin System* – Extensible PF4J‑based plugin framework for custom functionality, HTTP endpoints, and integration with external systems.
-* *Data Encryption* – Leverages DuckDB's native encryption for secure data‑at‑rest protection.
-
-==== Data Service Platform
-
-* *RESTful Data APIs* – Exposes database operations through comprehensive REST APIs, enabling integration with web applications, microservices, and serverless architectures.
-* *Self‑Managed Services* – Allows dynamic registration and management of data services at runtime without server restarts.
-* *SQL‑as‑a‑Service* – Transform SQL queries into reusable, parameterized API endpoints with built‑in caching and security controls.
-
+* *PostgreSQL Wire Protocol* – Standard PostgreSQL clients connect as‑is: JDBC, ODBC, libpq, psql, Python, and database tools such as DBeaver. A system catalog compatibility layer (`pg_catalog` emulation) keeps third‑party client metadata queries working.
+* *Multi‑Session Access* – One DuckDB database served to many concurrent client sessions, with a connection pool, per‑session state, and SQL executed off the network I/O threads.
+* *Query Cancellation* – Client‑side cancellation and `KILL SESSION` reach the statement that is actually running.
+* *High‑Performance Data Import* – PostgreSQL `COPY … FROM STDIN` in CSV and BINARY form, with a streaming decode path benchmarked at roughly 0.6–2.3 million rows/second depending on shape.
+* *Registered SQL Services* – Register parameterized SQL as named HTTP endpoints at runtime, with result caching, service versioning, and per‑service search paths.
+* *Server Management APIs* – Status and metrics, database backup, log viewing, and file upload/download on the management port.
+* *Asynchronous SQL over WebSocket* – Execute SQL asynchronously and page through results, for queries too large or too slow for a single request.
+* *Embeddable Design* – Run as a standalone process, or embed in Java code; multiple instances can run side by side on different ports.
+* *Plugin System* – Extensible PF4J‑based plugin framework for custom functionality, HTTP endpoints, and background tasks, with runtime load/start/stop/unload.
+* *Data Encryption* – Leverages DuckDB's native encryption for data‑at‑rest protection.
 
 ==== Use Cases
 
-* *Analytical Application Backends* – Serve as the data engine for BI tools, dashboards, and reporting applications.
-* *Edge Computing* – Lightweight, embeddable database for edge devices and IoT OLAP applications.
+* *Analytical Application Backends* – Serve as the data engine for BI tools, dashboards, and reporting applications that expect a PostgreSQL connection.
+* *Shared Internal Datasets* – Load an existing `.duckdb` file once and let several teams and tools query it concurrently without moving or re‑platforming the data.
+* *Local Data Processing* – Run bulk import, transformation, and querying on a single machine without standing up a separate database system.
+* *Embedded Service in Java* – Ship a networked analytical store inside a Java application, with the plugin framework available for application‑specific endpoints.
 
-SlackerDB combines DuckDB's analytical prowess with network connectivity, making it the ideal solution for modern data‑driven applications that require both high performance and flexible access patterns.
+SlackerDB is aimed at teams that want DuckDB's analytical performance but need it reachable over the network, usable by existing PostgreSQL tooling, and shareable between concurrent clients.
 
 === Usage
 
@@ -117,6 +115,9 @@ extension_dir=
 plugins_dir=
 
 # Run as background daemon (true/false)
+# Command line notes: `--daemon true|false`; a bare `--daemon` means true.
+# An explicit `--daemon` on the command line overrides this setting.
+# Only the `start` subcommand supports daemon mode.
 daemon=
 
 # PID file location
@@ -154,10 +155,23 @@ bind=0.0.0.0
 # Client connection idle timeout (seconds)
 client_timeout=600
 
-# External remote listener registry endpoint
-# Format: IP:PORT
-# Default: none (disabled)
-remote_listener=
+# Multicast service discovery: the group this server announces itself to.
+# Format: <group>:<port> (IPv6 groups must be bracketed: [ff02::1]:46666)
+# IPv4 groups must be inside 224.0.0.0/4; 224.0.0.0/24 is reserved and rejected.
+# There is NO default: leaving it empty disables service discovery entirely.
+# The proxy must use the EXACT same value in listener_address, otherwise nothing is
+# discovered and nothing is logged about it here either.
+# Example: 239.255.66.66:46666
+advertise_address=
+
+# Local network interface used to send the multicast announcement.
+# Accepts an interface name (eth0, Ethernet) or a local IPv4 address. Leaving it empty
+# picks the first usable interface (up, multicast-capable, non-loopback, with a
+# non-link-local IPv4 address) using a deterministic rule, so the same machine always
+# picks the same one. The chosen interface and address are logged at startup -- check
+# there first when discovery does not work.
+# Ignored when advertise_address is empty.
+advertise_nic=
 
 # Database opening mode.
 # Default: READ_WRITE
@@ -246,12 +260,16 @@ data_service_history=
 # - Schema files should contain service definitions in JSON format
 data_service_schema=
 
-# MCP configuration file/path
-# Specifies the Model Context Protocol configuration file for dynamic tool/resource loading.
+# MCP definitions loaded at startup
 # - Accepts:
 #   * JSON file path (single config)
-#   * Directory path (loads all *.mcp files)
-# Default: empty (no MCP configuration)
+#   * Directory path (loads all *.mcp and *.service files, in name order)
+# - Each tool entry may set "handler": "builtin:<name>" to bind to a real implementation
+#   (run_sql, list_tables, describe_table, sample_rows, list_services,
+#    open_session, close_session).
+#   Without "handler" the tool only echoes its arguments.
+#   Built-in tool names are reserved: a declared tool may not reuse one.
+# Default: empty (no MCP definitions; the built-in tools are always available)
 mcp_config=
 
 # MCP LLM server configuration
@@ -290,6 +308,9 @@ log=CONSOLE,logs/slackerdb-proxy.log
 log_level=INFO
 
 # Run as background daemon (true/false)
+# Command line notes: `--daemon true|false`; a bare `--daemon` means true.
+# An explicit `--daemon` on the command line overrides this setting.
+# Only the `start` subcommand supports daemon mode.
 daemon=
 
 # Main service port
@@ -341,6 +362,74 @@ locale=
 Note: All parameters are optional. +
 You can keep only the parameters you need to modify. +
 For parameters that are not configured, default values will be used.
+
+==== Service discovery: migrating from the registration mechanism
+
+In previous versions a dbserver registered itself by periodically sending a `REGISTER` command to a
+fixed proxy address (`IP:PORT`) configured through `remote_listener`, and sent `UNREGISTER` on
+shutdown. **That parameter has been removed** and replaced by UDP multicast discovery: the dbserver
+periodically announces "I am here" to a multicast group, and the proxy joins the same group and
+keeps its alias-to-backend map from those announcements.
+
+.Parameter mapping
+[cols="1,1,2",options="header"]
+|===
+| Old | New | Notes
+| dbserver `remote_listener=IP:PORT` | dbserver `advertise_address=<group>:<port>` | Semantics changed: from a unicast address pointing at one proxy to a multicast group shared by a subnet
+| — | dbserver `advertise_nic=<name or local IP>` | New. Empty means "pick the first usable interface"
+| — | dbproxy `listener_address=<group>:<port>` | New. Must match the dbserver `advertise_address` exactly
+|===
+
+There is **no default value**: leaving both sides unconfigured disables discovery entirely rather
+than falling back to a group that "looks usable".
+There is also **no fallback channel**: the legacy unicast `REGISTER` / `UNREGISTER` commands have
+been removed from the proxy, so both sides must be upgraded.
+
+.Upgrade style
+[cols="1,3",options="header"]
+|===
+| Style | Notes
+| Stop both, upgrade, restart (recommended) | No discovery gap at all
+| Rolling upgrade | There will be a gap, and it happens **whichever side goes first**: upgrade the dbserver first and the old proxy cannot receive multicast, so the new dbserver is invisible meanwhile; upgrade the proxy first and the old dbserver's registration is no longer accepted, so that dbserver is invisible meanwhile. Schedule a maintenance window in production
+|===
+
+.Upgrade steps
+[cols="1,3",options="header"]
+|===
+| Step | Action
+| 1 | Stop both the dbserver and the dbproxy
+| 2 | Upgrade the **dbproxy** and add `listener_address=<group>:<port>` to its conf
+| 3 | Upgrade the dbserver: **delete** `remote_listener=` from its conf and add `advertise_address=` (plus `advertise_nic=` if needed)
+| 4 | Start both
+| 5 | Run `status` on the proxy and confirm the aliases appear (the `Lease` column should show remaining time)
+|===
+
+WARNING: `remote_listener` was removed outright. Configuration parsing rejects unknown parameters
+(`SLACKERDB-00004`), so a conf file that still contains `remote_listener=` makes a new dbserver
+**fail to start** -- not "fail to register", but exit. The conf must be updated together with the
+binary.
+
+WARNING: Roll both sides back together, configuration included.
+
+.Checklist when discovery does not work
+[cols="1,3",options="header"]
+|===
+| Symptom | What to check
+| Nothing shows up on the proxy | Whether both sides use exactly the same group; whether the dbserver startup log contains a `[DISCOVERY] Advertising ...` line; whether the proxy startup log contains a `[DISCOVERY] Listening on ...` line
+| The dbserver fails at startup | Whether the interface name is misspelled; whether the host has any usable interface (try leaving `advertise_nic=` empty)
+| The proxy log shows `Unknown admin command [REGISTER ...]` | A dbserver is still on the old version with the old registration parameter. It is now ignored by the discovery mechanism and must be upgraded
+| Log says `No announcement received ... for 60 seconds` | Whether the firewall allows inbound UDP (default port 46666); whether the switches have IGMP snooping enabled; whether the two hosts are on different subnets (the multicast TTL is fixed at 1 and does not leave the subnet)
+| An alias appears and then disappears | Whether the target host went silent for 15 seconds (process killed, machine suspended, network hiccup)
+| Containers / Kubernetes | Most CNIs do not forward multicast, so this mechanism does not work there. Plan something else (host networking, or a unicast discovery mechanism)
+|===
+
+NOTE: The alias defaults to the database name, exactly as the old `AS <database>` did, so **client
+connection strings do not change**.
+
+NOTE: The advertised host defaults to the **source address of the UDP datagram**, not the address
+the sender reports about itself -- the source address is by definition reachable from the proxy.
+On multi-homed hosts either set `advertise_nic` explicitly or check the interface that the startup
+log reports.
 
 ==== JDBC Support
 
@@ -1126,6 +1215,9 @@ request body:
 
 |serviceType |service type, GET/POST
 
+|category |Optional. Grouping label; when services are saved into a directory it becomes the file name
+(`<category>.service`, services without a category go to `uncategorized.service`).
+
 |searchPath |sql default search path, Optional parameter
 
 |sql |SQL statement, can contain such $\{var1} variable information
@@ -1162,6 +1254,10 @@ Success response (200)
     "retMsg": "Successful."
   }
 ....
+
+Registering a service name + version that is already registered is rejected with
+`retCode = -1` and `retMsg = "Rejected. [<name>#<version>] is already registered."`.
+There is no "update" semantic: unregister first (`/api/unRegisterService`) and register again.
 
 ===== unRegisterService
 
@@ -1223,20 +1319,32 @@ Response example:
 ....
 Success response (200)
 
-  {
-    "retCode": 0,
-    "retMsg": "Successful.",
-    "services":
-      {
-        "Query1":
-        {
-          "serviceName" : "Query1",
-          "serviceType" : "GET",
-          ....
-        }
-      }
-  }
+  [
+    {
+      "serviceName" : "Query1",
+      "serviceVersion" : "1.0",
+      "serviceType" : "GET",
+      "category" : "test",
+      "searchPath" : "main",
+      "sql" : "SELECT 1",
+      "description" : "NO DESCRIPTION.",
+      "snapshotLimit" : "5 minutes",
+      "parameter" : {}
+    }
+  ]
 ....
+
+The response is a bare JSON **array** of service definitions (no `retCode` wrapper):
+each item contains `serviceName`, `serviceVersion`, `serviceType`, `category`,
+`searchPath`, `sql`, `description`, `snapshotLimit` and `parameter`.
+
+Related management endpoints (all POST, empty body):
+
+* `/api/dumpRegisteredService` - same array, returned as a JSON attachment;
+* `/api/downloadRegisteredService` - same payload (the endpoint the web console uses);
+* `/api/saveRegisterService` - writes the current definitions back to `data_service_schema`
+  (a single file, or one `<category>.service` file per category when it is a directory);
+* `/api/loadRegisterService` - loads definitions from the request body (a single object or an array).
 
 ===== /api/\{apiVersion}/\{apiName}
 
@@ -1303,12 +1411,231 @@ Success response (200)
   }
 ....
 
-==== MCP Tool
+Requesting a service that is not registered answers **HTTP 404** with
+`{"retCode": 404, "retMsg": "GET /api/1.0/xxx is not registered."}`.
 
-MCP (Model Context Protocol) Tool provides a way to register, manage, and invoke tools through the MCP protocol. These tools can be used by AI assistants and other clients that support MCP to perform specific operations or queries.
+`${var}` placeholders are always validated: when a placeholder has no value
+(no request parameter, no default in `parameters`, no token/context variable),
+the request is rejected with `retCode = -1` and
+`retMsg = "Missing required parameters: <names>"` - the SQL is never executed with a
+literal `${var}` left inside it.
+
+===== Result value types
+
+Both the HTTP data service and the SQL REPL return the same JSON representations,
+so a client never needs driver-specific knowledge:
+
+[cols="1,2",options="header",]
+|===
+|Value type |JSON representation
+
+|INTEGER/BIGINT/HUGEINT/DECIMAL/DOUBLE |number
+|VARCHAR/UUID/INTERVAL |string
+|BOOLEAN |true/false
+|DATE/TIME |ISO-8601 string (`2026-10-09`, `12:34:56`)
+|TIMESTAMP |ISO-8601 string without zone (`2026-10-09T12:34:56`)
+|TIMESTAMP WITH TIME ZONE |ISO-8601 string with offset (`2026-10-09T20:34:56+08:00`)
+|BLOB |Base64 string
+|LIST/ARRAY |JSON array
+|STRUCT |JSON object keyed by field name
+|MAP |JSON object
+|JSON |the JSON value itself (not a string-escaped copy, not driver internals)
+|NULL |null
+|===
+
+A result set is materialised into a single response: the data service API has no
+cursor/streaming variant, so very large results are bounded by memory.
+
+==== MCP Server
+
+SlackerDB runs a Model Context Protocol (MCP) server on the management port, so AI assistants and other
+MCP clients can inspect and query the database.
+
+The implementation targets the **`2026-07-28`** revision of the specification and also accepts earlier
+revisions (dual-era support), because installed clients lag the spec.
+
+===== Protocol surface
+
+[cols="1,3",options="header",]
+|===
+|Item |Behaviour
+
+|Transport |Streamable HTTP: every message is a `POST` to `/mcp` (`/jsonrpc` is kept as a compatibility alias).
+|Sessions |**None at the protocol level.** The `initialize` handshake and `Mcp-Session-Id` were removed in
+`2026-07-28`. Every request carries its protocol version and client capabilities in
+`params._meta` (`io.modelcontextprotocol/protocolVersion`, `.../clientCapabilities`). A version mismatch
+returns `UnsupportedProtocolVersionError` (`-32020`).
+|`server/discover` |Implemented, as the specification requires. Advertises supported protocol versions,
+capabilities, server identity and usage instructions. Sent as a normal `POST`.
+|GET requests |Answer `405 Method Not Allowed` (with `Allow: POST`). The specification removed the GET
+endpoint, and installed clients probe it to decide whether an SSE stream is offered — 405 is the documented
+"none available" answer, so this keeps older SDK clients connecting cleanly.
+|Result envelope |Every result carries `resultType` (`complete` or `input_required`).
+|Caching |`tools/list`, `prompts/list`, `resources/list`, `resources/read` and `resources/templates/list`
+carry `ttlMs` and `cacheScope`.
+|`tools/list` |Deterministic (sorted by name) so client-side caches and LLM prompt caches stay effective.
+|Removed methods |`ping` and `logging/setLevel` answer with an explicit "removed in 2026-07-28" error rather
+than being silently accepted. The `GET /sse` endpoint is gone; log level is per-request via `_meta`.
+|===
+
+===== Built-in tools
+
+[cols="1,3",options="header",]
+|===
+|Tool |Description
+
+|`open_session` |Opens a stateful SQL session and returns a **server-minted handle**. Pass that handle to
+`run_sql` to keep temporary tables, transactions and session settings across calls. Sessions expire when
+idle and are closed by `close_session`.
+|`close_session` |Closes a session and releases its connection immediately.
+|`run_sql` |Runs read-only SQL and returns at most `max_rows` rows, with `truncated` reported. The result
+also carries `read_only`, `statement_type` (`query`/`update`) and `elapsed_ms`.
+|`list_tables` |Lists tables and views as a `tables` array of `{schema, name, type}`, optionally filtered by
+schema.
+|`describe_table` |Column definitions (name, type, nullable, default) for one table or view, as a `columns`
+result grid plus the resolved `schema`/`table`.
+|`sample_rows` |A small sample of real values from a table.
+|`list_services` |The registered data services (see *Data Service*), so an agent prefers curated, cached,
+versioned services over ad-hoc SQL. Each entry carries the endpoint and its parameters; service SQL text is
+deliberately not exposed. The same list is also available as the resource `slackerdb://services`, because not
+every MCP client consumes resources.
+|===
+
+Because protocol-level sessions no longer exist, cross-call state is expressed the way the specification
+prescribes: as an explicit handle passed as an ordinary tool argument (the specification's own guidance
+names "a database transaction" as the motivating case).
+
+===== Enforcement: read-only by default, capped and timed
+
+* **Read-only by default.** Write statements are rejected **at parse level**, not by wrapping the query in a
+  read-only transaction — `BEGIN TRANSACTION READ ONLY` is trivially escaped by statements such as
+  `WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x`, so the check happens before the statement reaches
+  the engine and defaults to deny. Write access requires an explicit session:
+  `open_session(read_only=false)`. When the server itself runs with `access_mode=READ_ONLY`, that opt-out is
+  refused, so MCP cannot become a bypass around `access_mode`.
+* **Row cap.** `run_sql` returns at most `max_rows` rows (default 100, ceiling 5000) and reports `truncated`.
+* **Statement timeout.** Every statement runs under a timeout (default 30 s, ceiling 300 s) enforced in the
+  application layer, since DuckDB has no per-query timeout.
+* **Same execution path as everything else.** Tool calls take connections from the ordinary dbserver pool,
+  so the connection cap and session handling apply to agents exactly as they do to other clients.
+
+===== Resources and prompts
+
+[cols="1,2",options="header",]
+|===
+|URI / name |Content
+
+|`slackerdb://schema/tables` |Every table and view with schema and type.
+|`slackerdb://schema/table/{table}` |Column definitions for one table (resource template).
+|`slackerdb://services` |The registered data services (see *Data Service*), so an agent prefers curated,
+cached, versioned services over ad-hoc SQL. Service SQL text is deliberately not exposed.
+|`answer_with_services` (prompt) |A service-first answering policy that can be handed to the model.
+|===
+
+===== Configuration
+
+Definitions can be loaded at startup from `mcp_config` (a single JSON file, or a directory of `*.mcp` /
+`*.service` files):
+
+[source,properties]
+----
+mcp_config=conf/mcp_config_example.service
+----
+
+A tool entry may bind to a built-in implementation instead of being an echo stub:
+
+[source,json]
+----
+{
+  "name": "query",
+  "description": "Execute a read-only SQL query",
+  "handler": "builtin:run_sql"
+}
+----
+
+Recognised `builtin:` handlers are `run_sql`, `list_tables`, `describe_table`, `sample_rows`,
+`list_services`, `open_session` and `close_session`; the legacy aliases `query`, `sql`, `runquery`,
+`tables`, `show_tables`, `describe` and `sample` are mapped onto them. A tool without `handler` keeps the
+legacy behaviour of echoing its arguments, and is registered with a description that says so.
+
+`conf/mcp_config_example.service` in the distribution is a working sample of that shape: an echo stub, two
+bindings to built-in tools under custom names (`top_tables` -> `list_tables`, `peek_rows` -> `sample_rows`)
+and one static resource. The built-in tools themselves are always present and never need to be declared. A
+`handler` entry needs no `inputSchema` of its own: the built-in's real schema (including `outputSchema`) is
+used instead, so a declaration cannot drift from the implementation.
+
+Two rules apply to those names. A name a built-in tool already uses is **reserved**: such a declaration is
+skipped while loading, `/mcp/registerMCPTool` and the single-object form of `/mcp/loadMCPTool` reject it with
+`retCode = -1`, and the array form of `/mcp/loadMCPTool` skips that entry (`tools/list` would otherwise
+advertise two tools with the same name, and calls would always reach the built-in). And the binding survives a
+round trip: `saveMCPTool` / `dumpMCPTool` write
+`"handler": "builtin:<name>"` back into the file, so saving and restarting keeps a tool bound to its real
+implementation instead of degrading it to an echo stub.
+
+The optional `mcp_llm_server` / `mcp_llm_key` settings enable the private `/aichat` WebSocket endpoint,
+which routes natural-language questions to registered data services (`<service>:<ip>:<port>:<model>`;
+`ollama` and `openai` are supported). It is independent of the MCP protocol surface.
+
+===== Connecting an MCP client (DeepSeek Harness example)
+
+The endpoint lives on the **management** port, so the management interface must be enabled (`port_x` /
+`--portx`; the default `-1` disables it) and the port has to be explicit — leaving it empty assigns a random
+port that a client configuration cannot address.
+
+**1. Start the server with MCP enabled.**
+
+[source,shell]
+----
+java -jar slackerdb-dbserver-0.2.1-standalone.jar --conf conf/dbserver.conf \
+  --port 15432 --portx 18080 start
+----
+
+`--mcp-config` is deliberately left out here: it is optional, the built-in tools exist without it, and it only
+declares your own extra tools and resources (see the `mcp_config` setting above).
+
+**2. Point the client at `http://<host>:18080/mcp`** using the Streamable HTTP transport. For the DeepSeek
+Harness, add one row to the profile patch (`$DSH_HOME/profiles/<profile>/cordis.patch.yml`):
+
+[source,yaml]
+----
+- insert:
+    - id: mcp-slacker
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: slacker
+        transport: streamable-http
+        url: 'http://127.0.0.1:18080/mcp'
+----
+
+Use a unique `serverName` per server; the namespace is local configuration and never taken from the
+server's advertised name.
+
+**3. Verify by asking a question in the client.** Server tools reach the model as
+`mcp__<serverName>__<tool>`, and naming the tool is the most reliable form:
+
+[source,text]
+----
+Run SELECT 42 AS answer with mcp__slacker__run_sql and tell me the result.
+----
+
+The model calls `mcp__slacker__run_sql` and gets back `rows = [[42]]`. Naming no tool also works
+("query SELECT 42 AS answer with SlackerDB's MCP tools"), but naming it makes the hit certain.
+
+Two things to keep in mind:
+
+* **Start the server before the client.** The client connects once at start-up: with the server absent it
+  retries a few times, then gives up and unregisters every tool, and only a client restart brings them back
+  (restarting the server alone does not).
+* **Resources do not reach the model through this kind of bridge.** Clients that carry tools only cannot see
+  the `slackerdb://` resources, though the resources stay readable over HTTP.
+
+==== MCP Tool administration
+
+The endpoints in this section register and manage MCP tool definitions at runtime. They are
+administration operations used by scripts and by the web console, and are not part of the MCP protocol
+surface described under *MCP Server*.
 
 ===== registerMCPTool
-
 Register an MCP tool.
 
 [cols=",",options="header",]
@@ -1324,47 +1651,30 @@ request body:
 [width="100%",cols="20%,80%",options="header",]
 |===
 |Attribute |Value
-|name |tool name (required)
-
-|version |tool version (required)
+|name |tool name (required). A name a built-in tool already uses is rejected.
 
 |description |tool description (required)
 
-|category |tool category (optional)
+|inputSchema |JSON Schema of the arguments (required here; a definition loaded from `mcp_config` may omit it when it declares a `handler`)
 
-|capabilities |list of capabilities (optional array)
-
-|use_cases |list of use cases (optional array)
-
-|parameters |list of parameters (optional array of objects with name, type, required, description)
-
-|examples |list of examples (optional array of objects with user_query, parameters)
+|category |tool category (optional); used as the file name when definitions are saved into a directory
 |===
+
+A tool registered here is an echo stub: it carries no `handler`, so calling it returns its arguments. Tools
+bound to real implementations come from `mcp_config`.
 
 Request example:
 
 ....
   {
     "name": "queryDatabase",
-    "version": "1.0",
-    "description": "Execute SQL queries on the database",
+    "description": "Echo the request back, for connectivity checks",
     "category": "database",
-    "capabilities": ["query", "execute"],
-    "use_cases": ["data analysis", "report generation"],
-    "parameters": [
-      {
-        "name": "sql",
-        "type": "string",
-        "required": true,
-        "description": "SQL query to execute"
-      }
-    ],
-    "examples": [
-      {
-        "user_query": "Get all customers from the database",
-        "parameters": {"sql": "SELECT * FROM customers"}
-      }
-    ]
+    "inputSchema": {
+      "type": "object",
+      "properties": {"sql": {"type": "string"}},
+      "required": ["sql"]
+    }
   }
 ....
 
@@ -1430,7 +1740,9 @@ Load MCP tool definitions from JSON.
 |Path |`+/mcp/loadMCPTool+`
 |===
 
-request body: JSON array of tool definitions or a single tool definition object.
+request body: JSON array of tool definitions or a single tool definition object. A definition whose name a
+built-in tool already uses is skipped in the array form, and rejected with `retCode = -1` in the single-object
+form.
 
 Response example:
 
@@ -1446,6 +1758,9 @@ Success response (200)
 ===== saveMCPTool
 
 Save MCP tool definitions to configuration file.
+
+Tools bound to a built-in implementation are written back with their `"handler": "builtin:<name>"`, so loading
+the saved file restores the binding instead of turning the tool into an echo stub.
 
 [cols=",",options="header",]
 |===
@@ -1868,12 +2183,27 @@ object that carries neither `id` nor `type`:
 Validation errors you may see: `Field 'id' must be a string`, `Field 'type' must be a string`,
 `Field 'data' must be an object`, `Unknown type: <type>`, `Field 'sessionId' must be a string`,
 `Field 'sql' must be a string`, `Field 'fetchSize' must be a number`,
-`Field 'maxRows' must be a number`, `Invalid session`, `Invalid taskId`,
-`Another SQL is already running`.
+`Field 'maxRows' must be a number`, `Field 'maxRows' must be a positive number`,
+`Invalid session`, `Invalid taskId`, `Another SQL is already running`.
+
+`maxRows` must be a positive number: a previous version accepted `0` and answered an empty
+page with `hasMore = true`, which left clients looping forever on a page that never advances.
 
 ===== Session Management
 
 A session is created by sending a `start` message. The server returns a `sessionId` that must be included in subsequent messages for the same session.
+
+A session owns its own backend connection. Sessions are released in three ways:
+
+* explicitly, with a `close` message (the session id stops being valid immediately);
+* when the connection that created them disappears - detected by a 10-second heartbeat,
+  because the WebSocket `onClose` callback is not delivered by the Jetty/Javalin
+  combination in use;
+* when a session stays idle (no `start`/`exec`/`fetch`/`cancel`) for longer than
+  `client_timeout` seconds (default 600). Sessions with a running task are never
+  collected this way.
+
+A session that is still running a task is not collected by the idle rule.
 
 Start message:
 
@@ -1934,6 +2264,18 @@ Response (returned as soon as the task is accepted, while it is still running):
 If the SQL fails while executing, the task status becomes `error` and `fetch` reports it as
 `data.status = "error"` with the message in `data.error` (the `exec` response itself only means the
 task was accepted).
+
+`exec` accepts the same SQL as the PostgreSQL wire protocol, including:
+
+* **PL/SQL anonymous blocks** - `DO $$ ... $$`, bare `$$ ... $$` and unwrapped
+  `DECLARE ... BEGIN ... END;` scripts, executed by the same engine the PG path uses;
+* **multi-statement scripts** - every statement is executed in order; if the last statement
+  returns a result set, that result set is the one `fetch` pages through, otherwise the
+  affected-row count of the script's DML statements is reported as `updateCount`.
+  Earlier result sets are discarded, so a script is not a way to get several result sets.
+
+Result values use the representations listed in *Result value types* above
+(ISO-8601 dates/times, Base64 BLOBs, JSON arrays for LIST, JSON objects for STRUCT/MAP).
 
 ===== Fetch Results
 
@@ -2238,8 +2580,104 @@ and they are rejected with an explicit error rather than silently converted.
 
 ==== 3. postgresql-fdw
 
-fdw will use "`Declare CURSOR`" to fetch remote data, while duck doesn’t
-support this.
+SlackerDB speaks the PostgreSQL wire protocol, so `postgres_fdw` can attach a SlackerDB
+instance as a foreign server. The protocol layer handles the FDW's session and statement
+traffic, including the cursor-based data path it uses to read rows.
+
+Statements PostgreSQL 17's `postgres_fdw` actually sends, and where we stand:
+
+*Supported*
+
+* Connection setup: `SET search_path`, `SET timezone`, `SET datestyle`,
+  `SET intervalstyle`, `SET extra_float_digits`; `application_name` and
+  `client_encoding` in the startup packet; `GSSENCRequest` is answered with `N`.
+* Extended protocol: Parse / Bind / Describe / Execute / Close / Sync / Flush —
+  named and unnamed statements and portals, per-column result-format negotiation
+  (the `Int16[R]` list in Bind is honoured, text or binary), `PortalSuspended`
+  paging, `RETURNING`, `DEALLOCATE ALL` / `DEALLOCATE <name>`, `RESET ALL`,
+  `DISCARD ALL`.
+* Cursors: `DECLARE ... CURSOR [WITH HOLD] FOR`, `FETCH` (`NEXT` / `FORWARD n` /
+  `ALL` / bare count), `MOVE`, `CLOSE [ALL]` — on both the simple and the extended
+  protocol path. Cursors without `WITH HOLD` are dropped when the transaction ends,
+  as in PostgreSQL; `WITH HOLD` cursors survive `COMMIT` and are materialised in
+  memory to do so. Only forward directions are supported: `BACKWARD` / `ABSOLUTE` /
+  `RELATIVE` are rejected with `0A000` rather than silently misbehaving, because a
+  DuckDB JDBC result set cannot scroll backwards.
+* Transactions: `BEGIN` / `START TRANSACTION [ISOLATION LEVEL ...]` really open a DuckDB
+  transaction, and `COMMIT` / `COMMIT TRANSACTION` / `END` / `ROLLBACK` / `ABORT` end it
+  (a `COMMIT` inside a failed transaction rolls back, as in PostgreSQL; `COMMIT` with no
+  transaction in progress only raises a `NOTICE`). Isolation levels: `READ ONLY` is passed
+  through and enforced by DuckDB, `READ COMMITTED` / `REPEATABLE READ` are treated as
+  satisfied, `SERIALIZABLE` / `DEFERRABLE` are accepted with a `NOTICE` saying they are not
+  enforced. `SET TRANSACTION ...` is accepted inside a transaction block (with a `NOTICE`)
+  and rejected with `25P01` outside one.
+* `SET <PostgreSQL-only parameter>` (for example `statement_timeout`, `lock_timeout`,
+  `server_version_num`) is accepted, remembered per session and answered with a
+  `NOTICE` saying it has no effect; DuckDB's own parameters still pass through.
+* `ANALYZE <foreign table>` works: SlackDB answers both statements PostgreSQL sends for it
+  (`SELECT pg_catalog.pg_relation_size('schema.table'::pg_catalog.regclass) / 8192` and
+  `SELECT reltuples, relkind FROM pg_catalog.pg_class WHERE oid = …`) by translating the
+  `regclass` cast into a real OID lookup, and serves the row sample through a cursor.
+  `relpages` comes from DuckDB's own `estimated_size`, so it stays 0 for small tables;
+  the remote division is a floating-point division, which `postgres_fdw` truncates with `atoi`.
+* Errors follow the protocol: after an extended-protocol error the backend discards
+  messages until `Sync`; `Describe`/`Close` of an unknown statement or portal return
+  `26000`/`34000`; a malformed Bind message returns `08P01` instead of stalling the
+  client until the idle timeout.
+
+*Not implemented yet*
+
+* `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT`: DuckDB has no subtransactions,
+  so these fail predictably instead of degrading — `25P01` outside a transaction block, and
+  `0A000` (with an explanation) inside one. In particular `ROLLBACK TO SAVEPOINT` never rolls
+  back the whole transaction. Consequence for the FDW: `postgres_fdw` emits `SAVEPOINT sN`
+  whenever a remote statement runs inside a local subtransaction, so **foreign tables cannot be
+  used inside a subtransaction** (an explicit `SAVEPOINT`, or a PL/pgSQL `EXCEPTION` block), and
+  the failure additionally leaves that foreign server's connection unusable for the rest of the
+  transaction (`connection to server "sdb" cannot be used due to abort cleanup failure`).
+* `SELECT ... FOR UPDATE` / `FOR SHARE`: `postgres_fdw` pushes the locking clause to the remote,
+  and DuckDB rejects it (`Parser Error: SELECT locking clause is not supported!`), so such queries
+  fail. `ctid` matters only if you declare `OPTIONS (rowid 'ctid')` on a foreign table; ordinary
+  `UPDATE`/`DELETE` works without a remote key — verified, including on a table with duplicate
+  rows, where the whole predicate is pushed down instead of using `ctid`.
+* `IMPORT FOREIGN SCHEMA` only works with `import_collate 'false'`
+  (`pg_collation.collnamespace` is not exposed); column defaults are not imported
+  because `pg_get_expr` is unavailable.
+
+*Example*
+
+[source,sql]
+----
+CREATE EXTENSION postgres_fdw;
+CREATE SERVER sdb FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '127.0.0.1', port '15499', dbname 'fdwdb',
+           use_remote_estimate 'false');
+CREATE USER MAPPING FOR CURRENT_USER SERVER sdb OPTIONS (user 'main', password 'main');
+CREATE FOREIGN TABLE orders (id integer, amount numeric(38,4))
+  SERVER sdb OPTIONS (schema_name 'main', table_name 'orders');
+
+-- IMPORT FOREIGN SCHEMA 也可以直接把表导进来（需要 import_collate 'false'）
+IMPORT FOREIGN SCHEMA "main" FROM SERVER sdb INTO public
+  OPTIONS (import_collate 'false');
+----
+
+Two points that are easy to get wrong:
+
+* `dbname` is the **instance name** the server was started with (`--data fdwdb`), not a
+  PostgreSQL-style database name. `memory` (and other reserved words) cannot be used as
+  an instance name, so `--data memory` fails at startup.
+* `import_collate` is an option of `IMPORT FOREIGN SCHEMA`, **not** of `CREATE SERVER`;
+  PostgreSQL rejects it in the server options (`invalid option "import_collate"`).
+  Keep `use_remote_estimate` off: it makes `postgres_fdw` parse PostgreSQL's
+  `EXPLAIN (cost=... rows=... width=...)` text, which DuckDB does not produce.
+
+*Verified end-to-end*: PostgreSQL 18.6 with `postgres_fdw` 1.2, two SlackDB instances
+attached at once (a local query joined a foreign table from each instance), plus
+`INSERT`/`UPDATE`/`DELETE ... RETURNING`, `EXPLAIN (VERBOSE)` and `IMPORT FOREIGN SCHEMA`.
+The remote statement stream captured in SlackDB's own SQL history shows exactly what
+`postgres_fdw` sends: `SET search_path = pg_catalog` … `START TRANSACTION ISOLATION LEVEL
+REPEATABLE READ`, `DECLARE c1 CURSOR FOR SELECT …`, `FETCH 100 FROM c1`, `CLOSE c1`,
+`COMMIT TRANSACTION`.
 
 === Plugin System
 

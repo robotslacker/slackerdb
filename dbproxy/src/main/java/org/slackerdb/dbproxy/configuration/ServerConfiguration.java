@@ -1,6 +1,7 @@
 package org.slackerdb.dbproxy.configuration;
 
 import ch.qos.logback.classic.Level;
+import org.slackerdb.common.discovery.MulticastAddress;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.utils.Utils;
 
@@ -26,6 +27,11 @@ public class ServerConfiguration extends Throwable {
 
     // 默认绑定的主机地址
     private final String default_bind = "0.0.0.0";
+    // 组播服务发现的监听地址（<组IP>:<端口>）。刻意没有默认值：不配置就是不启用发现，
+    // 此时后端一条都不会被登记——旧的单播 REGISTER 注册通道已被删除，没有别的兜底路径。
+    //
+    // 必须与 dbserver 的 advertise_address 逐字一致，否则表现为"什么都发现不了"。
+    private final String default_listener_address = "";
     // 默认使用全部的CPU作为Netty的后台线程数
     private final int default_max_workers = Runtime.getRuntime().availableProcessors();
     // 默认客户端的超时时间
@@ -42,6 +48,7 @@ public class ServerConfiguration extends Throwable {
     private int      port;
     private int      portX;
     private String   bind;
+    private String   listener_address;
     private int      max_workers;
     private int      client_timeout;
     private Locale   locale;
@@ -55,6 +62,7 @@ public class ServerConfiguration extends Throwable {
         port = default_port;
         portX = default_portX;
         bind = default_bind;
+        listener_address = default_listener_address;
         max_workers = default_max_workers;
         client_timeout = default_client_timeout;
         locale = default_locale;
@@ -156,6 +164,13 @@ public class ServerConfiguration extends Throwable {
                         setMax_workers(entry.getValue().toString().trim());
                     }
                 }
+                case "LISTENER_ADDRESS" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        listener_address = this.default_listener_address;
+                    } else {
+                        setListenerAddress(entry.getValue().toString().trim());
+                    }
+                }
                 case "PID" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         pid = this.default_pid;
@@ -204,6 +219,45 @@ public class ServerConfiguration extends Throwable {
     public boolean getDaemonMode()
     {
         return this.daemonMode;
+    }
+
+    /**
+     * 组播监听地址（已解析）。未配置时返回 {@code null}。
+     *
+     * <p>解析结果不在构造期缓存：配置文件可以反复加载，缓存会让"后加载的值不生效"。</p>
+     */
+    public MulticastAddress getListenerAddress()
+    {
+        return listener_address.isEmpty() ? null : MulticastAddress.parse(listener_address);
+    }
+
+    /** 组播服务发现是否已启用（只看配置，不看 socket 是否真的建起来了）。 */
+    public boolean isDiscoveryEnabled()
+    {
+        return !listener_address.isEmpty();
+    }
+
+    /**
+     * 设置组播监听地址。
+     *
+     * <p>与 dbserver 的 {@code advertise_address} 必须逐字一致。格式错误在这里就报错（启动期），
+     * 因为组播配错的表现是"静默不发现"，越早失败越好。</p>
+     */
+    public void setListenerAddress(String pListenerAddress) throws ServerException
+    {
+        if (pListenerAddress == null || pListenerAddress.trim().isEmpty())
+        {
+            listener_address = this.default_listener_address;
+            return;
+        }
+        try {
+            listener_address = MulticastAddress.parse(pListenerAddress.trim()).toString();
+        }
+        catch (IllegalArgumentException iae) {
+            throw new ServerException("SLACKERDB-00020",
+                    Utils.getMessage("SLACKERDB-00020", pListenerAddress, iae.getMessage())
+            );
+        }
     }
 
     public void setLog_level(String pLog_level) throws ServerException {

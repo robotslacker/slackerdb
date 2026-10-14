@@ -8,6 +8,13 @@ import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.response.*;
 import org.slackerdb.dbserver.sql.CommandTag;
+import org.slackerdb.dbserver.sql.CursorHandler;
+import org.slackerdb.dbserver.sql.CursorSql;
+import org.slackerdb.dbserver.sql.DeallocateSql;
+import org.slackerdb.dbserver.sql.SessionSettingResponder;
+import org.slackerdb.dbserver.sql.SessionSettingSql;
+import org.slackerdb.dbserver.sql.TransactionHandler;
+import org.slackerdb.dbserver.sql.TransactionSql;
 import org.slackerdb.dbserver.sql.CopyProtocolHandler;
 import org.slackerdb.dbserver.sql.PlSqlHostImpl;
 import org.slackerdb.dbserver.sql.RowEncoder;
@@ -109,6 +116,27 @@ public class QueryRequest  extends PostgresRequest {
         super.decode(data);
     }
 
+    /**
+     * 判断本消息是否为"多条语句的批次"。
+     *
+     * <p>PG 的简单查询消息允许携带多条以 {@code ;} 分隔的语句，服务端要逐条执行、逐条回
+     * CommandComplete。下面的游标分支与事务分支都是<b>单语句</b>拦截器：它们只看消息开头就
+     * 认定"这条语句是什么"，然后执行并收尾整条消息。对批次而言这是错的 ——
+     * {@code begin; select 1; commit;} 会因为开头是 {@code BEGIN} 而被当成"一条事务控制语句"，
+     * 执行 BEGIN 后就把消息收尾掉，<b>后面的语句被静默丢弃</b>（不报错、不提示，
+     * 客户端只看到一个 BEGIN 标签，数据静默丢失）。</p>
+     *
+     * <p>因此批次必须绕开这两个单语句拦截器，交给下面的脚本路径逐条执行
+     * （{@code plsqlScript.isScript()} 分支）。注意 {@code psql -f script.sql} 不受影响：
+     * psql 读文件时是在客户端按分号逐条发送的，每条都是单语句消息。</p>
+     */
+    private boolean isMultiStatementBatch(String pSql) {
+        if (pSql == null) {
+            return false;
+        }
+        return SQLReplacer.splitSQLWithSemicolon(pSql).size() > 1;
+    }
+
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         // 记录会话的开始时间，以及业务类型
@@ -138,10 +166,109 @@ public class QueryRequest  extends PostgresRequest {
                 break tryBlock;
             }
 
+            // COPY ... TO STDOUT：简单查询路径的导出方向。
+            // 与 COPY IN 不同，这一步会**同步推完**全部数据（CopyOutResponse → CopyData×N →
+            // CopyDone → CommandComplete），所以返回 COPY_STARTED 时本回合只剩 ReadyForQuery。
+            CopyProtocolHandler.Result copyOutResult = CopyProtocolHandler.beginCopyOut(this, ctx, out, sql);
+            if (copyOutResult == CopyProtocolHandler.Result.COPY_STARTED
+                    || copyOutResult == CopyProtocolHandler.Result.REJECTED) {
+                break tryBlock;
+            }
+
             // 命令标签必须基于**客户端原文**判断，而不是 SQLReplacer 改写后的 SQL。
             // 原因：SET/SHOW 这类语句会被 SQLReplacer 改写（SET 被改写成空串、SHOW 被改写成
             // 等价的 SELECT），改写后就再也认不出原始命令了，标签会退化成 "SELECT 0"。
             String originalSql = sql;
+
+            // 审计与可观测性一律记录**客户端原文**：START TRANSACTION / DEALLOCATE / SET 这类语句会被
+            // SQLReplacer 改写成空串（或改成别的查询），若记改写后的文本，SQL 历史里就会出现空行，
+            // 排查问题（尤其排查 postgres_fdw 发了什么）时看不出客户端到底发了什么。
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = originalSql;
+
+            // B1：PG 游标族（DECLARE ... CURSOR FOR / FETCH / MOVE / CLOSE）。
+            // 必须放在 PL/SQL 检测**之前**：PlSqlDetector 会把任何以 DECLARE 开头的语句当成
+            // PL/SQL 块，于是 `DECLARE c CURSOR FOR ...` 在语法分析阶段就报 42601，
+            // 根本到不了执行层 —— 而 postgres_fdw 取远端数据走的正是这条语句。
+            // 多语句批次不走这里（见 isMultiStatementBatch）：否则
+            // `declare c cursor ...; fetch all from c;` 会在 DECLARE 之后截断。
+            if (!isMultiStatementBatch(originalSql) && CursorSql.isCursorStatement(originalSql)) {
+                DBSession cursorSession = this.dbInstance.getSession(getCurrentSessionId(ctx));
+                if (cursorSession.getTransactionState() == DBSession.TransactionState.FAILED) {
+                    // 与后面"失败事务"分支同语义：事务块失败后除 COMMIT/ROLLBACK 外一律 25P02
+                    sqlHistoryId = insertSqlHistory(ctx);
+                    updateSqlHistory(sqlHistoryId, 0, 0,
+                            "25P02: current transaction is aborted, commands ignored until end of transaction block");
+
+                    ErrorResponse cursorFailedTx = new ErrorResponse(this.dbInstance);
+                    cursorFailedTx.setErrorResponse("25P02",
+                            "current transaction is aborted, commands ignored until end of transaction block");
+                    cursorFailedTx.process(ctx, request, out);
+                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out,
+                            this.dbInstance.logger);
+
+                    ReadyForQuery cursorFailedReady = new ReadyForQuery(this.dbInstance);
+                    cursorFailedReady.process(ctx, request, out);
+                    PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out,
+                            this.dbInstance.logger);
+
+                    out.close();
+                    break tryBlock;
+                }
+
+                sqlHistoryId = insertSqlHistory(ctx);
+                CursorHandler.CursorResult cursorResult = CursorHandler.handle(
+                        this.dbInstance, ctx, request, out, cursorSession, originalSql, RowEncoder.ALL_TEXT, true);
+                if (cursorResult != null) {
+                    updateSqlHistory(sqlHistoryId, cursorResult.isError() ? -1 : 0, cursorResult.rows(),
+                            cursorResult.isError()
+                                    ? cursorResult.sqlState() + ": " + cursorResult.errorMessage()
+                                    : null);
+                    if (cursorResult.isError()) {
+                        // 游标语句失败同样让事务块进入 aborted（PG 语义）
+                        cursorSession.markTransactionFailed();
+
+                        ErrorResponse cursorError = new ErrorResponse(this.dbInstance);
+                        cursorError.setErrorFile("QueryRequest");
+                        cursorError.setErrorResponse(cursorResult.sqlState(), cursorResult.errorMessage());
+                        cursorError.process(ctx, request, out);
+                        PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out,
+                                this.dbInstance.logger);
+                    }
+
+                    ReadyForQuery cursorReady = new ReadyForQuery(this.dbInstance);
+                    cursorReady.process(ctx, request, out);
+                    PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out,
+                            this.dbInstance.logger);
+
+                    out.close();
+                    break tryBlock;
+                }
+            }
+
+            // P2：事务控制语句（START TRANSACTION / BEGIN / COMMIT / ROLLBACK / ABORT / END / SET TRANSACTION）。
+            // 必须在 PL/SQL 检测之前：`BEGIN` 既可能是事务开始、也可能是 PL/SQL 块的开头，
+            // 这里按 PG 的事务语法先判定（有歧义时优先当事务）。
+            // 也必须在"失败事务"分支之前：失败事务里的 COMMIT/ROLLBACK 必须照常结束事务块。
+            //
+            // 但**多语句批次**不能走这里：`begin; select 1; commit;` 的开头也是 BEGIN，
+            // 直接当"一条事务控制语句"处理会把后面的语句静默丢弃（见 isMultiStatementBatch）。
+            if (!isMultiStatementBatch(originalSql) && TransactionSql.parse(originalSql) != null) {
+                DBSession transactionSession = this.dbInstance.getSession(getCurrentSessionId(ctx));
+                sqlHistoryId = insertSqlHistory(ctx);
+                TransactionHandler.TransactionResult transactionResult = TransactionHandler.handle(
+                        this.dbInstance, ctx, request, out, transactionSession, originalSql, true);
+                if (transactionResult != null) {
+                    updateSqlHistory(sqlHistoryId, transactionResult.isError() ? -1 : 0, 0,
+                            transactionResult.isError()
+                                    ? transactionResult.sqlState() + ": " + transactionResult.errorMessage()
+                                    : null);
+                    if (transactionResult.isError()) {
+                        transactionSession.markTransactionFailed();
+                    }
+                    out.close();
+                    break tryBlock;
+                }
+            }
 
             // PL/SQL 检测：简单查询协议下也必须支持匿名块与多语句脚本。
             // 历史实现完全没有这条分支，`DO $$...$$` 会被原样丢给 DuckDB 并报错。
@@ -213,6 +340,66 @@ public class QueryRequest  extends PostgresRequest {
                 break tryBlock;
             }
 
+            // T2：PG 特有的会话设置/复位语句（SET <PG 独有参数> / RESET / RESET ALL / DISCARD ALL）。
+            // DuckDB 对它们要么没有参数（3F000）、要么整条语法都不认（0A000 / 42601），
+            // 而连接池 / ORM / IDE 建连时会例行发送。这里接管：记进会话表 + 回成功 + NOTICE 说明不生效。
+            // 注意用客户端原文判断：部分 SET 已被 SQLReplacer 改写成空串。
+            SessionSettingSql.Takeover settingTakeover = SessionSettingSql.apply(
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)), originalSql);
+            if (settingTakeover != null) {
+                sqlHistoryId = insertSqlHistory(ctx);
+                updateSqlHistory(sqlHistoryId, 0, 0, settingTakeover.isError()
+                        ? settingTakeover.errorSqlState() + ": " + settingTakeover.errorMessage()
+                        : null);
+                SessionSettingResponder.respond(this.dbInstance, ctx, request, out, settingTakeover, true);
+                out.close();
+                break tryBlock;
+            }
+
+            // T2：SHOW <本服务端能回答的参数>。DuckDB 不认识这些 PG 参数名，
+            // 会把参数名当表名 → 42P01；这里合成一行返回（列名 = 参数名）。
+            String showTarget = SessionSettingSql.showTarget(originalSql);
+            if (showTarget != null) {
+                sqlHistoryId = insertSqlHistory(ctx);
+                updateSqlHistory(sqlHistoryId, 0, 0, null);
+                SessionSettingResponder.respondShow(this.dbInstance, ctx, request, out, showTarget,
+                        SessionSettingSql.showValue(this.dbInstance.getSession(getCurrentSessionId(ctx)),
+                                showTarget),
+                        true, true);
+                out.close();
+                break tryBlock;
+            }
+
+            // DEALLOCATE ALL：DuckDB 不支持这条语句（42601 "DEALLOCATE requires a name"），
+            // 而 postgres_fdw 在出错清理路径会发它。由服务端接管：
+            // 清空协议级语句/门户缓存，并回命令标签 "DEALLOCATE ALL"。
+            if (DeallocateSql.isDeallocateAll(sql) || DeallocateSql.isDeallocateAll(originalSql)) {
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).clearProtocolLevelStatements();
+
+                sqlHistoryId = insertSqlHistory(ctx);
+                updateSqlHistory(sqlHistoryId, 0, 0, null);
+
+                CommandComplete deallocateComplete = new CommandComplete(this.dbInstance);
+                deallocateComplete.setCommandResult("DEALLOCATE ALL");
+                deallocateComplete.process(ctx, request, out);
+                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
+
+                ReadyForQuery deallocateReady = new ReadyForQuery(this.dbInstance);
+                deallocateReady.process(ctx, request, out);
+                PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+
+                out.close();
+                break tryBlock;
+            }
+
+            // DEALLOCATE <name>：DuckDB 会静默成功，但只作用于它自己的 SQL 级命名空间，
+            // 动不了我们协议级缓存里的同名语句（postgres_fdw 重建预备语句前会发它）。
+            // 这里顺手释放协议级缓存里的同名条目；语句本身仍照常交给 DuckDB 执行。
+            String deallocateTarget = DeallocateSql.deallocateName(sql);
+            if (deallocateTarget != null) {
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).releaseProtocolStatement(deallocateTarget);
+            }
+
             // 取出上次解析的SQL，如果为空语句，则直接返回
             if (sql.isEmpty()) {
                 // 空语句（客户端发的空串，或被 SQLReplacer 改写掉的 SET/SHOW）也要进审计：
@@ -272,8 +459,8 @@ public class QueryRequest  extends PostgresRequest {
                 if (isResultSet) {
                     ResultSet rs = preparedStatement.getResultSet();
 
-                    // 列级元数据只解析一次；simple query 路径一律文本返回（binaryAllowed = false）
-                    RowEncoder encoder = new RowEncoder(rs.getMetaData(), false, this.dbInstance.logger);
+                    // 列级元数据只解析一次；simple query 路径一律文本返回
+                    RowEncoder encoder = new RowEncoder(rs.getMetaData(), RowEncoder.ALL_TEXT, this.dbInstance.logger);
 
                     RowDescription rowDescription = new RowDescription(this.dbInstance);
                     rowDescription.setFields(encoder.describe());
@@ -414,6 +601,42 @@ public class QueryRequest  extends PostgresRequest {
 
             // 发送并刷新返回消息
             PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
+        } catch (RuntimeException re) {
+            // 未预期的运行时异常（例如行编码阶段 DuckDB JDBC 抛出的 NumberFormatException）。
+            //
+            // 这一类异常**不是** SQLException，原先没有任何分支接住它：它会一路穿出 process()
+            // 到 Netty 的 channelRead，被那里"只记日志"的 catch 吞掉。此时服务端往往已经发出
+            // 了 RowDescription，却永远不会再发 DataRow / ErrorResponse / ReadyForQuery ——
+            // 客户端（psql / psycopg2 / pgjdbc…）就会一直等一条永不到来的报文，表现为"查询永久挂起"，
+            // 且连接作废、statement_timeout 也救不回来。这正是 DECIMAL[] 挂起的放大器。
+            //
+            // 这里与上面的 catch (SQLException) 保持同一收尾语义：回 ErrorResponse + ReadyForQuery，
+            // 把"永久挂起"降级为"客户端收到一个明确的错误"。
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).markTransactionFailed();
+
+            String message = re.getMessage() == null ? re.toString() : re.getMessage();
+            if (sqlHistoryId != -1) {
+                updateSqlHistory(sqlHistoryId, -1, 0, "XX000:" + message);
+            }
+
+            this.dbInstance.logger.error("[SERVER][PG PROTOCOL]: Unexpected error while encoding/executing "
+                    + "a simple query, answering XX000 instead of dropping the request.", re);
+
+            ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+            errorResponse.setErrorFile("QueryRequest");
+            errorResponse.setErrorResponse("XX000", message);
+            errorResponse.setErrorSeverity("ERROR");
+            errorResponse.process(ctx, request, out);
+
+            // 发送并刷新返回消息
+            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+
+            // 发送ReadyForQuery
+            ReadyForQuery runtimeReady = new ReadyForQuery(this.dbInstance);
+            runtimeReady.process(ctx, request, out);
+
+            // 发送并刷新返回消息
+            PostgresMessage.writeAndFlush(ctx, ReadyForQuery.class.getSimpleName(), out, this.dbInstance.logger);
         } finally {
             out.close();
         }
@@ -464,8 +687,26 @@ public class QueryRequest  extends PostgresRequest {
             }
             session.executingSQL = statementSql;
 
+            // 失败事务块语义（与单语句路径的 25P02 分支一致）：事务块中一旦有语句报错，
+            // 后续语句一律以 25P02 拒绝，直到遇到 COMMIT/ROLLBACK 把事务块结束。
+            // **必须继续走完整个脚本**，不能像以前那样让异常冲破循环 —— 否则脚本里的
+            // BEGIN 会一直挂着（事务状态没被收尾），且后面的 COMMIT/ROLLBACK 永远执行不到，
+            // 事务块泄漏给下一个消息。
+            if (session.getTransactionState() == DBSession.TransactionState.FAILED
+                    && !isTransactionEndStatement(statementSql)) {
+                ErrorResponse abortedTx = new ErrorResponse(this.dbInstance);
+                abortedTx.setErrorFile("QueryRequest");
+                abortedTx.setErrorResponse("25P02",
+                        "current transaction is aborted, commands ignored until end of transaction block");
+                abortedTx.setErrorSeverity("ERROR");
+                abortedTx.process(ctx, request, out);
+                PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+                continue;
+            }
+
             long affectedRows = -1;
             boolean returnedRows = false;
+            boolean statementFailed = false;
             try (PreparedStatement preparedStatement = session.dbConnection.prepareStatement(statementSql)) {
                 long handleId = session.registerRunningStatement(preparedStatement);
                 try {
@@ -483,7 +724,7 @@ public class QueryRequest  extends PostgresRequest {
                     if (hasResultSet) {
                         returnedRows = true;
                         ResultSet resultSet = preparedStatement.getResultSet();
-                        RowEncoder encoder = new RowEncoder(resultSet.getMetaData(), false, this.dbInstance.logger);
+                        RowEncoder encoder = new RowEncoder(resultSet.getMetaData(), RowEncoder.ALL_TEXT, this.dbInstance.logger);
 
                         RowDescription rowDescription = new RowDescription(this.dbInstance);
                         rowDescription.setFields(encoder.describe());
@@ -517,6 +758,32 @@ public class QueryRequest  extends PostgresRequest {
                     session.unregisterRunningStatement(handleId);
                 }
             }
+            catch (Exception statementError) {
+                // 单条语句失败：如实回错误响应、把事务块标记为失败，然后**继续执行脚本剩余语句**。
+                // 这与单语句路径的 catch(SQLException) 分支同语义（那里也是 markTransactionFailed
+                // + 报错 + ReadyForQuery），也是 psql -f 逐条发送时的既有行为（psql 默认
+                // 出错后继续）。不这样做就会出现"错误把 COMMIT 一起吞掉、事务块泄漏"的坏状态。
+                final String affectedSql = statementSql;
+                statementFailed = true;
+                session.markTransactionFailed();
+
+                ErrorResponse statementErrorResponse = new ErrorResponse(this.dbInstance);
+                statementErrorResponse.setErrorFile("QueryRequest");
+                if (statementError instanceof SQLException sqlError) {
+                    statementErrorResponse.setErrorResponse(
+                            SqlStateMapper.fromException(sqlError), sqlError.getMessage());
+                } else if (statementError instanceof PlSqlException plsqlError) {
+                    statementErrorResponse.setErrorResponse(
+                            plsqlError.getSqlState(), plsqlError.getMessage() + plsqlError.positionSuffix());
+                } else {
+                    statementErrorResponse.setErrorResponse("XX000", statementError.getMessage());
+                }
+                statementErrorResponse.setErrorSeverity("ERROR");
+                statementErrorResponse.process(ctx, request, out);
+                PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+                this.dbInstance.logger.debug(
+                        "[SERVER] 脚本中的语句执行失败，继续执行剩余语句: [{}]", affectedSql);
+            }
 
             // 事务状态机：与单语句路径保持一致的判定
             String upperSql = statementSql.toUpperCase();
@@ -527,10 +794,12 @@ public class QueryRequest  extends PostgresRequest {
                 session.endTransaction();
             }
 
-            CommandComplete commandComplete = new CommandComplete(this.dbInstance);
-            commandComplete.setCommandResult(CommandTag.of(statement.sql(), affectedRows, returnedRows));
-            commandComplete.process(ctx, request, out);
-            PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
+            if (!statementFailed) {
+                CommandComplete commandComplete = new CommandComplete(this.dbInstance);
+                commandComplete.setCommandResult(CommandTag.of(statement.sql(), affectedRows, returnedRows));
+                commandComplete.process(ctx, request, out);
+                PostgresMessage.writeAndFlush(ctx, CommandComplete.class.getSimpleName(), out, this.dbInstance.logger);
+            }
         }
         return totalRows;
     }

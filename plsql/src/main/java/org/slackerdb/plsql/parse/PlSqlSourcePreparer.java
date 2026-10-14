@@ -148,6 +148,9 @@ public final class PlSqlSourcePreparer {
         int pos = 0;
         int length = script.length();
         State state = State.DECL_OR_STMT;
+        // DECLARE 段内是否位于 CURSOR 声明中：只有 `CURSOR name ... IS` 的 IS 才引入查询遮罩，
+        // 变量 DEFAULT 表达式里的 IS（如 `x boolean default (a is null)`）不是查询起点。
+        boolean inCursorDecl = false;
 
         while (pos < length) {
             char ch = script.charAt(pos);
@@ -225,16 +228,27 @@ public final class PlSqlSourcePreparer {
                     String word = SqlStatementSplitter.wordAt(script, pos);
                     if (word == null) {
                         out.append(ch);
+                        // 分号结束一条声明：若是 CURSOR 但尚未出现 IS（即 `cursor c;`），也随之复位
+                        if (ch == ';') {
+                            inCursorDecl = false;
+                        }
                         pos++;
                         break;
                     }
                     String upper = word.toUpperCase();
                     out.append(word);
                     pos += word.length();
-                    if (upper.equals("BEGIN")) {
-                        state = State.STATEMENT;
+                    if (upper.equals("CURSOR")) {
+                        inCursorDecl = true;
                     } else if (upper.equals("IS")) {
-                        state = State.MASK_QUERY;
+                        // 仅 CURSOR 声明里的 IS 是查询起点；变量 DEFAULT 里的 is 不是
+                        if (inCursorDecl) {
+                            state = State.MASK_QUERY;
+                            inCursorDecl = false;
+                        }
+                    } else if (upper.equals("BEGIN")) {
+                        state = State.STATEMENT;
+                        inCursorDecl = false;
                     }
                 }
                 case MASK_QUERY -> {
@@ -396,25 +410,22 @@ public final class PlSqlSourcePreparer {
         regions.add(new int[]{skeletonStart, out.length(), originalStart, originalStart + regionText.length()});
     }
 
-    /** 把一段被遮罩的文本写成占位符：首行/末行等长补齐，换行数保留。 */
+    /** 把一段被遮罩的文本写成占位符：行数保留、每行宽度保留，但只写一个 underscore-占位符 */
     private static void emitMaskedRegion(StringBuilder out, String region, int id) {
         int firstNewline = region.indexOf('\n');
         if (firstNewline < 0) {
             emitPlaceholder(out, id, region.length());
             return;
         }
-        emitPlaceholder(out, id, firstNewline);
-        int newlineCount = 0;
-        for (int i = 0; i < region.length(); i++) {
-            if (region.charAt(i) == '\n') {
-                newlineCount++;
-            }
-        }
-        out.append("\n".repeat(newlineCount));
-        int lastNewline = region.lastIndexOf('\n');
-        int lastLineLength = region.length() - lastNewline - 1;
-        if (lastLineLength > 0) {
-            emitPlaceholder(out, id, lastLineLength);
+        // 多行区域：**只**在首行写一个占位符（补齐到首行长，保住首行列号）；
+        // 其余行用空格占位，保留换行数与每行宽度，让行号/列号精确。
+        // 关键：绝不在末行再写一次同 id 占位符——否则该区域会以相同 id 出现多次，
+        // AstBuilder.sqlText() 会把整段原文按占位符个数重复拼接，导致 SQL 被复制粘贴。
+        String[] lines = region.split("\n", -1);
+        emitPlaceholder(out, id, lines[0].length());
+        for (int i = 1; i < lines.length; i++) {
+            out.append('\n');
+            out.append(" ".repeat(lines[i].length()));
         }
     }
 

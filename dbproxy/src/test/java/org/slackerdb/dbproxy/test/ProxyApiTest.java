@@ -55,7 +55,6 @@ public class ProxyApiTest {
         org.slackerdb.dbserver.configuration.ServerConfiguration serverConfiguration = new org.slackerdb.dbserver.configuration.ServerConfiguration();
         serverConfiguration.setPort(0);  // 随机端口
         serverConfiguration.setPortX(0); // 随机管理端口
-        serverConfiguration.setRemoteListener("127.0.0.1:" + proxyPort); // 注册到proxy
         serverConfiguration.setData("mem");
         serverConfiguration.setLog_level("INFO");
         serverConfiguration.setSqlHistory("OFF");
@@ -68,13 +67,9 @@ public class ProxyApiTest {
         
         dbPort = serverConfiguration.getPort();
         dbPortX = serverConfiguration.getPortX();
-        
-        // 等待远程注册成功
-        try {
-            Thread.sleep(3000);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
+
+        // 登记到代理（原来靠 dbserver 的 remote_listener 自注册，该参数已被组播发现取代并删除）
+        LocalBackendRegistration.register(proxyInstance, dbInstance);
 
         // 等待服务启动完成
         try {

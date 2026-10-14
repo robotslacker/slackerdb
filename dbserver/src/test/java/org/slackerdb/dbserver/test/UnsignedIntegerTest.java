@@ -230,7 +230,7 @@ public class UnsignedIntegerTest {
         RawClient client = new RawClient();
         try (client) {
             client.sendParse("", "SELECT ui, us, ut FROM uint_max");
-            client.sendBind("", "");
+            client.sendBind("", "", new int[]{1});     // 显式请求二进制
             client.sendDescribePortal("");
             client.sendExecute("");
             client.sendSync();
@@ -312,12 +312,26 @@ public class UnsignedIntegerTest {
         }
 
         void sendBind(String portal, String statement) throws Exception {
+            sendBind(portal, statement, new int[0]);
+        }
+
+        /**
+         * Bind 并显式指定结果列格式码。
+         *
+         * <p>协议规定 0 个格式码 = 所有结果列用文本；要二进制<b>必须显式声明 1</b>。
+         * 本用例要验证"宽整数的二进制宽度与声明的 OID 一致"，所以必须真的请求二进制，
+         * 否则测的是文本回落路径。</p>
+         */
+        void sendBind(String portal, String statement, int[] resultFormats) throws Exception {
             ByteArrayOutputStream body = new ByteArrayOutputStream();
             writeCString(body, portal);
             writeCString(body, statement);
-            body.writeBytes(Utils.int16ToBytes((short) 0));      // 参数格式码个数
-            body.writeBytes(Utils.int16ToBytes((short) 0));      // 参数个数
-            body.writeBytes(Utils.int16ToBytes((short) 0));      // 结果格式码个数
+            body.writeBytes(Utils.int16ToBytes((short) 0));                  // 参数格式码个数
+            body.writeBytes(Utils.int16ToBytes((short) 0));                  // 参数个数
+            body.writeBytes(Utils.int16ToBytes((short) resultFormats.length)); // 结果格式码个数
+            for (int format : resultFormats) {
+                body.writeBytes(Utils.int16ToBytes((short) format));         // 0 = 文本，1 = 二进制
+            }
             writeFrame('B', body.toByteArray());
         }
 

@@ -241,8 +241,8 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
             String requestedDatabase = connectParameters.get("database");
             if (requestedDatabase == null || requestedDatabase.trim().isEmpty())
             {
-                logger.info("[PROXY][STARTUP    ] Connection from [{}] refused: no database specified in the startup packet.",
-                        ctx.channel().remoteAddress());
+                // 探活/无库名连接是预期内的正常流量（dbserver 每 10 秒探活一次），
+                // 不打印每连接日志以避免刷屏；仍按 PG 协议回错误并关闭连接。
                 sendErrorAndClose(ctx, "SLACKERDB-00001", Utils.getMessage("SLACKERDB-00001"));
                 return;
             }

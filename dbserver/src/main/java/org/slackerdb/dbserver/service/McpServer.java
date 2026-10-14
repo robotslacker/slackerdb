@@ -19,14 +19,26 @@ import java.net.http.HttpResponse;
 import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 /**
- * A minimal MCP (Model Context Protocol) server implementation.
- * Provides SSE for streaming, JSON-RPC over HTTP for tools and resources.
+ * MCP 服务端。
+ *
+ * <p>职责分两层：本类负责"有哪些工具/资源/服务"（注册表 + 管理面 + 私有 AI Chat），
+ * {@link McpProtocol} 负责"这些内容怎么按 2026-07-28 规范落到线上"，
+ * {@link McpToolkit} 负责工具的实际执行（只读判定、行数上限、语句超时），
+ * {@link McpSessionStore} 负责跨调用状态的显式 handle。</p>
+ *
+ * <p>传输为 Streamable HTTP 的单一 POST 端点（{@code /mcp}，兼容别名 {@code /jsonrpc}）。
+ * 旧的 GET/{@code /sse} 端点与 {@code ping}、{@code logging/setLevel} 方法
+ * 已随 2026-07-28 规范移除；{@code initialize} 保留以兼容旧代客户端。</p>
  */
 public class McpServer {
 
@@ -50,11 +62,42 @@ public class McpServer {
     private final int portX;
     private final String bindHost;
 
+    /** 工具与资源的实际执行体。 */
+    private final McpToolkit toolkit;
+    /** 跨调用状态的显式 handle 表。 */
+    private final McpSessionStore sessionStore;
+
+    /**
+     * 列表类结果的缓存建议时长。
+     *
+     * <p>工具/资源清单只在管理员注册或卸载时变化，给 30 秒既能让客户端缓存生效，
+     * 又能让管理员的操作在可接受时间内被看见。</p>
+     */
+    private final long toolsTtlMs = 30_000L;
+    private final long resourcesTtlMs = 30_000L;
+
+    /** 只读模式下 run_sql 的行数上限与默认值。 */
+    private static final int MAX_ROWS_CEILING = 5000;
+    private static final int DEFAULT_MAX_ROWS = 100;
+    private static final int STATEMENT_TIMEOUT_MS = 30_000;
+    private static final int MAX_STATEMENT_TIMEOUT_MS = 300_000;
+    /** 会话 handle 的空闲回收时间。 */
+    private static final long SESSION_IDLE_TIMEOUT_MS = 10 * 60 * 1000L;
+    private static final int MAX_SESSIONS = 64;
+
     // WebSocket heartbeat support for keeping connections alive
     private final Map<WsContext, Long> activeChatConnections = new ConcurrentHashMap<>();
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
     private final AtomicBoolean heartbeatStarted = new AtomicBoolean(false);
-    
+
+    /** 会话 handle 的空闲回收线程。 */
+    private final ScheduledExecutorService sessionReaper =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "mcp-session-reaper");
+                t.setDaemon(true);
+                return t;
+            });
+
     public McpServer(
             DBInstance dbInstance,
             Javalin managementApp,
@@ -67,284 +110,691 @@ public class McpServer {
         this.mcpLlmKey = dbInstance.serverConfiguration.getMcpLlmKey();
         this.portX = dbInstance.serverConfiguration.getPortX();
         this.bindHost = dbInstance.serverConfiguration.getBindHost();
+
+        // 工具执行统一走 dbserver 的连接池——不新建旁路，池上限与会话约束同样生效。
+        //
+        // 借出的连接必须先把 schema 搜索路径钉回默认值：池是 pgwire / 数据服务 / MCP 共用的，
+        // 连接会把上一个会话的 search_path 一起带过来（例如客户端在启动包里要求了
+        // currentSchema=client_sp 的 pgwire 会话），而 run_sql 执行的是用户原始 SQL ——
+        // 非限定名一旦按别人的 schema 解析，轻则表找不到，重则读到另一个同名表的错数据。
+        final String mcpDefaultSchema = defaultSchema(dbInstance);
+        this.sessionStore = new McpSessionStore(
+                () -> openDefaultSchemaConnection(dbInstance, mcpDefaultSchema),
+                logger,
+                STATEMENT_TIMEOUT_MS,
+                SESSION_IDLE_TIMEOUT_MS,
+                MAX_SESSIONS);
+        // 只读默认：服务端本身就是 READ_ONLY 时，MCP 也必然是只读；
+        // 服务端可写时，MCP 仍然默认只读（2026 年生态门槛：只读默认、显式 opt-out）。
+        // opt-out 的粒度是会话：open_session(read_only=false) 或 run_sql 不带 handle 时的显式请求。
+        boolean serverReadOnly = "READ_ONLY".equalsIgnoreCase(
+                dbInstance.serverConfiguration.getAccess_mode());
+        boolean readOnlyDefault = true;
+        this.toolkit = new McpToolkit(sessionStore, new McpToolkit.Config(
+                readOnlyDefault,
+                serverReadOnly,
+                MAX_ROWS_CEILING,
+                DEFAULT_MAX_ROWS,
+                STATEMENT_TIMEOUT_MS,
+                MAX_STATEMENT_TIMEOUT_MS,
+                mcpDefaultSchema), logger);
+        if (!serverReadOnly) {
+            logger.info("[SERVER][MCP    ] MCP tools are read-only by default. "
+                    + "Write access requires an explicit session: open_session(read_only=false).");
+        }
+        sessionReaper.scheduleWithFixedDelay(() -> {
+            try {
+                sessionStore.reapIdle();
+            } catch (Exception e) {
+                logger.warn("[SERVER][MCP] session reaper failed", e);
+            }
+        }, 60, 60, TimeUnit.SECONDS);
+    }
+
+    /**
+     * 默认 schema。
+     *
+     * <p>用 DuckDB 的默认 schema {@code main}，<b>不是</b>配置里的 {@code data} 名：
+     * 后者是 ATTACH 进来的 catalog 名，直接拿它当 schema 会查不到任何列。
+     * 实测 {@code information_schema.columns} 里普通表落在 {@code main}。</p>
+     */
+    private static String defaultSchema(DBInstance dbInstance) {
+        return "main";
+    }
+
+    /**
+     * 从池里借一条连接，并把它的 schema 搜索路径钉回 MCP 的默认 schema。
+     *
+     * <p><b>为什么必须显式设</b>：MCP 与 pgwire、数据服务共用同一个连接池，池里的连接是复用的，
+     * 而归还时的复位只做"回滚未提交事务 + 恢复 autoCommit"
+     * （见 {@code DBDataSourcePool#resetConnectionForReuse}），<b>不碰 search_path</b>。
+     * 于是上一个会话留在连接上的 schema 搜索路径会被 MCP 继承：会话照样成功、不报错、不打日志，
+     * 但 {@code run_sql} 执行用户原始 SQL 时，非限定名按别人的 schema 解析——轻则表找不到，
+     * 重则解析到另一个同名表、静默读到错数据。</p>
+     *
+     * <p>把"借到即规范化"收敛成这一个入口，{@link McpSessionStore#borrow()}（无 handle 的
+     * 内省工具与 {@code run_sql}）与 handle 会话的建连都覆盖到了。</p>
+     *
+     * <p>规范化失败时必须把连接还回池里（句柄的 {@code close()} 语义就是归还），
+     * 不能把槽位漏在手上。</p>
+     */
+    private static Connection openDefaultSchemaConnection(DBInstance dbInstance, String defaultSchema)
+            throws SQLException {
+        Connection connection = dbInstance.dbDataSourcePool.getConnection();
+        boolean ready = false;
+        try {
+            applyDefaultSearchPath(connection, defaultSchema);
+            ready = true;
+            return connection;
+        } finally {
+            if (!ready) {
+                connection.close();
+            }
+        }
+    }
+
+    /**
+     * 把连接的 schema 搜索路径设成 {@code <当前 catalog>.<默认 schema>}。
+     *
+     * <p><b>为什么必须带 catalog 限定、而且必须是"当前 catalog"</b>：DuckDB 会跟着
+     * {@code search_path} 第一项的 catalog 切换当前库（实测把 {@code memory} 写在最前面会让
+     * 整个会话回到内存库，非限定名建表就落到内存库去了）。这里要的只是让 <b>schema 搜索路径</b>
+     * 确定下来、不继承别人的残留，<b>不改变当前库</b>——所以用 {@code current_catalog()}
+     * 把当前库原样带上。不加限定的写法（{@code set search_path = 'main'}）依赖 DuckDB
+     * 未文档化的推断行为，不采用。</p>
+     */
+    private static void applyDefaultSearchPath(Connection connection, String defaultSchema)
+            throws SQLException {
+        String catalog;
+        try (Statement probe = connection.createStatement();
+             ResultSet rs = probe.executeQuery("select current_catalog()")) {
+            catalog = rs.next() ? rs.getString(1) : null;
+        }
+
+        // catalog / schema 名都来自服务端自身（不是用户输入），仍做一次单引号转义以防万一
+        String searchPath = (catalog == null || catalog.isBlank())
+                ? defaultSchema
+                : catalog + "." + defaultSchema;
+        try (Statement stmt = connection.createStatement()) {
+            stmt.execute("set search_path = '" + searchPath.replace("'", "''") + "'");
+        }
     }
 
     public void run() throws Exception {
-        // SSE endpoint for MCP protocol
-        this.managementApp.unsafe.routes.sse("/sse", client -> {
-            try {
-                Map<String, Object> capabilities = new HashMap<>();
-                // 主流扩展：补充list/describe操作，更符合MCP标准
-                capabilities.put("tools", Map.of(
-                        "list", true,          // 列出所有可用工具
-                        "listChanged", true,   // 列出变更的工具
-                        "describe", true,      // 描述工具的参数/返回值
-                        "call", true           // 调用工具
-                ));
+        loadConfiguredMcpDefinitions();
+        registerMcpProtocolRoutes();
+        registerMcpAdminRoutes();
+        registerAiChatRoute();
+    }
 
-                // 主流扩展：补充list/write操作，覆盖完整的资源读写能力
-                capabilities.put("resources", Map.of(
-                        "list", true,
-                        "listChanged", true,
-                        "read", true,
-                        "write", true,         // 支持写入/修改资源
-                        "describe", true
-                ));
-
-                // 主流扩展：补充list/invoke操作，完善服务调用能力
-                capabilities.put("services", Map.of(
-                        "list", true,
-                        "listChanged", true,
-                        "invoke", true         // 通用的服务调用（替代仅listChanged）
-                ));
-
-                if (mcpLlmServer != null && !mcpLlmServer.trim().isEmpty()) {
-                    Map<String, Object> experimental = new HashMap<>();
-                    experimental.put("aiChat", true);
-                    capabilities.put("experimental", experimental);
-                }
-
-                client.sendEvent(
-                        "message",
-                        JSON.toJSONString(
-                                Map.of(
-                                "jsonrpc", "2.0",
-                                "id", 1,
-                                "result",
-                                        Map.of(
-                                                "protocolVersion", "2024-11-05",
-                                                "capabilities", capabilities,
-                                                "serverInfo", Map.of(
-                                                        "name", "SlackerDB-MCP-Server",
-                                                        "version", "1.0.0"
-                                                )
-                                        )
-                                )
-                        )
-                );
-            } catch (Exception e) {
-                logger.error("[SERVER][MCP] SSE error: ", e);
+    /**
+     * 启动时加载 {@code mcp_config} 指定的工具/资源定义。
+     *
+     * <p><b>为什么必须有这个方法</b>：配置项 {@code mcp_config} 在旧实现里
+     * <b>只在保存/导出端点被读取</b>，启动路径完全没有加载它——
+     * 也就是说 README 承诺的"启动时动态加载工具与资源"从未发生，
+     * 注册表在每次重启后都是空的。这里补上。</p>
+     *
+     * <p>接受：单个 JSON 文件，或一个目录（加载其中所有 {@code *.mcp} 与 {@code *.service}）。
+     * 加载失败不阻断启动（记警告继续），因为工具面不可用不应让数据库起不来。</p>
+     */
+    private void loadConfiguredMcpDefinitions() {
+        if (mcpConfigPath == null || mcpConfigPath.isBlank()) {
+            return;
+        }
+        File path = new File(mcpConfigPath);
+        if (!path.exists()) {
+            logger.warn("[SERVER][MCP    ] mcp_config [{}] does not exist; no tools or resources loaded.",
+                    mcpConfigPath);
+            return;
+        }
+        List<File> files = new ArrayList<>();
+        if (path.isDirectory()) {
+            File[] found = path.listFiles((dir, name) -> {
+                String lower = name.toLowerCase(Locale.ROOT);
+                return lower.endsWith(".mcp") || lower.endsWith(".service");
+            });
+            if (found != null) {
+                Arrays.sort(found, Comparator.comparing(File::getName));
+                files.addAll(Arrays.asList(found));
             }
+        } else {
+            files.add(path);
+        }
+        if (files.isEmpty()) {
+            logger.warn("[SERVER][MCP    ] mcp_config directory [{}] contains no *.mcp or *.service file.",
+                    mcpConfigPath);
+            return;
+        }
+        int toolCount = 0;
+        int resourceCount = 0;
+        for (File file : files) {
+            JSONObject config = readConfigFile(file);
+            if (config == null || config.isEmpty()) {
+                continue;
+            }
+            JSONArray toolArray = config.getJSONArray("tools");
+            if (toolArray != null) {
+                for (int i = 0; i < toolArray.size(); i++) {
+                    JSONObject def = toolArray.getJSONObject(i);
+                    if (registerExternalTool(def, "config:" + file.getName())) {
+                        toolCount++;
+                    }
+                }
+            }
+            JSONArray resourceArray = config.getJSONArray("resources");
+            if (resourceArray != null) {
+                for (int i = 0; i < resourceArray.size(); i++) {
+                    JSONObject def = resourceArray.getJSONObject(i);
+                    String uri = def.getString("uri");
+                    String name = def.getString("name");
+                    if (uri == null || uri.isBlank() || name == null || name.isBlank()) {
+                        logger.warn("[SERVER][MCP    ] skipping resource without uri/name in {}",
+                                file.getName());
+                        continue;
+                    }
+                    if (resources.containsKey(uri)) {
+                        logger.warn("[SERVER][MCP    ] duplicate resource [{}] in {}; skipped", uri,
+                                file.getName());
+                        continue;
+                    }
+                    addResource(uri, name,
+                            def.getString("description"),
+                            def.getString("mimeType"),
+                            def.get("contents"),
+                            def.getString("category"));
+                    resourceCount++;
+                }
+            }
+        }
+        logger.info("[SERVER][MCP    ] loaded {} tool(s) and {} resource(s) from mcp_config [{}].",
+                toolCount, resourceCount, mcpConfigPath);
+    }
+
+    /**
+     * 注册一个外部工具定义（来自配置文件或 {@code /mcp/registerMCPTool}）。
+     *
+     * <p>支持 {@code handler} 字段：{@code builtin:query} 之类会<b>绑定到真实实现</b>，
+     * 而不是像旧实现那样一律挂 echo 桩——旧实现从不读取 {@code handler}，
+     * 于是配置里写的语义被静默丢弃。</p>
+     *
+     * @return 是否注册成功（重复或字段缺失返回 false）
+     */
+    private boolean registerExternalTool(JSONObject def, String source) {
+        String name = def == null ? null : def.getString("name");
+        if (name == null || name.isBlank()) {
+            logger.warn("[SERVER][MCP    ] skipping tool without name in {}", source);
+            return false;
+        }
+        String description = def.getString("description");
+        if (description == null || description.isBlank()) {
+            logger.warn("[SERVER][MCP    ] skipping tool [{}] in {}: description is required", name, source);
+            return false;
+        }
+        if (isBuiltinTool(name)) {
+            logger.warn("[SERVER][MCP    ] skipping tool [{}] in {}: the name is reserved by a built-in tool",
+                    name, source);
+            return false;
+        }
+        if (tools.containsKey(name)) {
+            logger.warn("[SERVER][MCP    ] duplicate tool [{}] in {}; skipped", name, source);
+            return false;
+        }
+        String handler = def.getString("handler");
+        JSONObject inputSchema = def.getJSONObject("inputSchema");
+
+        if (handler != null && handler.startsWith("builtin:")) {
+            String target = handler.substring("builtin:".length()).trim();
+            String mapped = mapLegacyBuiltin(target);
+            McpToolkit.ToolSpec spec = findBuiltinSpec(mapped);
+            if (spec == null) {
+                logger.warn("[SERVER][MCP    ] tool [{}] in {} requests unknown builtin handler [{}]; skipped",
+                        name, source, handler);
+                return false;
+            }
+            // 内置工具带自己的 schema（含 outputSchema），不采用配置里的手写 schema，
+            // 保证"声明"与"实际实现"始终一致；spec.name() 一并记下，保存时写回 handler
+            boolean added = addTool(name, description, spec.inputSchema(), spec.outputSchema(), arguments -> {
+                try {
+                    return toolkit.call(spec.name(), JSONObject.from(arguments));
+                } catch (Exception e) {
+                    throw new RuntimeException(e.getMessage(), e);
+                }
+            }, def.getString("category"), spec.name(), false);
+            if (added) {
+                logger.info("[SERVER][MCP    ] tool [{}] from {} bound to builtin handler [{}]",
+                        name, source, spec.name());
+            }
+            return added;
+        }
+
+        if (inputSchema == null) {
+            logger.warn("[SERVER][MCP    ] skipping tool [{}] in {}: inputSchema is required "
+                    + "when no builtin handler is given", name, source);
+            return false;
+        }
+        // 无 handler：保留旧语义（回显入参）以便兼容既有配置。提示语不写进 description，
+        // 而是在 tools/list 展示时拼接，这样 save→load 反复往返也不会把描述越滚越长。
+        boolean added = addTool(name,
+                description,
+                inputSchema,
+                null,
+                arguments -> Map.of("status", "registered", "tool", name, "arguments", arguments),
+                def.getString("category"), null, true);
+        if (added) {
+            logger.warn("[SERVER][MCP    ] tool [{}] from {} has no 'handler'; it will only echo arguments",
+                    name, source);
+        }
+        return added;
+    }
+
+    /** 旧的示例配置里用过 {@code query} 这个名字，映射到现在的 {@code run_sql}。 */
+    private static String mapLegacyBuiltin(String target) {
+        return switch (target.toLowerCase(Locale.ROOT)) {
+            case "query", "sql", "runquery" -> "run_sql";
+            case "tables", "show_tables" -> "list_tables";
+            case "describe" -> "describe_table";
+            case "sample" -> "sample_rows";
+            default -> target;
+        };
+    }
+
+    private McpToolkit.ToolSpec findBuiltinSpec(String name) {
+        for (McpToolkit.ToolSpec spec : toolkit.toolSpecs()) {
+            if (spec.name().equals(name)) {
+                return spec;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 注册 MCP 协议面（规范相关部分）。
+     *
+     * <p>相对旧实现的差异，逐条对应 2026-07-28：</p>
+     * <ul>
+     *   <li><b>GET/{@code /sse} 端点已移除</b>（2026-07-28 取消 GET；HTTP+SSE 自 2025-03-26 起弃用）。
+     *       旧实现用 SSE 硬塞一个能力帧、且从不读取客户端消息，本身就是不合规的。</li>
+     *   <li><b>{@code POST /mcp} 为规范端点</b>：Streamable HTTP 的单一 POST 端点，
+     *       结果以 JSON 对象返回。</li>
+     *   <li><b>{@code POST /jsonrpc} 保留为兼容别名</b>：已安装客户端/控制台都在用它。</li>
+     *   <li><b>{@code server/discover} 已实现</b>（规范强制）。</li>
+     *   <li><b>{@code initialize} 保留以兼容旧代</b>——规范明确要求向后兼容。</li>
+     * </ul>
+     */
+    private void registerMcpProtocolRoutes() {
+        // 规范端点：Streamable HTTP 单一 POST
+        this.managementApp.unsafe.routes.post("/mcp", this::handleMcpPost);
+        // 兼容别名：旧客户端与控制台
+        this.managementApp.unsafe.routes.post("/jsonrpc", this::handleMcpPost);
+
+        /*
+          GET /mcp 必须回 405，不能回 200。
+
+          2026-07-28 取消了 GET 端点，但已安装客户端的 Streamable HTTP 传输仍会在
+          连接时先发一个 GET 想开 SSE 流，并且**只把 405 当作"服务端不提供 SSE 流"的
+          正常信号**（其余非 2xx 会抛错，而 2xx 会被当成 SSE 流解析）。对官方
+          @modelcontextprotocol/sdk 而言，返回 200 + JSON 会让它去解析一个不是
+          SSE 的响应体，连接直接失败。
+
+          所以这里刻意回 405 + Allow: POST：既符合规范方向，又让旧客户端能正常接上。
+          server/discover 仍然可用，走 POST（这是规范要求的唯一方式）。
+        */
+        this.managementApp.unsafe.routes.get("/mcp", ctx -> {
+            ctx.header("Allow", "POST");
+            ctx.status(405).result("Method Not Allowed: this MCP endpoint is POST-only "
+                    + "(the GET/SSE endpoint was removed in MCP 2026-07-28). "
+                    + "Send a JSON-RPC POST with method 'server/discover' instead.");
         });
+    }
 
-        // JSON-RPC over HTTP endpoint for MCP
-        this.managementApp.unsafe.routes.post("/jsonrpc", ctx -> {
-            JSONObject request;
-            try {
-                request = JSON.parseObject(ctx.body());
-            } catch (Exception e) {
-                // Parse error
-                ctx.result(JSON.toJSONString(Map.of(
-                    "jsonrpc", "2.0",
-                    "error", Map.of("code", -32700, "message", "Parse error: " + e.getMessage())
-                )));
+    /**
+     * 处理一次 MCP POST。
+     *
+     * <p>协议要点：</p>
+     * <ol>
+     *   <li>解析 JSON-RPC 信封，非法请求直接回标准错误码；</li>
+     *   <li>从 {@code params._meta} 读协议版本与客户端能力（无状态代）；</li>
+     *   <li>版本不匹配回 {@code UnsupportedProtocolVersionError}；</li>
+     *   <li>结果统一带 {@code resultType}；列表/read 结果统一带 {@code ttlMs}/{@code cacheScope}。</li>
+     * </ol>
+     */
+    private void handleMcpPost(io.javalin.http.Context ctx) {
+        ctx.contentType("application/json");
+
+        JSONObject request;
+        try {
+            String body = ctx.body();
+            if (body == null || body.isBlank()) {
+                ctx.result(JSON.toJSONString(errorEnvelope(null, McpProtocol.ERR_INVALID_REQUEST, "Empty request body")));
                 return;
             }
+            request = JSON.parseObject(body);
+        } catch (Exception e) {
+            ctx.result(JSON.toJSONString(errorEnvelope(null, McpProtocol.ERR_PARSE, "Parse error: " + e.getMessage())));
+            return;
+        }
 
-            // Validate jsonrpc version
-            String jsonrpcValue = request.getString("jsonrpc");
-            if (!"2.0".equals(jsonrpcValue)) {
-                ctx.result(JSON.toJSONString(Map.of(
-                    "jsonrpc", "2.0",
-                    "error", Map.of("code", -32600, "message", "Invalid Request: jsonrpc must be exactly '2.0'")
-                )));
-                return;
+        if (request == null) {
+            ctx.result(JSON.toJSONString(errorEnvelope(null, McpProtocol.ERR_INVALID_REQUEST, "Request must be a JSON object")));
+            return;
+        }
+        if (!"2.0".equals(request.getString("jsonrpc"))) {
+            ctx.result(JSON.toJSONString(errorEnvelope(request.get("id"), McpProtocol.ERR_INVALID_REQUEST,
+                    "Invalid Request: jsonrpc must be exactly '2.0'")));
+            return;
+        }
+        String method = request.getString("method");
+        if (method == null || method.isBlank()) {
+            ctx.result(JSON.toJSONString(errorEnvelope(request.get("id"), McpProtocol.ERR_INVALID_REQUEST,
+                    "Invalid Request: method must be a non-empty string")));
+            return;
+        }
+        Object id = request.get("id");
+        JSONObject params = request.getJSONObject("params");
+
+        // 规范要求在 Streamable HTTP POST 上带 Mcp-Method / Mcp-Name。
+        // 缺失时容忍（已安装客户端尚在过渡），仅在调试级别记录。
+        String headerMethod = ctx.header("Mcp-Method");
+        if (headerMethod == null && logger.isDebugEnabled()) {
+            logger.debug("[SERVER][MCP] request without Mcp-Method header: {}", method);
+        }
+
+        McpProtocol.RequestMeta meta = McpProtocol.readMeta(params);
+        if (meta.modernEra() && !McpProtocol.supportsVersion(meta.protocolVersion())) {
+            ctx.result(JSON.toJSONString(new JSONObject() {{
+                put("jsonrpc", "2.0");
+                put("id", id);
+                put("error", McpProtocol.unsupportedVersion(meta.protocolVersion()));
+            }}));
+            return;
+        }
+
+        try {
+            JSONObject result = dispatch(method, params, meta);
+            ctx.result(JSON.toJSONString(successEnvelope(id, result)));
+        } catch (McpProtocol.McpParamException e) {
+            ctx.result(JSON.toJSONString(errorEnvelope(id, McpProtocol.ERR_INVALID_PARAMS, e.getMessage())));
+        } catch (UnsupportedOperationException e) {
+            ctx.result(JSON.toJSONString(errorEnvelope(id, McpProtocol.ERR_METHOD_NOT_FOUND, e.getMessage())));
+        } catch (Exception e) {
+            logger.error("[SERVER][MCP] method {} failed", method, e);
+            ctx.result(JSON.toJSONString(errorEnvelope(id, McpProtocol.ERR_INTERNAL,
+                    "Internal error: " + e.getMessage())));
+        }
+    }
+
+    /**
+     * 协议方法分派。
+     *
+     * <p>旧代 {@code initialize} 与 {@code notifications/initialized} 在此处理，
+     * 返回与 {@code server/discover} 同一份能力与身份，避免两份真相。</p>
+     */
+    private JSONObject dispatch(String method, JSONObject params, McpProtocol.RequestMeta meta) throws Exception {
+        return switch (method) {
+            case "server/discover" -> wrap(McpProtocol.complete(discoverPayload()));
+
+            // 旧代握手：规范已移除，但已安装客户端仍在用，必须保留
+            case "initialize" -> wrap(McpProtocol.complete(legacyInitializePayload(params)));
+            case "notifications/initialized" -> wrap(McpProtocol.complete(new JSONObject()));
+            // 规范已移除 ping / logging/setLevel：明确回复不支持，而不是静默吞掉
+            case "ping" -> throw new UnsupportedOperationException(
+                    "Method 'ping' was removed in MCP 2026-07-28; use server/discover for liveness.");
+            case "logging/setLevel" -> throw new UnsupportedOperationException(
+                    "Method 'logging/setLevel' was removed in MCP 2026-07-28; pass "
+                            + McpProtocol.META_LOG_LEVEL + " in _meta per request instead.");
+
+            case "tools/list" -> wrap(McpProtocol.complete(
+                    McpProtocol.withCache(toolsListPayload(), toolsTtlMs, McpProtocol.SCOPE_PUBLIC)));
+            case "tools/call" -> callTool(params);
+            case "resources/list" -> wrap(McpProtocol.complete(
+                    McpProtocol.withCache(resourcesListPayload(), resourcesTtlMs, McpProtocol.SCOPE_PUBLIC)));
+            case "resources/templates/list" -> wrap(McpProtocol.complete(
+                    McpProtocol.withCache(resourceTemplatesPayload(), resourcesTtlMs, McpProtocol.SCOPE_PUBLIC)));
+            case "resources/read" -> readResource(params);
+            case "prompts/list" -> wrap(McpProtocol.complete(
+                    McpProtocol.withCache(promptsListPayload(), resourcesTtlMs, McpProtocol.SCOPE_PUBLIC)));
+            case "prompts/get" -> getPrompt(params);
+
+            default -> throw new UnsupportedOperationException("Method not found: " + method);
+        };
+    }
+
+    /** {@link McpProtocol} 用 {@code Map} 构造信封，协议出口统一转成 fastjson 的 JSONObject。 */
+    private static JSONObject wrap(Map<String, Object> map) {
+        return JSONObject.from(map);
+    }
+
+    /** {@code server/discover} 的载荷：规范强制的"公布版本 / 能力 / 身份"。 */
+    private JSONObject discoverPayload() {
+        JSONObject payload = new JSONObject();
+        payload.put("protocolVersions", new JSONArray(new ArrayList<Object>(McpProtocol.SUPPORTED_VERSIONS)));
+        payload.put("protocolVersion", McpProtocol.PROTOCOL_VERSION);
+        payload.put("serverInfo", McpProtocol.serverInfo());
+        payload.put("capabilities", McpProtocol.capabilities());
+        payload.put("instructions", instructions());
+        payload.put("methods", new JSONArray(new ArrayList<Object>(McpProtocol.implementedMethods())));
+        return payload;
+    }
+
+    /**
+     * 旧代 {@code initialize} 的应答。
+     *
+     * <p>旧客户端会读 {@code protocolVersion} 并据此决定后续行为，因此这里必须回
+     * <b>它请求的那个版本</b>（如果在我们支持范围内），而不是硬塞最新版本——
+     * 否则旧客户端会以为服务端升级了、开始发新语义的请求。</p>
+     *
+     * <p>当客户端请求的版本我们完全不支持时，退回到<b>双方共同支持的最新版本</b>
+     * （即 {@link McpProtocol#SUPPORTED_VERSIONS} 里最靠前的一个），而不是无条件回
+     * 我们的首要版本：对只认识旧版本的客户端来说，一个它不认识的新版本号同样没法用。</p>
+     */
+    private JSONObject legacyInitializePayload(JSONObject params) {
+        String requested = params == null ? null : params.getString("protocolVersion");
+        String negotiated = McpProtocol.supportsVersion(requested)
+                ? requested
+                : McpProtocol.SUPPORTED_VERSIONS.get(0);
+        JSONObject payload = new JSONObject();
+        payload.put("protocolVersion", negotiated);
+        payload.put("serverInfo", McpProtocol.serverInfo());
+        payload.put("capabilities", McpProtocol.capabilities());
+        payload.put("instructions", instructions());
+        return payload;
+    }
+
+    /** 给模型的服务器级说明：把"优先用已注册服务"这条策略写在握手阶段。 */
+    private String instructions() {
+        return "SlackerDB exposes a DuckDB database read-only by default. "
+                + "Start by calling list_services: the registered data services are parameterized SQL exposed "
+                + "as named, cached, versioned endpoints, and they are the curated queries for this database — "
+                + "prefer a matching service over writing ad-hoc SQL. "
+                + "If no service matches, inspect the schema with list_tables, then use describe_table or "
+                + "sample_rows before writing SQL. "
+                + "run_sql enforces read-only by parsing the statement; write statements are rejected. "
+                + "Rows are capped per call and every statement has a timeout. "
+                + "(The same service list is also available as the resource slackerdb://services, for clients "
+                + "that consume resources.)";
+    }
+
+    private JSONObject toolsListPayload() {
+        List<Map<String, Object>> toolList = new ArrayList<>();
+        for (McpToolkit.ToolSpec spec : toolkit.toolSpecs()) {
+            Map<String, Object> tool = new LinkedHashMap<>();
+            tool.put("name", spec.name());
+            tool.put("description", spec.description());
+            tool.put("inputSchema", spec.inputSchema());
+            tool.put("outputSchema", spec.outputSchema());
+            toolList.add(tool);
+        }
+        // 外部通过 /mcp/registerMCPTool 注册的工具（管理员自定义），同样按名排序
+        for (Tool tool : tools.values()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("name", tool.name);
+            item.put("description", tool.presentedDescription());
+            item.put("inputSchema", tool.inputSchema);
+            if (tool.outputSchema != null) {
+                item.put("outputSchema", tool.outputSchema);
             }
-
-            // Validate method
-            String method = request.getString("method");
-            if (method == null) {
-                ctx.result(JSON.toJSONString(Map.of(
-                    "jsonrpc", "2.0",
-                    "error", Map.of("code", -32600, "message", "Invalid Request: method must be a string")
-                )));
-                return;
+            if (tool.category != null) {
+                item.put("category", tool.category);
             }
+            toolList.add(item);
+        }
+        // 确定性顺序：规范 SHOULD 要求，用于客户端缓存与提示词缓存命中
+        toolList.sort((a, b) -> String.valueOf(a.get("name")).compareTo(String.valueOf(b.get("name"))));
+        JSONObject payload = new JSONObject();
+        payload.put("tools", toolList);
+        return payload;
+    }
 
-            JSONObject params = request.getJSONObject("params");
-            Object id = request.get("id"); // may be null, number, string, etc.
+    /**
+     * {@code tools/call}。
+     *
+     * <p>结果形状按规范给全：{@code content}（给人/模型看）+
+     * {@code structuredContent}（给程序用）+ {@code isError}。</p>
+     */
+    private JSONObject callTool(JSONObject params) throws Exception {
+        String toolName = McpProtocol.requireString(params, "name");
+        JSONObject arguments = params.getJSONObject("arguments");
 
-            switch (method) {
-                case "tools/list" -> {
-                    List<Map<String, Object>> toolList = new ArrayList<>();
-                    for (Tool tool : tools.values()) {
-                        toolList.add(Map.of(
-                                "name", tool.name,
-                                "description", tool.description,
-                                "inputSchema", tool.inputSchema,
-                                "category", tool.category
-                        ));
-                    }
-                    ctx.result(JSON.toJSONString(Map.of(
-                            "jsonrpc", "2.0",
-                            "id", id,
-                            "result", Map.of("tools", toolList)
-                    )));
-                }
-                case "tools/call" -> {
-                    // Validate params
-                    if (params == null) {
-                        ctx.result(JSON.toJSONString(Map.of(
-                                "jsonrpc", "2.0",
-                                "id", id,
-                                "error", Map.of("code", -32600, "message", "Invalid Request: params must be an object")
-                        )));
-                        return;
-                    }
-                    String toolName = params.getString("name");
-                    JSONObject argumentsNode = params.getJSONObject("arguments");
-                    if (toolName == null) {
-                        ctx.result(JSON.toJSONString(Map.of(
-                                "jsonrpc", "2.0",
-                                "id", id,
-                                "error", Map.of("code", -32600, "message", "Invalid Request: params.name must be a string")
-                        )));
-                        return;
-                    }
-                    Tool tool = tools.get(toolName);
-                    if (tool == null) {
-                        ctx.result(JSON.toJSONString(Map.of(
-                                "jsonrpc", "2.0",
-                                "id", id,
-                                "error", Map.of("code", -32601, "message", "Tool not found")
-                        )));
-                        return;
-                    }
-                    Map<String, Object> argsMap;
-                    if (argumentsNode == null) {
-                        argsMap = Map.of();
-                    } else {
-                        try {
-                            argsMap = JSON.parseObject(argumentsNode.toJSONString(), new TypeReference<>() {
-                            });
-                        } catch (Exception e) {
-                            ctx.result(JSON.toJSONString(Map.of(
-                                    "jsonrpc", "2.0",
-                                    "id", id,
-                                    "error", Map.of("code", -32602, "message", "Invalid params: arguments must be a valid object")
-                            )));
-                            return;
-                        }
-                    }
-                    CompletableFuture<Object> future = CompletableFuture.supplyAsync(() -> tool.handler.apply(argsMap), executor);
-                    Object result;
-                    try {
-                        result = future.get();
-                    } catch (Exception e) {
-                        ctx.result(JSON.toJSONString(Map.of(
-                                "jsonrpc", "2.0",
-                                "id", id,
-                                "error", Map.of("code", -32603, "message", "Internal error: " + e.getMessage())
-                        )));
-                        return;
-                    }
-                    ctx.result(JSON.toJSONString(Map.of(
-                            "jsonrpc", "2.0",
-                            "id", id,
-                            "result", result
-                    )));
-                }
-                case "resources/list" -> {
-                    List<Map<String, Object>> resourceList = new ArrayList<>();
-                    for (Resource res : resources.values()) {
-                        resourceList.add(Map.of(
-                                "uri", res.uri,
-                                "name", res.name,
-                                "description", res.description,
-                                "mimeType", res.mimeType,
-                                "category", res.category
-                        ));
-                    }
-                    ctx.result(JSON.toJSONString(Map.of(
-                            "jsonrpc", "2.0",
-                            "id", id,
-                            "result", Map.of("resources", resourceList)
-                    )));
-                }
-                case "resources/read" -> {
-                    // Validate params
-                    if (params == null) {
-                        ctx.result(JSON.toJSONString(Map.of(
-                                "jsonrpc", "2.0",
-                                "id", id,
-                                "error", Map.of("code", -32600, "message", "Invalid Request: params must be an object")
-                        )));
-                        return;
-                    }
-                    String uri = params.getString("uri");
-                    if (uri == null) {
-                        ctx.result(JSON.toJSONString(Map.of(
-                                "jsonrpc", "2.0",
-                                "id", id,
-                                "error", Map.of("code", -32600, "message", "Invalid Request: params.uri must be a string")
-                        )));
-                        return;
-                    }
-                    Resource res = resources.get(uri);
-                    if (res == null) {
-                        ctx.result(JSON.toJSONString(Map.of(
-                                "jsonrpc", "2.0",
-                                "id", id,
-                                "error", Map.of("code", -32601, "message", "Resource not found")
-                        )));
-                        return;
-                    }
-                    ctx.result(JSON.toJSONString(Map.of(
-                            "jsonrpc", "2.0",
-                            "id", id,
-                            "result", Map.of("contents", res.contents)
-                    )));
-                }
-                case "services/list" -> {
-                    List<Map<String, Object>> serviceList = new ArrayList<>();
-                    for (Service service : services.values()) {
-                        Map<String, Object> serviceObj = new HashMap<>();
-                        serviceObj.put("name", service.name);
-                        serviceObj.put("description", service.description);
-                        if (service.category != null) {
-                            serviceObj.put("category", service.category);
-                        }
-                        serviceObj.put("capabilities", service.capabilities);
-                        serviceObj.put("use_cases", service.useCases);
-
-                        // Convert parameters
-                        List<Map<String, Object>> paramList = new ArrayList<>();
-                        for (ServiceParameter param : service.parameters) {
-                            Map<String, Object> paramObj = new HashMap<>();
-                            paramObj.put("name", param.name);
-                            paramObj.put("type", param.type);
-                            paramObj.put("required", param.required);
-                            paramObj.put("description", param.description);
-                            paramList.add(paramObj);
-                        }
-                        serviceObj.put("parameters", paramList);
-
-                        // Convert examples
-                        List<Map<String, Object>> exampleList = new ArrayList<>();
-                        for (ServiceExample ex : service.examples) {
-                            Map<String, Object> exampleObj = new HashMap<>();
-                            exampleObj.put("user_query", ex.userQuery);
-                            exampleObj.put("parameters", ex.parameters);
-                            exampleList.add(exampleObj);
-                        }
-                        serviceObj.put("examples", exampleList);
-
-                        serviceList.add(serviceObj);
-                    }
-                    ctx.result(JSON.toJSONString(Map.of(
-                            "jsonrpc", "2.0",
-                            "id", id,
-                            "result", Map.of("services", serviceList)
-                    )));
-                }
-                default -> ctx.result(JSON.toJSONString(Map.of(
-                        "jsonrpc", "2.0",
-                        "id", id,
-                        "error", Map.of("code", -32601, "message", "Method not found")
-                )));
+        JSONObject structured;
+        if (isBuiltinTool(toolName)) {
+            structured = toolkit.call(toolName, arguments);
+        } else {
+            Tool external = tools.get(toolName);
+            if (external == null) {
+                throw new McpProtocol.McpParamException("Unknown tool: " + toolName);
             }
-        });
+            Map<String, Object> argsMap = arguments == null
+                    ? Map.of()
+                    : JSON.parseObject(arguments.toJSONString(), new TypeReference<Map<String, Object>>() {
+            });
+            Object handlerResult = external.handler.apply(argsMap);
+            structured = handlerResult instanceof JSONObject obj
+                    ? obj
+                    : JSONObject.from(handlerResult == null ? Map.of() : handlerResult);
+        }
 
+        JSONObject payload = new JSONObject();
+        payload.put("content", McpProtocol.jsonContent(structured));
+        payload.put("structuredContent", structured);
+        payload.put("isError", false);
+        return wrap(McpProtocol.complete(payload));
+    }
+
+    private boolean isBuiltinTool(String name) {
+        for (McpToolkit.ToolSpec spec : toolkit.toolSpecs()) {
+            if (spec.name().equals(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private JSONObject resourcesListPayload() {
+        List<Map<String, Object>> resourceList = new ArrayList<>();
+        for (McpToolkit.ResourceSpec spec : toolkit.resourceSpecs()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("uri", spec.uri());
+            item.put("name", spec.name());
+            item.put("description", spec.description());
+            item.put("mimeType", spec.mimeType());
+            resourceList.add(item);
+        }
+        for (Resource res : resources.values()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("uri", res.uri);
+            item.put("name", res.name);
+            item.put("description", res.description);
+            item.put("mimeType", res.mimeType);
+            if (res.category != null) {
+                item.put("category", res.category);
+            }
+            resourceList.add(item);
+        }
+        resourceList.sort((a, b) -> String.valueOf(a.get("uri")).compareTo(String.valueOf(b.get("uri"))));
+        JSONObject payload = new JSONObject();
+        payload.put("resources", resourceList);
+        return payload;
+    }
+
+    private JSONObject resourceTemplatesPayload() {
+        JSONObject payload = new JSONObject();
+        payload.put("resourceTemplates", toolkit.resourceTemplates());
+        return payload;
+    }
+
+    /**
+     * {@code resources/read}。
+     *
+     * <p>返回规范要求的 {@code contents} <b>数组</b>（含 uri/mimeType/text），
+     * 而不是旧实现那样直接回一个裸值——裸值不符合 content-block 形状，
+     * 客户端按规范解析会失败。</p>
+     */
+    private JSONObject readResource(JSONObject params) throws Exception {
+        String uri = McpProtocol.requireString(params, "uri");
+
+        JSONObject body;
+        String mimeType = "application/json";
+        // 先查已注册（配置/管理端点注册）的资源，再回退到内置命名空间。
+        // 顺序不能反过来：内置读取器只认识 slackerdb:// 下的固定几个 URI，
+        // 先按前缀路由会让"配置里声明了 slackerdb:// 资源"这种情况在列表里可见、
+        // 一读却报 Unknown resource URI。
+        Resource res = resources.get(uri);
+        if (res != null) {
+            mimeType = res.mimeType == null ? "text/plain" : res.mimeType;
+            body = new JSONObject();
+            body.put("value", res.contents);
+        } else if (uri.startsWith("slackerdb://")) {
+            body = toolkit.readResource(uri);
+        } else {
+            // 规范把"资源不存在"归到 -32602（旧的 -32002 已不再用于此）
+            throw new McpProtocol.McpParamException("Resource not found: " + uri);
+        }
+
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("uri", uri);
+        content.put("mimeType", mimeType);
+        content.put("text", body.toJSONString());
+
+        JSONObject payload = new JSONObject();
+        payload.put("contents", List.of(content));
+        return wrap(McpProtocol.complete(
+                McpProtocol.withCache(payload, resourcesTtlMs, McpProtocol.SCOPE_PUBLIC)));
+    }
+
+    private JSONObject promptsListPayload() {
+        JSONObject payload = new JSONObject();
+        payload.put("prompts", toolkit.prompts());
+        return payload;
+    }
+
+    private JSONObject getPrompt(JSONObject params) throws Exception {
+        String name = McpProtocol.requireString(params, "name");
+        JSONObject arguments = params.getJSONObject("arguments");
+        String topic = arguments == null ? null : arguments.getString("topic");
+        return wrap(McpProtocol.complete(toolkit.prompt(name, topic)));
+    }
+
+    private static JSONObject successEnvelope(Object id, JSONObject result) {
+        JSONObject envelope = new JSONObject();
+        envelope.put("jsonrpc", "2.0");
+        envelope.put("id", id);
+        envelope.put("result", result);
+        return envelope;
+    }
+
+    private static JSONObject errorEnvelope(Object id, int code, String message) {
+        JSONObject envelope = new JSONObject();
+        envelope.put("jsonrpc", "2.0");
+        if (id != null) {
+            envelope.put("id", id);
+        }
+        envelope.put("error", McpProtocol.error(code, message));
+        return envelope;
+    }
+
+    /** 管理面端点：注册/加载/保存/导出。协议面无状态，这些是管理员操作，与规范无关。 */
+    private void registerMcpAdminRoutes() {
         // Register MCP Tool endpoint
         this.managementApp.unsafe.routes.post("/mcp/registerMCPTool", ctx -> {
             try {
@@ -371,6 +821,14 @@ public class McpServer {
                     ctx.result(JSON.toJSONString(Map.of(
                         "retCode", -1,
                         "retMsg", "Rejected. inputSchema is missed."
+                    )));
+                    return;
+                }
+                // 内置工具名是保留的：撞名会让 tools/list 出现两条同名工具，且调用会被内置实现截走
+                if (isBuiltinTool(name)) {
+                    ctx.result(JSON.toJSONString(Map.of(
+                        "retCode", -1,
+                        "retMsg", "Rejected. [" + name + "] is reserved by a built-in tool; choose another name."
                     )));
                     return;
                 }
@@ -548,6 +1006,10 @@ public class McpServer {
                             logger.warn("[MCP] Skipping invalid tool definition: missing required fields");
                             continue;
                         }
+                        if (isBuiltinTool(name)) {
+                            logger.warn("[MCP] Skipping tool [{}]: the name is reserved by a built-in tool", name);
+                            continue;
+                        }
                         if (tools.containsKey(name)) {
                             logger.warn("[MCP] Tool already exists, skipping: {}", name);
                             continue;
@@ -570,6 +1032,13 @@ public class McpServer {
                         ctx.result(JSON.toJSONString(Map.of(
                             "retCode", -1,
                             "retMsg", "Rejected. Missing required fields."
+                        )));
+                        return;
+                    }
+                    if (isBuiltinTool(name)) {
+                        ctx.result(JSON.toJSONString(Map.of(
+                            "retCode", -1,
+                            "retMsg", "Rejected. [" + name + "] is reserved by a built-in tool; choose another name."
                         )));
                         return;
                     }
@@ -1211,6 +1680,15 @@ public class McpServer {
             }
         });
 
+    }
+
+    /**
+     * WebSocket AI Chat 端点：仅在配置了 {@code mcp_llm_server} 时启用。
+     *
+     * <p>与规范无关——这是本服务端私有的 NL→服务路由通道（模型不写 SQL，
+     * 只在已注册的数据服务里选择）。保留原样。</p>
+     */
+    private void registerAiChatRoute() {
         // WebSocket AI Chat endpoint - only enabled when mcp_llm_server is configured
         if (mcpLlmServer != null && !mcpLlmServer.trim().isEmpty()) {
             logger.info("[SERVER][AI CHAT    ] Chat server listening on websocket /aichat. ");
@@ -1323,16 +1801,31 @@ public class McpServer {
     private JSONArray generateToolDefinitionsJsonArray() {
         JSONArray toolArray = new JSONArray();
         for (Tool tool : tools.values()) {
-            JSONObject toolObj = new JSONObject();
-            toolObj.put("name", tool.name);
-            toolObj.put("description", tool.description);
-            toolObj.put("inputSchema", tool.inputSchema);
-            if (tool.category != null) {
-                toolObj.put("category", tool.category);
-            }
-            toolArray.add(toolObj);
+            toolArray.add(toolDefinition(tool));
         }
         return toolArray;
+    }
+
+    /**
+     * 把一个工具写成配置里的声明形状。
+     *
+     * <p><b>必须写回 {@code handler}</b>：saveMCPTool / dumpMCPTool 写出的文件会被再次当作
+     * {@code mcp_config} 加载，漏掉 handler 就会让内置绑定在重载后退化成回显桩；
+     * 同理这里写的是<b>声明时的 description</b>，不带展示用的回显桩提示语，
+     * 否则每保存一次描述就多一截。</p>
+     */
+    private JSONObject toolDefinition(Tool tool) {
+        JSONObject toolObj = new JSONObject();
+        toolObj.put("name", tool.name);
+        toolObj.put("description", tool.description);
+        toolObj.put("inputSchema", tool.inputSchema);
+        if (tool.builtinHandler != null) {
+            toolObj.put("handler", "builtin:" + tool.builtinHandler);
+        }
+        if (tool.category != null) {
+            toolObj.put("category", tool.category);
+        }
+        return toolObj;
     }
 
     /**
@@ -1343,15 +1836,8 @@ public class McpServer {
         Map<String, JSONArray> grouped = new HashMap<>();
         for (Tool tool : tools.values()) {
             String category = tool.category != null ? tool.category : "uncategorized";
-            JSONObject toolObj = new JSONObject();
-            toolObj.put("name", tool.name);
-            toolObj.put("description", tool.description);
-            toolObj.put("inputSchema", tool.inputSchema);
-            if (tool.category != null) {
-                toolObj.put("category", tool.category);
-            }
             JSONArray categoryArray = grouped.computeIfAbsent(category, k -> new JSONArray());
-            categoryArray.add(toolObj);
+            categoryArray.add(toolDefinition(tool));
         }
         return grouped;
     }
@@ -1582,7 +2068,42 @@ public class McpServer {
     }
 
     public void addTool(String name, String description, JSONObject inputSchema, Function<Map<String,Object>, Object> handler, String category) {
-        tools.put(name, new Tool(name, description, inputSchema, handler, category));
+        addTool(name, description, inputSchema, null, handler, category, null, false);
+    }
+
+    /**
+     * 注册工具，可带 {@code outputSchema}。
+     *
+     * <p>绑定到内置实现的工具会带上内置实现的真实 outputSchema——
+     * "声明"与"实际返回"必须一致，否则客户端按 schema 解析会失败。</p>
+     */
+    public void addTool(String name, String description, JSONObject inputSchema, JSONObject outputSchema,
+                        Function<Map<String,Object>, Object> handler, String category) {
+        addTool(name, description, inputSchema, outputSchema, handler, category, null, false);
+    }
+
+    /**
+     * 注册工具的完整入口。
+     *
+     * @param builtinHandler 绑定的内置实现名（如 {@code run_sql}），无绑定传 {@code null}；
+     *                       保存/导出时据此写回 {@code "handler": "builtin:<name>"}，
+     *                       使配置文件的保存-重载闭环不丢语义。
+     * @param echoStub       是否为"声明时未指定 handler"的回显桩，用于在展示时补提示语。
+     * @return 是否注册成功；名字已被内置工具占用时拒绝（内置名是保留的）
+     */
+    private boolean addTool(String name, String description, JSONObject inputSchema, JSONObject outputSchema,
+                            Function<Map<String,Object>, Object> handler, String category,
+                            String builtinHandler, boolean echoStub) {
+        // 兜底：tools/list 是"内置工具 + 外部工具"两段拼接，外部工具撞上内置名会出现两条同名
+        // 工具（调用还会被内置实现截走）。各入口已显式拒绝，这里再挡一次，防止新增调用点漏检。
+        if (isBuiltinTool(name)) {
+            logger.error("[SERVER][MCP    ] refusing to register [{}]: the name is reserved by a built-in tool",
+                    name);
+            return false;
+        }
+        tools.put(name, new Tool(name, description, inputSchema, outputSchema, handler, category,
+                builtinHandler, echoStub));
+        return true;
     }
 
     public void addResource(String uri, String name, String description, String mimeType, Object contents, String category) {
@@ -2102,6 +2623,25 @@ Output format (JSON):
     
     public void shutdown() {
         executor.shutdown();
+        // 会话 handle 持有连接池连接：必须显式释放，否则连接要等池的生命周期淘汰
+        try {
+            toolkit.shutdown();
+        } catch (Exception e) {
+            logger.warn("[SERVER][MCP] failed to close tool sessions", e);
+        }
+        sessionReaper.shutdownNow();
+        // 心跳线程是非 daemon 的，不关会挂住 JVM 退出
+        heartbeatExecutor.shutdownNow();
+    }
+
+    /**
+     * 注入已注册数据服务的读取器（来自 {@link APIService}）。
+     *
+     * <p>刻意<b>不</b>在 MCP 侧再建一份服务注册表：语义层只有一份真相，
+     * MCP 只是它的另一个视图。这正是"给 agent 开门，不新增第二条执行路径"的落地。</p>
+     */
+    public void setServiceSupplier(java.util.function.Supplier<List<Map<String, Object>>> supplier) {
+        toolkit.setServicesSupplier(supplier);
     }
 
     /**
@@ -2253,8 +2793,28 @@ Output format (JSON):
         return serviceResult; // 如果无法提取内容，返回原始结果
     }
 
-    private record Tool(String name, String description, JSONObject inputSchema,
-                        Function<Map<String, Object>, Object> handler, String category) {
+    /** 无 handler 的工具在 tools/list 里必须自曝其短，而不是伪装成能干活。 */
+    private static final String ECHO_STUB_NOTE = " (no handler configured: this tool only echoes its arguments.)";
+
+    /**
+     * 一个已注册的工具。
+     *
+     * <p>{@code builtinHandler} 记录"这个工具挂在哪个内置实现上"（如 {@code run_sql}），
+     * 而不是只持有一个 lambda：saveMCPTool / dumpMCPTool 要把绑定关系原样写回配置文件，
+     * 否则保存一次再重启，内置绑定就退化成回显桩了——lambda 本身无法序列化。</p>
+     *
+     * <p>{@code echoStub} 标记"声明时没有 handler"的条目：这类工具的"只会回显入参"提示在
+     * <b>展示时</b>拼接（见 {@link #presentedDescription()}），不写进 description 本身，
+     * 因此反复 save/load 不会让描述越滚越长。</p>
+     */
+    private record Tool(String name, String description, JSONObject inputSchema, JSONObject outputSchema,
+                        Function<Map<String, Object>, Object> handler, String category,
+                        String builtinHandler, boolean echoStub) {
+
+        /** 面向客户端的描述：没挂 handler 的工具必须自曝其短。 */
+        String presentedDescription() {
+            return echoStub ? description + ECHO_STUB_NOTE : description;
+        }
     }
 
     private record Resource(String uri, String name, String description, String mimeType, Object contents,

@@ -7,6 +7,13 @@ import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.*;
 import org.slackerdb.dbserver.sql.CommandTag;
 import org.slackerdb.dbserver.sql.CopyProtocolHandler;
+import org.slackerdb.dbserver.sql.CursorHandler;
+import org.slackerdb.dbserver.sql.CursorSql;
+import org.slackerdb.dbserver.sql.DeallocateSql;
+import org.slackerdb.dbserver.sql.SessionSettingResponder;
+import org.slackerdb.dbserver.sql.SessionSettingSql;
+import org.slackerdb.dbserver.sql.TransactionHandler;
+import org.slackerdb.dbserver.sql.TransactionSql;
 import org.slackerdb.dbserver.sql.PlSqlHostImpl;
 import org.slackerdb.dbserver.sql.RowEncoder;
 import org.slackerdb.dbserver.sql.SQLReplacer;
@@ -196,12 +203,124 @@ public class ExecuteRequest extends PostgresRequest {
                     out.close();
                     break tryBlock;
                 }
+
+                // COPY ... TO STDOUT：扩展协议路径的导出方向（同样在 Parse 阶段刻意不建
+                // PreparedStatement，见 ParseRequest）。beginCopyOut 会同步推完
+                // CopyOutResponse → CopyData×N → CopyDone → CommandComplete。
+                CopyProtocolHandler.Result copyOutResult =
+                        CopyProtocolHandler.beginCopyOut(this, ctx, out, parsedStatement.sql);
+                if (copyOutResult == CopyProtocolHandler.Result.COPY_STARTED) {
+                    out.close();
+                    break tryBlock;
+                }
+                if (copyOutResult == CopyProtocolHandler.Result.REJECTED) {
+                    out.close();
+                    break tryBlock;
+                }
             }
 
             if (parsedStatement == null || parsedStatement.preparedStatement == null || parsedStatement.preparedStatement.isClosed())
             {
                 // 即使没有数据，也要返回一个空的CommandComplete
                 CommandComplete commandComplete = new CommandComplete(this.dbInstance);
+
+                // DEALLOCATE ALL：Parse 阶段刻意不建 PreparedStatement（DuckDB 不支持这条语句），
+                // 所以一定会走到这个分支。这里接管：清空协议级语句/门户缓存，并回命令标签
+                // （与简单查询路径 QueryRequest 的处理保持一致）。
+                if (parsedStatement != null && DeallocateSql.isDeallocateAll(parsedStatement.originalSql)) {
+                    this.dbInstance.getSession(getCurrentSessionId(ctx)).clearProtocolLevelStatements();
+
+                    long historyId = openAuditForRewrittenStatement(ctx, parsedStatement);
+                    updateSqlHistory(historyId, 0, 0, null);
+
+                    commandComplete.setCommandResult("DEALLOCATE ALL");
+                }
+
+                // T2：PG 特有的会话设置/复位（Parse 阶段同样不建 PreparedStatement）。
+                // 与简单查询路径共用同一套接管逻辑与应答渲染。
+                if (parsedStatement != null) {
+                    DBSession settingSession = this.dbInstance.getSession(getCurrentSessionId(ctx));
+                    SessionSettingSql.Takeover settingTakeover =
+                            SessionSettingSql.apply(settingSession, parsedStatement.originalSql);
+                    if (settingTakeover != null) {
+                        long settingHistoryId = openAuditForRewrittenStatement(ctx, parsedStatement);
+                        updateSqlHistory(settingHistoryId, 0, 0, settingTakeover.isError()
+                                ? settingTakeover.errorSqlState() + ": " + settingTakeover.errorMessage()
+                                : null);
+                        if (settingTakeover.isError()) {
+                            // 扩展协议出错 → 丢弃到 Sync（与其它错误路径一致）
+                            settingSession.markExtendedProtocolError();
+                        }
+                        SessionSettingResponder.respond(this.dbInstance, ctx, request, out,
+                                settingTakeover, false);
+                        out.close();
+                        break tryBlock;
+                    }
+                }
+
+                // P2：事务控制语句（Parse 阶段同样不建 PreparedStatement）。
+                // 与简单查询路径共用 TransactionHandler（事务状态必须由会话显式驱动，
+                // 而不是靠"SQL 前缀字符串"猜）。
+                if (parsedStatement != null && TransactionSql.parse(parsedStatement.originalSql) != null) {
+                    DBSession txSession = this.dbInstance.getSession(getCurrentSessionId(ctx));
+                    long txHistoryId = openAuditForRewrittenStatement(ctx, parsedStatement);
+                    TransactionHandler.TransactionResult transactionResult = TransactionHandler.handle(
+                            this.dbInstance, ctx, request, out, txSession, parsedStatement.originalSql, false);
+                    if (transactionResult != null) {
+                        updateSqlHistory(txHistoryId, transactionResult.isError() ? -1 : 0, 0,
+                                transactionResult.isError()
+                                        ? transactionResult.sqlState() + ": " + transactionResult.errorMessage()
+                                        : null);
+                        if (transactionResult.isError()) {
+                            txSession.markExtendedProtocolError();
+                        }
+                        out.close();
+                        break tryBlock;
+                    }
+                }
+
+                // B1：PG 游标族（Parse 阶段同样不建 PreparedStatement）。
+                // 注意：FETCH 的行描述由 Describe('P') 发出，这里不能重复发（withRowDescription=false）。
+                if (parsedStatement != null && CursorSql.isCursorStatement(parsedStatement.originalSql)) {
+                    DBSession cursorSession = this.dbInstance.getSession(getCurrentSessionId(ctx));
+                    long cursorHistoryId = openAuditForRewrittenStatement(ctx, parsedStatement);
+                    CursorHandler.CursorResult cursorResult = CursorHandler.handle(
+                            this.dbInstance, ctx, request, out, cursorSession,
+                            parsedStatement.originalSql, parsedStatement.resultFormats, false);
+                    if (cursorResult != null) {
+                        updateSqlHistory(cursorHistoryId, cursorResult.isError() ? -1 : 0, cursorResult.rows(),
+                                cursorResult.isError()
+                                        ? cursorResult.sqlState() + ": " + cursorResult.errorMessage()
+                                        : null);
+                        if (cursorResult.isError()) {
+                            cursorSession.markExtendedProtocolError();
+
+                            ErrorResponse cursorError = new ErrorResponse(this.dbInstance);
+                            cursorError.setErrorFile("ExecuteRequest");
+                            cursorError.setErrorResponse(cursorResult.sqlState(), cursorResult.errorMessage());
+                            cursorError.process(ctx, request, out);
+                            PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out,
+                                    this.dbInstance.logger);
+                        }
+                        out.close();
+                        break tryBlock;
+                    }
+                }
+
+                // T2：SHOW <能回答的参数> → 合成一行（行描述已由 Describe 发出，这里不重复发）
+                if (parsedStatement != null) {
+                    String showTarget = SessionSettingSql.showTarget(parsedStatement.originalSql);
+                    if (showTarget != null) {
+                        long showHistoryId = openAuditForRewrittenStatement(ctx, parsedStatement);
+                        updateSqlHistory(showHistoryId, 0, 0, null);
+                        SessionSettingResponder.respondShow(this.dbInstance, ctx, request, out, showTarget,
+                                SessionSettingSql.showValue(this.dbInstance.getSession(getCurrentSessionId(ctx)),
+                                        showTarget),
+                                false, false);
+                        out.close();
+                        break tryBlock;
+                    }
+                }
                 commandComplete.process(ctx, request, out);
 
                 // 发送并刷新返回消息
@@ -246,9 +365,21 @@ public class ExecuteRequest extends PostgresRequest {
                 failedTxError.process(ctx, request, out);
                 PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
 
+                // 事务块已失败：本条（以及到 Sync 之前的）报文都不会真正执行
+                executeSession.markErrorUntilSync();
+
                 out.close();
                 break tryBlock;
             }
+
+            // DEALLOCATE <name>：DuckDB 会静默成功，但只作用于它自己的 SQL 级命名空间，
+            // 动不了协议级缓存里的同名语句。这里顺手释放该条目（postgres_fdw 重建预备语句前会发它），
+            // 语句本身仍照常交给 DuckDB 执行。
+            String deallocateTarget = DeallocateSql.deallocateName(executeSQL);
+            if (deallocateTarget != null) {
+                executeSession.releaseProtocolStatement(deallocateTarget);
+            }
+
             this.dbInstance.getSession(getCurrentSessionId(ctx)).executingSQL = executeSQL;
 
             // 之前有缓存记录
@@ -262,7 +393,9 @@ public class ExecuteRequest extends PostgresRequest {
                 DataRow dataRow = new DataRow(this.dbInstance);
                 // Portal 续取：RowDescription 之前已经发过，这里只需要一个行编码器。
                 // 列级元数据只解析一次，行循环里不再重复做类型判断与格式化器构造。
-                RowEncoder encoder = new RowEncoder(rs.getMetaData(), true, this.dbInstance.logger);
+                // 结果格式必须与之前 Describe('P') 回报的一致 —— 都取自本门户的 Bind 请求。
+                RowEncoder encoder = new RowEncoder(rs.getMetaData(), parsedStatement.resultFormats,
+                        this.dbInstance.logger);
 
                 int rowsReturned = 0;
                 // 累计尚未刷出的数据行字节数，达到阈值后再 flush
@@ -338,8 +471,10 @@ public class ExecuteRequest extends PostgresRequest {
 
                     // 列级元数据只解析一次：类型码、formatCode 都由它统一产出，
                     // 行循环里不再做 getColumnTypeName / toUpperCase / 格式化器构造等重复工作。
+                    // 结果格式按本门户 Bind 时客户端请求的格式（Describe('P') 已按同一份回报）。
                     ResultSetMetaData rsmd = rs.getMetaData();
-                    RowEncoder encoder = new RowEncoder(rsmd, true, this.dbInstance.logger);
+                    RowEncoder encoder = new RowEncoder(rsmd, parsedStatement.resultFormats,
+                            this.dbInstance.logger);
 
                     // 注意：这里**不**发 RowDescription —— 描述信息已经由 Describe 报文
                     // 即时应答（见 DescribeHandler）。改造前把 RowDescription 推迟到这里发，
@@ -430,8 +565,9 @@ public class ExecuteRequest extends PostgresRequest {
         catch (PlSqlException e)
         {
             // PL/SQL 的结构化错误：SQLSTATE 由引擎给出（42601 语法 / 57014 取消 / P0001 用户 RAISE ...）。
-            // 取消与失败都会让事务进入 aborted 状态（PG 语义），与 SQLException 分支保持一致。
-            this.dbInstance.getSession(getCurrentSessionId(ctx)).markTransactionFailed();
+            // 取消与失败都会让事务进入 aborted 状态（PG 语义），与 SQLException 分支保持一致；
+            // 两者也都进入"丢弃到 Sync"状态。
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).markExtendedProtocolError();
 
             String message = e.getMessage() + e.positionSuffix();
 
@@ -450,8 +586,9 @@ public class ExecuteRequest extends PostgresRequest {
             }
         }
         catch (SQLException e) {
-            // 事务块中的语句失败 → 事务进入 aborted 状态，ReadyForQuery 之后要回 'E'（BUG-15）
-            this.dbInstance.getSession(getCurrentSessionId(ctx)).markTransactionFailed();
+            // 事务块中的语句失败 → 事务进入 aborted 状态，ReadyForQuery 之后要回 'E'（BUG-15）；
+            // 同时进入"丢弃到 Sync"状态（扩展协议语义）。
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).markExtendedProtocolError();
 
             // 生成一个错误消息
             ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);

@@ -178,13 +178,17 @@ public final class SlackerCatalog {
         // ------------------------------------------------------------------
 
         // 关系/表大小：DuckDB 没有 pg_relation_size，用 duckdb_tables 的估算值顶替。
+        // 参数既可能是 OID（driver / postgres_fdw 翻译后的形式），也可能是**表名**
+        // （客户端直接写 pg_relation_size('t')）：两种都支持，名字可以带 schema 前缀。
         baseDdl.add("""
                 create or replace macro duck_catalog.pg_total_relation_size(a) as
                 (
                     select estimated_size
                     from   duckdb_tables
-                    where  table_oid = a
-                    and    database_name = getvariable('current_database')
+                    where  database_name = getvariable('current_database')
+                    and    (table_oid = try_cast(a as bigint)
+                            or (schema_name || '.' || table_name) = try_cast(a as varchar)
+                            or table_name = try_cast(a as varchar))
                 )
                 """);
         baseDdl.add("""
@@ -192,13 +196,28 @@ public final class SlackerCatalog {
                 (
                     select estimated_size
                     from   duckdb_tables
-                    where  table_oid = a
-                    and    database_name = getvariable('current_database')
+                    where  database_name = getvariable('current_database')
+                    and    (table_oid = try_cast(a as bigint)
+                            or (schema_name || '.' || table_name) = try_cast(a as varchar)
+                            or table_name = try_cast(a as varchar))
                 )
                 """);
         baseDdl.add("create or replace macro duck_catalog.pg_get_userbyid(a) as (select 'system')");
         baseDdl.add("create or replace macro duck_catalog.pg_encoding_to_char(a) as (select 'UTF8')");
         baseDdl.add("create or replace macro duck_catalog.pg_tablespace_location(a) as (select '')");
+        // pg_table_size：psql 的 `\dt+`/`\di+` 用它算 Size 列。
+        // DuckDB 没有等价函数，复用 pg_relation_size 的估算语义即可（客户端只是显示大小）。
+        baseDdl.add("""
+                create or replace macro duck_catalog.pg_table_size(a) as
+                (
+                    select estimated_size
+                    from   duckdb_tables
+                    where  database_name = getvariable('current_database')
+                    and    (table_oid = try_cast(a as bigint)
+                            or (schema_name || '.' || table_name) = try_cast(a as varchar)
+                            or table_name = try_cast(a as varchar))
+                )
+                """);
 
         // ------------------------------------------------------------------
         // 4. 类型目录（顺序敏感：pg_namespace 的 oid 来自 pg_type）

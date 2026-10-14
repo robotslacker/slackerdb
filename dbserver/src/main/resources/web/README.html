@@ -660,10 +660,18 @@ bind=0.0.0.0
 # Client connection idle timeout (seconds)
 client_timeout=600
 
-# External remote listener registry endpoint
-# Format: IP:PORT
-# Default: none (disabled)
-remote_listener=
+# Multicast service discovery: the group this server announces itself to.
+# Format: &lt;group&gt;:&lt;port&gt;   (IPv6 groups must be bracketed: [ff02::1]:46666)
+# There is NO default: leaving it empty disables service discovery entirely.
+# A dbproxy must be configured with the SAME value in listener_address.
+# Example: 239.255.66.66:46666
+advertise_address=
+
+# Local network interface used to send the multicast announcement.
+# Accepts an interface name (eth0, Ethernet) or a local IPv4 address.
+# Default: the first usable interface, chosen by a deterministic rule.
+# Ignored when advertise_address is empty.
+advertise_nic=
 
 # Database opening mode.
 # Default: READ_WRITE
@@ -4157,8 +4165,43 @@ and they are rejected with an explicit error rather than silently converted.</p>
 <div class="sect3">
 <h4 id="_3_postgresql_fdw">3. postgresql-fdw</h4>
 <div class="paragraph">
-<p>fdw will use &#8220;Declare CURSOR&#8221; to fetch remote data, while duck doesn’t
-support this.</p>
+<p>SlackerDB speaks the PostgreSQL wire protocol, so <code>postgres_fdw</code> can attach a SlackerDB instance as a foreign server. The protocol layer handles the FDW&#8217;s session and statement traffic, including the cursor-based data path it uses to read rows.</p>
+</div>
+<div class="paragraph"><p><strong>Supported</strong></p></div>
+<div class="ulist">
+<ul>
+<li><p>Connection setup: <code>SET search_path</code>, <code>SET timezone</code>, <code>SET datestyle</code>, <code>SET intervalstyle</code>, <code>SET extra_float_digits</code>; <code>application_name</code> and <code>client_encoding</code> in the startup packet; <code>GSSENCRequest</code> is answered with <code>N</code>.</p></li>
+<li><p>Extended protocol: Parse / Bind / Describe / Execute / Close / Sync / Flush &#8212; named and unnamed statements and portals, per-column result-format negotiation (the <code>Int16[R]</code> list in Bind is honoured, text or binary), <code>PortalSuspended</code> paging, <code>RETURNING</code>, <code>DEALLOCATE ALL</code> / <code>DEALLOCATE &lt;name&gt;</code>, <code>RESET ALL</code>, <code>DISCARD ALL</code>.</p></li>
+<li><p>Cursors: <code>DECLARE ... CURSOR [WITH HOLD] FOR</code>, <code>FETCH</code> (<code>NEXT</code> / <code>FORWARD n</code> / <code>ALL</code> / bare count), <code>MOVE</code>, <code>CLOSE [ALL]</code> &#8212; on both the simple and the extended protocol path. Cursors without <code>WITH HOLD</code> are dropped when the transaction ends, as in PostgreSQL; <code>WITH HOLD</code> cursors survive <code>COMMIT</code> and are materialised in memory to do so. Only forward directions are supported: <code>BACKWARD</code> / <code>ABSOLUTE</code> / <code>RELATIVE</code> are rejected with <code>0A000</code> rather than silently misbehaving, because a DuckDB JDBC result set cannot scroll backwards.</p></li>
+<li><p>Transactions: <code>BEGIN</code> / <code>START TRANSACTION [ISOLATION LEVEL ...]</code> really open a DuckDB transaction, and <code>COMMIT</code> / <code>COMMIT TRANSACTION</code> / <code>END</code> / <code>ROLLBACK</code> / <code>ABORT</code> end it (a <code>COMMIT</code> inside a failed transaction rolls back, as in PostgreSQL; <code>COMMIT</code> with no transaction in progress only raises a <code>NOTICE</code>). Isolation levels: <code>READ ONLY</code> is passed through and enforced by DuckDB, <code>READ COMMITTED</code> / <code>REPEATABLE READ</code> are treated as satisfied, <code>SERIALIZABLE</code> / <code>DEFERRABLE</code> are accepted with a <code>NOTICE</code> saying they are not enforced. <code>SET TRANSACTION ...</code> is accepted inside a transaction block (with a <code>NOTICE</code>) and rejected with <code>25P01</code> outside one.</p></li>
+<li><p><code>SET &lt;PostgreSQL-only parameter&gt;</code> (for example <code>statement_timeout</code>, <code>lock_timeout</code>, <code>server_version_num</code>) is accepted, remembered per session and answered with a <code>NOTICE</code> saying it has no effect; DuckDB&#8217;s own parameters still pass through.</p></li>
+<li><p><code>ANALYZE &lt;foreign table&gt;</code> works: SlackDB answers both statements PostgreSQL sends for it (<code>SELECT pg_catalog.pg_relation_size(&#39;schema.table&#39;::pg_catalog.regclass) / 8192</code> and <code>SELECT reltuples, relkind FROM pg_catalog.pg_class WHERE oid = &#8230;</code>) by translating the <code>regclass</code> cast into a real OID lookup, and serves the row sample through a cursor. <code>relpages</code> comes from DuckDB&#8217;s own <code>estimated_size</code>, so it stays 0 for small tables; the remote division is a floating-point division, which <code>postgres_fdw</code> truncates with <code>atoi</code>.</p></li>
+<li><p>Errors follow the protocol: after an extended-protocol error the backend discards messages until <code>Sync</code>; <code>Describe</code>/<code>Close</code> of an unknown statement or portal return <code>26000</code>/<code>34000</code>; a malformed Bind message returns <code>08P01</code> instead of stalling the client until the idle timeout.</p></li>
+</ul>
+</div>
+<div class="paragraph"><p><strong>Not implemented yet</strong></p></div>
+<div class="ulist">
+<ul>
+<li><p><code>SAVEPOINT</code> / <code>RELEASE SAVEPOINT</code> / <code>ROLLBACK TO SAVEPOINT</code>: DuckDB has no subtransactions, so these fail predictably instead of degrading &#8212; <code>25P01</code> outside a transaction block, and <code>0A000</code> (with an explanation) inside one. In particular <code>ROLLBACK TO SAVEPOINT</code> never rolls back the whole transaction. Consequence for the FDW: <code>postgres_fdw</code> emits <code>SAVEPOINT sN</code> whenever a remote statement runs inside a local subtransaction, so <strong>foreign tables cannot be used inside a subtransaction</strong> (an explicit <code>SAVEPOINT</code>, or a PL/pgSQL <code>EXCEPTION</code> block), and the failure additionally leaves that foreign server&#8217;s connection unusable for the rest of the transaction (<code>connection to server &quot;sdb&quot; cannot be used due to abort cleanup failure</code>).</p></li>
+<li><p><code>SELECT ... FOR UPDATE</code> / <code>FOR SHARE</code>: <code>postgres_fdw</code> pushes the locking clause to the remote, and DuckDB rejects it (<code>Parser Error: SELECT locking clause is not supported!</code>), so such queries fail. <code>ctid</code> matters only if you declare <code>OPTIONS (rowid &#39;ctid&#39;)</code> on a foreign table; ordinary <code>UPDATE</code>/<code>DELETE</code> works without a remote key &#8212; verified, including on a table with duplicate rows, where the whole predicate is pushed down instead of using <code>ctid</code>.</p></li>
+<li><p><code>IMPORT FOREIGN SCHEMA</code> only works with <code>import_collate &#39;false&#39;</code> (<code>pg_collation.collnamespace</code> is not exposed); column defaults are not imported because <code>pg_get_expr</code> is unavailable.</p></li>
+</ul>
+</div>
+<div class="paragraph"><p><strong>Example</strong></p></div>
+<div class="listingblock"><div class="content"><pre>CREATE EXTENSION postgres_fdw;
+CREATE SERVER sdb FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host &#39;127.0.0.1&#39;, port &#39;15499&#39;, dbname &#39;fdwdb&#39;, use_remote_estimate &#39;false&#39;);
+CREATE USER MAPPING FOR CURRENT_USER SERVER sdb OPTIONS (user &#39;main&#39;, password &#39;main&#39;);
+CREATE FOREIGN TABLE orders (id integer, amount numeric(38,4))
+  SERVER sdb OPTIONS (schema_name &#39;main&#39;, table_name &#39;orders&#39;);
+
+-- import_collate belongs to IMPORT FOREIGN SCHEMA, not to CREATE SERVER
+IMPORT FOREIGN SCHEMA &quot;main&quot; FROM SERVER sdb INTO public OPTIONS (import_collate &#39;false&#39;);</pre></div></div>
+<div class="paragraph">
+<p><code>dbname</code> is the <strong>instance name</strong> the server was started with (<code>--data fdwdb</code>), not a PostgreSQL-style database name; <code>memory</code> (and other reserved words) cannot be used as an instance name, so <code>--data memory</code> fails at startup.</p>
+</div>
+<div class="paragraph">
+<p><strong>Verified end-to-end</strong>: PostgreSQL 18.6 with <code>postgres_fdw</code> 1.2, two SlackDB instances attached at once (a local query joined a foreign table from each instance), plus <code>INSERT</code>/<code>UPDATE</code>/<code>DELETE ... RETURNING</code>, <code>EXPLAIN (VERBOSE)</code> and <code>IMPORT FOREIGN SCHEMA</code>. The remote statement stream captured in SlackDB&#8217;s own SQL history shows exactly what <code>postgres_fdw</code> sends: <code>SET search_path = pg_catalog</code> &#8230; <code>START TRANSACTION ISOLATION LEVEL REPEATABLE READ</code>, <code>DECLARE c1 CURSOR FOR SELECT &#8230;</code>, <code>FETCH 100 FROM c1</code>, <code>CLOSE c1</code>, <code>COMMIT TRANSACTION</code>.</p>
 </div>
 </div>
 </div>

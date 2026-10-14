@@ -1787,7 +1787,10 @@ public abstract class BaseDataSource implements CommonDataSource, Referenceable 
 
   @Override
   public Logger getParentLogger() {
-    return Logger.getLogger("org.postgresql");
+    // 与 Driver.PARENT_LOGGER 保持一致：JDBC 要求数据源的父日志器与驱动的父日志器同名，
+    // 否则按 org.slackerdb 配置的日志级别对数据源路径不生效。
+    // （历史遗留：此处也曾是 pgjdbc 改名漏下的 "org.postgresql"。）
+    return Logger.getLogger("org.slackerdb.jdbc");
   }
 
   public String getXmlFactoryFactory() {

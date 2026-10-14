@@ -261,6 +261,65 @@ public class DBDataSourcePool {
     }
 
     /**
+     * 归还前的连接状态复位：把连接恢复成"刚创建"的样子，避免上一个借用者的状态
+     * 泄漏给下一个借用者。
+     *
+     * <p><b>为什么必须做</b>：池里的连接是复用的，而 {@link PooledConnection#close()}
+     * 的语义是"归还"而不是"销毁"（调用方按 JDBC 习惯写的
+     * {@code try (Connection c = pool.getConnection())} 也会走到这里）。如果连接上
+     * 开过事务却没提交/回滚，直接放回空闲池就等于把这条<b>未提交事务</b>交给下一个借用者：
+     * 它会看到上一个会话未提交的数据，甚至在自己 COMMIT 时把别人的改动一起提交掉。</p>
+     *
+     * <p><b>为什么不能只看 {@code getAutoCommit()}</b>：实测 DuckDB 的显式
+     * {@code BEGIN} 在 autoCommit=true 下<b>不会</b>反映到 {@code getAutoCommit()}，
+     * 但 {@code rollback()} 能把它的数据一并丢掉。因此这里<b>无条件</b>尝试回滚，
+     * 只把"确实没有事务"当成正常情况忽略。反过来先 {@code setAutoCommit} 是错的：
+     * JDBC 规定切换 autoCommit 会<b>提交</b>当前事务。</p>
+     *
+     * <p><b>代价</b>：无事务时会拿到一次 {@code cannot rollback - no transaction is active}
+     * （DuckDB 的正常路径，按 debug 记录、不算失败），与 {@code DBSession.endSession}
+     * 的处理方式保持一致。</p>
+     *
+     * <p><b>在哪里调用</b>：由 {@link #releaseConnection} 在 <b>poolLock 之外</b>调用——
+     * 回滚是真实工作量，不能占着全池唯一的锁做。调用期间连接仍留在 usedConnectionPool 中：
+     * 既不会被 {@code getConnection()} 借出去，也不会被 {@code shutdown()} 漏掉。</p>
+     *
+     * @return true 表示连接已复位、可以复用；false 表示复位失败，必须退役
+     *         （状态不明的连接不能放回池里）
+     */
+    private boolean resetConnectionForReuse(Connection connection) {
+        try {
+            connection.rollback();
+        } catch (SQLException sqlException) {
+            if (!isNoActiveTransaction(sqlException)) {
+                logger.warn("[SERVER][CONN POOL  ]: Pool [{}] Rollback before reuse failed ({}). "
+                        + "Connection will be retired.", this.poolName, sqlException.getMessage());
+                return false;
+            }
+            logger.debug("[SERVER][CONN POOL  ]: Pool [{}] No active transaction to roll back.",
+                    this.poolName);
+        }
+
+        try {
+            boolean defaultAutoCommit = this.dbDataSourcePoolConfig.getAutoCommit();
+            if (connection.getAutoCommit() != defaultAutoCommit) {
+                connection.setAutoCommit(defaultAutoCommit);
+            }
+        } catch (SQLException sqlException) {
+            logger.warn("[SERVER][CONN POOL  ]: Pool [{}] Restoring autoCommit before reuse failed ({}). "
+                    + "Connection will be retired.", this.poolName, sqlException.getMessage());
+            return false;
+        }
+        return true;
+    }
+
+    /** DuckDB 在"没有活动事务"时的固定报错：{@code cannot rollback - no transaction is active}。 */
+    private static boolean isNoActiveTransaction(SQLException sqlException) {
+        String message = sqlException.getMessage();
+        return message != null && message.contains("no transaction is active");
+    }
+
+    /**
      * 回收连接。注意：调用方必须持有 poolLock。
      * 这里只负责清理 metadata 并登记待关闭，物理 close 由 closePendingConnections 在锁外执行。
      */
@@ -384,6 +443,23 @@ public class DBDataSourcePool {
         }
     }
 
+    /** 池名（用于日志与诊断输出）。 */
+    String poolName() {
+        return this.poolName;
+    }
+
+    /**
+     * 把物理连接包装成"关闭即归还"的池句柄。
+     *
+     * <p>所有对外发放连接的出口都必须经过这里：调用方按 JDBC 习惯
+     * {@code try (Connection c = ...)} 时关闭的是句柄，槽位会正确回到池里。
+     * 池内部的 {@code usedConnectionPool} / {@code connectionMetaDataMap}
+     * 始终以<b>物理连接</b>为键，因此包装只发生在池的边界上。</p>
+     */
+    private Connection wrapForCaller(Connection physical) {
+        return physical == null ? null : new PooledConnection(physical, this, this.logger);
+    }
+
     public Connection getConnection() throws SQLException {
         long timeoutMs = this.connectionAcquireTimeoutMs;
         long deadline = timeoutMs > 0 ? System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs) : Long.MAX_VALUE;
@@ -408,7 +484,7 @@ public class DBDataSourcePool {
                         logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Offer reused connection {}.",
                                 this.poolName,
                                 connectionNumber);
-                        return connection;
+                        return wrapForCaller(connection);
                     }
                     // 连接不可用，登记退役（物理关闭延迟到锁外）
                     retireConnection(connection, "failed validation");
@@ -468,7 +544,7 @@ public class DBDataSourcePool {
             closePendingConnections();
 
             if (newConnection != null) {
-                return newConnection;
+                return wrapForCaller(newConnection);
             }
             // 容量竞争失败，回到循环重新尝试
         }
@@ -487,11 +563,34 @@ public class DBDataSourcePool {
         return null;
     }
 
+    /**
+     * 归还连接。
+     *
+     * <p>同时接受两种形态，两条路径都幂等：
+     * <ul>
+     *   <li>{@link PooledConnection} 句柄 —— 交给句柄自己去归还，与 {@code conn.close()} 共用
+     *       同一个"只归还一次"的原子标志，因此 {@code releaseConnection(conn)} 和
+     *       {@code conn.close()} 可以同时出现在一条代码路径上而不会重复归还；</li>
+     *   <li>物理连接 —— 池内部及历史调用方直接持有的形态。</li>
+     * </ul>
+     */
     public void releaseConnection(Connection connection) {
         if (connection == null) {
             return;
         }
 
+        // 池句柄：由句柄负责归还（幂等），无需在这里解包
+        if (connection instanceof PooledConnection pooledConnection) {
+            pooledConnection.release();
+            return;
+        }
+
+        // ---- 阶段一（锁内）：校验这条连接确实属于本池、且仍在"使用中"。
+        //
+        // 刻意**不**在这里把它移出 usedConnectionPool —— 复位阶段在锁外执行，
+        // 而 shutdown() 只遍历 used/idle 两个集合，连接若在窗口里"两边都不在"就会被漏掉、
+        // 永远不关（这正是当初把复位放在锁内的理由）。留在 usedConnectionPool 里同时满足两件事：
+        // shutdown() 看得见它，getConnection() 也不会把它借出去（那里只从 idle 取）。
         poolLock.lock();
         try {
             if (this.closed.get()) {
@@ -508,8 +607,7 @@ public class DBDataSourcePool {
             this.logger.debug("[SERVER][CONN POOL  ]: Pool [{}] Release connection {}.",
                     this.poolName, connectionNumber);
 
-            // O(1) 从 usedConnectionPool 移除
-            if (!this.usedConnectionPool.remove(connection)) {
+            if (!this.usedConnectionPool.contains(connection)) {
                 // 连接不在使用池中（重复释放或非本池连接），登记关闭以避免泄漏
                 this.logger.warn("[SERVER][CONN POOL  ]: Pool [{}] Release unknown connection {}. Closing to avoid leak.",
                         this.poolName, connectionNumber);
@@ -519,7 +617,44 @@ public class DBDataSourcePool {
             }
 
             if (!isReusable(connection)) {
+                this.usedConnectionPool.remove(connection);
+                // retireConnection 要求调用方先把它移出 used/idle
                 retireConnection(connection, "failed validation on release");
+                return;
+            }
+        } finally {
+            poolLock.unlock();
+        }
+
+        // 锁外关闭上面登记的连接，避免持锁 IO
+        closePendingConnections();
+
+        // ---- 阶段二（锁外）：复位会话状态（回滚未提交事务 + 恢复 autoCommit）。
+        //
+        // 这里必须移出 poolLock：回滚可能要丢弃一个大事务的全部工作，DuckDB 会做真实的工作量，
+        // 而 poolLock 是全池唯一的锁——一次慢回滚会让所有 getConnection() 一起排队。
+        // 此刻连接仍在 usedConnectionPool 中，池不会把它借给别人。
+        boolean restored = resetConnectionForReuse(connection);
+
+        // ---- 阶段三（锁内）：按复位结果把连接挪进空闲池、或退役。
+        poolLock.lock();
+        try {
+            if (!restored) {
+                // 状态不明的连接不能放回池里
+                this.usedConnectionPool.remove(connection);
+                retireConnection(connection, "failed to reset state on release");
+                return;
+            }
+            if (this.closed.get()) {
+                // 复位期间池被关闭：shutdown() 已经把 usedConnectionPool 里的连接收走并关闭，
+                // 这里绝不能再放回空闲池（否则空闲池里会躺着一条已关闭的连接）。
+                this.usedConnectionPool.remove(connection);
+                this.idleConnectionPool.remove(connection);
+                connectionMetaDataMap.remove(connection);
+                return;
+            }
+            if (!this.usedConnectionPool.remove(connection)) {
+                // 复位期间被别处接管（例如 shutdown 已清空集合并负责关闭它）：不再放回空闲池
                 return;
             }
 
@@ -531,6 +666,35 @@ public class DBDataSourcePool {
         }
 
         // 锁外关闭可能登记的连接，避免持锁 IO
+        closePendingConnections();
+    }
+
+    /**
+     * 退役一条正由池句柄归还的连接：不放回空闲池，直接物理关闭。
+     *
+     * <p>用于"归还时状态不可信"的情况——句柄上仍有未关闭或正在执行的语句
+     * （见 {@link PooledConnection#close()}）。这类连接若放回池里，会被下一个借用者
+     * <b>立刻</b>拿到，而语句可能仍在别的线程上执行：DuckDB 的单条连接不是线程安全的，
+     * 两个会话会在同一条连接上互相踩。退役（销毁）比复用安全，代价只是这一次连接创建。</p>
+     *
+     * <p>与 {@link #releaseConnection(Connection)} 互斥，由 {@link PooledConnection} 的
+     * "只归还一次"原子标志保证一条连接只会走其中一条路径。本方法自己取锁，
+     * 调用方<b>不得</b>持锁调用。</p>
+     */
+    void retireConnectionFromHandle(Connection connection, String reason) {
+        if (connection == null) {
+            return;
+        }
+        poolLock.lock();
+        try {
+            this.usedConnectionPool.remove(connection);
+            this.idleConnectionPool.remove(connection);
+            // retireConnection 要求调用方先把它移出 used/idle
+            retireConnection(connection, reason);
+        } finally {
+            poolLock.unlock();
+        }
+        // 锁外做物理关闭
         closePendingConnections();
     }
 

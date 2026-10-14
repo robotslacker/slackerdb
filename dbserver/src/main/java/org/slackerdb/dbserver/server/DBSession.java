@@ -14,6 +14,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -79,6 +80,10 @@ public class DBSession {
     /** 结束事务块（COMMIT / ROLLBACK / ABORT / END）。 */
     public void endTransaction() {
         transactionState = TransactionState.IDLE;
+        // PG 语义：非 WITH HOLD 游标随事务结束一起销毁（WITH HOLD 的跨事务存活）。
+        // 放在这里而不是 COMMIT/ROLLBACK 的处理里，是因为"事务结束"的所有入口
+        // （简单查询、扩展协议、脚本）都汇到本方法。
+        closeNonHoldCursors();
     }
 
     /**
@@ -92,6 +97,55 @@ public class DBSession {
         if (transactionState == TransactionState.IN_TRANSACTION) {
             transactionState = TransactionState.FAILED;
         }
+    }
+
+    /**
+     * 本会话允许缓存的带名字语句（{@code PreparedStatement-<名字>}）上限。
+     *
+     * <p>为什么需要上限：未命名语句会被复用（下一个 Parse 覆盖它，旧句柄由
+     * {@link #closeIfOrphaned} 回收），但<b>带名字</b>的语句不会 —— postgres_fdw
+     * 每条 DML 都用一个全新的名字（{@code pgsql_fdw_prep_<n>}）Prepare 一次，
+     * 长连接上缓存只增不减，每个条目都占着一条 DuckDB 语句句柄。</p>
+     *
+     * <p>为什么不做静默淘汰：淘汰会打断正在使用的语句或挂起的游标，属于最难排查的隐蔽故障。
+     * 超限一律回 {@code 54000 program_limit_exceeded}，让客户端自己决定
+     * （{@code DEALLOCATE ALL} 或重连）——可观测、可恢复。</p>
+     */
+    public static final int MAX_PREPARED_STATEMENTS = 512;
+
+    /**
+     * 会话是否处于"扩展协议出错、丢弃后续报文直到 Sync"的状态（PG 语义）。
+     *
+     * <p>PG 规定：Parse / Bind / Describe / Execute / Close 任一条失败后，后端<b>丢弃</b>
+     * 后续前端报文，直到收到 Sync 才恢复处理，期间不发 ReadyForQuery。</p>
+     *
+     * <p>dbserver 改造前没有这个状态，于是失败之后的 Bind 仍回 {@code BindComplete}、
+     * Execute 仍回一个空 {@code CommandComplete}：客户端读到与它发送的报文不匹配的应答，
+     * 协议状态机脱节（严格驱动会直接报 desync 并断开）。</p>
+     */
+    private volatile boolean skipUntilSync = false;
+
+    /**
+     * 扩展协议路径上的一条语句失败：事务块置为 aborted（PG 语义），
+     * 并让会话进入"丢弃到 Sync"状态。
+     */
+    public void markExtendedProtocolError() {
+        markTransactionFailed();
+        skipUntilSync = true;
+    }
+
+    /** 进入"丢弃到 Sync"状态，但不动事务块状态（用于事务块已被拒绝的场景）。 */
+    public void markErrorUntilSync() {
+        skipUntilSync = true;
+    }
+
+    /** 收到 Sync：恢复正常处理（由 PostgresServerHandler 在处理 Sync 之前调用）。 */
+    public void clearSkipUntilSync() {
+        skipUntilSync = false;
+    }
+
+    public boolean isSkipUntilSync() {
+        return skipUntilSync;
     }
 
     /** 当前会话状态  connected, dbConnected */
@@ -252,7 +306,9 @@ public class DBSession {
         // 否则会把客户端事务里先前的工作一起抹掉。
         if (copyOwnTransaction) {
             copyOwnTransaction = false;
-            try (Statement rollbackStatement = ((DuckDBConnection) dbConnection).createStatement()) {
+            // 这里只需要一个 Statement：不要向下转型成 DuckDBConnection ——
+            // 会话连接是连接池发放的句柄（PooledConnection），转型会 ClassCastException。
+            try (Statement rollbackStatement = dbConnection.createStatement()) {
                 rollbackStatement.execute("ROLLBACK");
             }
             catch (SQLException se) {
@@ -389,6 +445,9 @@ public class DBSession {
      */
     public void closeSession() throws SQLException
     {
+        // 关闭 PG 游标（DECLARE ... CURSOR）：它们持有独立于协议级语句缓存的 JDBC 结果集
+        closeAllCursors();
+
         // 关闭所有连接，并释放所有资源
         for (ParsedStatement parsedStatement : parsedStatements.values())
         {
@@ -439,6 +498,9 @@ public class DBSession {
 
     public void abortSession() throws SQLException
     {
+        // 关闭 PG 游标（DECLARE ... CURSOR）：它们持有独立的 JDBC 结果集
+        closeAllCursors();
+
         // 关闭所有连接，并释放所有资源
         // 默认abort的时候要执行Rollback操作
         for (ParsedStatement parsedStatement : parsedStatements.values())
@@ -484,11 +546,226 @@ public class DBSession {
         transactionState = TransactionState.IDLE;
     }
 
+    /**
+     * 记录（或覆盖）一个语句/门户缓存项，并顺手回收被顶掉后<b>已经彻底不可达</b>的语句句柄。
+     *
+     * <p><b>为什么必须回收</b>：pgjdbc 的一次性查询全部复用<b>未命名</b>语句与未命名门户
+     * （未命名门户在下一个 Bind 时被隐式销毁，这是 PG 协议规定的）。于是每执行一条查询，
+     * 键 {@code PreparedStatement-} 与 {@code Portal-} 都会被覆盖一次，而原来的
+     * {@code put} 会让被顶掉的 {@link PreparedStatement} 从缓存里消失、再也关不掉——
+     * 一条长连接上 DuckDB 语句数只增不减（每执行一条漏一条），连接池还会据此判定
+     * "归还时仍有未关闭语句"、把整条连接退役。</p>
+     *
+     * <p><b>为什么不能在顶掉语句时就关</b>：被顶掉的语句往往还被一个门户引用着，
+     * 而那个门户要等到<b>下一次 Bind</b> 才会被顶掉。{@code fetchSize} 挂起的游标更是长期持有
+     * （{@code Sanity01Test#testFetchSize}：取到一半、穿插另一条查询、再回来继续取同一个游标）。
+     * 因此判定标准不是"被顶掉"，而是"缓存里再没有任何条目引用它"——见
+     * {@link #closeIfOrphaned}。</p>
+     */
     public void saveParsedStatement(String portalName, ParsedStatement parsedPrepareStatement)
     {
         // 注意：parsedStatements 是 ConcurrentHashMap，**不接受 null 值**。
         // "空语句/空 portal" 请存一个 sql="" 且 preparedStatement=null 的对象，而不是 null。
-        parsedStatements.put(portalName, parsedPrepareStatement);
+        //
+        // 限流不在这里做：本方法的调用点分布在 ParseRequest 的"try 之外"的多条分支上，
+        // 加 checked 异常会把调用链搅乱。容量判定由 ParseRequest 在入口处统一把关
+        // （见 ParseRequest#rejectIfStatementCacheFull 与 MAX_PREPARED_STATEMENTS）。
+        closeIfOrphaned(parsedStatements.put(portalName, parsedPrepareStatement));
+    }
+
+    /**
+     * 本会话缓存的语句条数（不含门户条目）。供限流判定与测试使用。
+     */
+    public int preparedStatementCount() {
+        int count = 0;
+        for (String key : parsedStatements.keySet()) {
+            if (key.startsWith("PreparedStatement-")) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * 响应 {@code DEALLOCATE ALL}：清空本会话<b>协议级</b>的语句与门户缓存。
+     *
+     * <p>DuckDB 不支持 {@code DEALLOCATE ALL}（报 {@code 42601}），而 postgres_fdw 在出错清理
+     * 路径会发它。这里由服务端接管：先关门户（释放挂起的结果集），再关语句。
+     * 注意它<b>不</b>影响 DuckDB 自己的 SQL 级 {@code PREPARE}（那些随会话连接结束一起消失）。</p>
+     */
+    public void clearProtocolLevelStatements() {
+        for (String key : new ArrayList<>(parsedStatements.keySet())) {
+            if (key.startsWith("Portal-")) {
+                try {
+                    closePortal(key);
+                } catch (SQLException e) {
+                    dbInstance.logger.warn("[SERVER] Close portal while handling DEALLOCATE ALL failed. {}",
+                            e.getMessage());
+                }
+            }
+        }
+        for (String key : new ArrayList<>(parsedStatements.keySet())) {
+            if (key.startsWith("PreparedStatement-")) {
+                try {
+                    clearParsedStatement(key);
+                } catch (SQLException e) {
+                    dbInstance.logger.warn("[SERVER] Close statement while handling DEALLOCATE ALL failed. {}",
+                            e.getMessage());
+                }
+            }
+        }
+    }
+
+    /**
+     * 响应 {@code DEALLOCATE <name>}：摘掉协议级缓存里同名的语句条目。
+     *
+     * <p>仍被某个门户引用时<b>不</b>关句柄（由 {@link #closeIfOrphaned} 判定），
+     * 避免把还在用的游标打断。</p>
+     */
+    public void releaseProtocolStatement(String name) {
+        closeIfOrphaned(parsedStatements.remove("PreparedStatement" + "-" + name));
+    }
+
+    // ------------------------------------------------------------------
+    // 接受但不生效的会话设置（PG 特有参数，见 SessionSettingSql）
+    // ------------------------------------------------------------------
+
+    /**
+     * 本会话被客户端设置过、但 SlackDB <b>不会生效</b>的 PG 参数。
+     *
+     * <p>存在的意义：{@code SET statement_timeout = 0} 这类语句在 PG 里是连接池/ORM 的例行操作，
+     * DuckDB 没有对应参数（报 {@code 3F000}）。SlackDB 接受它、记在这里、回成功，
+     * 并<b>发一条 NOTICE 明确说明不会生效</b> —— 而不是静默假装设置了。</p>
+     */
+    private final Map<String, String> acceptedSettings = new ConcurrentHashMap<>();
+
+    /** 记录一个"接受但不生效"的会话设置。 */
+    public void acceptSetting(String name, String value) {
+        acceptedSettings.put(name, value);
+    }
+
+    /** 清掉一个"接受但不生效"的会话设置（{@code RESET <name>}）。 */
+    public void removeAcceptedSetting(String name) {
+        acceptedSettings.remove(name);
+    }
+
+    /** 当前记录的"接受但不生效"设置（只读快照，供提示与测试使用）。 */
+    public Map<String, String> acceptedSettings() {
+        return Map.copyOf(acceptedSettings);
+    }
+
+    /** 清空全部"接受但不生效"的设置（{@code RESET ALL} / {@code DISCARD ALL}）。 */
+    public void resetAcceptedSettings() {
+        acceptedSettings.clear();
+    }
+
+    /**
+     * {@code DISCARD ALL}：回到"刚建连"的会话状态。
+     *
+     * <p>做三件事：清空"接受但不生效"的设置 + 清空协议级语句/门户缓存 + 关闭全部游标。
+     * 不碰 DuckDB 自己的会话变量（DuckDB 没有等价语句，且那些随连接结束消失）。</p>
+     */
+    public void resetSessionForDiscardAll() {
+        resetAcceptedSettings();
+        clearProtocolLevelStatements();
+        closeAllCursors();
+    }
+
+    // ------------------------------------------------------------------
+    // PG 游标（DECLARE ... CURSOR ... FOR / FETCH / MOVE / CLOSE）
+    // ------------------------------------------------------------------
+
+    /**
+     * 本会话声明的服务端游标。
+     *
+     * <p>游标持有独立于 {@link #parsedStatements} 的 JDBC 结果集（fdw 的取数路径就是它），
+     * 因此生命周期单独管理：非 WITH HOLD 的随事务结束销毁，WITH HOLD 的活到显式
+     * {@code CLOSE} / {@code CLOSE ALL} / {@code DISCARD ALL} / 会话结束。</p>
+     */
+    private final Map<String, ServerCursor> cursors = new ConcurrentHashMap<>();
+
+    public void addCursor(ServerCursor cursor) {
+        cursors.put(cursor.name, cursor);
+    }
+
+    public ServerCursor getCursor(String name) {
+        return cursors.get(name);
+    }
+
+    /** 当前游标个数（测试与文档用）。 */
+    public int cursorCount() {
+        return cursors.size();
+    }
+
+    /** 关闭并移除一个游标；名字不存在返回 {@code false}（调用方据此回 34000）。 */
+    public boolean closeCursor(String name) {
+        ServerCursor cursor = cursors.remove(name);
+        if (cursor == null) {
+            return false;
+        }
+        closeCursorQuietly(cursor);
+        return true;
+    }
+
+    /** 关闭全部游标（{@code CLOSE ALL} / {@code DISCARD ALL} / 会话结束）。 */
+    public void closeAllCursors() {
+        for (String name : new ArrayList<>(cursors.keySet())) {
+            closeCursorQuietly(cursors.remove(name));
+        }
+    }
+
+    /** 事务结束：销毁非 WITH HOLD 游标（PG 语义）。 */
+    public void closeNonHoldCursors() {
+        for (Map.Entry<String, ServerCursor> entry : new ArrayList<>(cursors.entrySet())) {
+            if (!entry.getValue().withHold) {
+                closeCursorQuietly(cursors.remove(entry.getKey()));
+            }
+        }
+    }
+
+    private void closeCursorQuietly(ServerCursor cursor) {
+        if (cursor == null) {
+            return;
+        }
+        try {
+            cursor.close();
+        } catch (SQLException e) {
+            dbInstance.logger.warn("[SERVER] Close cursor [{}] failed. {}", cursor.name, e.getMessage());
+        }
+    }
+
+    /**
+     * 关掉一条已经彻底不可达的语句句柄（尽力而为：它已经不可达，关不掉也不该让本次协议消息失败）。
+     *
+     * <p>"不可达"= 缓存里没有任何条目（语句条目或门户条目）还引用这个句柄。
+     * 只要还有门户引用就<b>绝不能关</b>：挂起的游标下一次 Execute 会直接打在这个句柄上。</p>
+     *
+     * <p>仍被挂起游标占用的语句会一直留到会话结束，届时连接池按"归还时仍有未关闭语句"
+     * 把整条连接退役——一次会话最多付一条连接的代价，比把仍在使用的连接交给下一个借用者安全。</p>
+     */
+    private void closeIfOrphaned(ParsedStatement displaced)
+    {
+        if (displaced == null) {
+            return;
+        }
+        PreparedStatement candidate = displaced.preparedStatement;
+        if (candidate == null) {
+            return;
+        }
+        for (ParsedStatement other : parsedStatements.values()) {
+            if (other.preparedStatement == candidate) {
+                return;
+            }
+        }
+        try {
+            closeResultSet(displaced.resultSet);
+            if (!candidate.isClosed()) {
+                candidate.close();
+            }
+        } catch (SQLException closeException) {
+            dbInstance.logger.warn("[SERVER] Close orphaned prepared statement failed. {}",
+                    closeException.getMessage());
+        }
     }
 
     /**
@@ -514,10 +791,13 @@ public class DBSession {
     /**
      * 关闭并摘除一个门户（{@code Portal-<名字>}）缓存项。
      *
-     * <p>与 {@link #clearParsedStatement(String)} 的区别：<b>不关闭</b>底层的
+     * <p>与 {@link #clearParsedStatement(String)} 的区别：<b>不</b>直接关闭底层的
      * {@link PreparedStatement}。门户与语句共享同一个句柄（见 {@code BindRequest}，
      * 门户对象直接复用语句对象里的引用），按 PG 语义关闭门户也不应牵连语句 ——
      * 否则对同名语句的下一次 Bind/Execute 会直接打在已关闭的句柄上。</p>
+     *
+     * <p>但门户一走，那条语句可能就<b>再也没有任何条目引用</b>了（它的语句条目早被后续 Parse
+     * 顶掉），这时必须回收，否则句柄会一直挂在连接上——见 {@link #closeIfOrphaned}。</p>
      */
     public void closePortal(String portalName) throws SQLException
     {
@@ -526,6 +806,7 @@ public class DBSession {
             return;
         }
         closeResultSet(parsedStatement.resultSet);
+        closeIfOrphaned(parsedStatement);
     }
 
     private static void closeResultSet(ResultSet resultSet) throws SQLException

@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Properties;
 
 import ch.qos.logback.classic.Level;
+import org.slackerdb.common.discovery.MulticastAddress;
 import org.slackerdb.common.utils.Utils;
 
 public class ServerConfiguration {
@@ -50,8 +51,15 @@ public class ServerConfiguration {
 
     // 默认绑定的主机地址
     private final String default_bind = "0.0.0.0";
-    // 外部监听地址，用来多个数据库服务在统一的外部服务下进行消息转发
-    private final String default_remote_listener = "";
+    // 组播通告地址（<组IP>:<端口>）。刻意没有默认值：不配置就是不启用服务发现。
+    //
+    // 之所以不给默认值：组播组是 dbserver 与 dbproxy 之间唯一的会合点，而且两端是各自配置的。
+    // 一旦内置一个"看起来能用"的默认组，用户很容易只在一端配置、另一端忘了配，表现是
+    // "什么都发现不了"却没有任何报错。要求两端都显式配置，配合启动日志与实际生效地址的回显，
+    // 把这类错误变成一眼可见的配置差异。
+    private final String default_advertise_address = "";
+    // 组播使用的本机网卡（网卡名或本机 IP），留空 = 自动选一块。
+    private final String default_advertise_nic = "";
     // 默认不限制内存使用情况
     private final String default_memory_limit;
     // 默认线程数（在构造函数中基于内存计算）
@@ -127,7 +135,13 @@ public class ServerConfiguration {
     private int      port;
     private int      portX;
     private String   bind;
-    private String   remote_listener;
+    private String   advertise_address;
+    private String   advertise_nic;
+    /**
+     * 实际生效的通告地址（组 IP 的文本形式，不含端口），在 {@code startAdvertise} 解析网卡时确定。
+     * 仅供状态查询与日志使用；未启用通告时为 null。
+     */
+    private String   advertise_host;
     private String   memory_limit;
     private double   auto_workload_threshold;
     private int      threads;
@@ -173,7 +187,9 @@ public class ServerConfiguration {
         port = default_port;
         portX = default_portX;
         bind = default_bind;
-        remote_listener = default_remote_listener;
+        advertise_address = default_advertise_address;
+        advertise_nic = default_advertise_nic;
+        advertise_host = null;
         access_mode = default_access_mode;
         max_workers = default_max_workers;
         business_threads = default_business_threads;
@@ -317,11 +333,18 @@ public class ServerConfiguration {
                         setBindHost(entry.getValue().toString().trim());
                     }
                 }
-                case "REMOTE_LISTENER" -> {
+                case "ADVERTISE_ADDRESS" -> {
                     if (entry.getValue().toString().isEmpty()) {
-                        remote_listener = this.default_remote_listener;
+                        advertise_address = this.default_advertise_address;
                     } else {
-                        setRemoteListener(entry.getValue().toString().trim());
+                        setAdvertiseAddress(entry.getValue().toString().trim());
+                    }
+                }
+                case "ADVERTISE_NIC" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        advertise_nic = this.default_advertise_nic;
+                    } else {
+                        setAdvertiseNic(entry.getValue().toString().trim());
                     }
                 }
                 case "CLIENT_TIMEOUT" -> {
@@ -621,9 +644,24 @@ public class ServerConfiguration {
     {
         return bind;
     }
-    public String getRemoteListener()
+    public MulticastAddress getAdvertiseAddress()
     {
-        return remote_listener;
+        return advertise_address.isEmpty() ? null : MulticastAddress.parse(advertise_address);
+    }
+
+    /**
+     * 实际生效的通告地址（本机 IP）。未启用通告、或尚未完成网卡解析时为 null。
+     * 供 status 查询与日志使用，与"是否已启用通告"是两件事。
+     */
+    public String getAdvertiseHost()
+    {
+        return advertise_host;
+    }
+
+    /** 通告是否已启用（只看配置，不看网卡是否解析成功）。 */
+    public boolean isAdvertiseEnabled()
+    {
+        return !advertise_address.isEmpty();
     }
     public int getClient_timeout()
     {
@@ -790,23 +828,55 @@ public class ServerConfiguration {
         bind = pHost;
     }
 
-    public void setRemoteListener(String pRemote_Listener)
+    /**
+     * 设置组播通告地址。
+     *
+     * <p>格式错误在这里就报错（启动期），而不是等到真正开始通告——组播配错的表现是"静默不发现"，
+     * 越早失败越好。</p>
+     */
+    public void setAdvertiseAddress(String pAdvertiseAddress) throws ServerException
     {
-        if (pRemote_Listener.contains(":")) {
-            var ignoredVar1 = pRemote_Listener.substring(0, pRemote_Listener.lastIndexOf(':'));
-            try {
-                Integer.parseInt(pRemote_Listener.substring(pRemote_Listener.indexOf(':') + 1));
-            }
-            catch (NumberFormatException ignored)
-            {
-                throw new ServerException("Invalid remote listener parameter [" + pRemote_Listener + "]. Example: '1.1.1.1:1000' .");
-            }
-        }
-        else
+        if (pAdvertiseAddress == null || pAdvertiseAddress.trim().isEmpty())
         {
-            throw new ServerException("Invalid remote listener parameter [" + pRemote_Listener + "]. Example: '1.1.1.1:1000' .");
+            advertise_address = this.default_advertise_address;
+            return;
         }
-        remote_listener = pRemote_Listener;
+        try {
+            // 只做校验，规范化后的文本由 getAdvertiseAddress() 按需解析
+            MulticastAddress parsed = MulticastAddress.parse(pAdvertiseAddress.trim());
+            advertise_address = parsed.toString();
+        }
+        catch (IllegalArgumentException iae) {
+            throw new ServerException("SLACKERDB-00020",
+                    Utils.getMessage("SLACKERDB-00020", pAdvertiseAddress, iae.getMessage())
+            );
+        }
+    }
+
+    /**
+     * 设置组播使用的本机网卡。
+     *
+     * <p>这里<b>只记下取值、不解析网卡</b>：解析要依赖本机实际网卡，属于"启动时才知道"的事，
+     * 而且通告未启用时这个参数根本不该被使用（更不该因为它而让进程起不来）。真正的解析与报错
+     * 发生在 {@code DBInstance} 启动通告时。</p>
+     *
+     * @param pAdvertiseNic 网卡名（如 eth0 / Ethernet）或本机 IP；留空表示自动选择
+     */
+    public void setAdvertiseNic(String pAdvertiseNic)
+    {
+        advertise_nic = pAdvertiseNic == null ? this.default_advertise_nic : pAdvertiseNic.trim();
+    }
+
+    /** 网卡配置原值（可能是空、网卡名或本机 IP）。 */
+    public String getAdvertiseNic()
+    {
+        return advertise_nic;
+    }
+
+    /** 记录实际生效的通告地址，由启动通告的一方写入。 */
+    public void setAdvertiseHost(String pAdvertiseHost)
+    {
+        advertise_host = pAdvertiseHost;
     }
 
     public void setPort(String pPort) throws ServerException

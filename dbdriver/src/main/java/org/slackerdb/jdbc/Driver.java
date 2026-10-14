@@ -63,8 +63,28 @@ import java.util.logging.Logger;
 public class Driver implements java.sql.Driver {
 
   private static @Nullable Driver registeredDriver;
-  private static final Logger PARENT_LOGGER = Logger.getLogger("org.postgresql");
-  private static final Logger LOGGER = Logger.getLogger("org.postgresql.Driver");
+  // 日志器名必须是本项目的命名空间：历史上这两行是从 pgjdbc 改名时漏下的
+  // "org.postgresql" / "org.postgresql.Driver"，导致日志配置按 org.slackerdb 写时
+  // 完全匹配不到本驱动的输出，且会与真正的 PostgreSQL 驱动共用同一个日志器。
+  private static final Logger PARENT_LOGGER = Logger.getLogger("org.slackerdb.jdbc");
+  private static final Logger LOGGER = Logger.getLogger("org.slackerdb.jdbc.Driver");
+
+  /**
+   * 本驱动的 URL 前缀（{@code jdbc:<subprotocol>:}）。
+   *
+   * <p>只能有这一个来源：{@link #connect} 的"是不是我的 URL"判定与
+   * {@link #parseURL} 的解析入口必须用完全相同的规则。历史上两者各写各的
+   * （一个大小写不敏感、一个大小写敏感），于是同一个 URL 可能出现
+   * {@code connect()} 认为该自己处理、而 {@code acceptsURL()} 返回 false 的分歧——
+   * 这类分歧只在特定写法下暴露，极难排查。</p>
+   */
+  private static final String URL_PREFIX = "jdbc:slackerdb:";
+
+  /** URL 是否属于本驱动。只做前缀判定，不尝试完整解析。 */
+  private static boolean hasSlackerdbPrefix(@Nullable String url) {
+    return url != null && url.regionMatches(true, 0, URL_PREFIX, 0, URL_PREFIX.length());
+  }
+
   private static final SharedTimer SHARED_TIMER = new SharedTimer();
 
   static {
@@ -232,7 +252,7 @@ public class Driver implements java.sql.Driver {
    * <p>Our protocol takes the forms:</p>
    *
    * <pre>
-   *  jdbc:postgresql://host:port/database?param1=val1&amp;...
+   *  jdbc:slackerdb://host:port/database?param1=val1&amp;...
    * </pre>
    *
    * @param url the URL of the database to connect to
@@ -247,6 +267,18 @@ public class Driver implements java.sql.Driver {
     if (url == null) {
       throw new SQLException("url is null");
     }
+
+    // JDBC 规范：URL 不属于本驱动时必须返回 null，让 DriverManager 继续尝试后面的驱动。
+    //
+    // 这里必须显式判断，不能依赖下面 parseURL 的 null 返回值——原实现在 parseURL 返回 null 时
+    // 抛出 PSQLException("Unable to parse URL ...")，于是本驱动一旦被轮到就先报一个与用户
+    // 实际问题无关的错（DriverManager 只在所有驱动都失败时才会把第一个原因抛给用户，
+    // 所以这个错会盖住标准 PostgreSQL 驱动的真实报错，让人以为是 URL 写错了）。
+    if (!hasSlackerdbPrefix(url)) {
+      LOGGER.log(Level.FINE, "Not a SlackerDB URL, ignoring: {0}", url);
+      return null;
+    }
+
     // get defaults
     Properties defaults;
 
@@ -446,7 +478,7 @@ public class Driver implements java.sql.Driver {
   /**
    * Returns true if the driver thinks it can open a connection to the given URL. Typically, drivers
    * will return true if they understand the subprotocol specified in the URL and false if they
-   * don't. Our protocols start with jdbc:postgresql:
+   * don't. Our protocols start with jdbc:slackerdb:
    *
    * @param url the URL of the driver
    * @return true if this driver accepts the given URL
@@ -547,10 +579,10 @@ public class Driver implements java.sql.Driver {
       urlArgs = url.substring(qPos + 1);
     }
 
-    if (!urlServer.startsWith("jdbc:slackerdb:")) {
+    if (!hasSlackerdbPrefix(urlServer)) {
       return null;
     }
-    urlServer = urlServer.substring("jdbc:slackerdb:".length());
+    urlServer = urlServer.substring(URL_PREFIX.length());
 
     if ("//".equals(urlServer) || "///".equals(urlServer)) {
       urlServer = "";

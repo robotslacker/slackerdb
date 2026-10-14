@@ -8,12 +8,14 @@ import org.slackerdb.common.utils.Utils;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.sql.Array;
 import java.sql.Date;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -89,6 +91,15 @@ public final class RowEncoder {
     public static final int T_NUMERIC_TEXT = 14;
     /** BLOB / BYTEA：二进制格式下原样发字节；文本格式下按 PG 的 {@code \x} + 十六进制发 */
     public static final int T_BYTEA = 15;
+    /**
+     * PostgreSQL 数组（一维、元素类型在 PG 里有对应）：按 PG 数组文本字面量
+     * {@code {a,b,c}} 发送，并在 RowDescription 里声明真正的数组 OID（如 int4[] = 1007）。
+     *
+     * <p>支持的判据只有一处：{@link PostgresTypeOids#getArrayTypeOidFromTypeName}。
+     * 它返回 null 的列表列（STRUCT/MAP 元素、多层嵌套、未知元素类型）仍走
+     * {@link #T_UNKNOWN} 的文本路径，行为与改造前一致。</p>
+     */
+    public static final int T_PG_ARRAY = 16;
 
     // 线程安全且可复用的格式化器（DateTimeFormatter 是不可变对象）
     private static final DateTimeFormatter TIMESTAMP_FORMATTER =
@@ -104,13 +115,18 @@ public final class RowEncoder {
     private final Column[] columns;
     private final List<Column> columnList;
 
+    /** 全部列使用文本格式：简单查询路径（simple query 一律文本）与语句级 Describe 使用。 */
+    public static final short[] ALL_TEXT = new short[0];
+
     /**
-     * @param metaData     结果集列元数据；只会读取一次，不参与行循环
-     * @param binaryAllowed 是否允许对定长类型使用二进制格式。
-     *                      extended 协议路径为 true；simple query 路径为 false（一律文本返回）
-     * @param logger       用于对未识别类型告警（每个列一次）
+     * @param metaData      结果集列元数据；只会读取一次，不参与行循环
+     * @param resultFormats 客户端在 Bind 报文中请求的结果列格式码（协议规则：长度 0 = 全部文本，
+     *                      长度 1 = 广播到所有列，长度 n = 逐列）。若客户端请求二进制但该列类型
+     *                      没有二进制编码器（例如 TIMESTAMPTZ / DECIMAL），该列会<b>如实</b>按文本
+     *                      编码，并在 RowDescription 里声明 format=0 —— 绝不能声明 1 却发文本。
+     * @param logger        用于对未识别类型告警（每个列一次）
      */
-    public RowEncoder(ResultSetMetaData metaData, boolean binaryAllowed, Logger logger) throws SQLException {
+    public RowEncoder(ResultSetMetaData metaData, short[] resultFormats, Logger logger) throws SQLException {
         this.logger = logger;
         int columnCount = metaData.getColumnCount();
         this.typeCodes = new int[columnCount];
@@ -121,13 +137,31 @@ public final class RowEncoder {
         List<Field> fieldList = new ArrayList<>(columnCount);
         for (int i = 1; i <= columnCount; i++) {
             String columnTypeName = metaData.getColumnTypeName(i);
+            // 列表 / 数组列**不能**当标量处理。
+            //
+            // DuckDB 的列表类型名是"<元素类型>[]"（INTEGER[]、DECIMAL(2,1)[]、VARCHAR[]…），
+            // 而标量 DECIMAL 是靠**名称前缀**识别的，所以 DECIMAL(2,1)[] 曾被误判成标量 DECIMAL，
+            // encodeColumn 进而对列表调用 rs.getBigDecimal()，DuckDB JDBC 直接抛
+            // NumberFormatException；该异常原先会穿出 QueryRequest 一直到 Netty，
+            // 客户端拿不到任何应答而永久挂起（已修）。
+            //
+            // 现在由 typeCodeOf 统一判定：元素类型在 PG 里有对应数组类型 → T_PG_ARRAY
+            // （声明真实数组 OID + 发 PG 数组字面量）；否则 T_UNKNOWN（保持文本行为）。
+            // 这里再用 JDBC 类型码交叉校验一次：名称说是数组、元数据却不认时，宁可退回文本，
+            // 也不要声明一个和值不匹配的 OID。
             int typeCode = typeCodeOf(columnTypeName);
+            if (typeCode == T_PG_ARRAY && metaData.getColumnType(i) != Types.ARRAY) {
+                typeCode = T_UNKNOWN;
+            }
             if (typeCode == T_UNKNOWN) {
                 // 注意：这里每个列只告警一次。原实现放在单元格循环内，日志量会与结果集大小成正比。
                 logger.warn("Not implemented column type: {}", columnTypeName);
             }
             this.typeCodes[i - 1] = typeCode;
-            this.formatCodes[i - 1] = (binaryAllowed && isBinaryType(typeCode)) ? (short) 1 : (short) 0;
+            // 结果格式由客户端在 Bind 里指定；只有"客户端要二进制 且 本类型有二进制编码器"
+            // 才声明 1。两者必须一致，否则客户端会按错误的格式解码 DataRow。
+            short requestedFormat = requestedFormatOf(resultFormats, i - 1);
+            this.formatCodes[i - 1] = (requestedFormat == 1 && isBinaryType(typeCode)) ? (short) 1 : (short) 0;
             this.columns[i - 1] = new Column();
 
             Field field = new Field();
@@ -361,6 +395,25 @@ public final class RowEncoder {
                     setValue(column, hex);
                 }
             }
+            case T_PG_ARRAY -> {
+                // 数组一律按文本发（isBinaryType 不含 T_PG_ARRAY），因此这里只需要
+                // 把元素拼成 PG 的数组字面量 {a,b,c}。元素用 java.sql.Array 结构化取出，
+                // 不要去解析 DuckDB 的 "[1, 2, 3]" repr —— 那既不是 PG 语法，转义也不规则。
+                Array value = rs.getArray(columnIndex);
+                if (value == null) {
+                    setNull(column);
+                } else {
+                    Object elements = value.getArray();
+                    if (elements instanceof Object[]) {
+                        setValue(column, encodePgArrayText((Object[]) elements));
+                    } else {
+                        // DuckDB 对列表列一定返回 Object[]；真出现别的形态说明类型判断错了，
+                        // 这时宁可报错（客户端会收到 XX000），也不要把错误格式的字节发出去。
+                        throw new IllegalStateException("Array column did not return Object[]: "
+                                + (elements == null ? "null" : elements.getClass().getName()));
+                    }
+                }
+            }
             default -> {
                 // 未识别类型：按字符串处理（构造阶段已经告警过一次）
                 String value = rs.getString(columnIndex);
@@ -389,10 +442,102 @@ public final class RowEncoder {
     }
 
     /**
+     * 把一维元素数组编码成 PostgreSQL 的数组文本字面量。
+     *
+     * <p>规则与 PG 的 {@code array_out} 对齐：元素之间用逗号；只有"会被误读"的元素才加双引号
+     * （含逗号 / 花括号 / 双引号 / 反斜杠 / 空白、空串、以及字面量 NULL），引号内用反斜杠转义
+     * {@code \} 与 {@code "}；SQL NULL 元素写成不带引号的 {@code NULL}。</p>
+     *
+     * <p>之所以自己拼而不复用 DuckDB 的 {@code getString()}：DuckDB 的列表 repr 是
+     * {@code [1, 2, 3]}，既不是 PG 数组语法，转义规则也不一致（实测同一行里
+     * {@code ['has,comma', 'has"quote', has\backslash, '']} 有的加引号有的不加）。</p>
+     */
+    private static byte[] encodePgArrayText(Object[] elements) {
+        StringBuilder out = new StringBuilder(elements.length * 8 + 2);
+        out.append('{');
+        for (int i = 0; i < elements.length; i++) {
+            if (i > 0) {
+                out.append(',');
+            }
+            Object element = elements[i];
+            if (element == null) {
+                out.append("NULL");
+                continue;
+            }
+            String text = elementText(element);
+            if (needsQuoting(text)) {
+                out.append('"').append(escapeElement(text)).append('"');
+            } else {
+                out.append(text);
+            }
+        }
+        out.append('}');
+        // 元素可能是中文等多字节字符（VARCHAR[]），必须按 UTF-8 编码
+        return out.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** 单个数组元素的文本形式（各类型的 PG 输入语法）。 */
+    private static String elementText(Object element) {
+        if (element instanceof Boolean bool) {
+            // PG 的 bool 文本形式是 t / f（不是 true/false）
+            return bool ? "t" : "f";
+        }
+        if (element instanceof byte[] bytes) {
+            // bytea 元素：PG 的十六进制形式 \x...（含反斜杠，会被自动加引号）
+            StringBuilder hex = new StringBuilder(2 + bytes.length * 2);
+            hex.append("\\x");
+            final char[] digits = "0123456789abcdef".toCharArray();
+            for (byte b : bytes) {
+                hex.append(digits[(b >> 4) & 0x0F]).append(digits[b & 0x0F]);
+            }
+            return hex.toString();
+        }
+        // 数字（含 BigDecimal / BigInteger / NaN / Infinity）、java.sql.Date/Timestamp/Time、
+        // java.time.*、UUID、String：toString() 就是 PG 的输入语法（日期时间均为 ISO 形式）
+        return String.valueOf(element);
+    }
+
+    /** PG {@code array_out} 的加引号规则。 */
+    private static boolean needsQuoting(String text) {
+        if (text.isEmpty() || text.equalsIgnoreCase("NULL")) {
+            // 空串不加引号会丢失；"NULL" 不加引号会被当成 SQL NULL 元素
+            return true;
+        }
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == ',' || c == '{' || c == '}' || c == '"' || c == '\\'
+                    || Character.isWhitespace(c)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String escapeElement(String text) {
+        return text.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    /**
      * 该列是否使用二进制的结果格式。只有 extended 协议路径会返回 true。
      */
     public boolean isBinary(int zeroBasedColumnIndex) {
         return formatCodes[zeroBasedColumnIndex] == 1;
+    }
+
+    /**
+     * 解析客户端请求的第 {@code zeroBasedColumnIndex} 列结果格式。
+     *
+     * <p>协议规则：格式码个数为 0 → 全部文本；为 1 → 广播；等于列数 → 逐列。
+     * 个数与列数不匹配（畸形报文）时，缺失的列按文本处理，绝不越界。</p>
+     */
+    private static short requestedFormatOf(short[] resultFormats, int zeroBasedColumnIndex) {
+        if (resultFormats == null || resultFormats.length == 0) {
+            return 0;
+        }
+        if (resultFormats.length == 1) {
+            return resultFormats[0];
+        }
+        return zeroBasedColumnIndex < resultFormats.length ? resultFormats[zeroBasedColumnIndex] : 0;
     }
 
     /**
@@ -414,6 +559,18 @@ public final class RowEncoder {
             return T_UNKNOWN;
         }
         String typeName = columnTypeName.toUpperCase(Locale.ROOT).trim();
+        // "<元素类型>[]" 是列表 / 数组，必须**早于**标量前缀匹配判断：
+        // DECIMAL(2,1)[] 同样以 "DECIMAL" 开头，落到下面 default 分支就会被当成标量 DECIMAL，
+        // 进而在取值阶段对列表调用 getBigDecimal() 抛 NumberFormatException。
+        //
+        // 元素类型在 PG 里有对应数组类型（INTEGER[]/VARCHAR[]/DECIMAL(18,3)[]…）时，
+        // 按真正的 PG 数组发送；STRUCT/MAP 元素、多层嵌套、未知元素类型退回文本
+        // （与既有的 VARCHAR[] -> 1043 约定一致）。
+        if (typeName.endsWith("[]")) {
+            return PostgresTypeOids.getArrayTypeOidFromTypeName(typeName) != null
+                    ? T_PG_ARRAY
+                    : T_UNKNOWN;
+        }
         return switch (typeName) {
             case "TINYINT", "SMALLINT" -> T_SMALLINT;
             case "INTEGER" -> T_INTEGER;

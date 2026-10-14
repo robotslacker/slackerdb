@@ -901,8 +901,8 @@ public class CopyDoneRequest extends PostgresRequest {
         // 只有在 COMMIT 成功之后才敢回 CommandComplete，避免"报了成功但数据没落库"。
         if (session.copyOwnTransaction) {
             session.copyOwnTransaction = false;
-            try (Statement finishStatement =
-                         ((DuckDBConnection) session.dbConnection).createStatement()) {
+            // 不需要向下转型成 DuckDBConnection：会话连接是连接池发放的句柄（PooledConnection）。
+            try (Statement finishStatement = session.dbConnection.createStatement()) {
                 finishStatement.execute(copyFailed ? "ROLLBACK" : "COMMIT");
             }
             catch (SQLException se) {
@@ -914,8 +914,7 @@ public class CopyDoneRequest extends PostgresRequest {
                 }
                 // COMMIT 失败时事务可能仍是打开/已中止状态，尽力回滚，
                 // 避免一个脏事务一直挂在会话上影响后续语句。
-                try (Statement rollbackStatement =
-                             ((DuckDBConnection) session.dbConnection).createStatement()) {
+                try (Statement rollbackStatement = session.dbConnection.createStatement()) {
                     rollbackStatement.execute("ROLLBACK");
                 }
                 catch (SQLException ignored) {

@@ -23,6 +23,7 @@ import org.slackerdb.dbproxy.message.request.SSLRequest;
 import org.slackerdb.dbproxy.message.request.StartupRequest;
 import org.slf4j.LoggerFactory;
 
+import java.net.BindException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.*;
@@ -41,7 +42,10 @@ public class PostgresProxyServer {
 
     private String bind;
     private int port;
-    private boolean portReady = false;
+    // volatile：由 "PROXY" 线程写、由 ProxyInstance.start() 的启动线程读（见 waitUntilReady）。
+    private volatile boolean portReady = false;
+    // 监听器启动失败的原因。非 null 表示线程已经退出，启动方必须立刻失败，而不是傻等 portReady。
+    private volatile Exception startupError = null;
     private ProxyInstance proxyInstance;
 
     public void setProxyInstance(ProxyInstance pProxyInstance)
@@ -49,19 +53,50 @@ public class PostgresProxyServer {
         this.proxyInstance = pProxyInstance;
     }
     /**
-     * 启动协议处理
+     * 启动协议处理。
+     *
+     * <p>启动跑在独立的 "PROXY" 线程上（不是调用线程），因此监听器启动失败
+     * <b>不会</b>从这里抛出：失败原因记录在 {@link #getStartupError()}，由调用方通过
+     * {@link #waitUntilReady(long)} 观察到。</p>
      */
     public void start() {
         // Listener thread
         Thread thread = new Thread(() -> {
+            Thread.currentThread().setName("PROXY");
             try {
-                Thread.currentThread().setName("PROXY");
                 run();
-            } catch (InterruptedException | ServerException e) {
-                throw new RuntimeException(e);
+            } catch (Exception e) {
+                // 不要把异常抛出到线程外（那只会打印一行 "Exception in thread PROXY" 然后什么也不发生）
+                startupError = e;
+                logger.error("[PROXY] Listener failed to start. Proxy will not accept connections.", e);
             }
-        });
+        }, "PROXY");
+        thread.setDaemon(true);
         thread.start();
+    }
+
+    /**
+     * 等待监听器就绪。
+     *
+     * <p>三种退出方式：就绪（返回，正常）、启动失败（抛 {@link ServerException}）、超时
+     * （抛 {@link ServerException}）。<b>任何一条路径都不会无限等待</b>，否则调用方
+     * （{@code ProxyInstance.start()}）会永久挂住 —— 端口被占用时旧行为正是如此。</p>
+     *
+     * @param timeoutMillis 最长等待时间（毫秒），必须 &gt; 0
+     */
+    public void waitUntilReady(long timeoutMillis) throws ServerException, InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (!portReady) {
+            Exception error = startupError;
+            if (error != null) {
+                throw new ServerException("Listener startup failed: " + error.getMessage(), error);
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                throw new ServerException("Listener startup timed out after [" + timeoutMillis
+                        + "]ms. Expected listener on " + bind + ":" + port + ".");
+            }
+            Thread.sleep(50);
+        }
     }
 
 
@@ -345,8 +380,21 @@ public class PostgresProxyServer {
                             ch.pipeline().addLast(new PostgresProxyServerHandler(logger, proxyInstance));
                         }
                     });
-            ChannelFuture future =
-                    bootstrap.bind(new InetSocketAddress(bind, port)).sync();
+            ChannelFuture future;
+            try {
+                future = bootstrap.bind(new InetSocketAddress(bind, port)).sync();
+            } catch (Exception bindFailure) {
+                // 最常见的一类启动失败：端口已被占用。SO_REUSEADDR 只能复用 TIME_WAIT。
+                // Netty 会把 BindException 包成 ChannelException，因此要钻 cause chain 来判断。
+                BindException bindException = Utils.findCause(bindFailure, BindException.class);
+                if (bindException != null) {
+                    throw new ServerException("Cannot bind TCP listener to " + bind + ":" + port
+                            + ", the address is already in use. "
+                            + "Stop the process listening on it or start the proxy on another port.",
+                            bindException);
+                }
+                throw bindFailure;
+            }
             logger.info("[PROXY] Listening on {}:{}", bind, port);
             portReady = true;
             future.channel().closeFuture().sync();
@@ -359,5 +407,14 @@ public class PostgresProxyServer {
     public boolean isPortReady()
     {
         return portReady;
+    }
+
+    /**
+     * 监听器启动失败的原因，未失败时为 {@code null}。
+     * 非 null 即代表监听线程已经退出，代理不会再接受任何连接。
+     */
+    public Exception getStartupError()
+    {
+        return startupError;
     }
 }

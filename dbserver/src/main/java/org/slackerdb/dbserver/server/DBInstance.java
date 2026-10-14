@@ -2,16 +2,11 @@ package org.slackerdb.dbserver.server;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
-import io.netty.bootstrap.Bootstrap;
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
-import io.netty.channel.*;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.handler.codec.ByteToMessageDecoder;
-import io.netty.handler.codec.MessageToByteEncoder;
 import org.duckdb.DuckDBConnection;
 import org.pf4j.PluginManager;
+import org.slackerdb.common.discovery.MulticastAddress;
+import org.slackerdb.common.discovery.MulticastAdvertiser;
+import org.slackerdb.common.discovery.NetworkAddressUtil;
 import org.slackerdb.common.utils.BoundedQueue;
 import org.slackerdb.common.utils.OSUtil;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
@@ -20,7 +15,6 @@ import org.slackerdb.common.logger.AppLogger;
 import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.entity.SQLHistoryRecord;
-import org.slackerdb.dbserver.message.request.AdminClientRequest;
 import org.slackerdb.dbserver.sql.SQLReplacer;
 import org.slackerdb.dbserver.sql.SqlCommentStripper;
 import org.slackerdb.plugin.DBPluginContext;
@@ -29,11 +23,9 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.RandomAccessFile;
-import java.net.InetSocketAddress;
-import java.nio.ByteBuffer;
 import java.nio.channels.FileLock;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.*;
@@ -71,6 +63,56 @@ public class DBInstance {
 
     // 实例的名称
     public String instanceName;
+
+    /** DuckDB 内存主 catalog 的名字，也是 fake catalog 的唯一归属地。 */
+    private static final String MEMORY_CATALOG = "memory";
+
+    /**
+     * 承载 fake catalog（{@code duck_catalog}）的 catalog 名，也是 SQL 改写与会话
+     * {@code search_path} 使用的限定前缀。
+     *
+     * <p><b>为什么必须有唯一来源</b>：客户端 SQL 里的 {@code pg_catalog.X} 会被
+     * {@link SQLReplacer} 改写成 {@code <本字段>.duck_catalog.X}，而会话的
+     * {@code search_path}（见 {@code StartupRequest}）也要指向同一个位置。
+     * 两处必须逐字一致，否则改写出的表名解析不到。</p>
+     *
+     * <p><b>为什么恒为 {@code memory}</b>：{@link SlackerCatalog#createFakeCatalog}
+     * 的第一条语句就是 {@code use memory}，之后才建 {@code duck_catalog}；而它在
+     * {@link #attachDatabase} 里是在 {@code ATTACH} <b>之前</b>被调用的。因此无论
+     * {@code data_dir} 是 {@code :memory:} 还是磁盘目录、无论实例库叫什么名字，
+     * fake catalog 都只存在于内存主 catalog（DuckDB 默认的 {@code memory}）里。</p>
+     *
+     * <p><b>踩过的坑（不要重犯）</b>：这里曾经按配置推导成"文件模式 + 指定 data → 用实例库名"。
+     * 但磁盘模式（{@code data_dir=<目录>} + {@code data=<库名>}，也就是真实部署形态）下
+     * DuckDB 里根本没有 {@code <库名>.duck_catalog} 这个 schema，于是：
+     * <ul>
+     *   <li>会话下发 {@code SET search_path = '<库名>.duck_catalog,...'}——DuckDB 对 search_path 中
+     *       不存在的 catalog+schema 是<b>直接报错</b>而非忽略：
+     *       {@code Catalog Error: SET search_path: No catalog + schema named "xxx.duck_catalog" found.}
+     *       于是每个新建连接都在握手期失败，服务端等于拒收全部客户端；</li>
+     *   <li>{@code pg_catalog.X} 被改写成指向不存在的 {@code <库名>.duck_catalog.X}，
+     *       客户端元数据查询同样失败
+     *       （{@code Catalog Error: Table with name "duck_catalog.pg_type" does not exist}）。</li>
+     * </ul>
+     * 两条都由 {@code memory} 前缀解决（实测 {@code SET search_path='memory.duck_catalog,<库名>'}
+     * 可正常解析、{@code pg_catalog.pg_type} 改写后也能查到）。</p>
+     *
+     * <p>如果将来真要把 fake catalog 建到实例库里，必须<b>同一次改动</b>先改
+     * {@link SlackerCatalog#createFakeCatalog}（去掉 {@code use memory}，或改到 ATTACH 之后再建），
+     * 再改 {@link #refreshCatalogName()}——两处必须一起改，否则又会分叉。</p>
+     */
+    public String catalogName = MEMORY_CATALOG;
+
+    /**
+     * 重算 {@link #catalogName}。
+     *
+     * <p>当前实现恒取 {@code memory}，原因见字段说明。保留这个方法的目的是让
+     * "fake catalog 在哪个 catalog" 只有一个决定点：{@link #attachDatabase} 收尾会调用它，
+     * 测试与嵌入场景也可以显式调用它把改写前缀对齐到实际位置。</p>
+     */
+    public void refreshCatalogName() {
+        this.catalogName = MEMORY_CATALOG;
+    }
 
     // DuckDB的数据库连接池
     public DBDataSourcePool dbDataSourcePool = null;
@@ -125,6 +167,10 @@ public class DBInstance {
     private volatile boolean diskSpaceValid = true; // true表示空间足够
     private static final long DISK_CHECK_INTERVAL = 120000; // 2分钟，单位毫秒
 
+    // 监听器（Netty）启动的最长等待时间。正常情况下 1 秒内就绪；60 秒是给
+    // "起不来但也没立刻报错"的情况兜底，保证 start() 最终一定会返回而不是永久挂住。
+    private static final long LISTENER_STARTUP_TIMEOUT_MILLIS = 60 * 1000;
+
     // 管理端口服务
     public DBInstanceX dbInstanceX = null;
 
@@ -169,8 +215,6 @@ public class DBInstance {
     // 监控线程
     class DBInstanceMonitorThread extends Thread
     {
-        private static String lastRegisterMessage = "";
-
         @Override
         public void run()
         {
@@ -189,23 +233,6 @@ public class DBInstance {
                             getRegisteredConnectionsCount(), serverConfiguration.getMax_Workers());
                 }
 
-                // 如果配置了外部监听地址，则定期发送本服务器信息到监听地址上
-                if (!serverConfiguration.getRemoteListener().isEmpty())
-                {
-                    logger.trace("[SERVER] Will register current service to [{}] ...", serverConfiguration.getRemoteListener());
-                    String remoteListener = serverConfiguration.getRemoteListener();
-                    String remoteListenerHost = remoteListener.substring(0, remoteListener.lastIndexOf(':'));
-                    int remoteListenerPort = Integer.parseInt(remoteListener.substring(remoteListener.indexOf(':') + 1));
-                    try {
-                        talkWithRemoteListener("REGISTER", remoteListenerHost, remoteListenerPort);
-                    }
-                    catch (ServerException serverException)
-                    {
-                        logger.warn("[SERVER] Try register current service to [{}] failed. {}",
-                                serverConfiguration.getRemoteListener(), serverException.getMessage());
-                    }
-                }
-
                 // 检查磁盘空间剩余情况
                 checkDiskSpace();
 
@@ -221,6 +248,12 @@ public class DBInstance {
         }
     }
     private DBInstanceMonitorThread dbInstanceMonitorThread = null;
+
+    /**
+     * 组播通告器。{@code advertise_address} 为空时始终为 {@code null}——
+     * "不配置就是不启用"：不建 socket、不起线程、不产生任何周期性动作。
+     */
+    private MulticastAdvertiser advertiser = null;
 
     // SQL历史记录线程
     class DBInstanceSQLHistoryThread extends Thread
@@ -403,115 +436,81 @@ public class DBInstance {
     }
     private DBInstanceSQLHistoryThread dbInstanceSQLHistoryThread = null;
 
-    // 注册/取消注册当前的服务端口到指定的监听进程上
-    private void talkWithRemoteListener(String method, String remoteListenerHost, int remoteListenerPort) throws ServerException
+    /**
+     * 解析并启动组播通告。
+     *
+     * <p>这条路径替代了原来"周期性向 remote_listener 发 TCP REGISTER"的做法。区别在于：
+     * 不再需要预先知道代理的地址、不再维护一条注册连接；并且进程被强杀时，代理侧能靠租约超时
+     * 自动摘除条目，而不是留下一个永远指向死进程的目标。</p>
+     *
+     * <p>{@code advertise_address} 为空时<b>什么都不做</b>：不解析网卡、不建 socket、不起线程。</p>
+     *
+     * @throws ServerException 取值指向不存在的网卡、本机没有可用网卡、或 socket 建不起来
+     */
+    private void startAdvertise() throws ServerException
     {
-        // Encoder to convert byte[] to ByteBuf
-        class ByteArrayEncoder extends MessageToByteEncoder<byte[]> {
-            @Override
-            protected void encode(ChannelHandlerContext channelHandlerContext, byte[] msg, ByteBuf out)  {
-                out.writeBytes(msg);
-            }
+        if (!serverConfiguration.isAdvertiseEnabled()) {
+            logger.info("[SERVER][DISCOVERY  ] Service discovery is disabled (advertise_address is not set).");
+            return;
         }
 
-        // Decoder to convert ByteBuf to byte[]
-        class ByteArrayDecoder extends ByteToMessageDecoder {
-            @Override
-            protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
-                while (in.readableBytes() > 0) {
-                    if (in.readableBytes() < 5) {
-                        // 等待发送完毕，前5个字节为标识符和消息体长度
-                        return;
-                    }
-
-                    // 首字节为消息体的长度
-                    byte[] data = new byte[5];
-                    in.readBytes(data);
-                    ByteBuffer byteBuffer = ByteBuffer.wrap(data);
-                    byteBuffer.get();  // 忽略传递的首位标志
-                    int messageLen = byteBuffer.getInt();
-
-                    // 等待消息体发送结束, 4字节的字节长度也是消息体长度的一部分
-                    if (in.readableBytes() < (messageLen - 4)) {
-                        in.readerIndex(in.readerIndex() - 5); // 重置读取位置
-                        return;
-                    }
-                    data = new byte[messageLen - 4];
-                    in.readBytes(data);
-
-                    // 处理消息，并回显. 避免噪音重复打印
-                    String registerFeedBackMessage = new String(data, StandardCharsets.UTF_8);
-                    if ((data.length != 0) && !DBInstanceMonitorThread.lastRegisterMessage.equalsIgnoreCase(registerFeedBackMessage))
-                    {
-                        logger.info("[SERVER] {}", registerFeedBackMessage);
-                        DBInstanceMonitorThread.lastRegisterMessage = registerFeedBackMessage;
-                    }
-
-                    // 关闭连接，每次只处理一个请求
-                    ctx.close();
-                }
-            }
-        }
-
-        // 启动Netty客户端
-        EventLoopGroup group = new NioEventLoopGroup(1);
+        MulticastAddress multicastAddress = serverConfiguration.getAdvertiseAddress();
         try {
-            Bootstrap client = new Bootstrap();
-            client.group(group)
-                    .channel(NioSocketChannel.class)
-                    .option(ChannelOption.SO_KEEPALIVE, true)
-                    .handler(new ChannelInitializer<NioSocketChannel>() {
-                                 @Override
-                                 protected void initChannel(NioSocketChannel ch) {
-                                     // 定义消息处理
-                                     ch.pipeline().addLast(new ByteArrayEncoder());
-                                     ch.pipeline().addLast(new ByteArrayDecoder());
-                                 }
-                             }
-                    );
+            // 选本机地址的优先级：advertise_nic 显式指定 > bind 是具体地址 > 自动选一块可用网卡
+            NetworkAddressUtil.Candidate candidate = NetworkAddressUtil.resolveForAdvertise(
+                    serverConfiguration.getAdvertiseNic(), serverConfiguration.getBindHost());
+            // 记下实际生效的地址，供 status 查询与排障使用
+            serverConfiguration.setAdvertiseHost(candidate.getAddress().getHostAddress());
 
-            // 连接服务器
-            ChannelFuture future =
-                    client.connect(remoteListenerHost, remoteListenerPort).sync();
+            MulticastAdvertiser.Options options = new MulticastAdvertiser.Options(
+                    multicastAddress,
+                    candidate.getNic(),
+                    candidate.getAddress(),
+                    serverConfiguration.getData(),
+                    serverConfiguration.getPort(),
+                    serverConfiguration.getPortX())
+                    // 别名沿用库名，与旧 REGISTER 的 "AS <data>" 完全一致：客户端连接串不用改
+                    .version(readVersion());
 
-            // 拼接消息正文
-            InetSocketAddress localAddress = (InetSocketAddress) future.channel().localAddress();
-            String message = "";
-            // REGISTER <hostName>:<port,portX>/<dbInstanceName> AS <alias>
-            if (method.equals("REGISTER")) {
-                message = "REGISTER " +
-                        localAddress.getHostName() + ":" + serverConfiguration.getPort() + "," + serverConfiguration.getPortX() +
-                        "/" + serverConfiguration.getData() + " AS " +
-                        serverConfiguration.getData();
-            }
-            else if (method.equals("UNREGISTER")) {
-                message = "UNREGISTER " + serverConfiguration.getData() ;
-            }
-
-            // 发送 8 字节管理握手头 + '!' 命令帧，**必须一次性写出**（同一个 ByteBuf / 同一次 flush）。
-            //
-            // 代理侧的解码器只在"首 8 字节恰好是管理头、且后面还没有数据"时才把它识别为握手头；
-            // 如果分两次 write，操作系统可能把两段合进同一个 TCP 段，解码器面对
-            // "8 字节头 + 5 字节命令头"就会按 StartupMessage 解析（长度域 0x01010101 > 1024）
-            // 并直接关连接。后果是 REGISTER 自注册**间歇性失败**，代理随即报
-            // "Database [alias] does not exist!" —— 这是一个很难复现的偶发故障。
-            byte[] msg = message.getBytes(StandardCharsets.UTF_8);
-            ByteBuf buffer = Unpooled.buffer(AdminClientRequest.AdminClientRequestHeader.length + 5 + msg.length);
-            buffer.writeBytes(AdminClientRequest.AdminClientRequestHeader);
-            buffer.writeByte('!');
-            buffer.writeInt(4 + msg.length);
-            buffer.writeBytes(msg);
-            future.channel().writeAndFlush(buffer).sync();
-
-            // Wait until the connection is closed.
-            future.channel().closeFuture().sync();
+            advertiser = new MulticastAdvertiser(logger, options);
+            advertiser.start();
         }
-        catch (Exception e) {
-            logger.warn("[SERVER] Register current service to remote server failed. Will try again later ...");
-            logger.trace("Error connecting to remote server", e);
+        catch (IllegalArgumentException | IOException e) {
+            throw new ServerException("SLACKERDB-00021", Utils.getMessage("SLACKERDB-00021",
+                    serverConfiguration.getAdvertiseNic().isEmpty()
+                            ? "auto" : serverConfiguration.getAdvertiseNic(),
+                    e.getMessage()));
         }
-        finally {
-            group.shutdownGracefully();
+    }
+
+    /**
+     * 停止组播通告。
+     *
+     * <p>{@link MulticastAdvertiser#close()} 会先停周期线程、再连发两条 BYE，最后关 socket。
+     * 代理收到 BYE 会立即摘除条目，不必等租约超时——否则停机窗口内客户端还会被路由到一个
+     * 已经关闭的地址上。</p>
+     */
+    private void stopAdvertise()
+    {
+        if (advertiser != null) {
+            advertiser.close();
+            advertiser = null;
+        }
+    }
+
+    /** 读取版本号，仅用于通告报文里的排障字段；读不到就留空，不影响功能。 */
+    private static String readVersion()
+    {
+        try (InputStream inputStream = DBInstance.class.getResourceAsStream("/version.properties")) {
+            if (inputStream == null) {
+                return "";
+            }
+            Properties properties = new Properties();
+            properties.load(inputStream);
+            return properties.getProperty("version", "");
+        }
+        catch (IOException ioe) {
+            return "";
         }
     }
 
@@ -603,11 +602,10 @@ public class DBInstance {
             // 虚构一些PG的数据字典，以满足后续各种工具对数据字典的查找
             SlackerCatalog.createFakeCatalog(this, backendSysConnection);
 
-            // SQL替换
-            // DuckDB并不支持所有的PG语法，所以需要进行转义替换，以保证第三方工具能够正确使用
-            SQLReplacer.load(this);
-
             // 校验数据库参数
+            // 注意：SQLReplacer 的改写规则是按 catalogName 生成的静态规则表，而 catalogName
+            // 由 refreshCatalogName() 决定；规则表因此统一放到本方法的 finally 里加载一次，
+            // 保证无论走哪条分支（data 为空 / 等密钥挂起 / 正常挂载）规则都与最终前缀一致。
             String instanceName = this.serverConfiguration.getData();
             if (instanceName.isEmpty())
             {
@@ -727,6 +725,13 @@ public class DBInstance {
             stmt.execute(attachString + " " + attachOptions);
             stmt.close();
             stmt = null;
+            // 走到这里说明实例库 ATTACH 成功。
+            //
+            // 注意：fake catalog（duck_catalog）**不在**这个实例库里 ——
+            // createFakeCatalog 的第一条语句是 "use memory"，且它在本方法开头（ATTACH 之前）
+            // 就被调用了，所以 duck_catalog 恒在内存主 catalog。不要再根据"实例库已挂载"
+            // 去改 catalogName / 改写前缀，否则磁盘模式下所有连接都会在 SET search_path 阶段失败
+            // （详见 catalogName 字段说明）。
             if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
                 if (this.serverConfiguration.getDataEncrypt())
                 {
@@ -843,6 +848,15 @@ public class DBInstance {
                     stmt.close();
                 } catch (SQLException ignored) {}
             }
+            // 无论走了哪条分支（data 为空直接返回 / 加密模式第一段等密钥挂起 / 正常挂载 /
+            // 挂载失败抛出），都在这里把 catalog 名与改写规则对齐：改写规则是按 catalogName
+            // 生成的静态规则表，加载早了就会得到错误前缀（历史缺陷见 catalogName 字段说明）。
+            //
+            // 加密模式启动分两段：第一段（等密钥）会从这里返回，客户端随后发
+            // ALTER DATABASE ... SET ENCRYPT KEY 会再次进入本方法；两次都走这里，
+            // 因此无需再去记忆"实例库到底挂上了没有"。
+            refreshCatalogName();
+            SQLReplacer.load(this);
         }
     }
 
@@ -1102,14 +1116,24 @@ public class DBInstance {
             protocolServer.setBusinessThreads(serverConfiguration.resolveBusiness_threads());
             protocolServer.setDBInstance(this);
             protocolServer.start();
-            while (!protocolServer.isPortReady()) {
-                // 等待Netty进程就绪
+            try {
+                // 等待 Netty 就绪。监听器启动失败（典型：端口被占用）或长时间无进展时
+                // 直接失败 —— 不能无限等待，否则 start() 会永远挂住，调用方只看到"卡死"。
+                protocolServer.waitUntilReady(LISTENER_STARTUP_TIMEOUT_MILLIS);
+            } catch (Exception listenerException) {
+                logger.error("[SERVER][STARTUP    ] Instance listener startup failed, rolling back startup.", listenerException);
+                // 回滚已经完成的挂载：停掉监听器/后台线程/连接池，把实例置回 IDLE，
+                // 否则失败的实例会留下线程与文件句柄（历史上正是这样把端口和内存一直占着）。
                 try {
-                    Sleeper.sleep(1000);
+                    stop();
+                } catch (Exception stopException) {
+                    logger.warn("[SERVER][STARTUP    ] Cleanup after failed startup also failed.", stopException);
                 }
-                catch (InterruptedException ignored) {
-                    throw new ServerException("Server terminated due to user cancelled.");
+                if (listenerException instanceof ServerException serverException) {
+                    // 已是带明确原因（端口被占用/超时）的启动失败，直接上抛，不要套娃
+                    throw serverException;
                 }
+                throw new ServerException("Start listener error. " + listenerException.getMessage(), listenerException);
             }
             if (serverConfiguration.getPort() != -1) {
                 logger.info("[SERVER][STARTUP    ] Instance opened at {}:{} successful.",
@@ -1130,6 +1154,9 @@ public class DBInstance {
             dbInstanceMonitorThread = new DBInstanceMonitorThread();
             dbInstanceMonitorThread.start();
         }
+
+        // 启动组播通告：未配置 advertise_address 时完全跳过（不建 socket、不起线程）
+        startAdvertise();
 
         // 如果需要，启动管理端口
         if (serverConfiguration.getPortX() != -1) {
@@ -1255,18 +1282,8 @@ public class DBInstance {
             protocolServer.stop();
         }
 
-        // 取消之前注册的远程监听
-        String remoteListener = serverConfiguration.getRemoteListener();
-        if (!remoteListener.isEmpty()) {
-            String remoteListenerHost = remoteListener.substring(0, remoteListener.lastIndexOf(':'));
-            int remoteListenerPort = Integer.parseInt(remoteListener.substring(remoteListener.indexOf(':') + 1));
-            try {
-                talkWithRemoteListener("UNREGISTER", remoteListenerHost, remoteListenerPort);
-            } catch (ServerException serverException) {
-                logger.warn("[SERVER] Try unregister current service to [{}] failed. {}",
-                        serverConfiguration.getRemoteListener(), serverException.getMessage());
-            }
-        }
+        // 停止组播通告（会连发 BYE，让代理立刻摘除本实例，而不是等租约超时）
+        stopAdvertise();
 
         // 关闭数据库连接池
         if (this.dbDataSourcePool != null) {

@@ -2,10 +2,14 @@ package org.slackerdb.dbserver.message.request;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.dbserver.entity.ParsedStatement;
+import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
+import org.slackerdb.dbserver.message.response.ErrorResponse;
 import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.dbserver.server.DBSession;
 import org.slackerdb.dbserver.sql.DescribeHandler;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
@@ -68,18 +72,48 @@ public class DescribeRequest extends PostgresRequest {
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
+        DBSession session = this.dbInstance.getSession(getCurrentSessionId(ctx));
         if (describeType == 'S') {
             // 语句名与 ParseRequest 的存储键保持一致（未命名语句存为 NONAME）
-            ParsedStatement parsedStatement = this.dbInstance.getSession(getCurrentSessionId(ctx))
+            ParsedStatement parsedStatement = session
                     .getParsedStatement("PreparedStatement" + "-" + (portalName.isEmpty() ? "NONAME" : portalName));
-            int[] declaredOids = parsedStatement == null ? null : parsedStatement.parameterDataTypeIds;
-            DescribeHandler.describeStatement(this.dbInstance, ctx, parsedStatement, declaredOids);
+            if (parsedStatement == null) {
+                // PG 语义：Describe 一个不存在的语句 → 26000 invalid_sql_statement_name。
+                // 改造前这里会回"0 个参数 + NoData"，客户端无法区分"语句没有结果集"与"语句不存在"。
+                writeMissingObjectError(ctx, request, session, "26000",
+                        "prepared statement \"" + portalName + "\" does not exist");
+                return;
+            }
+            int[] declaredOids = parsedStatement.parameterDataTypeIds;
+            DescribeHandler.describeStatement(this.dbInstance, ctx, session, parsedStatement, declaredOids);
         }
         else {
             // 门户名与 BindRequest 的存储键保持一致
-            ParsedStatement parsedStatement = this.dbInstance.getSession(getCurrentSessionId(ctx))
-                    .getParsedStatement("Portal" + "-" + portalName);
-            DescribeHandler.describePortal(this.dbInstance, ctx, parsedStatement, true);
+            ParsedStatement parsedStatement = session.getParsedStatement("Portal" + "-" + portalName);
+            if (parsedStatement == null) {
+                // PG 语义：Describe 一个不存在的门户 → 34000 invalid_cursor_name
+                writeMissingObjectError(ctx, request, session, "34000",
+                        "portal \"" + portalName + "\" does not exist");
+                return;
+            }
+            DescribeHandler.describePortal(this.dbInstance, ctx, session, parsedStatement);
         }
+    }
+
+    /**
+     * 描述一个不存在的语句/门户：回协议规定的错误码，并进入"丢弃到 Sync"状态
+     * （扩展协议里出错后，后续到 Sync 之间的报文都不该被执行）。
+     */
+    private void writeMissingObjectError(ChannelHandlerContext ctx, Object request, DBSession session,
+                                         String sqlState, String message) throws IOException {
+        session.markExtendedProtocolError();
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+        errorResponse.setErrorFile("DescribeRequest");
+        errorResponse.setErrorResponse(sqlState, message);
+        errorResponse.process(ctx, request, out);
+        PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out, this.dbInstance.logger);
+        out.close();
     }
 }

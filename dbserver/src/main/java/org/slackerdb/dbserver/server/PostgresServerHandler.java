@@ -7,8 +7,13 @@ import io.netty.channel.unix.DomainSocketAddress;
 import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.util.AttributeKey;
+import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
+import org.slackerdb.dbserver.message.request.SyncRequest;
+import org.slackerdb.dbserver.message.request.TerminateRequest;
+import org.slackerdb.dbserver.message.response.ErrorResponse;
 
+import java.io.ByteArrayOutputStream;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.time.LocalDateTime;
@@ -88,13 +93,64 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
+        // 提到 try 之外：兜底的 catch 里要靠它把错误应答发出去
+        PostgresRequest postgresRequest = null;
         try {
             // 开始处理，标记活跃会话数加一
             dbInstance.activeSessions.incrementAndGet();
-            PostgresRequest postgresRequest = (PostgresRequest) msg;
+            postgresRequest = (PostgresRequest) msg;
+
+            // PG 语义：扩展协议（Parse/Bind/Describe/Execute/Close）出错之后，
+            // 后端必须**丢弃**后续前端报文直到 Sync，期间不应答任何东西。
+            //
+            // 拦截必须放在"处理"这一侧而不是解码器里：Netty 的解码器可能已经把同一个
+            // TCP 段里的 Parse/Bind/Execute/Sync 全部解出来排队，只有逐条处理时才能看到
+            // "上一条已经失败"这个会话状态。
+            int sessionId = getSessionIdSafe(ctx);
+            DBSession session = sessionId > 0 ? dbInstance.getSession(sessionId) : null;
+            if (session != null && session.isSkipUntilSync()) {
+                if (msg instanceof SyncRequest) {
+                    // Sync 是同步点：恢复正常处理，由 SyncRequest 自己回 ReadyForQuery
+                    session.clearSkipUntilSync();
+                } else if (!(msg instanceof TerminateRequest)) {
+                    logger.debug("[SERVER][PG PROTOCOL]: Discarding {} (session {} is in error state, waiting for Sync).",
+                            msg.getClass().getSimpleName(), sessionId);
+                    return;
+                }
+            }
+
             postgresRequest.process(ctx, msg);
         } catch (Exception e) {
             logger.error("[SERVER][PG PROTOCOL]: Error processing request", e);
+            // 兜底：**绝不静默丢弃请求**。
+            //
+            // 任何从 process() 逃出来的异常都意味着应答是不完整的（通常只发到了 RowDescription），
+            // 原先这里只记日志、什么都不回，客户端就会一直等一条永不到来的报文，
+            // 表现为"查询永久挂起"直到空闲超时，且没有任何错误码可查 —— 这是最难排查的一类故障。
+            // 这正是 DECIMAL[] 查询挂起的成因：行编码抛的 NumberFormatException 从这里被吞掉。
+            //
+            // 各请求自身应当先把自己的异常收尾成 ErrorResponse（见 QueryRequest 的
+            // catch (SQLException) / catch (RuntimeException)）。能走到这里，说明协议状态机
+            // 已经无法判断"该补什么报文"，因此按本项目既定约定统一"回错误 + 关闭连接"：
+            // 先尽量让客户端拿到一个明确的错误，再断开，让它立刻失败而不是无限等待。
+            try {
+                if (postgresRequest != null) {
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    ErrorResponse errorResponse = new ErrorResponse(dbInstance);
+                    errorResponse.setErrorFile("PostgresServerHandler");
+                    errorResponse.setErrorResponse("XX000",
+                            e.getMessage() == null ? e.toString() : e.getMessage());
+                    errorResponse.setErrorSeverity("ERROR");
+                    errorResponse.process(ctx, msg, out);
+                    PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out,
+                            dbInstance.logger);
+                    out.close();
+                }
+            } catch (Exception ignored) {
+                // 连错误都发不出去（通道已断等）：下面直接关闭连接即可
+            } finally {
+                ctx.close();
+            }
         }
         finally {
             // 结束处理，标记活跃会话数减一

@@ -15,7 +15,10 @@ import java.util.*;
 
 
 public class TPCDSTest {
-    static final int dbPort=4309;
+    // 不使用固定端口：4309 曾与 PlSqlTest 等类共用，一旦本机已有 SlackerDB 实例
+    // （手工启动的开发实例、上一次没退干净的测试 JVM）就会 bind 失败。
+    // 0 表示由配置生成一个空闲端口，随后回读实际端口。
+    static int dbPort;
     // 一共需要运行几轮
     static final int round = 10;
     // 需要几个线程并发测试
@@ -42,12 +45,13 @@ public class TPCDSTest {
 
         // 修改默认的db启动端口
         ServerConfiguration serverConfiguration = new ServerConfiguration();
-        serverConfiguration.setPort(dbPort);
+        serverConfiguration.setPort(0);
         serverConfiguration.setData("tpcdstest");
         serverConfiguration.setData_dir(System.getProperty("java.io.tmpdir"));
         serverConfiguration.setThreads(threads);
         serverConfiguration.setMemory_limit(memory_limit);
         serverConfiguration.setMax_workers(max_nio_workers);
+        dbPort = serverConfiguration.getPort();
 
         File dbFile = new File(String.valueOf(Path.of(serverConfiguration.getData_Dir(), serverConfiguration.getData() + ".db")));
         if (dbFile.exists())

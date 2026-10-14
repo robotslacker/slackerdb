@@ -578,10 +578,11 @@
                 return;
             }
             document.getElementById('backupResult').innerHTML = '<span style="color:#aaa">Backup in progress...</span>';
-            fetch('/api/backup', {
+            // 服务端注册的路径是 /backup（不是 /api/backup），且请求字段是 backupTag
+            fetch('/backup', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: path })
+                body: JSON.stringify({ backupTag: path })
             })
             .then(response => response.json())
             .then(data => {
@@ -2385,16 +2386,18 @@
             const messageEl = document.getElementById('mcpServiceListMessage');
             const countEl = document.getElementById('mcpServiceCount');
             tbody.innerHTML = '';
-            messageEl.textContent = 'Loading MCP Services...';
-            // Use JSON-RPC endpoint /jsonrpc with method "services/list"
+            messageEl.textContent = 'Loading registered data services...';
+            // MCP 2026-07-28 去掉了自定义的 services/list 方法：
+            // 服务清单现在通过资源 slackerdb://services 读取（可读上下文属于 resources）。
+            // 同时服务只注册一份（数据服务注册表），MCP 只是它的视图。
             fetch('/jsonrpc', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     jsonrpc: '2.0',
                     id: 1,
-                    method: 'services/list',
-                    params: {}
+                    method: 'resources/read',
+                    params: { uri: 'slackerdb://services' }
                 })
             })
                 .then(response => response.json())
@@ -2403,9 +2406,18 @@
                         messageEl.textContent = 'Error: ' + data.error.message;
                         return;
                     }
-                    const services = data.result.services || [];
+                    const contents = (data.result && data.result.contents) || [];
+                    let services = [];
+                    if (contents.length > 0 && contents[0].text) {
+                        try {
+                            services = JSON.parse(contents[0].text).services || [];
+                        } catch (e) {
+                            messageEl.textContent = 'Error: failed to parse services payload';
+                            return;
+                        }
+                    }
                     if (services.length === 0) {
-                        messageEl.textContent = 'No MCP services found.';
+                        messageEl.textContent = 'No registered data services found.';
                         countEl.textContent = '0 services';
                         return;
                     }

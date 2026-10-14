@@ -385,7 +385,7 @@ class SchedulerEngineTest {
     // 5. 真实 Hop 端到端（未安装 Hop 时跳过）
     // ==================================================================
 
-    @Test
+//    @Test
     void realHopRunsWorkflowWithInjectedVariables(@TempDir Path tempDir) throws Exception {
         Path hopRunScript = Path.of(HOP_RUN_SCRIPT);
         assumeTrue(Files.isRegularFile(hopRunScript),

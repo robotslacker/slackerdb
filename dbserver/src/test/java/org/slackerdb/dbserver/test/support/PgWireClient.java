@@ -3,11 +3,13 @@ package org.slackerdb.dbserver.test.support;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 极简 PostgreSQL V3 线协议客户端（测试用）。
@@ -83,6 +85,21 @@ public class PgWireClient implements AutoCloseable {
      * @param database StartupMessage 里的 database 参数（服务端要求必须存在）
      */
     public PgWireClient(String host, int port, String database, int timeoutMs) throws IOException {
+        this(host, port, database, Map.of(), timeoutMs);
+    }
+
+    /**
+     * 同上，但允许在 StartupMessage 里附加任意启动参数。
+     *
+     * <p><b>为什么需要</b>：有些契约只体现在握手报文的参数里，用 JDBC 驱动测不到——
+     * 例如客户端把 {@code search_path} 放进启动包（asyncpg 的 {@code server_settings}、
+     * Npgsql 的 {@code Search Path} 就是这么做的），pgjdbc/dbdriver 则只支持
+     * {@code options=-c ...}，走的是另一个键。</p>
+     *
+     * @param extraStartupParameters 附加的启动参数（键值都会写进 StartupMessage）
+     */
+    public PgWireClient(String host, int port, String database, Map<String, String> extraStartupParameters,
+                        int timeoutMs) throws IOException {
         socket = new Socket();
         socket.connect(new InetSocketAddress(host, port), timeoutMs);
         socket.setSoTimeout(timeoutMs);
@@ -94,6 +111,10 @@ public class PgWireClient implements AutoCloseable {
         writeCString(body, "test");
         writeCString(body, "database");
         writeCString(body, database);
+        for (Map.Entry<String, String> parameter : extraStartupParameters.entrySet()) {
+            writeCString(body, parameter.getKey());
+            writeCString(body, parameter.getValue());
+        }
         body.write(0);
 
         byte[] bodyBytes = body.toByteArray();
@@ -176,12 +197,68 @@ public class PgWireClient implements AutoCloseable {
     }
 
     public void sendBind(String portalName, String statementName) throws IOException {
+        sendBind(portalName, statementName, new int[0]);
+    }
+
+    /**
+     * 故意发送"参数格式码个数与参数个数不匹配"的 Bind（协议违规：个数只能是 0 / 1 / 参数个数）。
+     *
+     * <p>参数值一律写成 NULL(-1)，让用例只聚焦于格式码这一维度。</p>
+     */
+    public void sendBindWithFormatCodeCountMismatch(String portalName, String statementName,
+                                                    int[] formatCodes, int parameterCount) throws IOException {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        writeCString(body, portalName);
+        writeCString(body, statementName);
+        writeInt16(body, formatCodes.length);
+        for (int format : formatCodes) {
+            writeInt16(body, format);
+        }
+        writeInt16(body, parameterCount);
+        for (int i = 0; i < parameterCount; i++) {
+            writeInt32(body, -1);                 // NULL 参数值
+        }
+        writeInt16(body, 0);                      // 结果格式码个数 = 0
+        writeFrame('B', body.toByteArray());
+    }
+
+    /**
+     * 故意发送"参数声明长度超出报文实际长度"的 Bind（截断报文）。
+     *
+     * <p>旧实现用 {@code Arrays.copyOfRange} 静默补 0，会把截断报文当成合法值；
+     * 现在必须回 {@code 08P01}。</p>
+     */
+    public void sendBindWithTruncatedParameter(String portalName, String statementName,
+                                               int declaredLength, byte[] actualBytes) throws IOException {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        writeCString(body, portalName);
+        writeCString(body, statementName);
+        writeInt16(body, 0);                      // 参数格式码个数 = 0（全文本）
+        writeInt16(body, 1);                      // 参数个数 = 1
+        writeInt32(body, declaredLength);         // 声明长度（大于实际给出的字节数）
+        body.writeBytes(actualBytes);
+        writeFrame('B', body.toByteArray());
+    }
+
+    /**
+     * Bind，并显式指定<b>结果列</b>格式码。
+     *
+     * <p>协议规则（PG 文档 Bind 报文）：结果格式码个数为 0 → 所有结果列用默认格式（<b>文本</b>）；
+     * 为 1 → 该值广播到所有列；等于列数 → 逐列。需要二进制结果的客户端必须显式声明 1，
+     * 服务端不得自行假设（声明与实际字节必须一致，否则客户端静默错值）。</p>
+     *
+     * @param resultFormats 结果列格式码；空数组 = 全部文本
+     */
+    public void sendBind(String portalName, String statementName, int[] resultFormats) throws IOException {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         writeCString(body, portalName);
         writeCString(body, statementName);
         writeInt16(body, 0);                       // 参数格式码个数 = 0（全文本）
         writeInt16(body, 0);                       // 参数个数 = 0
-        writeInt16(body, 0);                       // 结果格式码个数 = 0（全文本）
+        writeInt16(body, resultFormats.length);    // 结果格式码个数
+        for (int format : resultFormats) {
+            writeInt16(body, format);              // 0 = 文本，1 = 二进制
+        }
         writeFrame('B', body.toByteArray());
     }
 
@@ -218,6 +295,26 @@ public class PgWireClient implements AutoCloseable {
 
     public void sendFlush() throws IOException {
         writeFrame('H', new byte[0]);
+    }
+
+    /** Terminate：客户端要求关闭连接（服务端不得因为"等待 Sync"而把它丢掉）。 */
+    public void sendTerminate() throws IOException {
+        writeFrame('X', new byte[0]);
+    }
+
+    /**
+     * CopyData：COPY IN 子协议里发送一段数据。
+     *
+     * <p>与 {@link #sendQuery} 的动作不同：COPY 建立之后（客户端已收到 {@code CopyInResponse}）
+     * 客户端改为发送 {@code 'd'} 报文，收尾发 {@link #sendCopyDone()}。</p>
+     */
+    public void sendCopyData(byte[] payload) throws IOException {
+        writeFrame('d', payload == null ? new byte[0] : payload);
+    }
+
+    /** CopyDone：告诉服务端 COPY IN 的数据发完了。 */
+    public void sendCopyDone() throws IOException {
+        writeFrame('c', new byte[0]);
     }
 
     // ------------------------------------------------------------------ 接收
@@ -415,6 +512,100 @@ public class PgWireClient implements AutoCloseable {
     @Override
     public void close() throws IOException {
         socket.close();
+    }
+
+    /**
+     * 模拟“客户端被外部强杀”：不发 Terminate，直接以 RST 断开（SO_LINGER=0）。
+     *
+     * <p>与 {@link #close()} 的差别只在 TCP 层的收尾方式（RST vs FIN）：两者服务端都只会看到
+     * “连接没了”。本仓库的断连用例统一用它，避免误以为客户端做过任何礼貌收尾。</p>
+     */
+    public void abortConnection() throws IOException {
+        try {
+            socket.setSoLinger(true, 0);
+        } catch (java.net.SocketException ignored) {
+            // 部分平台/实现不允许改 SO_LINGER，退化为普通 close 即可（对服务端同样只是"连接没了"）
+        }
+        socket.close();
+    }
+
+    /**
+     * 发送一个"带类型字节"的报文（用于构造本服务端不实现/不应支持的报文，例如 fastpath FunctionCall）。
+     */
+    public void sendFrameOfType(char type, byte[] body) throws IOException {
+        writeFrame(type, body);
+    }
+
+    /**
+     * 只做"GSSENCRequest + StartupMessage"这一段握手，验证服务端是否按 PG 语义
+     * 对 GSSENCRequest 回<b>单个字节 {@code 'N'}</b>，并且随后的启动包能正常完成。
+     *
+     * <p>为什么需要单独实现：{@link #PgWireClient(String, int, String, int)} 的构造函数
+     * 直接发 StartupMessage，测不到"加密协商被拒绝后仍能继续握手"这条路径。</p>
+     *
+     * @return {@code true} = 收到 'N' 且启动完成（读到 ReadyForQuery）
+     */
+    public static boolean startupAfterGssEncRequest(String host, int port, String database, int timeoutMs)
+            throws IOException {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(host, port), timeoutMs);
+            socket.setSoTimeout(timeoutMs);
+            OutputStream socketOut = socket.getOutputStream();
+            InputStream socketIn = socket.getInputStream();
+
+            // GSSENCRequest：Int32(8) + Int32(80877104)
+            socketOut.write(new byte[]{0, 0, 0, 8, 0x04, (byte) 0xD2, 0x16, 0x30});
+            socketOut.flush();
+            if (socketIn.read() != 'N') {
+                return false;               // 期望单个 'N'（不支持 GSSAPI 加密）
+            }
+
+            // 随后正常发 StartupMessage
+            ByteArrayOutputStream body = new ByteArrayOutputStream();
+            writeInt32(body, 196608);
+            writeCString(body, "user");
+            writeCString(body, "test");
+            writeCString(body, "database");
+            writeCString(body, database);
+            body.write(0);
+            byte[] bodyBytes = body.toByteArray();
+            ByteArrayOutputStream packet = new ByteArrayOutputStream();
+            writeInt32(packet, bodyBytes.length + 4);
+            packet.writeBytes(bodyBytes);
+            socketOut.write(packet.toByteArray());
+            socketOut.flush();
+
+            // 读到 ReadyForQuery('Z') 即成功；中途的 ErrorResponse 视为失败
+            while (true) {
+                int type = socketIn.read();
+                if (type == -1) {
+                    return false;
+                }
+                byte[] lengthBytes = readFully(socketIn, 4);
+                int length = ((lengthBytes[0] & 0xFF) << 24) | ((lengthBytes[1] & 0xFF) << 16)
+                        | ((lengthBytes[2] & 0xFF) << 8) | (lengthBytes[3] & 0xFF);
+                readFully(socketIn, length - 4);
+                if (type == 'Z') {
+                    return true;
+                }
+                if (type == 'E') {
+                    return false;
+                }
+            }
+        }
+    }
+
+    private static byte[] readFully(InputStream input, int length) throws IOException {
+        byte[] buffer = new byte[length];
+        int offset = 0;
+        while (offset < length) {
+            int read = input.read(buffer, offset, length - offset);
+            if (read == -1) {
+                throw new IOException("连接提前关闭（期望再读 " + (length - offset) + " 字节）");
+            }
+            offset += read;
+        }
+        return buffer;
     }
 
     // ------------------------------------------------------------------ 内部

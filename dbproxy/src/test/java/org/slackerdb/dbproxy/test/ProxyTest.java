@@ -45,7 +45,6 @@ public class ProxyTest {
         org.slackerdb.dbserver.configuration.ServerConfiguration serverConfiguration =
                 new org.slackerdb.dbserver.configuration.ServerConfiguration();
         serverConfiguration.setPort(0);
-        serverConfiguration.setRemoteListener("127.0.0.1:" + proxyPort);
         serverConfiguration.setData("mem1");
         dbInstance1 = new DBInstance(serverConfiguration);
         dbInstance1.start();
@@ -53,15 +52,14 @@ public class ProxyTest {
         org.slackerdb.dbserver.configuration.ServerConfiguration serverConfiguration2 =
                 new org.slackerdb.dbserver.configuration.ServerConfiguration();
         serverConfiguration2.setPort(0);
-        serverConfiguration2.setRemoteListener("127.0.0.1:" + proxyPort);
         serverConfiguration2.setData("mem2");
         dbInstance2 = new DBInstance(serverConfiguration2);
         dbInstance2.start();
 
-        // 需要等待远程注册成功
-        try {
-            Sleeper.sleep(3 * 1000);
-        } catch (InterruptedException ignored) {}
+        // 登记到代理。原来靠 dbserver 的 remote_listener 自注册，该参数已被组播发现取代并删除；
+        // 这里显式登记（同步完成，不需要再等 3 秒），让用例专注于验证代理的转发与选路。
+        LocalBackendRegistration.register(proxyInstance, dbInstance1);
+        LocalBackendRegistration.register(proxyInstance, dbInstance2);
     }
 
 

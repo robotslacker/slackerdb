@@ -2,6 +2,10 @@ package org.slackerdb.dbproxy.server;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import org.slackerdb.common.discovery.Announcement;
+import org.slackerdb.common.discovery.MulticastAddress;
+import org.slackerdb.common.discovery.MulticastListener;
+import org.slackerdb.common.discovery.NetworkAddressUtil;
 import org.slackerdb.common.utils.OSUtil;
 import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 import org.slackerdb.common.exceptions.ServerException;
@@ -9,9 +13,11 @@ import org.slackerdb.common.exceptions.ServerException;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.net.InetAddress;
 import java.nio.channels.FileLock;
 import java.text.MessageFormat;
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.MissingResourceException;
 import java.util.ResourceBundle;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,6 +39,10 @@ public class ProxyInstance {
     // 实例的状态
     public String instanceState = "IDLE";
 
+    // 监听器（Netty）启动的最长等待时间。正常情况下 1 秒内就绪；60 秒是给
+    // "起不来但也没立刻报错"的情况兜底，保证 start() 最终一定会返回而不是永久挂住。
+    private static final long LISTENER_STARTUP_TIMEOUT_MILLIS = 60 * 1000;
+
     // 服务器配置参数
     public ServerConfiguration serverConfiguration;
 
@@ -53,6 +63,9 @@ public class ProxyInstance {
     private FileLock pidFileLockHandler;
 
     public final ConcurrentHashMap<String,PostgresProxyTarget> proxyTarget = new ConcurrentHashMap<>();
+
+    // 组播服务发现接收器。listener_address 为空时始终为 null——不配置就是不启用。
+    private MulticastListener discoveryListener = null;
 
     // 后端会话号 → 上游 的取消路由表。
     // CancelRequest 报文没有 database，无法按别名选路；代理在握手期从后端的
@@ -96,11 +109,204 @@ public class ProxyInstance {
     {
         return this.exclusiveMode;
     }
-
     // 设置程序运行的模式，是否为独占模式
     public void setExclusiveMode(boolean exclusiveMode)
     {
         this.exclusiveMode = exclusiveMode;
+    }
+
+    // ------------------------------------------------------------------ 目标登记
+    //
+    // "把某个别名指向某台 dbserver"只有一条路径：组播发现收到的 HELLO。曾经的遗留单播
+    // REGISTER 通道已被删除。之所以把登记收敛到下面这几个方法，是因为登记要同时做几件事
+    // （写别名、维护 portX 的 HTTP 转发映射、处理重名与搬家），分散在多处迟早会漂移——
+    // 历史上 REGISTER 与 UNREGISTER 就各自维护了一份 forwarderPathMappings，漏掉一边就会出现
+    // "别名删了但 HTTP 转发还指着旧地址"。
+
+    /**
+     * 按别名找目标。转发路径唯一的查表入口。
+     *
+     * <p>将来若要支持"一个别名对应多台 dbserver 并做负载/故障转移"，改这里一处即可。</p>
+     */
+    public PostgresProxyTarget lookupTarget(String alias)
+    {
+        return proxyTarget.get(alias);
+    }
+
+    /**
+     * 应用一条组播通告（{@code HELLO}）。
+     *
+     * @param announcement  解析成功的报文
+     * @param sourceAddress UDP 报文的源地址；<b>这是权威的可达地址</b>，优先于报文里自报的 host，
+     *                      因为源地址天然是"从本机视角可达"的，而同网段任何人都能伪造 host
+     */
+    public void applyAnnouncement(Announcement announcement, InetAddress sourceAddress)
+    {
+        String host = (sourceAddress != null && !sourceAddress.isAnyLocalAddress())
+                ? sourceAddress.getHostAddress()
+                : announcement.getHost();
+        registerTarget(announcement.getAlias(), announcement.getName(), host,
+                announcement.getPort(), announcement.getPortX(),
+                System.currentTimeMillis() + Announcement.LEASE_MILLIS,
+                "announced by " + sourceAddress);
+    }
+
+    /**
+     * 登记/刷新一个目标别名。
+     *
+     * @param leaseExpireAtMs 租约到期时刻；{@code 0} 表示<b>无租约</b>、不会被动过期
+     * @param origin          日志里的来源说明
+     */
+    private void registerTarget(String alias, String database, String host, int port, int portX,
+                                long leaseExpireAtMs, String origin)
+    {
+        if (alias == null || alias.isEmpty()) {
+            return;
+        }
+
+        PostgresProxyTarget previous = proxyTarget.get(alias);
+        boolean unchangedEndpoint = previous != null
+                && host.equals(previous.host)
+                && port == previous.port
+                && portX == previous.portX
+                && database.equals(previous.database);
+
+        PostgresProxyTarget target = new PostgresProxyTarget();
+        // 创建时间沿用首次登记的，便于看出"这个别名是什么时候出现的"
+        target.createdDateTime = previous != null ? previous.createdDateTime : LocalDateTime.now();
+        target.lastActivatedTIme = LocalDateTime.now();
+        target.host = host;
+        target.port = port;
+        target.portX = portX;
+        target.database = database;
+        target.leaseExpireAtMs = leaseExpireAtMs;
+
+        proxyTarget.put(alias, target);
+
+        if (unchangedEndpoint) {
+            // 幂等刷新：组播每 5 秒来一条，这里绝不能打日志，否则日志会被刷爆
+            return;
+        }
+
+        updateForwarderMapping(alias, target);
+
+        if (previous != null) {
+            logger.warn("[PROXY][DISCOVERY  ] Alias [{}] moved from {}:{}/{} to {}:{}/{} ({}).",
+                    alias, previous.host, previous.port, previous.database,
+                    host, port, database, origin);
+        } else {
+            logger.info("[PROXY][DISCOVERY  ] Alias [{}] now points to {}:{}/{} ({}).",
+                    alias, host, port, database, origin);
+        }
+    }
+
+    /**
+     * 摘除一个别名（收到 BYE、或过期扫描判定对方已消失）。
+     *
+     * @param reason 日志里的原因说明
+     */
+    public void removeAnnouncement(String alias, String reason)
+    {
+        if (alias == null || alias.isEmpty()) {
+            return;
+        }
+        PostgresProxyTarget removed = proxyTarget.remove(alias);
+        if (proxyInstanceX != null) {
+            proxyInstanceX.forwarderPathMappings.remove("/" + alias);
+        }
+        if (removed != null) {
+            logger.info("[PROXY][DISCOVERY  ] Alias [{}] at {}:{}/{} removed ({}).",
+                    alias, removed.host, removed.port, removed.database, reason);
+        }
+    }
+
+    /**
+     * 维护 portX 的 HTTP 转发映射。
+     *
+     * <p>dbserver 的 portX 未启用时通告 {@code -1}，此时必须把旧映射删掉——否则会出现
+     * "别名已经不指向那台机器了，HTTP 转发还指着它的管理端口"这种半死状态。</p>
+     */
+    private void updateForwarderMapping(String alias, PostgresProxyTarget target)
+    {
+        if (proxyInstanceX == null) {
+            // 代理自身也没有启用管理端口，谈不上转发
+            return;
+        }
+        String path = "/" + alias;
+        if (target.portX > 0) {
+            proxyInstanceX.forwarderPathMappings.put(path, "http://" + target.host + ":" + target.portX);
+        } else {
+            proxyInstanceX.forwarderPathMappings.remove(path);
+        }
+    }
+
+    /**
+     * 摘除所有租约已过期的目标。
+     *
+     * <p>{@code leaseExpireAtMs == 0} 表示"无租约"，不会被清理。组播发现的条目一定带租约，
+     * 这个约定是给直接写入 {@link #proxyTarget} 的调用方（插件、将来的管理接口、测试）留的：
+     * 否则它们放进来的目标会在 15 秒后被静默摘掉，而原因完全看不出来。</p>
+     */
+    public void expireLeases()
+    {
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, PostgresProxyTarget> entry : proxyTarget.entrySet()) {
+            PostgresProxyTarget target = entry.getValue();
+            if (target.leaseExpireAtMs > 0 && target.leaseExpireAtMs <= now) {
+                removeAnnouncement(entry.getKey(), "no announcement for "
+                        + Announcement.LEASE_MILLIS + " ms");
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ 组播发现生命周期
+
+    /**
+     * 启动组播服务发现。{@code listener_address} 为空时完全跳过（不建 socket、不起线程）。
+     */
+    private void startDiscovery() throws ServerException
+    {
+        if (!serverConfiguration.isDiscoveryEnabled()) {
+            logger.info("[PROXY][DISCOVERY  ] Service discovery is disabled (listener_address is not set).");
+            return;
+        }
+
+        MulticastAddress address = serverConfiguration.getListenerAddress();
+        try {
+            discoveryListener = new MulticastListener(
+                    logger,
+                    address,
+                    NetworkAddressUtil.multicastReceiveInterfaces(),
+                    new MulticastListener.Handler() {
+                        @Override
+                        public void onHello(Announcement announcement, InetAddress sourceAddress) {
+                            applyAnnouncement(announcement, sourceAddress);
+                        }
+
+                        @Override
+                        public void onBye(Announcement announcement, InetAddress sourceAddress) {
+                            removeAnnouncement(announcement.getAlias(), "BYE from " + sourceAddress);
+                        }
+
+                        @Override
+                        public void onIdle() {
+                            expireLeases();
+                        }
+                    });
+            discoveryListener.start();
+        }
+        catch (IOException | IllegalArgumentException e) {
+            throw new ServerException("SLACKERDB-00021",
+                    Utils.getMessage("SLACKERDB-00021", address, e.getMessage()));
+        }
+    }
+
+    private void stopDiscovery()
+    {
+        if (discoveryListener != null) {
+            discoveryListener.close();
+            discoveryListener = null;
+        }
     }
 
     // 根据参数配置文件启动代理实例
@@ -167,12 +373,23 @@ public class ProxyInstance {
             protocolServer.setNioEventThreads(serverConfiguration.getMax_Workers());
             protocolServer.setProxyInstance(this);
             protocolServer.start();
-            while (!protocolServer.isPortReady()) {
-                // 等待Netty进程就绪
+            try {
+                // 等待 Netty 就绪。监听器启动失败（典型：端口被占用）或长时间无进展时
+                // 直接失败 —— 不能无限等待，否则 start() 会永远挂住，调用方只看到"卡死"。
+                protocolServer.waitUntilReady(LISTENER_STARTUP_TIMEOUT_MILLIS);
+            } catch (Exception listenerException) {
+                logger.error("[PROXY][STARTUP    ] Listener startup failed, rolling back startup.", listenerException);
+                // 回滚已经完成的挂载，避免失败的实例继续占着端口/线程/文件句柄。
                 try {
-                    Sleeper.sleep(1000);
-                } catch (InterruptedException ignored) {
+                    stop();
+                } catch (Exception stopException) {
+                    logger.warn("[PROXY][STARTUP    ] Cleanup after failed startup also failed.", stopException);
                 }
+                if (listenerException instanceof ServerException serverException) {
+                    // 已是带明确原因（端口被占用/超时）的启动失败，直接上抛，不要套娃
+                    throw serverException;
+                }
+                throw new ServerException("Start listener error. " + listenerException.getMessage(), listenerException);
             }
         }
         else
@@ -196,6 +413,10 @@ public class ProxyInstance {
         {
             logger.info("[PROXY][STARTUP    ] Management server listener has been disabled.");
         }
+
+        // 启动组播服务发现（未配置 listener_address 时完全跳过）
+        startDiscovery();
+
         // 标记服务已经启动完成
         this.instanceState = "RUNNING";
         logger.info("[PROXY] Server is running.");
@@ -222,6 +443,9 @@ public class ProxyInstance {
         }
 
         this.instanceState = "SHUTTING DOWN";
+
+        // 停止组播服务发现
+        stopDiscovery();
 
         // 停止管理服务
         if (this.proxyInstanceX != null)

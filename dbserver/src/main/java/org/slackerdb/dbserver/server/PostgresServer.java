@@ -27,6 +27,7 @@ import org.slackerdb.common.utils.OSUtil;
 import org.slackerdb.common.utils.Utils;
 
 import java.io.File;
+import java.net.BindException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -48,7 +49,11 @@ public class PostgresServer {
     private EventExecutorGroup businessGroup;
 
     private Logger logger;
-    private boolean portReady = false;
+    // volatile：由 "Listener" 线程写、由 DBInstance.start() 的启动线程读（见 waitUntilReady）。
+    private volatile boolean portReady = false;
+    // 监听器启动失败的原因。非 null 表示 Listener 线程已经退出，DBInstance.start() 必须立刻失败，
+    // 而不是傻等 portReady —— 历史上 bind 失败（端口被占用）会让启动线程死循环 1 秒一轮，永远不返回。
+    private volatile Exception startupError = null;
 
     long readerIdleTime;
     long writerIdleTime;
@@ -107,10 +112,56 @@ public class PostgresServer {
      * <b>同一连接内的消息仍然串行有序</b>（这也是不自己做排队的原因），
      * 而 I/O 线程不再被 JDBC 阻塞。注意副作用：分到同一个 executor 的连接之间仍会互相排队，
      * 被拖累的连接数约为 (连接数 / 业务线程数 - 1)，因此业务线程数应取到与并发会话数同量级。</p>
+     *
+     * <p><b>断连即取消</b>：这里额外挂一个 closeFuture 监听（跑在 I/O 线程上），
+     * 连接一断就取消该会话正在执行的语句 —— 见 {@link #cancelRunningStatementOfDeadSession}。</p>
      */
     private void addBusinessHandler(ChannelPipeline pipeline)
     {
         pipeline.addLast(businessGroup, new PostgresServerHandler(dbInstance, logger));
+
+        // 关键：这个监听器必须挂在 channel 自己的 I/O eventLoop 上（closeFuture 天然如此），
+        // **不能**放进 PostgresServerHandler 的任何回调 —— 那些回调跑在业务线程上，
+        // 而"客户端被强杀时业务线程正卡在长语句里"恰恰是我们要处理的场景：
+        // channelInactive 会被排在长语句后面，等它执行就已经晚了。
+        Channel channel = pipeline.channel();
+        channel.closeFuture().addListener(future -> cancelRunningStatementOfDeadSession(channel));
+    }
+
+    /**
+     * 连接断开后立刻取消该会话正在执行的语句。
+     *
+     * <p><b>为什么必须做</b>：客户端被强杀（或任何非 Terminate 断开）时，服务端只在 I/O 线程上
+     * 看到 socket 关闭；清理动作（{@code channelInactive → abortSession → 回滚 + 归还连接}）
+     * 却排在业务线程上。若那条业务线程正卡在一条长 SQL 里，清理要等 SQL 自然跑完 ——
+     * 期间会话/连接/未提交事务一直悬着（实测 2 亿行 INSERT 约 8 秒，语句越长拖得越久），
+     * 占满连接池与业务线程后新客户端连启动握手都没人处理。</p>
+     *
+     * <p>这里从 I/O 线程调用 {@link DBSession#cancelRunningStatements()}（与 CancelRequest /
+     * KILL SESSION 同一条跨线程取消路径），让正在执行的语句尽快抛错退出，业务线程随即执行
+     * 既有清理逻辑。**不能**改用"再建一条连接发 CancelRequest"：那条连接的握手同样要占业务线程，
+     * 池/线程被占满时取消请求自己就送不进去（实测 79 秒无任何效果）。</p>
+     *
+     * <p>幂等且允许目标不存在：会话可能早就正常收尾了，此时静默返回。</p>
+     */
+    private void cancelRunningStatementOfDeadSession(Channel channel)
+    {
+        AttributeKey<Integer> sessionKey = AttributeKey.valueOf("SessionId");
+        if (!channel.hasAttr(sessionKey)) {
+            return;
+        }
+        Integer sessionId = channel.attr(sessionKey).get();
+        if (sessionId == null || sessionId <= 0) {
+            return;
+        }
+        DBSession session = dbInstance.getSession(sessionId);
+        if (session == null) {
+            // 会话已经正常收尾（Terminate / 之前的清理已完成），无需处理
+            return;
+        }
+        logger.debug("[SERVER][PG PROTOCOL]: Connection of session {} is gone. " +
+                "Cancelling its running statement so cleanup is not blocked behind it.", sessionId);
+        session.cancelRunningStatements();
     }
 
     public void setDBInstance(DBInstance pDbInstance)
@@ -119,19 +170,52 @@ public class PostgresServer {
     }
 
     /**
-     * 启动协议处理
+     * 启动协议处理。
+     *
+     * <p>启动跑在独立的 "Listener" 线程上（不是调用线程），因此监听器启动失败
+     * <b>不会</b>从这里抛出：失败原因记录在 {@link #getStartupError()}，由调用方通过
+     * {@link #waitUntilReady(long)} 观察到。</p>
      */
     public void start() {
         // Listener thread
         Thread thread = new Thread(() -> {
+            Thread.currentThread().setName("Listener");
             try {
-                Thread.currentThread().setName("Listener");
                 run();
-            } catch (InterruptedException | ServerException e) {
-                throw new RuntimeException(e);
+            } catch (Exception e) {
+                // 关键：不要把异常抛出到线程外（那只会打印一行 "Exception in thread Listener"
+                // 然后什么也不发生）。记录下来，让启动线程能立刻失败并走清理流程。
+                startupError = e;
+                logger.error("[SERVER] Listener failed to start. Server will not accept connections.", e);
             }
-        });
+        }, "Listener");
+        thread.setDaemon(true);
         thread.start();
+    }
+
+    /**
+     * 等待监听器就绪。
+     *
+     * <p>三种退出方式：就绪（返回，正常）、启动失败（抛 {@link ServerException}）、超时
+     * （抛 {@link ServerException}）。<b>任何一条路径都不会无限等待</b>，否则调用方
+     * （{@code DBInstance.start()}）会永久挂住 —— 这正是端口被占用时旧行为的表现。</p>
+     *
+     * @param timeoutMillis 最长等待时间（毫秒），必须 &gt; 0
+     */
+    public void waitUntilReady(long timeoutMillis) throws ServerException, InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (!portReady) {
+            Exception error = startupError;
+            if (error != null) {
+                // 已经记录过日志了，这里只负责把失败传给调用方
+                throw new ServerException("Listener startup failed: " + error.getMessage(), error);
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                throw new ServerException("Listener startup timed out after [" + timeoutMillis
+                        + "]ms. Expected listener on " + bind + ":" + port + ".");
+            }
+            Thread.sleep(50);
+        }
     }
 
     /**
@@ -163,6 +247,16 @@ public class PostgresServer {
 
     // 自定义解码器，处理原始字节数据
     class RawMessageDecoder extends ByteToMessageDecoder {
+
+        /**
+         * GSSENCRequest 的 8 字节前导：{@code Int32(8) + Int32(80877104)}。
+         *
+         * <p>PG 前导报文的三个魔法值：SSLRequest {@code 80877103}、
+         * CancelRequest {@code 80877102}、GSSENCRequest {@code 80877104}。</p>
+         */
+        private static final byte[] GSSENC_REQUEST_HEADER =
+                {0x00, 0x00, 0x00, 0x08, 0x04, (byte) 0xD2, 0x16, 0x30};
+
         void pushMsgObject(List<Object> out, Object obj)
         {
             // 打印所有收到的字节内容（16进制）
@@ -209,6 +303,21 @@ public class PostgresServer {
                         pushMsgObject(out, sslRequest);
 
                         // 标记当前步骤
+                        lastRequestCommand = SSLRequest.class.getSimpleName();
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
+                    }
+                    else if (Arrays.equals(data, GSSENC_REQUEST_HEADER))
+                    {
+                        // GSSENCRequest：客户端询问能否用 GSSAPI 加密。不支持就回单个字节 'N'，
+                        // 客户端随后发普通 StartupMessage（这也是 PG 后端的行为）。
+                        //
+                        // 必须在这里显式判定：否则这 8 字节会被回退指针当成 StartupMessage 解析，
+                        // 结果是客户端收到 3D000 "Database alias does not exist" 并被断连 ——
+                        // 一个纯粹的"不支持加密"被报成"库不存在"，排查方向完全跑偏。
+                        SSLRequest gssEncReject = new SSLRequest(dbInstance);
+                        pushMsgObject(out, gssEncReject);
+
+                        // 与 SSLRequest 同一状态：下一个报文仍按 StartupMessage 解析
                         lastRequestCommand = SSLRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                     }
@@ -439,14 +548,17 @@ public class PostgresServer {
                         ctx.close();
                     }
                     case 'F' -> {
-                        CancelRequest cancelRequest = new CancelRequest(dbInstance);
-                        cancelRequest.decode(data);
-
-                        // 处理消息
-                        pushMsgObject(out, cancelRequest);
+                        // FunctionCall（fastpath，已废弃）本服务端不实现。
+                        //
+                        // 关键区分：'F' 只在**连接首个报文**的位置才是 CancelRequest 的别名；
+                        // 带类型字节的 'F' 是 FunctionCall。改造前这里被当成 CancelRequest 处理，
+                        // 客户端只看到连接被静默关闭（连错误都收不到），完全无从排查。
+                        logger.warn("[SERVER] FunctionCall (fastpath) is not supported; answering 0A000.");
+                        pushMsgObject(out, new UnsupportedMessageRequest(dbInstance,
+                                "FunctionCall (fastpath) is not supported by SlackerDB", "0A000", false));
 
                         // 标记当前步骤
-                        lastRequestCommand = CancelRequest.class.getSimpleName();
+                        lastRequestCommand = UnsupportedMessageRequest.class.getSimpleName();
                         ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
                     }
                     case 'f' -> {
@@ -576,7 +688,22 @@ public class PostgresServer {
                                 addBusinessHandler(ch.pipeline());
                             }
                         });
-                var ignored = tcpBootstrap.bind(new InetSocketAddress(bind, port)).sync();
+                try {
+                    var ignored = tcpBootstrap.bind(new InetSocketAddress(bind, port)).sync();
+                } catch (Exception bindFailure) {
+                    // 最常见的一类启动失败：端口已被占用（另一个 SlackerDB 实例、上一次没退干净的测试
+                    // JVM）。SO_REUSEADDR 只能复用 TIME_WAIT，救不了"已有进程正在 LISTEN"。
+                    // Netty 会把 BindException 包成 ChannelException，因此这里要钻 cause chain 来判断，
+                    // 并给出可操作的错误信息 —— 而不是让启动线程挂死在一段等不到结果的循环里。
+                    BindException bindException = Utils.findCause(bindFailure, BindException.class);
+                    if (bindException != null) {
+                        throw new ServerException("Cannot bind TCP listener to " + bind + ":" + port
+                                + ", the address is already in use. "
+                                + "Stop the process listening on it or start this instance on another port.",
+                                bindException);
+                    }
+                    throw bindFailure;
+                }
                 portReady = true;
                 logger.info("[SERVER] TCP listener started on {}:{}", bind, port);
             }
@@ -654,5 +781,14 @@ public class PostgresServer {
     public boolean isPortReady()
     {
         return portReady;
+    }
+
+    /**
+     * 监听器启动失败的原因，未失败时为 {@code null}。
+     * 非 null 即代表 Listener 线程已经退出，服务不会再接受任何连接。
+     */
+    public Exception getStartupError()
+    {
+        return startupError;
     }
 }

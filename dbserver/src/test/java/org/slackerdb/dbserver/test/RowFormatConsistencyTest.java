@@ -50,7 +50,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 且解出来的逻辑值必须相同"写成契约：</p>
  * <ol>
  *   <li>简单查询路径：所有列必须声明 format=0，且值必须是<b>文本</b>；</li>
- *   <li>扩展协议路径：定长类型声明 format=1，值必须是<b>对应宽度的二进制</b>；</li>
+ *   <li>扩展协议路径：格式必须<b>按客户端在 Bind 里的请求</b>回报 —— 0 个格式码（协议默认）
+ *       必须全文本；显式请求二进制时定长类型才声明 format=1 且宽度必须对得上，
+ *       没有二进制编码器的类型必须如实回落文本；</li>
  *   <li>两条路径解出来的逻辑值必须完全一致（这才是客户端真正关心的）。</li>
  * </ol>
  */
@@ -148,16 +150,54 @@ public class RowFormatConsistencyTest {
     }
 
     // ================================================================
-    // 二、扩展协议路径：定长类型声明二进制，且宽度必须对得上
+    // 二、扩展协议路径：格式必须按客户端在 Bind 中的请求回报
     // ================================================================
 
+    /**
+     * Bind 里<b>没有</b>结果格式码 → 协议规定所有结果列都用默认格式（文本）。
+     *
+     * <p>服务端不得因为"走的是扩展协议"就擅自改发二进制：postgres_fdw 的 DML RETURNING
+     * 恰恰请求文本（resultFormat=0），若收到 4 字节二进制，它会当成文本喂给 int4in。</p>
+     */
     @Test
-    void extendedQueryDeclaresBinaryWithMatchingWidth() throws Exception {
+    void extendedQueryWithoutFormatCodesDeclaresTextAndSendsText() throws Exception {
         try (PgWireClient client = newClient()) {
-            client.sendParse("fmt_s", SELECT_ALL);
-            client.sendBind("fmt_p", "fmt_s");
-            client.sendDescribe('P', "fmt_p");
-            client.sendExecute("fmt_p", 0);
+            client.sendParse("fmt_s_text", SELECT_ALL);
+            client.sendBind("fmt_p_text", "fmt_s_text");
+            client.sendDescribe('P', "fmt_p_text");
+            client.sendExecute("fmt_p_text", 0);
+            client.sendSync();
+            List<PgWireClient.Frame> frames = client.readUntilReadyForQuery();
+
+            List<PgWireClient.FieldDesc> fields =
+                    PgWireClient.parseRowDescription(PgWireClient.ofType(frames, 'T').get(0));
+            List<byte[]> values = PgWireClient.dataRowValues(PgWireClient.ofType(frames, 'D').get(0));
+            assertEquals(COLUMNS.size(), fields.size(), "列数不符");
+
+            for (int i = 0; i < COLUMNS.size(); i++) {
+                ColumnSpec spec = COLUMNS.get(i);
+                assertEquals(0, fields.get(i).formatCode,
+                        "未指定结果格式码时必须声明文本格式，列 " + spec.name()
+                                + " 实际声明 format=" + fields.get(i).formatCode);
+                assertEquals(spec.expectedText(), PgWireClient.textValue(values.get(i)),
+                        "列 " + spec.name() + " 声明为文本，但值是二进制字节"
+                                + "（原始字节=" + Arrays.toString(values.get(i)) + "）");
+            }
+        }
+    }
+
+    /**
+     * 客户端显式请求二进制（广播 1）→ 有二进制编码器的定长类型声明 format=1，
+     * 且字节宽度必须与声明的 OID 一致；没有二进制编码器的类型必须<b>如实回落</b>文本
+     * （声明 1 却发文本 = 客户端静默错值）。
+     */
+    @Test
+    void extendedQueryWithBinaryFormatCodesDeclaresMatchingBinary() throws Exception {
+        try (PgWireClient client = newClient()) {
+            client.sendParse("fmt_s_bin", SELECT_ALL);
+            client.sendBind("fmt_p_bin", "fmt_s_bin", new int[]{1});   // 广播二进制
+            client.sendDescribe('P', "fmt_p_bin");
+            client.sendExecute("fmt_p_bin", 0);
             client.sendSync();
             List<PgWireClient.Frame> frames = client.readUntilReadyForQuery();
 
@@ -171,13 +211,14 @@ public class RowFormatConsistencyTest {
                 byte[] value = values.get(i);
 
                 if (spec.binaryWidth() < 0) {
-                    // 对照组：这些类型在两条路径下都是文本
-                    assertEquals(0, field.formatCode, "列 " + spec.name() + " 应为文本格式");
+                    // 没有二进制编码器：请求了二进制也必须回落文本，并如实声明 format=0
+                    assertEquals(0, field.formatCode,
+                            "列 " + spec.name() + " 无二进制编码器，必须回落文本格式");
                     assertEquals(spec.expectedText(), PgWireClient.textValue(value),
-                            "列 " + spec.name() + " 的文本值不符");
+                            "列 " + spec.name() + " 回落文本后的值不符");
                 } else {
                     assertEquals(1, field.formatCode,
-                            "扩展协议下定长类型应声明二进制格式，列 " + spec.name());
+                            "客户端请求二进制时定长类型应声明二进制格式，列 " + spec.name());
                     assertEquals(spec.binaryWidth(), value.length,
                             "列 " + spec.name() + " 声明的格式与实际字节数不符");
                 }

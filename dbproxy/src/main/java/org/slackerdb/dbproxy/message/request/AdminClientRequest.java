@@ -24,8 +24,6 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Properties;
 import java.util.TimeZone;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class AdminClientRequest extends PostgresRequest {
     public static final byte[] AdminClientRequestHeader = {0x00, 0x00, 0x00, 0x08, 0x01, 0x01, 0x01, 0x01};
@@ -137,77 +135,43 @@ public class AdminClientRequest extends PostgresRequest {
                     .append(String.format("%-10s", "AliasName"))
                     .append(String.format("%-25s", "Created Time"))
                     .append(String.format("%-25s", "Activated Time"))
+                    .append(String.format("%-16s", "Lease"))
                     .append("Target URL")
                     .append("\n");
             for (String aliasName : this.proxyInstance.proxyTarget.keySet()) {
                 PostgresProxyTarget postgresProxyTarget = this.proxyInstance.proxyTarget.get(aliasName);
+                // 租约一栏是排查"发现为什么不通"的关键：正常应显示还剩多久到期
+                // （组播每 5 秒续租一次，不会接近 0）；none 表示该条目没有租约、不参与过期清理
+                String leaseText;
+                if (postgresProxyTarget.leaseExpireAtMs <= 0) {
+                    leaseText = "none";
+                } else {
+                    long remaining = postgresProxyTarget.leaseExpireAtMs - System.currentTimeMillis();
+                    leaseText = remaining > 0 ? remaining + "ms" : "expiring";
+                }
                 feedBackMsg.append("    ")
                         .append(String.format("%-10s", aliasName))
                         .append(String.format("%-25s", postgresProxyTarget.createdDateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))))
                         .append(String.format("%-25s", postgresProxyTarget.lastActivatedTIme.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))))
+                        .append(String.format("%-16s", leaseText))
                         .append(postgresProxyTarget.host).append(":").append(postgresProxyTarget.port)
                         .append("/").append(postgresProxyTarget.database)
                         .append("\n");
             }
             feedBackMsg.append("\n");
         }
-        else if (clientRequestCommand.trim().toUpperCase().startsWith("REGISTER"))
-        {
-            Pattern pattern = Pattern.compile(
-                    "REGISTER\\s+(\\S+):(\\d+),[+-]?(\\d+)/(\\S+)\\s+AS\\s+(\\S+)"
-            );
-            Matcher matcher = pattern.matcher(clientRequestCommand);
-
-            if (matcher.find()) {
-                String host = matcher.group(1);
-                int port = Integer.parseInt(matcher.group(2));
-                int portX = Integer.parseInt(matcher.group(3));
-                String service = matcher.group(4);
-                String alias = matcher.group(5);
-                PostgresProxyTarget postgresProxyTarget = new PostgresProxyTarget();
-                postgresProxyTarget.createdDateTime = LocalDateTime.now();
-                postgresProxyTarget.lastActivatedTIme = LocalDateTime.now();
-                postgresProxyTarget.host = host;
-                postgresProxyTarget.port = port;
-                postgresProxyTarget.portX = portX;
-                postgresProxyTarget.database = service;
-                this.proxyInstance.proxyTarget.put(alias, postgresProxyTarget);
-                feedBackMsg.append("Register " +
-                        "[").append(host).append(":").append(port).append(",").append(portX)
-                        .append("/").append(service).append("] " +
-                        "as [").append(alias).append("] successful. ");
-                // 处理PortX的转发请求
-                if (this.proxyInstance.proxyInstanceX != null && postgresProxyTarget.portX != -1) {
-                    this.proxyInstance.proxyInstanceX.forwarderPathMappings
-                            .put("/" + alias, "http://" + postgresProxyTarget.host + ":" + postgresProxyTarget.portX);
-                }
-            } else {
-                feedBackMsg.append("WRONG REGISTER COMMAND FORMAT. ").append(clientRequestCommand);
-            }
-        }
-        else if (clientRequestCommand.trim().toUpperCase().startsWith("UNREGISTER"))
-        {
-            Pattern pattern = Pattern.compile(
-                    "UNREGISTER\\s+(\\S+)"
-            );
-            Matcher matcher = pattern.matcher(clientRequestCommand);
-
-            if (matcher.find()) {
-                String alias = matcher.group(1);
-                // 处理PORTX的转发请求
-                if (this.proxyInstance.proxyInstanceX != null) {
-                    this.proxyInstance.proxyInstanceX.forwarderPathMappings
-                            .remove("/" + alias);
-                }
-                this.proxyInstance.proxyTarget.remove(alias);
-                feedBackMsg.append("Unregister " + "[").append(alias).append("] successful. ");
-            } else {
-                feedBackMsg.append("WRONG UNREGISTER COMMAND FORMAT. ").append(clientRequestCommand);
-            }
-        }
         else
         {
+            // 未知命令：一边回给调用方，一边在代理侧留一条记录。
+            //
+            // 这条日志在升级期间特别有用：旧版 dbserver 的注册通道（REGISTER / UNREGISTER）
+            // 已被彻底移除，如果还有没升级的 dbserver 在跑，代理侧会看到 "Unknown command"，
+            // 而不是让运维只看到"客户端连不上"却查不出注册根本没发生。
             feedBackMsg.append("[ADMIN CMD] Unknown command [").append(clientRequestCommand).append("].");
+            this.proxyInstance.logger.warn("[PROXY][ADMIN      ] Unknown admin command [{}]. Note: the legacy "
+                            + "REGISTER/UNREGISTER commands are no longer supported; backends are discovered "
+                            + "through multicast (advertise_address on the dbserver, listener_address here).",
+                    clientRequestCommand.trim());
         }
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();

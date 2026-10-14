@@ -128,6 +128,10 @@ public class SqlReplacerGoldenTest {
         cfg.setLog_level("INFO");
         DBInstance dbInstance = new DBInstance(cfg);
         dbInstance.logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("replbench");
+        // 本测试不走 attachDatabase（那需要真正启动实例），因此显式调一次 refreshCatalogName()：
+        // SQLReplacer 的改写前缀来自 DBInstance.catalogName，走启动路径时由 attachDatabase 收尾
+        // 负责对齐，这里必须自己对齐，否则本测试与真实启动路径的前缀可能不是同一个值。
+        dbInstance.refreshCatalogName();
         SQLReplacer.load(dbInstance);
         return dbInstance;
     }

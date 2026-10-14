@@ -15,10 +15,11 @@ import net.jodah.expiringmap.ExpiringMap;
 import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.server.DBDataSourcePool;
 import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.dbserver.sql.JsonValues;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.*;
@@ -47,6 +48,15 @@ public class APIService {
 
     private final ConcurrentHashMap<String, DBServiceDefinition> registeredDBService = new ConcurrentHashMap<>();
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /** SQL 模板中的参数占位符：{@code ${name}}。 */
+    private static final Pattern SQL_PARAMETER_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
+
+    /** category 会作为文件名保存，这些字符不允许出现（允许为空）。 */
+    private static final Pattern ILLEGAL_CATEGORY_CHARS = Pattern.compile("[\\\\/:*?\"<>|]");
+
+    /** 无 category 的服务在按 category 落盘时使用的文件名。 */
+    private static final String UNCATEGORIZED_CATEGORY = "uncategorized";
 
     private static void handleSqlQuery(
             Context ctx,
@@ -109,7 +119,7 @@ public class APIService {
             snapshotLimit = dbServiceDefinition.snapshotLimit;
         }
         if (caffeineQueryCache != null && snapshotLimit > 0) {
-            cacheKey = generateCacheKey(sql, sqlParameters);
+            cacheKey = generateCacheKey(dbServiceDefinition, sql, sqlParameters);
 
             Map<String, Object> cacheResult = caffeineQueryCache.getIfPresent(cacheKey);
             if (cacheResult != null) {
@@ -133,12 +143,14 @@ public class APIService {
             }
         }
 
-        // 处理传递的SQL语句
-        if (!sqlParameters.isEmpty()) {
-            Pattern pattern = Pattern.compile("\\$\\{([^}]+)}");
-            Matcher matcher = pattern.matcher(sql);
+        // 处理传递的SQL语句。
+        // 注意：扫描/替换必须**无条件执行**，不能只在"已经有参数"时才做：
+        // 否则服务未声明 parameters、请求又没带参数时，SQL 会带着 ${var} 原样执行，
+        // DuckDB 把 '${var}' 当作字符串字面量，于是"缺参数"被静默变成"返回占位符文本"。
+        {
+            Matcher matcher = SQL_PARAMETER_PATTERN.matcher(sql);
             // 首先检查所有变量是否都有值
-            Set<String> missingKeys = new HashSet<>();
+            Set<String> missingKeys = new LinkedHashSet<>();
             while (matcher.find()) {
                 String key = matcher.group(1);
                 if (!sqlParameters.containsKey(key) || sqlParameters.get(key) == null) {
@@ -204,7 +216,10 @@ public class APIService {
                         while (rs.next()) {
                             List<Object> row = new ArrayList<>();
                             for (int nPos = 0; nPos < resultSetMetaData.getColumnCount(); nPos++) {
-                                row.add(rs.getObject(nPos + 1));
+                                // 统一转成 JSON 安全类型：DATE/TIME/TIMESTAMPTZ/BLOB/LIST/JSON
+                                // 等类型直接交给 Jackson 会失败（内部错误 500 / 类名泄漏），
+                                // 转换后 HTTP 与 SQL REPL 两个端点的取值形态保持一致。
+                                row.add(JsonValues.toJsonValue(rs.getObject(nPos + 1)));
                             }
                             dataset.add(row);
                         }
@@ -269,21 +284,39 @@ public class APIService {
         }
     }
 
-    // 生成稳定的缓存键（按键排序）
-    private static String generateCacheKey(String sql, Map<String, String> parameters) {
-        if (parameters.isEmpty()) {
-            return sql;
-        }
-        // 按键排序以保证稳定
-        List<String> keys = new ArrayList<>(parameters.keySet());
-        Collections.sort(keys);
-        StringBuilder sb = new StringBuilder(sql);
-        sb.append("|");
-        for (String key : keys) {
-            sb.append(key).append("=").append(parameters.get(key)).append("&");
-        }
-        // 删除最后一个多余的 "&"
-        if (sb.charAt(sb.length() - 1) == '&') {
+    /**
+     * 服务注册表的统一键：{@code 类型大写#名称#版本}（名称与版本保持原样、大小写敏感）。
+     *
+     * <p>注册、注销、查表、文件加载必须全部走这一个函数。历史实现里查重用的是
+     * 整个键 {@code toUpperCase()}，而写入用的是原样键，两者永不相等，
+     * 于是"重复注册"检测失效、同名服务被静默覆盖。</p>
+     */
+    private static String serviceKey(String serviceType, String serviceName, String serviceVersion) {
+        return (serviceType == null ? "" : serviceType.toUpperCase()) + "#" + serviceName + "#" + serviceVersion;
+    }
+
+    /**
+     * 生成稳定的缓存键。
+     *
+     * <p>键里必须包含服务身份与 searchPath：只按 SQL 文本+参数做键时，
+     * 两个 SQL 文本相同但 searchPath / 定义不同的服务会共用同一个缓存条目，
+     * 结果就是"一个服务返回另一个服务的数据"（实测可复现）。</p>
+     */
+    private static String generateCacheKey(DBServiceDefinition service, String sql, Map<String, String> parameters) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(service.serviceType == null ? "" : service.serviceType.toUpperCase())
+                .append('#').append(service.serviceName)
+                .append('#').append(service.serviceVersion)
+                .append('|').append(service.searchPath == null ? "" : service.searchPath)
+                .append('|').append(sql);
+        if (parameters != null && !parameters.isEmpty()) {
+            // 按键排序以保证稳定
+            List<String> keys = new ArrayList<>(parameters.keySet());
+            Collections.sort(keys);
+            sb.append('|');
+            for (String key : keys) {
+                sb.append(key).append('=').append(parameters.get(key)).append('&');
+            }
             sb.deleteCharAt(sb.length() - 1);
         }
         return sb.toString();
@@ -298,14 +331,17 @@ public class APIService {
         }
     }
 
-    // 验证category是否合法（非空且不含非法字符）
-    private static boolean isValidCategory(String category) {
+    /**
+     * category 是否含有文件系统非法字符（{@code \ / : * ? " < > |}）。
+     *
+     * <p>允许为空：API 文档中 category 是可选字段，历史实现把"空"也当成非法，
+     * 导致文档里的注册示例直接被拒绝。</p>
+     */
+    private static boolean hasIllegalCategoryChars(String category) {
         if (category == null || category.trim().isEmpty()) {
-            return true;
+            return false;
         }
-        // 检查非法字符：\/:*?"<>|
-        Pattern illegalChars = Pattern.compile("[\\\\/:*?\"<>|]");
-        return illegalChars.matcher(category).find();
+        return ILLEGAL_CATEGORY_CHARS.matcher(category).find();
     }
 
     // 实现会话信息的自动过期处理,
@@ -370,14 +406,14 @@ public class APIService {
                 }
             }
             // 验证category
-            if (isValidCategory(dbService.category)) {
+            if (hasIllegalCategoryChars(dbService.category)) {
                 logger.warn("[SERVER][LOAD       ] Invalid category ignored: {} (serviceName={}, serviceVersion={}, category={}) from {}",
                         dbService.serviceType.toUpperCase() + "#" + dbService.serviceName + "#" + dbService.serviceVersion,
                         dbService.serviceName, dbService.serviceVersion, dbService.category, source);
                 // 忽略，不注册
                 continue;
             }
-            String key = dbService.serviceType.toUpperCase() + "#" + dbService.serviceName + "#" + dbService.serviceVersion;
+            String key = serviceKey(dbService.serviceType, dbService.serviceName, dbService.serviceVersion);
             if (registeredDBService.containsKey(key)) {
                 logger.warn("[SERVER][LOAD       ] Duplicate service definition ignored: {} (serviceName={}, serviceVersion={}, serviceType={}) from {}",
                         key, dbService.serviceName, dbService.serviceVersion, dbService.serviceType, source);
@@ -533,9 +569,10 @@ public class APIService {
                 ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. serviceType or sql is missed. SQL is only supported serviceType at this time."));
                 return;
             }
-            if (registeredDBService.containsKey((serviceType + "#" + serviceName + "#" + serviceVersion).toUpperCase()))
+            String registryKey = serviceKey(serviceType, serviceName, serviceVersion);
+            if (registeredDBService.containsKey(registryKey))
             {
-                // 如果已经注册，则不再容许重复注册
+                // 如果已经注册，则不再容许重复注册（要变更定义请先 unRegisterService）
                 ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. [" + serviceName + "#" + serviceVersion + "] is already registered."));
                 return;
             }
@@ -572,12 +609,12 @@ public class APIService {
                     }
                 }
             }
-            // 验证category
-            if (isValidCategory(dbService.category)) {
-                ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. category is empty or contains illegal characters (\\ / : * ? \" < > |)."));
+            // 验证category（允许为空：文档中 category 是可选字段，仅作为落盘分组名）
+            if (hasIllegalCategoryChars(dbService.category)) {
+                ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. category contains illegal characters (\\ / : * ? \" < > |)."));
                 return;
             }
-            registeredDBService.put(serviceType.toUpperCase() + "#" + serviceName + "#" + serviceVersion, dbService);
+            registeredDBService.put(registryKey, dbService);
 
             ctx.json(Map.of("retCode", 0, "retMsg", "successful."));
         });
@@ -604,11 +641,9 @@ public class APIService {
                 ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. serviceType missed. GET/POST is only two supported serviceType at this time."));
                 return;
             }
-            if (registeredDBService.containsKey((serviceType.toUpperCase() + "#" + serviceName + "#" + serviceVersion)))
-            {
-                // 删除之前的注册
-                registeredDBService.remove(serviceType.toUpperCase() + "#" + serviceName + "#" + serviceVersion);
-            }
+            String registryKey = serviceKey(serviceType, serviceName, serviceVersion);
+            // 删除之前的注册（不存在时同样返回成功：注销是幂等的）
+            registeredDBService.remove(registryKey);
             ctx.json(Map.of("retCode", 0, "retMsg", "successful."));
         });
 
@@ -648,29 +683,19 @@ public class APIService {
             }
         });
 
-        // 下载注册服务文件（HTTP文件流，类似InstanceX中的download函数）
+        // 下载注册服务文件（作为响应体直接返回；不再走"临时文件 + 文件流"，
+        // 那样会在 Jetty 还没把流写出去之前就删掉临时文件，实测固定返回 HTTP 500）
         managementApp.unsafe.routes.post("/api/downloadRegisteredService", ctx -> {
             try {
-                String json = dumpRegisteredServiceAsJson();
-                // 创建临时文件
-                Path tempDir = Files.createTempDirectory("slackerdb_services");
-                Path tempFile = tempDir.resolve("services.json");
-                Files.write(tempFile, json.getBytes());
-                // 设置响应头
+                byte[] payload = dumpRegisteredServiceAsJson().getBytes(StandardCharsets.UTF_8);
                 ctx.header("Content-Type", "application/json");
                 ctx.header("Content-Disposition", "attachment; filename=\"services.json\"");
-                ctx.header("Content-Length", String.valueOf(Files.size(tempFile)));
-                // 使用文件流传输（使用FileHandlerHelper的流式传输）
-                try (InputStream is = Files.newInputStream(tempFile)) {
-                    ctx.result(is);
-                }
-                // 删除临时文件
-                Files.deleteIfExists(tempFile);
-                Files.deleteIfExists(tempDir);
-                logger.info("[SERVER-API] Downloaded {} registered services via file stream", registeredDBService.size());
+                ctx.result(payload);
+                logger.info("[SERVER-API] Downloaded {} registered services ({} bytes)",
+                        registeredDBService.size(), payload.length);
             } catch (Exception e) {
-                logger.error("[SERVER-API] Failed to generate or stream registered services JSON: {}", e.getMessage());
-                ctx.json(Map.of("retCode", -1, "retMsg", "Failed to generate or stream JSON: " + e.getMessage()));
+                logger.error("[SERVER-API] Failed to generate registered services JSON for download", e);
+                ctx.json(Map.of("retCode", -1, "retMsg", "Failed to generate JSON: " + e.getMessage()));
             }
         });
 
@@ -752,16 +777,18 @@ public class APIService {
         managementApp.unsafe.routes.get("/api/{apiVersion}/{apiName}", ctx -> {
             String apiName = ctx.pathParam("apiName");
             String apiVersion = ctx.pathParam("apiVersion");
-            if (!registeredDBService.containsKey(("GET#" + apiName + "#" + apiVersion)))
+            DBServiceDefinition dbServiceDefinition = registeredDBService.get(serviceKey("GET", apiName, apiVersion));
+            if (dbServiceDefinition == null)
             {
-                ctx.json(
+                // 键名统一为 retMsg（历史实现写成了 regMsg，客户端按 retMsg 取会拿到 null），
+                // HTTP 状态码与 retCode 保持一致
+                ctx.status(404).json(
                         Map.of(
                                 "retCode",404,
-                                "regMsg", "GET " + ctx.path() + " is not registered.")
+                                "retMsg", "GET " + ctx.path() + " is not registered.")
                 );
             }
             else {
-                DBServiceDefinition dbServiceDefinition = registeredDBService.get(("GET#" + apiName + "#" + apiVersion));
                 handleSqlQuery(
                         ctx,
                         dbServiceDefinition,
@@ -778,15 +805,15 @@ public class APIService {
         managementApp.unsafe.routes.post("/api/{apiVersion}/{apiName}", ctx -> {
             String apiVersion = ctx.pathParam("apiVersion");
             String apiName = ctx.pathParam("apiName");
-            if (!registeredDBService.containsKey(("POST#" + apiName + "#" + apiVersion)))
+            DBServiceDefinition dbServiceDefinition = registeredDBService.get(serviceKey("POST", apiName, apiVersion));
+            if (dbServiceDefinition == null)
             {
-                ctx.json(
+                ctx.status(404).json(
                         Map.of(
                                 "retCode",404,
-                                "regMsg", "POST " + ctx.path() + " is not registered."));
+                                "retMsg", "POST " + ctx.path() + " is not registered."));
             }
             else {
-                DBServiceDefinition dbServiceDefinition = registeredDBService.get(("POST#" + apiName + "#" + apiVersion));
                 handleSqlQuery(
                         ctx,
                         dbServiceDefinition,
@@ -804,6 +831,48 @@ public class APIService {
     public void stop()
     {
         // 不再有监控线程需要停止
+    }
+
+    /**
+     * 已注册数据服务的只读视图（供 MCP 工具面复用）。
+     *
+     * <p>MCP 侧不再维护第二份服务注册表：语义层只有一份真相，
+     * agent 看到的服务清单与 HTTP 数据服务始终一致。</p>
+     *
+     * <p>刻意<b>不</b>暴露 {@code sql}：模型不需要看到实现，
+     * 也就不可能被诱导去改写它。它只需要知道"有哪些服务、要什么参数"。</p>
+     *
+     * @return 每个服务的名字、版本、方法、描述、参数与分类
+     */
+    public List<Map<String, Object>> describeRegisteredServices() {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (DBServiceDefinition service : registeredDBService.values()) {
+            Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("name", service.serviceName);
+            item.put("version", service.serviceVersion);
+            item.put("method", service.serviceType);
+            item.put("description", service.description);
+            if (service.category != null && !service.category.isBlank()) {
+                item.put("category", service.category);
+            }
+            if (service.searchPath != null && !service.searchPath.isBlank()) {
+                item.put("search_path", service.searchPath);
+            }
+            if (service.parameter != null && !service.parameter.isEmpty()) {
+                List<Map<String, Object>> params = new ArrayList<>();
+                for (Map.Entry<String, String> entry : service.parameter.entrySet()) {
+                    params.add(Map.of(
+                            "name", entry.getKey(),
+                            "default", entry.getValue() == null ? "" : entry.getValue()));
+                }
+                item.put("parameters", params);
+            }
+            // 调用方式：让模型知道该发哪个 HTTP 请求，而不是猜
+            item.put("endpoint", "/api/" + service.serviceVersion + "/" + service.serviceName);
+            result.add(item);
+        }
+        result.sort((a, b) -> String.valueOf(a.get("name")).compareTo(String.valueOf(b.get("name"))));
+        return result;
     }
 
     /**
@@ -848,19 +917,22 @@ public class APIService {
 
     /**
      * 按category分组生成服务定义的JSON数组。
-     * @return Map key为category，value为该category下的服务JSON数组
-     * @throws IllegalArgumentException 如果category为空或包含非法字符（\/:*?"<>|）
+     *
+     * <p>无 category 的服务归入 {@value #UNCATEGORIZED_CATEGORY} 分组：
+     * category 在 API 文档里是可选字段，历史实现直接抛异常，导致"允许注册但无法保存"。</p>
+     *
+     * @return Map key为category（文件名前缀），value为该category下的服务JSON数组
+     * @throws IllegalArgumentException 如果category包含非法字符（\/:*?"<>|）
      */
     private Map<String, JSONArray> generateRegisteredServiceJsonArrayByCategory() {
         Map<String, List<DBServiceDefinition>> grouped = new HashMap<>();
         for (DBServiceDefinition dbService : registeredDBService.values()) {
             String category = dbService.category;
-            // category不允许为空
             if (category == null || category.trim().isEmpty()) {
-                throw new IllegalArgumentException("Category cannot be null or empty.");
+                category = UNCATEGORIZED_CATEGORY;
             }
-            // 验证category合法性
-            if (isValidCategory(category)) {
+            // 验证category合法性（作为文件名使用）
+            if (hasIllegalCategoryChars(category)) {
                 throw new IllegalArgumentException("Category '" + category + "' contains illegal characters (\\ / : * ? \" < > |).");
             }
             grouped.computeIfAbsent(category, k -> new ArrayList<>()).add(dbService);

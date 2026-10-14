@@ -149,7 +149,17 @@ public class AdminClientRequest  extends PostgresRequest {
                 feedBackMsg.append(String.format("%-20s", "  Bind_Host:")).append(this.dbInstance.serverConfiguration.getBindHost()).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Port:")).append(this.dbInstance.serverConfiguration.getPort()).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Port_X:")).append(this.dbInstance.serverConfiguration.getPortX()).append("\n");
-                feedBackMsg.append(String.format("%-20s", "  Remote_Listener:")).append(this.dbInstance.serverConfiguration.getRemoteListener()).append("\n");
+                // 组播通告状态：服务发现配错时的表现是"静默不发现"，所以这里把实际生效的
+                // 组地址、网卡、以及本机通告地址都回显出来，方便和代理侧对比
+                String advertiseText = "(disabled)";
+                if (this.dbInstance.serverConfiguration.isAdvertiseEnabled()) {
+                    String advertiseNic = this.dbInstance.serverConfiguration.getAdvertiseNic();
+                    String advertiseHost = this.dbInstance.serverConfiguration.getAdvertiseHost();
+                    advertiseText = this.dbInstance.serverConfiguration.getAdvertiseAddress()
+                            + " as " + (advertiseHost == null ? "?" : advertiseHost)
+                            + " (nic: " + (advertiseNic.isEmpty() ? "auto" : advertiseNic) + ")";
+                }
+                feedBackMsg.append(String.format("%-20s", "  Advertise:")).append(advertiseText).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Data:")).append(this.dbInstance.serverConfiguration.getData()).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Data_Dir:")).append(this.dbInstance.serverConfiguration.getData_Dir()).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Temp_Dir:")).append(this.dbInstance.serverConfiguration.getTemp_dir()).append("\n");

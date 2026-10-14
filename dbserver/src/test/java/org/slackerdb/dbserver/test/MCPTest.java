@@ -127,41 +127,38 @@ public class MCPTest {
     }
     
     private static void registerTestServices() throws Exception {
-        // Register query_inventory service
+        /*
+          注册到真正的数据服务注册表（/api/registerService），而不是 MCP 自有的那一份。
+          MCP 侧的 slackerdb://services 资源现在直接读 APIService，只保留一份真相：
+          agent 看到的服务与 HTTP 数据服务永远一致。
+        */
         Map<String, Object> queryInventoryService = Map.of(
-                "name", "query_inventory",
-                "apiName", "query_inventory",
-                "version", "1.0",
-                "method", "GET",
+                "serviceName", "query_inventory",
+                "serviceVersion", "1.0",
+                "serviceType", "GET",
+                "sql", "SELECT 1 AS warehouse_id, 2 AS product_id",
                 "description", "查询仓库库存水平，可以按仓库ID和产品ID过滤",
                 "category", "database",
-                "capabilities", java.util.List.of("query", "filter", "aggregate", "report"),
-            "use_cases", java.util.List.of("inventory_check", "stock_analysis", "reorder_planning"),
-            "parameters", java.util.List.of(
-                Map.of("name", "warehouse_id", "type", "string", "required", false, "description", "仓库ID"),
-                Map.of("name", "product_id", "type", "string", "required", false, "description", "产品ID")
-            ),
-            "examples", java.util.List.of(
-                Map.of("user_query", "查看仓库A的库存", "parameters", Map.of("warehouse_id", "A")),
-                Map.of("user_query", "查看产品P123在所有仓库的库存", "parameters", Map.of("product_id", "P123"))
-            )
+                "parameters", java.util.List.of(
+                        Map.of("name", "warehouse_id", "defaultValue", "A"),
+                        Map.of("name", "product_id", "defaultValue", "P123")
+                )
         );
-        
+
         String requestBody = JSON.toJSONString(queryInventoryService);
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/mcp/registerMCPService"))
+                .uri(URI.create(baseUrl + "/api/registerService"))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                 .build();
-        
+
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
         assertEquals(200, response.statusCode());
-        
+
         JSONObject resp = JSON.parseObject(response.body());
-        assertEquals(0, resp.getInteger("retCode"));
-        assertEquals("Service registered successfully", resp.getString("retMsg"));
-        
-        System.out.println("TEST:: Registered query_inventory service");
+        assertEquals(0, resp.getInteger("retCode"), "registerService failed: " + response.body());
+
+        System.out.println("TEST:: Registered query_inventory data service");
     }
 
     @AfterAll
@@ -236,15 +233,18 @@ public class MCPTest {
         assertEquals(2, resp.getInteger("id"));
         assertTrue(resp.containsKey("result"));
         JSONObject result = resp.getJSONObject("result");
-        
-        // 默认工具处理程序返回格式: {"status":"registered","tool":"echo","arguments":{"text":"Hello MCP"}}
-        // 检查是否包含预期的结构
-        assertTrue(result.containsKey("status"));
-        assertEquals("registered", result.getString("status"));
-        assertTrue(result.containsKey("tool"));
-        assertEquals("echo", result.getString("tool"));
-        assertTrue(result.containsKey("arguments"));
-        JSONObject arguments = result.getJSONObject("arguments");
+
+        // 2026-07-28 起 tools/call 必须返回 {content, structuredContent, isError}，
+        // 不能像旧实现那样直接把 handler 的裸对象当 result 返回。
+        assertEquals("complete", result.getString("resultType"));
+        assertEquals(Boolean.FALSE, result.getBoolean("isError"));
+        assertNotNull(result.getJSONArray("content"));
+        JSONObject structured = result.getJSONObject("structuredContent");
+        assertNotNull(structured);
+        // 由配置文件注册、没有 builtin handler 的工具仍然回显入参（保持兼容）
+        assertEquals("registered", structured.getString("status"));
+        assertEquals("echo", structured.getString("tool"));
+        JSONObject arguments = structured.getJSONObject("arguments");
         assertTrue(arguments.containsKey("text"));
         assertEquals("Hello MCP", arguments.getString("text"));
     }
@@ -308,8 +308,16 @@ public class MCPTest {
         assertEquals("2.0", resp.getString("jsonrpc"));
         assertEquals(4, resp.getInteger("id"));
         assertTrue(resp.containsKey("result"));
-        String contents = resp.getJSONObject("result").getString("contents");
-        assertEquals("Hello, MCP!", contents);
+        // 2026-07-28：resources/read 必须返回 contents 数组（content-block 形状），
+        // 旧实现直接回一个裸值，按规范解析的客户端会失败。
+        JSONArray contents = resp.getJSONObject("result").getJSONArray("contents");
+        assertNotNull(contents);
+        assertEquals(1, contents.size());
+        JSONObject block = contents.getJSONObject(0);
+        assertEquals("file:///example.txt", block.getString("uri"));
+        assertEquals("text/plain", block.getString("mimeType"));
+        assertTrue(block.getString("text").contains("Hello, MCP!"),
+                "content block text must carry the stored value, got: " + block.getString("text"));
     }
 
     @Test
@@ -337,8 +345,10 @@ public class MCPTest {
         assertEquals("2.0", resp.getString("jsonrpc"));
         assertEquals(5, resp.getInteger("id"));
         assertTrue(resp.containsKey("error"));
-        assertEquals(-32601, resp.getJSONObject("error").getInteger("code"));
-        assertEquals("Tool not found", resp.getJSONObject("error").getString("message"));
+        // 2026-07-28：未知工具属于"入参不合法"（-32602），
+        // 旧的 -32601 是"方法不存在"，两者不再混用。
+        assertEquals(-32602, resp.getJSONObject("error").getInteger("code"));
+        assertTrue(resp.getJSONObject("error").getString("message").contains("Unknown tool"));
     }
 
     @Test
@@ -363,33 +373,15 @@ public class MCPTest {
         assertEquals(6, resp.getInteger("id"));
         assertTrue(resp.containsKey("error"));
         assertEquals(-32601, resp.getJSONObject("error").getInteger("code"));
-        assertEquals("Method not found", resp.getJSONObject("error").getString("message"));
+        assertTrue(resp.getJSONObject("error").getString("message").startsWith("Method not found"),
+                "message should name the missing method, got: " + resp.getJSONObject("error").getString("message"));
     }
 
     @Test
     void testServicesList() throws Exception {
-        String requestBody = JSON.toJSONString(Map.of(
-                "jsonrpc", "2.0",
-                "id", 7,
-                "method", "services/list"
-        ));
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/jsonrpc"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                .build();
-
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-
-        JSONObject resp = JSON.parseObject(response.body());
-        assertEquals("2.0", resp.getString("jsonrpc"));
-        assertEquals(7, resp.getInteger("id"));
-        assertTrue(resp.containsKey("result"));
-        JSONArray services = resp.getJSONObject("result").getJSONArray("services");
+        JSONArray services = readServicesResource();
         assertTrue(services != null && !services.isEmpty());
-        
+
         // Check for the example query_inventory service
         boolean foundQueryInventory = false;
         for (int i = 0; i < services.size(); i++) {
@@ -398,51 +390,68 @@ public class MCPTest {
                 foundQueryInventory = true;
                 assertEquals("查询仓库库存水平，可以按仓库ID和产品ID过滤", service.getString("description"));
                 assertEquals("database", service.getString("category"));
-                
-                // Check capabilities
-                JSONArray capabilities = service.getJSONArray("capabilities");
-                assertTrue(capabilities != null && !capabilities.isEmpty());
-                assertEquals(4, capabilities.size());
-                
+
                 // Check parameters
                 JSONArray parameters = service.getJSONArray("parameters");
                 assertTrue(parameters != null && !parameters.isEmpty());
                 assertEquals(2, parameters.size());
-                
-                // Check examples
-                JSONArray examples = service.getJSONArray("examples");
-                assertTrue(examples != null && !examples.isEmpty());
-                assertEquals(2, examples.size());
+
+                // 服务必须给出调用端点，模型无需猜
+                assertNotNull(service.getString("endpoint"));
+                // SQL 文本刻意不下发
+                assertFalse(service.containsKey("sql"), "service SQL must not be exposed to the agent");
                 break;
             }
         }
-        assertTrue(foundQueryInventory, "query_inventory service not found in services/list");
+        assertTrue(foundQueryInventory, "query_inventory service not found in slackerdb://services");
+    }
+
+    /**
+     * 读 {@code slackerdb://services} 资源，取回服务数组。
+     *
+     * <p>2026-07-28 把自定义的 {@code services/list} 方法去掉了：服务清单是
+     * <b>可读上下文</b>，属于 resources 而不是私有方法。控制台也改读这个资源。</p>
+     */
+    private static JSONArray readServicesResource() throws Exception {
+        String requestBody = JSON.toJSONString(Map.of(
+                "jsonrpc", "2.0",
+                "id", 7,
+                "method", "resources/read",
+                "params", Map.of("uri", "slackerdb://services")
+        ));
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/jsonrpc"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                .build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode());
+        JSONObject resp = JSON.parseObject(response.body());
+        assertTrue(resp.containsKey("result"), "resources/read must return a result: " + response.body());
+        JSONArray contents = resp.getJSONObject("result").getJSONArray("contents");
+        assertTrue(contents != null && contents.size() == 1);
+        String text = contents.getJSONObject(0).getString("text");
+        return JSON.parseObject(text).getJSONArray("services");
     }
 
     @Test
     void testRegisterMCPService() throws Exception {
-        // Register a new service via HTTP API
-        Map<String, Object> serviceDef = Map.of(
-                "name", "test_service",
-                "apiName", "test_service",
-                "version", "1.0",
-                "method", "GET",
-                "description", "A test service for unit testing",
-                "category", "test",
-                "capabilities", java.util.List.of("test capability 1", "test capability 2"),
-                "use_cases", java.util.List.of("test use case 1", "test use case 2"),
-                "parameters", java.util.List.of(
-                        Map.of("name", "param1", "type", "string", "required", true, "description", "First parameter"),
-                        Map.of("name", "param2", "type", "number", "required", false, "description", "Second parameter")
-                ),
-            "examples", java.util.List.of(
-                Map.of("user_query", "How to use test service?", "parameters", Map.of("param1", "value1"))
-            )
-        );
+        // 注册走真正的数据服务注册表，MCP 只是它的一个视图
+        Map<String, Object> serviceDef = new java.util.HashMap<>();
+        serviceDef.put("serviceName", "test_service");
+        serviceDef.put("serviceVersion", "1.0");
+        serviceDef.put("serviceType", "GET");
+        serviceDef.put("sql", "SELECT 1");
+        serviceDef.put("description", "A test service for unit testing");
+        serviceDef.put("category", "test");
+        serviceDef.put("parameters", java.util.List.of(
+                Map.of("name", "param1", "defaultValue", "value1"),
+                Map.of("name", "param2", "defaultValue", "value2")
+        ));
 
         String requestBody = JSON.toJSONString(serviceDef);
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/mcp/registerMCPService"))
+                .uri(URI.create(baseUrl + "/api/registerService"))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                 .build();
@@ -451,27 +460,10 @@ public class MCPTest {
         assertEquals(200, response.statusCode());
 
         JSONObject resp = JSON.parseObject(response.body());
-        assertEquals(0, resp.getInteger("retCode"));
-        assertEquals("Service registered successfully", resp.getString("retMsg"));
+        assertEquals(0, resp.getInteger("retCode"), "registerService failed: " + response.body());
 
-        // Verify the service is now listed
-        String listRequestBody = JSON.toJSONString(Map.of(
-                "jsonrpc", "2.0",
-                "id", 8,
-                "method", "services/list"
-        ));
-
-        HttpRequest listRequest = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/jsonrpc"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(listRequestBody))
-                .build();
-
-        HttpResponse<String> listResponse = client.send(listRequest, HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, listResponse.statusCode());
-
-        JSONObject listResp = JSON.parseObject(listResponse.body());
-        JSONArray services = listResp.getJSONObject("result").getJSONArray("services");
+        // Verify the service is now listed through the MCP resource
+        JSONArray services = readServicesResource();
         boolean foundTestService = false;
         for (int i = 0; i < services.size(); i++) {
             JSONObject service = services.getJSONObject(i);
@@ -487,23 +479,20 @@ public class MCPTest {
 
     @Test
     void testUnregisterMCPService() throws Exception {
-        // First register a service
+        // First register a service in the real data-service registry
         Map<String, Object> serviceDef = Map.of(
-                "name", "temp_service",
-                "apiName", "temp_service",
-                "version", "1.0",
-                "method", "GET",
+                "serviceName", "temp_service",
+                "serviceVersion", "1.0",
+                "serviceType", "GET",
+                "sql", "SELECT 1",
                 "description", "Temporary service for unregister test",
                 "category", "temp",
-                "capabilities", java.util.List.of("temp capability"),
-                "use_cases", java.util.List.of("temp use case"),
-                "parameters", java.util.List.of(),
-                "examples", java.util.List.of()
+                "parameters", java.util.List.of()
         );
 
         String registerBody = JSON.toJSONString(serviceDef);
         HttpRequest registerRequest = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/mcp/registerMCPService"))
+                .uri(URI.create(baseUrl + "/api/registerService"))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(registerBody))
                 .build();
@@ -512,9 +501,14 @@ public class MCPTest {
         assertEquals(200, registerResponse.statusCode());
 
         // Now unregister it
-        String unregisterBody = JSON.toJSONString(Map.of("name", "temp_service"));
+        Map<String, Object> unregisterDef = Map.of(
+                "serviceName", "temp_service",
+                "serviceVersion", "1.0",
+                "serviceType", "GET"
+        );
+        String unregisterBody = JSON.toJSONString(unregisterDef);
         HttpRequest unregisterRequest = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/mcp/unregisterMCPService"))
+                .uri(URI.create(baseUrl + "/api/unRegisterService"))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(unregisterBody))
                 .build();
@@ -522,28 +516,8 @@ public class MCPTest {
         HttpResponse<String> unregisterResponse = client.send(unregisterRequest, HttpResponse.BodyHandlers.ofString());
         assertEquals(200, unregisterResponse.statusCode());
 
-        JSONObject unregisterResp = JSON.parseObject(unregisterResponse.body());
-        assertEquals(0, unregisterResp.getInteger("retCode"));
-        assertEquals("Service unregistered successfully", unregisterResp.getString("retMsg"));
-
-        // Verify the service is no longer listed
-        String listRequestBody = JSON.toJSONString(Map.of(
-                "jsonrpc", "2.0",
-                "id", 9,
-                "method", "services/list"
-        ));
-
-        HttpRequest listRequest = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/jsonrpc"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(listRequestBody))
-                .build();
-
-        HttpResponse<String> listResponse = client.send(listRequest, HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, listResponse.statusCode());
-
-        JSONObject listResp = JSON.parseObject(listResponse.body());
-        JSONArray services = listResp.getJSONObject("result").getJSONArray("services");
+        // Verify the service is no longer listed through the MCP resource
+        JSONArray services = readServicesResource();
         boolean foundTempService = false;
         for (int i = 0; i < services.size(); i++) {
             JSONObject service = services.getJSONObject(i);

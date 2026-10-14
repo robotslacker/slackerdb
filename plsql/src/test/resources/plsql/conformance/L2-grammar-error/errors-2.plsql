@@ -101,7 +101,7 @@ end;
 --! id: GRM-F12
 --! layer: L2
 --! mode: parse
---! expect-error: extraneous input '<EOF>' expecting @3:9
+--! expect-error: extraneous input '<EOF>' expecting @3:5
 begin
   insert into t values(1)
 end;

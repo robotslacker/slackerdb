@@ -347,8 +347,18 @@ public class DBInstanceX {
                 );
 
         // 自定义404界面
+        // 注意：/api/* 由数据服务自己用 JSON 表达"服务未注册"，不能被这里的 HTML 页面覆盖
+        // （Javalin 的 error handler 会在端点写完响应之后触发）。
         ClassPathResource page404Resource = new ClassPathResource("web/404.html");
-        this.managementApp.unsafe.routes.error(404, ctx -> ctx.html(Files.readString(Path.of(page404Resource.getURI()))));
+        this.managementApp.unsafe.routes.error(404, ctx -> {
+            if (ctx.path().startsWith("/api/")) {
+                if (ctx.result() == null) {
+                    ctx.json(Map.of("retCode", 404, "retMsg", ctx.path() + " is not found."));
+                }
+                return;
+            }
+            ctx.html(Files.readString(Path.of(page404Resource.getURI())));
+        });
 
         // 需要在记录器之前添加的过滤器
         this.managementApp.unsafe.routes.before(ctx -> {
@@ -435,10 +445,18 @@ public class DBInstanceX {
                 }
         );
 
+        /*
+          顺序要求：APIService 必须在 McpServer 之前构造。
+          MCP 的工具面复用语义层那一份服务注册表（不建第二份），因此它需要
+          在 run() 时就能拿到 APIService 的只读视图。
+        */
+        this.apiService = new APIService(dbInstance, this.managementApp, dbInstance.logger);
+
         // 初始化SQLREPL服务,MCP服务
         try {
             SqlReplServer sqlReplServer = new SqlReplServer(dbInstance, this.managementApp, dbInstance.logger);
             this.mcpServer = new McpServer(dbInstance, this.managementApp, dbInstance.logger);
+            this.mcpServer.setServiceSupplier(this.apiService::describeRegisteredServices);
 
             mcpServer.run();
             sqlReplServer.run();
@@ -510,6 +528,10 @@ public class DBInstanceX {
             }
             try {
                 Connection backupConnection = ((DuckDBConnection)backendSysConnection).duplicate();
+                // 备份语句序列（DETACH/ATTACH/COPY/DETACH）必须各自独立提交。
+                // 复用的连接默认 autoCommit=false，DuckDB 会因为"当前事务里还有未完成的工作"
+                // 拒绝 DETACH，实测备份接口 100% 失败。
+                backupConnection.setAutoCommit(true);
                 String currentDatabaseName;
                 if (this.dbInstance.serverConfiguration.getData_Dir().equalsIgnoreCase(":memory:"))
                 {
@@ -527,7 +549,6 @@ public class DBInstanceX {
                 statement.execute("DETACH DATABASE " + backupDBName);
                 statement.close();
 
-                backupConnection.commit();
                 backupConnection.close();
                 JSONObject result = new JSONObject();
                 result.put("retCode", 0);
@@ -610,8 +631,7 @@ public class DBInstanceX {
             }
         });
 
-        // API服务处理
-        this.apiService = new APIService(dbInstance, this.managementApp, dbInstance.logger);
+        // API服务已在上面提前构造（MCP 的工具面要复用它的服务注册表）
 
         // Plugin服务处理
         this.pluginService = new PluginService(dbInstance, this.managementApp, dbInstance.logger);
@@ -719,7 +739,10 @@ public class DBInstanceX {
             parameters.put("bindHost", config.getBindHost());
             parameters.put("port", config.getPort());
             parameters.put("portX", config.getPortX());
-            parameters.put("remoteListener", config.getRemoteListener());
+            parameters.put("advertiseAddress", config.isAdvertiseEnabled()
+                    ? config.getAdvertiseAddress().toString() : "");
+            parameters.put("advertiseNic", config.getAdvertiseNic());
+            parameters.put("advertiseHost", config.getAdvertiseHost());
             parameters.put("data", config.getData());
             parameters.put("dataDir", config.getData_Dir());
             parameters.put("tempDir", config.getTemp_dir());

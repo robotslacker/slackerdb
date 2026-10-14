@@ -4,6 +4,7 @@ import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.response.CloseComplete;
+import org.slackerdb.dbserver.message.response.ErrorResponse;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.dbserver.server.DBSession;
 
@@ -75,13 +76,35 @@ public class CloseRequest extends PostgresRequest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
         try {
+            String cacheKey = closeType == 'S'
+                    ? "PreparedStatement" + "-" + portalName
+                    : "Portal" + "-" + portalName;
+
+            if (session.getParsedStatement(cacheKey) == null) {
+                // PG 语义：Close 一个不存在的语句/门户 → 26000 / 34000。
+                // 改造前一律回 CloseComplete，客户端无法区分"确实关掉了"与"本来就不存在"；
+                // 对连接池/驱动来说，这会把"句柄早就没了"这种状态掩盖下去。
+                session.markExtendedProtocolError();
+
+                ErrorResponse errorResponse = new ErrorResponse(this.dbInstance);
+                errorResponse.setErrorFile("CloseRequest");
+                errorResponse.setErrorResponse(closeType == 'S' ? "26000" : "34000",
+                        (closeType == 'S' ? "prepared statement \"" : "portal \"") + portalName
+                                + "\" does not exist");
+                errorResponse.process(ctx, request, out);
+                PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out,
+                        this.dbInstance.logger);
+                out.close();
+                return;
+            }
+
             if (closeType == 'S') {
-                session.clearParsedStatement("PreparedStatement" + "-" + portalName);
+                session.clearParsedStatement(cacheKey);
             }
             else {
                 // (closeType == 'P')
                 // 关门户只释放它的结果集，不动共享的 PreparedStatement（见 DBSession.closePortal）。
-                session.closePortal("Portal" + "-" + portalName);
+                session.closePortal(cacheKey);
             }
         }
         catch (Exception e) {
@@ -92,15 +115,16 @@ public class CloseRequest extends PostgresRequest {
                             ? "PreparedStatement-" + portalName
                             : "Portal-" + portalName, e);
         }
+        finally {
+            // 取消会话的开始时间，以及业务类型
+            session.executingFunction = "";
+            session.executingTime = null;
+        }
 
         // 标记Close完成
         CloseComplete closeComplete = new CloseComplete(this.dbInstance);
         closeComplete.process(ctx, request, out);
         PostgresMessage.writeAndFlush(ctx, CloseComplete.class.getSimpleName(), out, this.dbInstance.logger);
         out.close();
-
-        // 取消会话的开始时间，以及业务类型
-        session.executingFunction = "";
-        session.executingTime = null;
     }
 }

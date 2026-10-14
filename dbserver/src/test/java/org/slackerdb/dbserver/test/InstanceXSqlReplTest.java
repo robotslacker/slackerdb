@@ -1,5 +1,6 @@
 package org.slackerdb.dbserver.test;
 
+import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -233,6 +234,225 @@ public class InstanceXSqlReplTest {
         JSONObject closeJson = JSONObject.parseObject(closeResp);
         assert "closed".equals(closeJson.getJSONObject("data").getString("status"));
 
+        client.close();
+    }
+
+    // ------------------------------------------------------------------
+    // 以下为 SQL REPL 审计问题的回归用例
+    // ------------------------------------------------------------------
+
+    private static String startSession(WebSocketTestClient client) throws Exception {
+        JSONObject startMsg = new JSONObject();
+        startMsg.put("id", "start");
+        startMsg.put("type", "start");
+        startMsg.put("data", new JSONObject());
+        JSONObject startJson = JSONObject.parseObject(client.sendAndReceive(startMsg.toString()));
+        String sessionId = startJson.getJSONObject("data").getString("sessionId");
+        assert sessionId != null && !sessionId.isEmpty();
+        return sessionId;
+    }
+
+    /** 提交一条 SQL 并轮询 fetch 直到任务结束，返回最后一次 fetch 的响应。 */
+    private static JSONObject execAndCollect(WebSocketTestClient client, String sessionId, String sql,
+                                             int maxRows) throws Exception {
+        JSONObject execData = new JSONObject();
+        execData.put("sessionId", sessionId);
+        execData.put("sql", sql);
+        JSONObject execMsg = new JSONObject();
+        execMsg.put("id", "exec");
+        execMsg.put("type", "exec");
+        execMsg.put("data", execData);
+        JSONObject execJson = JSONObject.parseObject(client.sendAndReceive(execMsg.toString()));
+        String taskId = execJson.getJSONObject("data").getString("taskId");
+        assert taskId != null && !taskId.isEmpty() : "exec 未返回 taskId: " + execJson;
+
+        JSONObject fetchMsg = new JSONObject();
+        fetchMsg.put("id", "fetch");
+        fetchMsg.put("type", "fetch");
+        for (int i = 0; i < 60; i++) {
+            JSONObject fetchData = new JSONObject();
+            fetchData.put("sessionId", sessionId);
+            fetchData.put("taskId", taskId);
+            fetchData.put("maxRows", maxRows);
+            fetchMsg.put("data", fetchData);
+            JSONObject fetchJson = JSONObject.parseObject(client.sendAndReceive(fetchMsg.toString()));
+            String status = fetchJson.getJSONObject("data").getString("status");
+            if (!"running".equals(status)) {
+                return fetchJson;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("fetch 超时");
+    }
+
+    /**
+     * 分页必须不丢行：历史实现里 {@code while (rs.next() && fetched < maxRows)} 的短路求值
+     * 会在每次页边界多读并丢弃一行，7 行/maxRows=2 只能拿到 5 行。
+     */
+    @Test
+    void testSqlReplPagingKeepsEveryRow() throws Exception {
+        WebSocketTestClient client = new WebSocketTestClient("ws://127.0.0.1:" + dbPortX + "/sql/ws");
+        String sessionId = startSession(client);
+
+        int[][] cases = {{7, 2}, {10, 3}, {10, 4}, {1, 1}, {10, 1}};
+        for (int[] testCase : cases) {
+            int rowCount = testCase[0];
+            int pageSize = testCase[1];
+
+            JSONObject execData = new JSONObject();
+            execData.put("sessionId", sessionId);
+            execData.put("sql", "SELECT i FROM range(0," + rowCount + ") t(i)");
+            JSONObject execMsg = new JSONObject();
+            execMsg.put("id", "exec");
+            execMsg.put("type", "exec");
+            execMsg.put("data", execData);
+            JSONObject execJson = JSONObject.parseObject(client.sendAndReceive(execMsg.toString()));
+            String taskId = execJson.getJSONObject("data").getString("taskId");
+
+            java.util.List<Integer> seen = new java.util.ArrayList<>();
+            for (int page = 0; page < rowCount + 5; page++) {
+                JSONObject fetchData = new JSONObject();
+                fetchData.put("sessionId", sessionId);
+                fetchData.put("taskId", taskId);
+                fetchData.put("maxRows", pageSize);
+                JSONObject fetchMsg = new JSONObject();
+                fetchMsg.put("id", "fetch");
+                fetchMsg.put("type", "fetch");
+                fetchMsg.put("data", fetchData);
+                JSONObject fetchJson = JSONObject.parseObject(client.sendAndReceive(fetchMsg.toString()));
+                JSONObject data = fetchJson.getJSONObject("data");
+                if ("running".equals(data.getString("status"))) {
+                    page--;
+                    Thread.sleep(50);
+                    continue;
+                }
+                JSONArray rows = data.getJSONArray("rows");
+                for (int i = 0; rows != null && i < rows.size(); i++) {
+                    seen.add(rows.getJSONObject(i).getInteger("i"));
+                }
+                if (!data.getBooleanValue("hasMore")) {
+                    break;
+                }
+            }
+            java.util.List<Integer> expected = new java.util.ArrayList<>();
+            for (int i = 0; i < rowCount; i++) {
+                expected.add(i);
+            }
+            assert seen.equals(expected)
+                    : "分页丢行：rows=" + rowCount + " maxRows=" + pageSize + " got=" + seen + " expect=" + expected;
+        }
+        client.close();
+    }
+
+    /** maxRows <= 0 必须明确报错（历史实现会让客户端一直拿到 hasMore=true）。 */
+    @Test
+    void testSqlReplRejectsNonPositiveMaxRows() throws Exception {
+        WebSocketTestClient client = new WebSocketTestClient("ws://127.0.0.1:" + dbPortX + "/sql/ws");
+        String sessionId = startSession(client);
+
+        JSONObject execData = new JSONObject();
+        execData.put("sessionId", sessionId);
+        execData.put("sql", "SELECT i FROM range(0,3) t(i)");
+        JSONObject execMsg = new JSONObject();
+        execMsg.put("id", "exec");
+        execMsg.put("type", "exec");
+        execMsg.put("data", execData);
+        String taskId = JSONObject.parseObject(client.sendAndReceive(execMsg.toString()))
+                .getJSONObject("data").getString("taskId");
+
+        JSONObject fetchData = new JSONObject();
+        fetchData.put("sessionId", sessionId);
+        fetchData.put("taskId", taskId);
+        fetchData.put("maxRows", 0);
+        JSONObject fetchMsg = new JSONObject();
+        fetchMsg.put("id", "fetch");
+        fetchMsg.put("type", "fetch");
+        fetchMsg.put("data", fetchData);
+        JSONObject response = JSONObject.parseObject(client.sendAndReceive(fetchMsg.toString()));
+        assert response.containsKey("error") : "maxRows=0 应返回错误对象：" + response;
+        assert response.getString("error").contains("positive") : response.toJSONString();
+        client.close();
+    }
+
+    /**
+     * DATE/TIME/TIMESTAMPTZ/BLOB/LIST 等列必须能回包。
+     *
+     * <p>历史实现里这些值让 ObjectMapper 序列化失败，而异常被 catch 吞掉，
+     * 客户端永远收不到任何响应（不是报错，是彻底静默）。</p>
+     */
+    @Test
+    void testSqlReplRepliesForNonScalarTypes() throws Exception {
+        WebSocketTestClient client = new WebSocketTestClient("ws://127.0.0.1:" + dbPortX + "/sql/ws");
+        String sessionId = startSession(client);
+
+        String[][] types = {
+                {"DATE", "DATE '2026-10-09'"},
+                {"TIME", "TIME '12:34:56'"},
+                {"TIMESTAMPTZ", "TIMESTAMPTZ '2026-10-09 12:34:56+00'"},
+                {"BLOB", "'\\xDE\\xAD'::BLOB"},
+                {"LIST", "[1,2,3]"},
+                {"JSON", "'{\"a\":1}'::JSON"}
+        };
+        for (String[] type : types) {
+            JSONObject response = execAndCollect(client, sessionId, "SELECT " + type[1] + " AS v", 10);
+            JSONObject data = response.getJSONObject("data");
+            assert data != null : type[0] + " 未回包（静默丢弃）";
+            assert "completed".equals(data.getString("status")) : type[0] + " 状态异常：" + response;
+            assert data.getJSONArray("rows").getJSONObject(0).get("v") != null : type[0] + " 取值为空：" + response;
+        }
+        client.close();
+    }
+
+    /** REPL 必须支持 PL/SQL 匿名块（与 PG 协议路径同一个引擎）。 */
+    @Test
+    void testSqlReplSupportsPlSqlBlock() throws Exception {
+        WebSocketTestClient client = new WebSocketTestClient("ws://127.0.0.1:" + dbPortX + "/sql/ws");
+        String sessionId = startSession(client);
+
+        String block = """
+                DO $$
+                DECLARE
+                    i     INTEGER := 1;
+                    total INTEGER := 0;
+                BEGIN
+                    CREATE OR REPLACE TABLE repl_plsql_t(n INTEGER);
+                    WHILE i <= 6 LOOP
+                        INSERT INTO repl_plsql_t VALUES (:i);
+                        total := total + i;
+                        i := i + 1;
+                    END LOOP;
+                    INSERT INTO repl_plsql_t VALUES (:total);
+                END;
+                $$;""";
+        JSONObject blockResult = execAndCollect(client, sessionId, block, 100);
+        assert "completed".equals(blockResult.getJSONObject("data").getString("status"))
+                : "PL/SQL 块执行失败：" + blockResult;
+
+        JSONObject count = execAndCollect(client, sessionId, "SELECT count(*) AS c FROM repl_plsql_t", 10);
+        assert count.getJSONObject("data").getJSONArray("rows").getJSONObject(0).getInteger("c") == 7
+                : "PL/SQL 效果不正确：" + count;
+        client.close();
+    }
+
+    /** 二次 cancel 必须返回 no-running-statement（文档契约），而不是裸 error。 */
+    @Test
+    void testSqlReplSecondCancelContract() throws Exception {
+        WebSocketTestClient client = new WebSocketTestClient("ws://127.0.0.1:" + dbPortX + "/sql/ws");
+        String sessionId = startSession(client);
+
+        JSONObject cancelData = new JSONObject();
+        cancelData.put("sessionId", sessionId);
+        JSONObject cancelMsg = new JSONObject();
+        cancelMsg.put("id", "cancel");
+        cancelMsg.put("type", "cancel");
+        cancelMsg.put("data", cancelData);
+        JSONObject first = JSONObject.parseObject(client.sendAndReceive(cancelMsg.toString()));
+        assert first.getJSONObject("data") != null : "首次 cancel 不应返回裸 error：" + first;
+
+        JSONObject second = JSONObject.parseObject(client.sendAndReceive(cancelMsg.toString()));
+        assert second.getJSONObject("data") != null : "二次 cancel 不应返回裸 error：" + second;
+        assert "no-running-statement".equals(second.getJSONObject("data").getString("status"))
+                : "二次 cancel 应为 no-running-statement：" + second;
         client.close();
     }
 }
