@@ -1,0 +1,476 @@
+= dbcli 用户手册（SlackerDB 命令行客户端）
+:lang: zh-CN
+
+
+== 1. 这是什么
+
+`dbcli` 是 SlackerDB 的命令行客户端：跑 SQL、看结果，也能把一批脚本自动跑完并校验结果。
+
+* **SQL 客户端**：交互式控制台 + 批处理脚本执行器。语句以 `;` 或单独一行 `/` 收尾，执行中可用 Ctrl-C 取消。
+* **结果校验**：`_assert` 做语句级断言，`--ref` / `_compare` 与参考文件逐行比对。
+* **可编排**：`_job` 并发跑多个脚本，`_ssh` / SFTP 操作远端，`_host` 执行本地命令。
+
+== 2. 运行环境
+
+* JDK 17 或更高。
+* 一个可连的 SlackerDB 实例（同机或远程）。
+* 发行包里的启动脚本：`bin/dbcli.bat`（Windows）或 `bin/dbcli.sh`（Linux/macOS）。
+* JDK 查找顺序：`SLACKERDB_JAVA_HOME` -> `JAVA_HOME` -> `PATH`。
+
+== 3. 安装与启动
+
+发行包中 `dbcli` 位于：
+
+----
+jlib/slackerdb-dbcli-<版本>-standalone.jar   主程序（已含全部依赖）
+bin/dbcli.bat | bin/dbcli.sh                 启动脚本（Windows | Linux/macOS）
+doc/dbcli/README*.adoc | README*.pdf         本手册（中英双语）
+----
+
+常用启动方式：
+
+[source,bash]
+----
+dbcli                                   # 无参数：进控制台、把 stdin 当脚本，或打印用法帮助
+type script.sql | dbcli                 # 把其它命令的输出当脚本执行
+dbcli --execute script.sql              # 执行脚本后退出
+dbcli --execute script.sql --logfile run.log --reference golden.ref   # 跑脚本并和参考文件比对
+dbcli --execute soak.sql --daemon true --pidfile pid/dbcli.pid        # 后台运行
+dbcli --help                            # 帮助
+dbcli --version                         # 版本信息
+----
+
+语句什么时候执行（批处理与控制台同一套规则）：
+
+[source,sql]
+----
+select 1;                       -- 顶层 ';'：语句写完，回车即执行
+select 'a;b'                    -- 这个 ';' 在字符串里，语句没写完，继续等
+;                               -- 现在才执行（整条 select）
+create procedure p() begin      -- 块语句：块体里的 ';' 也不收尾
+  select 1;
+end;
+/                               -- 顶格的 '/'：这时才执行
+----
+
+* `_` 开头的命令（`_help`、`_exit`、`_set …`、`_assert …`）**按行收尾，不需要 `;`**。
+* 控制台里，提示符处 Ctrl-C 取消正在输入的行；语句执行期间 Ctrl-C 取消这条语句。
+
+=== 3.1 版本与横幅
+
+`--version`（`-V` 同义）打印版本与构建时间；启动横幅只打印客户端名字：
+
+[source,bash]
+----
+$ dbcli --version
+[CLIENT] VERSION: 0.2.1
+[CLIENT] Build Time: 2026-10-17 01:17:02 +08:00
+
+$ dbcli
+dbcli (SlackerDB command line client)
+dbcli>
+----
+
+=== 3.2 命令行历史
+
+控制台的历史跨会话保存在 `~/slackerdb/dbcli.history`：启动时读入，上下键能翻到之前敲过的语句，退出时写回。
+
+== 4. 命令行选项
+
+[cols="1,3"]
+|===
+| 选项 | 含义
+
+| `--execute <脚本>` | 执行该脚本后退出；`--execute -` 表示从 stdin 读脚本
+| `--logon <连接串>` | 跑脚本前先连接（写法同 `_connect`）；默认取环境变量 `SLACKERDB_LOGON`，命令行优先
+| `--var NAME=VALUE` | 定义脚本变量，可重复；供 `${名字}` 取值
+| `--profile <脚本>` | 在主脚本/控制台**之前**执行该脚本，可重复，按给定顺序
+| `--silent` | 完全静默：终端上什么都不打印，只留退出码（日志等文件产物照常写）
+| `--logfile <文件>` | 把本次运行写进文件：被执行语句的原文 + 与终端相同的数据/状态输出
+| `--reference <文件>`、`--ref <文件>` | 把本次运行的数据输出与参考文件逐行比对（**ref 必须已存在**）
+| `--report-dir <目录>` | `--ref` 产物写进该目录（默认与 work 文件同目录）
+| `--daemon <布尔>` | 把脚本放到后台跑；裸写 `--daemon` 等价 `true`
+| `--pidfile <文件>` | 执行脚本的进程把自己的 pid 写进去。**后台副本退出后保留该文件**（父进程要靠它报出 pid），拿里面的 pid 判断副本还在不在；前台运行退出时删掉
+| `-h`、`--help` | 列出选项后退出
+| `-V`、`--version` | 打印版本与构建时间后退出
+|===
+
+**脚本里**的相对路径以 `--execute <文件>` 所在目录为参照（stdin 与控制台用进程当前目录）；命令行选项一律按进程当前目录解析。
+
+== 5. 连接数据库
+
+`_connect` 认三种写法：
+
+[source,sql]
+----
+_connect 127.0.0.1:3175/db1                                  # 简写：host:port/service（三段都必填）
+_connect 127.0.0.1:3175/db1?param=value                      # 连接参数（三种写法都原样透传）
+_connect user/password@jdbc:slackerdb://127.0.0.1:3175/db1   # slackerdb 全写：驱动口径的 URL
+_connect jdbc:slackerdb://127.0.0.1:3175/                    # slackerdb 全写：省略库名（用默认库）
+_connect jdbc:sqlite:/tmp/demo.db                            # 其它 jdbc:<scheme>: URL 原样透传
+_connect user/password@jdbc:postgresql://127.0.0.1:5432/db   # （对应驱动要在 classpath 上）
+_disconnect
+----
+
+* **简写**形态没有缺省值：host、端口、服务名都必填，也不接受用户名/口令。
+* **全写**形态把 `jdbc:` 起的 URL 原样交给驱动；`slackerdb` 分支由客户端校验 host/端口/库名，库名可省略。
+* URL 里如果必须有 `;`（脚本的语句分隔符），整段加引号：`_connect "jdbc:h2:mem:t;DB_CLOSE_DELAY=-1"`。
+* 其它写法报 `Invalid connection string [...]`，并原样回显写下的取值。
+
+=== 加载其它 JDBC 驱动
+
+随包只带 SlackerDB 与 SQLite 两个驱动；其它驱动（PostgreSQL、MySQL…）要先加载，再连接：
+
+[source,sql]
+----
+_load jdbcdriver C:\drivers\postgresql-42.7.2.jar
+_connect postgres/secret@jdbc:postgresql://127.0.0.1:5432/postgres
+select version();
+----
+
+同一个 jar 只真正加载一次；加载后本次运行里所有 `_connect`（含作业）都能用这个驱动。
+`--logon` 在脚本之前执行，用不上脚本里才加载的驱动——需要的话把 `_load` + `_connect` 写进 `--profile`。
+
+== 6. 脚本基础
+
+* 空行与 `--`、`#` 开头的注释行会被忽略。
+* **SQL 语句以 `;` 结束**，或用**单独一行、顶格的 `/`** 结束（适合块与存储过程）。
+* 一行可以写多条语句：`select 1; select 2;`。
+* 命令关键字不区分大小写；脚本里可以用 `${变量}` 取值（见第 8 节）。
+* 错误按 `_whenever` 的设置处理（见 §7.8），默认不改变退出码。
+
+== 7. 命令参考
+
+下面的清单与 `_HELP` 同源（由 `help/HelpCatalog.java` 生成，测试保证两边一致）；每条命令的详细说明用 `_help <命令>` 查看。
+
+// BEGIN GENERATED: help-catalog (source: help/HelpCatalog.java; checked by HelpCatalogReadmeTest)
+* `<SQL statement>`
+* `_ASSERT <l> <op> <r> [, n]`
+* `_COMPARE <work> <ref>`
+* `_CONNECT <host>:<port>/<service>[?k=v]`
+* `_CONNECT [<user>[/<password>]@]jdbc:slackerdb://<host>:<port>/[<database>]`
+* `_CONNECT [<user>[/<password>]@]jdbc:<scheme>:<url>`
+* `_DISCONNECT`
+* `_ECHO ... echo off`
+* `_EXIT [n] | _QUIT [n]`
+* `_HELP [topic]`
+* `_HOST <command>`
+* `_JOB ...`
+* `_LOAD JDBCDRIVER <jar>`
+* `_SESSION SAVE|RESTORE|RELEASE|SAVEURL|SHOW <name>`
+* `_SET @name <value>`
+* `_SET ECHO ON|OFF`
+* `_SET FEEDBACK ON|OFF`
+* `_SET TERMOUT ON|OFF`
+* `_SET TIMING ON|OFF`
+* `_SET TIME ON|OFF`
+* `_SET OUTFORMAT table|vertical|csv`
+* `_SET HEADER ON|OFF`
+* `_SET LINEWIDTH <n>`
+* `_SET COLWIDTH <n>`
+* `_SET DIFF_REPORT_HTML ON|OFF`
+* `_SET AUTOCOMMIT ON|OFF`
+* `_SET TIMEOUT <n>`
+* `_SLEEP <seconds>`
+* `_SPOOL <file>`
+* `_SSH ...`
+* `_START <script> [args...]`
+* `_WHENEVER ERROR CONTINUE|EXIT <n>`
+// END GENERATED: help-catalog
+
+=== 7.1 SQL 语句
+
+直接写 SQL 即可：
+
+[source,sql]
+----
+create table tab1 (id int, name varchar(20));
+insert into tab1 values (1, 'alpha');
+select * from tab1;
+with cte as (select 1 as x) select * from cte;
+truncate table tab1;
+commit;
+rollback;
+begin;                                          # 事务形态：用 ';' 收尾
+----
+
+=== 7.2 `_connect` / `_disconnect` / `_session`
+
+多会话支持：在一个终端内保存多个连接并来回切换（名字是引用语义）。
+
+[source,sql]
+----
+_connect 127.0.0.1:3175/db1
+_connect user/password@jdbc:slackerdb://127.0.0.1:3175/db1   # 全写（用户名/口令与库名都可省略）
+_disconnect
+_session SAVE name1          # 给当前连接再挂一个名字
+_session RESTORE name1       # 切换到它
+_session SAVEURL url1        # 只记住当前连接的 URL
+_session RESTORE url1        # 按该 URL 重新连接
+_session RELEASE name1       # 删掉这个名字（没有名字再引用该连接时才真正关闭）
+_session SHOW                # 结果集：name / url / current
+----
+
+=== 7.3 `_assert`
+
+[source,sql]
+----
+_assert RESULT.ERRORCODE = 0, errorCodeCheck      // 裸形态；逗号后是断言名
+_assert {% RESULT.ROWS[0][0] = 10 %}              // {% %} 外观
+_assert {% 3==3 %}                                // 常量断言
+----
+
+[cols="1,3"]
+|===
+| 取值器 | 含义
+
+| `RESULT.ERRORCODE` | 上一条 SQL 语句的错误码（0 表示正常）
+| `RESULT.ROWCOUNT` | 上一条语句的影响行数
+| `RESULT.ROWS.COUNT` | 结果集行数
+| `RESULT.HEADERS.COUNT` / `RESULT.COLUMNS.COUNT` | 列数
+| `RESULT.STATUS` | 上一条语句的状态文案
+| `RESULT.ROWS[r][c]` | 结果集第 r 行第 c 列（**0 基**）
+| `RESULT.HEADERS[i]` / `RESULT.COLUMNS[i]` | 列标签 / 列类型名（0 基）
+| `VAR.<名字>` / `ENV.<名字>` | 脚本变量 / 环境变量
+| `RUN.EXITCODE` / `JOB.<名字>.STATUS` | 子脚本退出码 / 作业状态
+|===
+
+比较符：`=`（`==`）、`<>`（`!=`）、`>`、`>=`、`<`、`<=`、`CONTAINS`、`NOTCONTAINS`、`MATCHES`（整串正则）、
+`EXISTS`（左值非 NULL 即成立，不写右值）。两侧都是数字时按数值比，否则按文本比（区分大小写）。
+
+通过时打印 `Assert successful.`（有名字时为 `Assert [名字] successful.`），失败时打印
+`Assert [名字] fail.` 并计一次错误；失败会触发 `_whenever error exit n`。
+
+=== 7.4 `_compare`
+
+[source,sql]
+----
+_compare work.txt reference.txt MASK NOCASE
+_compare SET MASK CASE IGBLANK NOTRIM
+_compare SKIPLINE "临时行.*"
+_compare MASKLINE "<id>[0-9]+" => "<id>N"
+_compare SET                     # 打印当前设置
+_compare RESET                   # 回到默认值并清空全部规则
+----
+
+* 第 1 个路径是**目标/工作文件**，第 2 个是**参考文件**。
+* 选项：`CASE` / `NOCASE`（默认区分大小写）、`TRIM` / `NOTRIM`（默认不剥离首尾空白）、
+  `MASK` / `NOMASK`（默认关；打开后把参考行当正则对工作行做整行匹配）、
+  `IGBLANK` / `NOIGBLANK`（默认关；打开后空行不参与比较）。
+* 有差异写 `<目标文件去扩展名>.dif`，一致则写 `<目标文件去扩展名>.suc`。
+  例：`_compare work.txt ref.txt` → `work.dif`，或（一致时）`work.suc`。
+* `_set diff_report_html on`（默认 off）时，有差异会另外写一份 `.html`。
+* 行规则声明即生效：`MASKLINE "<正则>" => "<替换>"` 替换命中内容，`SKIPLINE "<正则>"` 丢弃整行匹配的行，
+  `NOMASKLINE` / `NOSKIPLINE` 按模式移除。
+
+=== 7.5 `_set`
+
+[source,sql]
+----
+_set                    # 打印选项表（Option / Current value / Default value）
+_set echo off           # 执行的 SQL/命令原文不写进日志（默认 on）
+_set feedback off       # 摘要与错误都不打印（默认 on）
+_set termout off        # 结果集既不显示、也不进 logfile / _SPOOL（默认 on）
+_set timing on          # 每条语句跑完后打一行耗时（默认 off）
+_set time on            # 每条语句跑完后打一行当前系统时间（默认 off）
+_set outformat csv      # 结果格式 table|vertical|csv（默认 table）
+_set header off         # 不打印表头（默认 on）
+_set linewidth 200      # 整行最多多少显示列，超出换行（默认 200，不作用于 csv）
+_set colwidth 40        # 单元格最多多少显示列，超出用 ... 截断（默认 40，不作用于 csv）
+_set diff_report_html on  # _compare 有差异时另外写 HTML（默认 off）
+_set autocommit off     # 切换 JDBC autocommit（默认 on）
+_set timeout 30         # 单条语句的服务端超时秒数（默认 0 = 不限）
+_set @name value        # 定义脚本变量（与 --var 同一种；未定义时取同名环境变量）
+----
+
+`echo`、`feedback`、`termout`、`autocommit` 默认 `on`，`timing`、`time`、`diff_report_html` 默认 `off`；
+开关只接受 `on` / `off`。
+
+* `echo`：日志里记不记"跑了什么"（被执行语句的原文）。控制台的日志是整段会话的转录。
+* `feedback`：打不打摘要与错误（`N rows selected.`、`Not connected.` 这类）。关掉不影响错误计数与退出码。
+* `termout`：结果集打不打（关掉后终端、日志、`_SPOOL` 里都没有结果集）。
+* `timing` / `time`：每条语句后补一行耗时 / 当前时间。
+
+=== 7.6 `_spool` / `_echo`
+
+[source,sql]
+----
+_spool out.txt          # 把这次运行的记录写进文件（与 --logfile 同一份内容）
+_spool off              # 停止 spool
+_echo 一段标题
+第一行数据
+第二行数据
+echo off
+----
+
+`_echo` 与 `echo off` 之间的行按数据打印（变量会被替换），`echo off` 那一行不打印。
+`_SPOOL` 必须带文件名或 `OFF`；`OFF` 是关键字，要输出到名字真的叫 `off` 的文件请写路径（`_spool ./off`）。
+
+=== 7.7 `_start`
+
+[source,sql]
+----
+_start child.sql              # 串行执行另一个脚本
+_start child.sql arg1 arg2    # 传参数：${ARGV1}、${ARGV2} …
+----
+
+子脚本与调用方共享会话状态（连接、变量、`_set` 选项、spool）。相对脚本名先在工作目录里找，
+再在当前脚本所在目录里找；嵌套上限 16 层。
+
+=== 7.8 `_whenever`
+
+[source,sql]
+----
+_whenever error continue    # 出错继续（默认）
+_whenever error exit 3      # 出错以退出码 3 结束
+----
+
+每次错误都会打印并计数；没有 `_whenever error exit n` 时脚本继续跑，退出码不受影响（仍是 0）。
+
+=== 7.9 `_sleep` / `_host` / `_help` / `_exit`
+
+[source,sql]
+----
+_sleep 1.5                  # 秒，可带小数
+_host ls -l                 # 执行本地系统命令
+_help                       # 命令清单
+_help _compare              # 某条命令的详细说明
+_exit 0                     # 结束整次运行（_quit 同义）
+----
+
+`_host` 在脚本工作目录里通过 `cmd.exe /c`（Windows）或 `/bin/sh -c`（其它平台）执行命令：
+stdout 行作为数据行、stderr 行作为错误行都写到 stdout；退出码非 0 算一次错误。
+
+=== 7.10 `_job`
+
+作业是与当前脚本并发跑的另一份脚本，有自己的连接、变量与输出文件。
+
+[source,sql]
+----
+_job jobmanager on                              # 打开作业管理器
+_job create JOB1 script=child.sql k1=v1         # 定义作业（script 必需；其余 k=v 是变量）
+_job create JOB2 script=child.sql mode=process  # 用独立进程跑（隔离更硬）
+_job start JOB1                                 # 启动
+_job wait JOB1 timeout=10                       # 等它结束（timeout 单位秒；不写就一直等）
+_job show JOB1                                  # name/state/thread/elapsed/exitCode
+_job timer GO                                   # 放行定时点 GO
+_job wait TIMER:GO                              # 在定时点 GO 等待
+_job abort JOB1                                 # 请求停止并中断
+_job shutdown JOB1                              # 先请求，宽限期内没停才中断
+_job jobmanager off                             # 停止接受新作业
+----
+
+* `mode=thread`（默认）跑在同一 JVM 的线程里；`mode=process` 是独立的 dbcli 进程（可以硬超时、杀进程树）。
+* `timeout=` 到点只表示"这次没等到"（作业继续跑、仍是 `RUNNING`），要收掉它得显式 `abort` / `shutdown`。
+* 每个作业写一个输出文件 `<作业名>.out`（stdout + stderr），`_job wait` 返回时可以读。
+* 作业 `FAILED` / `TIMEOUT` 算一次错误；没有被 `_job wait` 检查过的失败，脚本收尾时也会报出来。
+* 同步屏障：一个脚本 `_job timer X` 放行，另一个脚本 `_job wait TIMER:X` 等待；两种模式都可用。
+
+=== 7.11 `_ssh` 与 SFTP
+
+[source,sql]
+----
+_ssh connect 192.168.183.128 with user root password 123456
+_ssh connect 192.168.183.128 with user root keyfile ~/.ssh/id_rsa port 2222
+_ssh execute "uname -a; df -h"
+_ssh set encoding = UTF-8
+_ssh save node1
+_ssh restore node1
+_ssh sftp getcwd
+_ssh sftp chdir /tmp/dir
+_ssh sftp listdir /tmp
+_ssh sftp mkdir /tmp/dir 755
+_ssh sftp put local.txt /tmp/dir/remote.txt
+_ssh sftp get /tmp/dir/remote.txt local-copy.txt
+_ssh sftp remove /tmp/dir/remote.txt
+_ssh disconnect
+----
+
+连接参数：`_ssh connect <主机> with user <用户> [password <口令> | keyfile <私钥>] [port <端口>]`，
+端口默认 22。SFTP 动作：
+
+[cols="1,2"]
+|===
+| 动作 | 参数
+
+| `getcwd` | 无（输出当前远端目录）
+| `chdir` / `listdir` | `<远端目录>`
+| `mkdir` / `chmod` | `<远端路径> <权限位>`；权限位是八进制（`755`）
+| `chown` | `<远端文件> <uid> <gid>`（十进制）
+| `truncate` | `<远端文件> <字节数>`
+| `put` / `get` | `<本地文件> <远端文件>` / `<远端文件> <本地文件>`
+| `rename` | `<远端旧名> <远端新名>`
+| `remove` | `<远端文件>`
+|===
+
+`_ssh execute` 把远端输出逐行打印，最后一行是 `< Command finished with [退出码]`。
+没连接就用 `_ssh` 或 SFTP 动作会报 `SSH not connected.` / `SFTP not connected.`。
+
+== 8. 变量
+
+脚本里用 `${名字}` 取值，这是唯一的占位符写法：
+
+[source,sql]
+----
+_set @table orders
+_echo t
+table=${table}  argv1=${ARGV1}
+echo off
+_start child.sql AAA 123        # 子脚本里 ${ARGV1}=AAA、${ARGV2}=123
+----
+
+来源与优先级（先命中先用）：脚本变量 `_set @名字 值` → 命令行 `--var NAME=VALUE` →
+子脚本参数 `${ARGV1}`、`${ARGV2}`… → 同名环境变量。
+
+* 已定义的名字不会再看环境变量；未定义且没有同名环境变量时**原样保留**（不会变成空串）。
+* 变量名区分大小写；替换是单遍的（替换结果不会再次扫描）。
+* 要让 `${...}` 原样出现，用反斜杠转义：`\${名字}`。
+* 需要预置一批变量时，用 `--profile <脚本>` 先跑一个设置脚本。
+
+== 9. 输出与退出码
+
+=== 9.1 结果格式
+
+结果格式由 `_set outformat` 决定（命令行没有格式参数），只影响打印方式，不影响数据库返回什么：
+
+[cols="1,3"]
+|===
+| 格式 | 输出
+
+| `table`（默认） | 带边框、带行号列、按列类型对齐
+| `vertical` | 一条记录一个块（`-[ RECORD 1 ]`），一行一个字段，宽表更好读
+| `csv` | 逗号分隔、必要时加引号、LF 行尾、没有行号列
+|===
+
+`_set header on|off`（默认 on）控制表头；`_set colwidth <n>`（默认 40）限制单元格宽度；
+`_set linewidth <n>`（默认 200）限制整行宽度（后两个都只作用于 `table` / `vertical`）。
+
+=== 9.2 运行记录与参考比对
+
+`--logfile <文件>` 保存本次运行的完整记录：被执行语句的原文 + 与终端相同的数据/状态输出。
+`--ref <文件>`（`--reference` 的别名）把这次运行的数据输出与参考文件逐行比对，产物：
+
+[cols="1,1,2"]
+|===
+| 产物 | 何时写 | 内容
+
+| `<工作文件去扩展名>.suc` | 比对一致 | `SUCCESS<TAB><脚本><TAB><参考文件路径>`
+| `<工作文件去扩展名>.dif` | 有差异 | 与 `_compare` 的 `.dif` 同一种格式
+|===
+
+`--report-dir <目录>` 指定这两个产物的目录（默认与 work 文件同目录）。首次录制参考文件：
+
+[source,bash]
+----
+dbcli --execute orders.sql --logfile orders.log     # 第一次：跑一遍，输出落在 orders.log
+mv orders.log orders.sql.ref                        # 人工确认后改名成参考文件
+dbcli --execute orders.sql --ref orders.sql.ref     # 以后：拿本次运行与 ref 比对
+----
+
+=== 9.3 退出码
+
+* 正常结束 `0`；`_EXIT n` / `_WHENEVER ERROR EXIT n` 返回 `n`。
+* 普通脚本错误（打印并计数）**不改变退出码**，仍是 `0`。
+* `--ref` 不一致或参考文件不存在：脚本退出码为 0 时返回 `1`（脚本自己的非 0 优先）。
+* 命令行/文件等错误 `1`；选项用法错误 `2`。
+* 未捕获异常 `255`；JVM 级 Error（如 OOM）`70`。

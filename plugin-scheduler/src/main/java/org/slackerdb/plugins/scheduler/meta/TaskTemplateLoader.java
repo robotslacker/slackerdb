@@ -51,6 +51,29 @@ public final class TaskTemplateLoader {
     /** 支持的脚本类型（SQL 由 HOP 工作流内的 SQL action 执行，不在此列）。 */
     public static final Set<String> SCRIPT_TYPES = Set.of("HOP", "SHELL", "COMMAND");
 
+    /**
+     * 默认任务类型：模板清单与 API 传入的任务定义**共用**这一个默认值。
+     *
+     * <p>曾经模板默认 {@code HOP}、API 默认 {@code SQL}（SQL 已不支持），同一个"没写类型"
+     * 在两条入口上落到不同结果：走模板能跑、走 API 必然在运行期被拒。默认值只留这一处，
+     * 两条入口都从这里取。</p>
+     */
+    public static final String DEFAULT_SCRIPT_TYPE = "HOP";
+
+    /**
+     * 任务定义允许出现的字段名（模板清单与 API 内联任务**共用**这一份清单）。
+     *
+     * <p>存在的意义是"不许静默忽略"：字段名拼错（例如 {@code taskTimeouts}）在两条入口上都会被指出来 ——
+     * 模板侧记一条 warning（不阻断装载，历史行为），API 侧直接 400。以前两处都是静默忽略，
+     * 于是"配了但没生效"只能靠运行期猜。</p>
+     */
+    public static final Set<String> TASK_FIELDS = Set.of(
+            "taskName", "taskScript", "taskScriptType",
+            "taskRunPolicy", "taskFailPolicy", "taskRetryTimes", "taskRetryInterval",
+            "taskParallelPolicy", "taskCrontabExpr", "taskInterval", "taskTimeout",
+            "taskEnabled", "taskMandatory", "taskGroup", "taskStartupOrder",
+            "taskDescription", "configJson", "variables");
+
     /** 加载结果。 */
     public record Loaded(Path file, List<SchedulerTask> tasks, List<String> warnings, List<String> groups) {
         public boolean isEmpty() {
@@ -231,13 +254,21 @@ public final class TaskTemplateLoader {
     }
 
     private static SchedulerTask toTask(String runId, String taskName, JSONObject item, List<String> warnings) {
+        // 拼错的字段名不许静默忽略：只记 warning、不阻断装载（与 API 侧"400 拒绝"区分开）
+        for (String key : item.keySet()) {
+            if (!TASK_FIELDS.contains(key)) {
+                warnings.add("任务[" + taskName + "] 含未知字段[" + key + "]（可用: "
+                        + TASK_FIELDS + "），已忽略");
+            }
+        }
+
         String script = item.getString("taskScript");
         if (script == null || script.isBlank()) {
             warnings.add("任务[" + taskName + "] 缺少 taskScript，已跳过");
             return null;
         }
 
-        String scriptType = upper(item.getString("taskScriptType"), "HOP");
+        String scriptType = upper(item.getString("taskScriptType"), DEFAULT_SCRIPT_TYPE);
         if (!SCRIPT_TYPES.contains(scriptType)) {
             warnings.add("任务[" + taskName + "] 的 taskScriptType=[" + scriptType + "] 不受支持（可用: "
                     + SCRIPT_TYPES + "），已跳过");
@@ -297,19 +328,36 @@ public final class TaskTemplateLoader {
         task.setConfigJson(item.getString("configJson"));
 
         // 任务级变量：随 JobData 下发，作为变量层中最靠近任务的一层
-        JSONObject variables = item.getJSONObject("variables");
-        if (variables != null && !variables.isEmpty()) {
-            Map<String, String> flat = new LinkedHashMap<>();
-            for (String key : variables.keySet()) {
-                Object value = variables.get(key);
-                if (value == null || value instanceof JSONObject || value instanceof JSONArray) {
-                    continue;
-                }
-                flat.put(key, String.valueOf(value));
-            }
-            task.setVariablesJson(JSON.toJSONString(flat));
+        Map<String, String> flatVariables = flattenVariables(item.get("variables"));
+        if (!flatVariables.isEmpty()) {
+            task.setVariablesJson(JSON.toJSONString(flatVariables));
         }
         return task;
+    }
+
+    /**
+     * 把 {@code variables} 对象拍平成 KEY→字符串（{@code null} 与嵌套对象/数组被忽略）。
+     *
+     * <p>模板清单与 API 内联任务**共用**这一份拍平逻辑，避免两条入口拍出不同结果；
+     * 差异只在"遇到嵌套值时怎么办"：模板路径静默跳过（历史行为），API 路径会在
+     * 调用这里之前先校验、把嵌套值当错误拒绝。</p>
+     *
+     * <p>入参声明为 {@link Object} 而不是 {@link JSONObject}：HTTP 层（Javalin 的 JSON 映射）
+     * 可能把 JSON 对象映射成 {@code Map} 的其它实现，只认 {@code JSONObject} 会把合法入参判成非法。</p>
+     */
+    public static Map<String, String> flattenVariables(Object variables) {
+        Map<String, String> flat = new LinkedHashMap<>();
+        if (!(variables instanceof Map<?, ?> map)) {
+            return flat;
+        }
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            Object value = entry.getValue();
+            if (value == null || value instanceof Map || value instanceof java.util.Collection) {
+                continue;
+            }
+            flat.put(String.valueOf(entry.getKey()), String.valueOf(value));
+        }
+        return flat;
     }
 
     private static String upper(String value, String fallback) {

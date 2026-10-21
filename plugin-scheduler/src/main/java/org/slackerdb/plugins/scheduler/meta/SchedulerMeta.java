@@ -46,7 +46,9 @@ public class SchedulerMeta {
                 "run_id VARCHAR NOT NULL, " +
                 "task_name VARCHAR NOT NULL, " +
                 "task_script VARCHAR, " +
-                "task_script_type VARCHAR DEFAULT 'SQL', " +
+                // 默认类型与 TaskTemplateLoader.DEFAULT_SCRIPT_TYPE 保持一致（SQL 不支持，见该类注释）；
+                // 写入时总是显式 setString，这里的 DEFAULT 只影响"新装库 + 漏填"的极端情况
+                "task_script_type VARCHAR DEFAULT 'HOP', " +
                 "task_run_policy VARCHAR DEFAULT 'RUN_ONCE', " +
                 "task_fail_policy VARCHAR DEFAULT 'STOP', " +
                 "task_retry_times INTEGER DEFAULT 0, " +

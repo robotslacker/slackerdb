@@ -13,8 +13,6 @@
     <packaging>jar</packaging>
 
     <properties>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
@@ -63,10 +61,6 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <configuration>
-                    <source>17</source>
-                    <target>17</target>
-                </configuration>
             </plugin>
             <!-- Assembly 插件：生成 fat JAR -->
             <plugin>
@@ -91,20 +85,24 @@
                             <goal>single</goal>
                         </goals>
                     </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-source-plugin</artifactId>
-                <executions>
+                    <!--
+                      源码包（<artifactId>-<version>-sources.jar）：口径见 build/sources-assembly.xml ——
+                      与 git 里提交的 src/main 树一致（java + antlr4 语法 + 资源），不含任何构建产物。
+                      执行级必须显式把 appendAssemblyId 改回 true 并换掉 descriptorRefs：
+                      插件级那份配置是给 jar-with-dependencies 用的（appendAssemblyId=false）。
+                    -->
                     <execution>
-                        <id>attach-sources</id>
+                        <id>sources-jar</id>
                         <phase>package</phase>
                         <goals>
-                            <goal>jar</goal>
+                            <goal>single</goal>
                         </goals>
                         <configuration>
-                            <classifier>sources</classifier>
+                            <appendAssemblyId>true</appendAssemblyId>
+                            <descriptorRefs combine.self="override"/>
+                            <descriptors>
+                                <descriptor>${project.basedir}/../build/sources-assembly.xml</descriptor>
+                            </descriptors>
                         </configuration>
                     </execution>
                 </executions>

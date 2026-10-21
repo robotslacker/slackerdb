@@ -380,10 +380,15 @@ public class Utils {
      *       （如 {@code setVariant("JP")}），把参数错误变成了异常。</li>
      * </ul>
      *
+     * <p><b>为什么这里用（已废弃的）构造器</b>：替代品 {@code Locale.of(...)} 是 Java 19 才加的 API，
+     * 而本项目 `--release 17`，用不了。构造器在 17 上就是唯一"能表达空 variant"的写法，
+     * 所以本方法显式抑制 deprecation 警告（JDK 19+ 编译时才会报警）。</p>
+     *
      * @param str Locale字符串
      * @return 对应的Locale对象，如果输入为null则返回null
      * @throws IllegalArgumentException 如果字符串格式无效
      */
+    @SuppressWarnings("deprecation")
     public static Locale toLocale(String str) throws IllegalArgumentException {
         if (str == null) {
             return null;

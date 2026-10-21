@@ -153,6 +153,17 @@ public class DBSession {
     public volatile String status = "N/A";
     // 客户端的IP地址
     public String clientAddress = "";
+    /**
+     * 客户端自报的应用名（来自 {@code SET application_name = 'x'}）。
+     *
+     * <p>为什么要单独记：pgjdbc 系驱动（含本项目 {@code dbdriver}）在握手完成后用一条
+     * {@code SET application_name} 上报来源，而这条语句会被 {@code SQLReplacer} 丢弃
+     * （DuckDB 不支持该设置）。若不在这里截留下来，管理端就永远无法回答
+     * "这条连接是谁的"，也就没法安全地做会话终止。</p>
+     *
+     * <p>由 {@code QueryRequest}/{@code ExecuteRequest} 在替换 SQL 之前写入，管理端跨线程读取。</p>
+     */
+    public volatile String applicationName = "";
     // 保存的语句解析信息
     //
     // 必须是并发容器：CancelRequest 与 KILL SESSION 会从**别的线程**遍历它

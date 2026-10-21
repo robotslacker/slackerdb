@@ -311,6 +311,13 @@ public class QueryRequest  extends PostgresRequest {
                 sql = "";
             }
 
+            // 客户端（pgjdbc 系驱动，含本项目 dbdriver）常用 SET application_name 上报来源，
+            // 而该语句会被 SQLReplacer 丢弃 —— 必须在替换前把值记到会话上，供 /status 辨识来源。
+            String requestedApplicationName = SQLReplacer.extractApplicationName(sql);
+            if (requestedApplicationName != null) {
+                this.dbInstance.getSession(getCurrentSessionId(ctx)).applicationName = requestedApplicationName;
+            }
+
             // 在执行之前需要做替换
             sql = SQLReplacer.replaceSQL(this.dbInstance, sql);
 

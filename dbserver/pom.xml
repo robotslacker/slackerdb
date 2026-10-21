@@ -125,14 +125,6 @@
         </dependency>
     </dependencies>
     <build>
-        <resources>
-            <resource>
-                <directory>src/main/resources</directory>
-                <includes>
-                    <include>**/*</include>
-                </includes>
-            </resource>
-        </resources>
         <plugins>
             <!--
                 COPY 语句文法（CopyStatement.g4）的生成：
@@ -167,32 +159,6 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-deploy-plugin</artifactId>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-resources-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <id>generate-version-properties</id>
-                        <phase>process-resources</phase>
-                        <goals>
-                            <goal>copy-resources</goal>
-                        </goals>
-                        <configuration>
-                            <outputDirectory>${project.build.outputDirectory}</outputDirectory>
-                            <resources>
-                                <resource>
-                                    <directory>src/main/resources</directory>
-                                    <includes>
-                                        <include>version.properties</include>
-                                    </includes>
-                                    <filtering>true</filtering>  <!-- 启用变量替换 -->
-                                </resource>
-                            </resources>
-                            <propertiesEncoding>${project.build.sourceEncoding}</propertiesEncoding>
-                        </configuration>
-                    </execution>
-                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -248,15 +214,25 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.6.3</version>
             </plugin>
-            <plugin>
+                        <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-source-plugin</artifactId>
+                <artifactId>maven-assembly-plugin</artifactId>
                 <executions>
+                    <!--
+                      源码包（<artifactId>-<version>-sources.jar）：口径见 build/sources-assembly.xml ——
+                      与 git 里提交的 src/main 树一致（java + antlr4 语法 + 资源），不含任何构建产物。
+                    -->
                     <execution>
-                        <id>attach-sources</id>
+                        <id>sources-jar</id>
+                        <phase>package</phase>
                         <goals>
-                            <goal>jar</goal>
+                            <goal>single</goal>
                         </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>${project.basedir}/../build/sources-assembly.xml</descriptor>
+                            </descriptors>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
@@ -264,6 +240,24 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <executions>
+                    <!--
+                      构建信息（generate-resources 阶段）：生成 target/classes/META-INF/build-info.properties，
+                      键名是 Spring Boot 的公共约定 build.artifact / build.group / build.name /
+                      build.version / build.time（读取见 common 的 org.slackerdb.common.version.BuildInfo）。
+
+                      它取代了原来“src/main/resources 里放 version.properties + 资源过滤”的写法：
+                        - 源码树里不再有可手工编辑的版本文件（那份文件曾经是“jar 与 POM 不一致”的唯一入口）；
+                        - build.time 是 ISO-8601 的 **UTC 瞬时**，取 project.build.outputTimestamp，
+                          没设置时取本次 Maven 会话的启动时刻（同一次 reactor 构建里各模块一致），
+                          要可复现构建就显式传 -Dproject.build.outputTimestamp=...；
+                        - 取值里不会留下 ${...} 占位符，运行期也不再有“把占位符印给用户”的降级路径。
+                    -->
+                    <execution>
+                        <id>build-info</id>
+                        <goals>
+                            <goal>build-info</goal>
+                        </goals>
+                    </execution>
                     <execution>
                         <id>repackage-standalone</id>
                         <goals>

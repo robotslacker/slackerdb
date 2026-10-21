@@ -1,7 +1,9 @@
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -46,7 +48,18 @@ public final class DaemonArgsFixture {
         if (file.getParent() != null) {
             Files.createDirectories(file.getParent());
         }
-        Files.write(file, lines, StandardCharsets.UTF_8);
+
+        // 先写临时文件、再原子改名：这样"目标文件存在"就等于"内容已经完整"。
+        // 不能直接写目标文件——Files.write 会先创建/截断再写内容，读的一方（测试）
+        // 正好落在这两步之间就会读到**空文件**（Windows 上实测红过一次：reported=[]）。
+        Path temp = file.resolveSibling(file.getFileName() + ".tmp");
+        Files.write(temp, lines, StandardCharsets.UTF_8);
+        try {
+            Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException fallback) {
+            // 极少数文件系统不支持原子改名：退化成覆盖式改名（此时读的一方靠测试侧的内容等待兜底）
+            Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
+        }
 
         // 立即退出：参数已经写完，测试机不该留下后台进程
         System.exit(0);

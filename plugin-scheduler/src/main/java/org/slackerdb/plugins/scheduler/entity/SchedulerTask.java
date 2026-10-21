@@ -20,7 +20,7 @@ public class SchedulerTask {
     /** Script path (relative to run's flow directory, or absolute) */
     private String taskScript;
 
-    /** Script type: SQL, HOP, SHELL */
+    /** Script type: HOP（默认）, SHELL, COMMAND。SQL 不支持：SQL 请写进 HOP 工作流的 SQL action */
     private String taskScriptType;
 
     /** Run policy: RUN_ONCE, CRONTAB, INTERVAL */

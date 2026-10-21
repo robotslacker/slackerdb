@@ -43,7 +43,10 @@ public class DynamicQuartzScheduler {
 
     private Scheduler createScheduler(int threadCount) throws SchedulerException {
         Properties props = new Properties();
-        props.setProperty("org.quartz.scheduler.instanceName", "SlackerDBScheduler");
+        // instanceName 必须**每个实例唯一**：Quartz 的 StdSchedulerFactory 按名字缓存单例，
+        // 写死名字会让同一 JVM 里的多个调度器（多实例 dbserver、或测试并行）共用同一个
+        // RAMJobStore —— 表现为"别人的触发器出现在我的暂停列表里"。
+        props.setProperty("org.quartz.scheduler.instanceName", nextInstanceName());
         props.setProperty("org.quartz.scheduler.instanceId", "AUTO");
         props.setProperty("org.quartz.threadPool.class", "org.quartz.simpl.SimpleThreadPool");
         props.setProperty("org.quartz.threadPool.threadCount", String.valueOf(threadCount));
@@ -70,6 +73,24 @@ public class DynamicQuartzScheduler {
     }
 
     /**
+     * 生成唯一的 Quartz 调度器实例名。
+     *
+     * <p>可用 {@code -Dslackerdb.scheduler.instanceName=...} 覆盖（排查/复现时有用）；
+     * 默认带上进程号与自增序号，保证同一 JVM 内互不干扰。</p>
+     */
+    private static String nextInstanceName() {
+        String override = System.getProperty("slackerdb.scheduler.instanceName");
+        if (override != null && !override.isBlank()) {
+            return override.trim();
+        }
+        return "SlackerDBScheduler-" + ProcessHandle.current().pid() + "-" + INSTANCE_SEQ.incrementAndGet();
+    }
+
+    /** 同 JVM 内调度器实例序号（见 {@link #nextInstanceName()}）。 */
+    private static final java.util.concurrent.atomic.AtomicInteger INSTANCE_SEQ =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /**
      * Get the thread count of the scheduler's thread pool.
      */
     public int getThreadCount() {
@@ -78,6 +99,21 @@ public class DynamicQuartzScheduler {
         } catch (SchedulerException e) {
             logger.warn("[SCHEDULER] Could not get thread count: {}", e.getMessage());
             return -1;
+        }
+    }
+
+    /**
+     * Quartz 是否已启动。
+     *
+     * <p>给能力声明（{@code /scheduler/capabilities}）用：过去 {@code /scheduler/status} 返回的是
+     * 硬编码常量，客户端无法据此判断调度器到底起没起。</p>
+     */
+    public boolean isStarted() {
+        try {
+            return quartzScheduler.isStarted();
+        } catch (SchedulerException e) {
+            logger.warn("[SCHEDULER] Could not read scheduler state: {}", e.getMessage());
+            return false;
         }
     }
 

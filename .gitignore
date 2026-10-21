@@ -7,3 +7,5 @@ dist
 logs
 localtest/
 */*.iml
+dbcli/gen/
+

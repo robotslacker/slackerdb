@@ -124,8 +124,11 @@
             <directory>${project.basedir}/../plugin/target</directory>
             <outputDirectory>jlib</outputDirectory>
             <includes>
-                <include>slackerdb-plugin-*api.jar</include>
+                <include>slackerdb-plugin-*.jar</include>
             </includes>
+            <excludes>
+                <exclude>slackerdb-plugin-*sources.jar</exclude>
+            </excludes>
         </fileSet>
         <!--
             这里原先逐个收集各模块的 -sources.jar 放在 source/ 目录下。
@@ -148,6 +151,65 @@
             <excludes>
                 <exclude>*-sources.jar</exclude>
             </excludes>
+        </fileSet>
+        <!--
+            dbcli（命令行客户端）：决策 15「随主发行包分发」。
+            只收 standalone jar（它已含 common/plsql/dbdriver/picocli/jsch/antlr 等依赖），
+            启动脚本与手册一并带上；**没有 conf**（决策 16：dbcli 不需要配置文件）。
+        -->
+        <fileSet>
+            <directory>${project.basedir}/../dbcli/target</directory>
+            <outputDirectory>jlib</outputDirectory>
+            <includes>
+                <include>slackerdb-dbcli-*-standalone.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../dbcli/bin</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>dbcli.sh</include>
+            </includes>
+            <filtered>true</filtered>
+            <fileMode>0755</fileMode>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../dbcli/bin</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>dbcli.bat</include>
+            </includes>
+            <filtered>true</filtered>
+            <fileMode>0755</fileMode>
+        </fileSet>
+        <!-- dbcli 的中英文用户手册（源文件 + 由 build 模块生成的 PDF）：放在 doc/dbcli/ 下，
+             避免与工程主手册的 README.pdf/README-CN.pdf 在同一个目录里混淆 -->
+        <fileSet>
+            <directory>${project.basedir}/../dbcli</directory>
+            <outputDirectory>doc/dbcli</outputDirectory>
+            <includes>
+                <include>README.adoc</include>
+                <include>README-CN.adoc</include>
+            </includes>
+        </fileSet>
+        <!--
+            dbcli 的中英文用户手册 PDF：asciidoctor 用**独立输出目录**生成
+            （generated-docs-dbcli/README.pdf 与 README-CN.pdf，见 build/pom.xml 的注释：
+            沿用顶层目录会覆盖工程主手册的同名 PDF）。
+        -->
+        <fileSet>
+            <directory>${project.basedir}/target/generated-docs-dbcli</directory>
+            <outputDirectory>doc/dbcli</outputDirectory>
+            <includes>
+                <include>README.pdf</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/target/generated-docs-dbcli</directory>
+            <outputDirectory>doc/dbcli</outputDirectory>
+            <includes>
+                <include>README-CN.pdf</include>
+            </includes>
         </fileSet>
     </fileSets>
 

@@ -2,6 +2,7 @@ package org.slackerdb.dbserver.service;
 
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import org.slackerdb.dbserver.BuildInfo;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -105,22 +106,9 @@ final class McpProtocol {
         return info;
     }
 
+    /** 服务端版本号：构建期生成（读不到时是 {@code unknown}），不再在这里维护一份硬编码的版本。 */
     private static String serverVersion() {
-        try {
-            java.util.Properties props = new java.util.Properties();
-            try (java.io.InputStream in = McpProtocol.class.getResourceAsStream("/version.properties")) {
-                if (in != null) {
-                    props.load(in);
-                    String version = props.getProperty("version");
-                    if (version != null && !version.isBlank()) {
-                        return version.trim();
-                    }
-                }
-            }
-        } catch (Exception ignored) {
-            // 版本号取不到不影响协议功能，退回固定值
-        }
-        return "0.2.1";
+        return BuildInfo.version();
     }
 
     /**

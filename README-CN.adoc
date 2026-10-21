@@ -5,19 +5,19 @@ image::robotslacker.jpg[RobotSlacker]
 
 === 什么是 SlackerDB？
 
-SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。它说 PostgreSQL 线路协议，
+SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。它能遵循 PostgreSQL 通讯协议，
 因此标准的 PostgreSQL 客户端无需任何专用驱动即可连接；同时它让多个客户端能够共用同一份
-DuckDB 库 —— 这是单进程的 DuckDB 做不到的。在此之上，它还提供了一层注册式 SQL，
-把查询变成可缓存的 HTTP 端点，以及一条用于装载数据的批量 COPY 通道。
+DuckDB 库 —— 这是单进程的 DuckDB 做不到的。在此之上，它还提供了一条用于装载数据的批量 COPY 通道，
+以及一层注册式 SQL， 把查询变成可缓存的 HTTP 端点，。
 
-它既可以作为独立服务器（`dbserver`）运行，也可以直接嵌入 Java 应用。
+它既可以作为独立服务器（`dbserver`）运行，也可以直接嵌入你的 Java 应用。
 
 ==== 能力
 
-* *PostgreSQL 线路协议* —— 标准 PostgreSQL 客户端开箱即连：JDBC、ODBC、libpq、psql、Python，以及 DBeaver 这类数据库工具。系统目录兼容层（`pg_catalog` 仿真）保证第三方客户端的元数据查询可用。
+* *PostgreSQL 通讯协议* —— 标准 PostgreSQL 客户端开箱即连：JDBC、ODBC、libpq、psql、Python，以及 DBeaver 这类数据库工具。系统目录兼容层（`pg_catalog` 仿真）保证第三方客户端的元数据查询可用。
 * *多会话访问* —— 一份 DuckDB 库同时服务多个并发客户端会话，具备连接池、会话级状态，SQL 在网络 I/O 线程之外执行。
 * *查询取消* —— 客户端取消与 `KILL SESSION` 能命中真正正在执行的那条语句。
-* *高性能数据导入* —— 支持 PostgreSQL `COPY … FROM STDIN` 的 CSV 与 BINARY 两种形式，流式解码路径实测约 0.6–2.3 百万行/秒（视数据形态而定）。
+* *高性能数据导入* —— 支持 PostgreSQL `COPY … FROM STDIN` 的 CSV 与 BINARY 两种形式。
 * *注册式 SQL 服务* —— 在运行时把参数化 SQL 注册为具名 HTTP 端点，自带结果缓存、服务版本与按服务设定的搜索路径。
 * *服务器管理接口* —— 管理端口提供状态与指标、数据库备份、日志查看与文件上传下载。
 * *WebSocket 异步 SQL* —— 异步执行 SQL 并分页取回结果，适用于单次请求装不下或太慢的查询。
@@ -56,6 +56,12 @@ SlackerDB 面向的是这样一类团队：想要 DuckDB 的分析性能，但�
     #        （不含 git 历史，也不含任何编译产物）。解开后在该目录里
     #        执行同样的 maven 命令，即可从源码重新构建全部产物。
 ....
+
+TIP: 在 zh-CN 的 Windows 上用 **JDK 8~17** 构建时，建议加上
+`MAVEN_OPTS=-Dfile.encoding=UTF-8`（JDK 18+ 默认就是 UTF-8，无需设置）。
+否则文档 PDF 阶段会多出一行 `error reading or parsing <M2_HOME>/conf/settings.xml`：
+那是 JRuby 里 jar-dependencies 按 GBK 读 UTF-8 的 Maven 配置导致的告警，
+**不影响产物**（PDF 照常生成），只是看着像构建错误。
 
 ==== 启动数据库服务器
 
@@ -118,9 +124,6 @@ extension_dir=
 plugins_dir=
 
 # 以后台守护进程方式运行（true/false）。默认是false
-# 命令行写法：--daemon true|false，裸写 --daemon 等价于 true。
-# 命令行上显式给出 --daemon 时以此为准，覆盖本配置项。
-# 只有 start 子命令支持后台运行。
 daemon=
 
 # PID 文件位置
@@ -161,17 +164,11 @@ client_timeout=600
 # 组播服务发现：本服务向哪个组播组通报自己。
 # 格式：<组IP>:<端口>（IPv6 组需加方括号：[ff02::1]:46666）
 # IPv4 组必须在 224.0.0.0/4 之内，其中 224.0.0.0/24 为保留段会被拒绝。
-# 没有默认值：留空即彻底不启用服务发现。
-# 代理端必须在 listener_address 里配置**完全相同**的取值，否则什么都发现不了，
-# 而且本端也不会有任何报错。
-# 示例：239.255.66.66:46666
+# 默认：不启用服务发现。
 advertise_address=
 
 # 发送组播通告所用的本机网卡。
 # 可填网卡名（eth0、Ethernet）或本机 IPv4 地址；留空则自动选择第一块可用网卡
-# （up、支持组播、非回环、且有非 link-local 的 IPv4 地址），选择规则是确定性的，
-# 同一台机器每次启动都会选中同一块。实际选中的网卡与地址会在启动日志里打印——
-# 发现不通时先看这里。
 # advertise_address 为空时本参数被忽略。
 advertise_nic=
 
@@ -190,9 +187,7 @@ max_workers=
 # 业务处理线程（在 Netty I/O 线程之外执行 SQL）
 # 默认：0 = 跟随 max_connections（每个会话一个业务线程）
 #  >0 = 显式指定线程数
-# 说明：共享同一个业务线程的连接之间仍会互相排队，
-# 被慢查询拖累的连接数约为 (连接数 / business_threads - 1)，
-# 因此该值应接近并发活跃会话数。
+# 该值建议应接近并发活跃会话数。
 business_threads=
 
 # 数据库引擎线程数
@@ -216,11 +211,13 @@ template=
 # 初始化脚本
 # 仅在首次启动时执行
 # 接受：.sql 文件或目录
+# 若指定目录，该目录下所有文件都会被执行
 init_script=
 
 # 启动脚本
 # 每次启动时执行
 # 接受：.sql 文件或目录
+# 若指定目录，该目录下所有文件都会被执行
 startup_script=
 
 # 系统区域设置
@@ -262,7 +259,7 @@ data_service_schema=
 # 启动时加载的 MCP 定义
 # - 接受：
 #   * JSON 文件路径（单个配置）
-#   * 目录路径（按名字顺序加载所有 *.mcp 与 *.service 文件）
+#   * 目录路径（按名字顺序加载所有 *.mcp 文件）
 # - 每个工具条目可设置 "handler": "builtin:<名称>" 以绑定到真实实现
 #   （run_sql、list_tables、describe_table、sample_rows、list_services、
 #    open_session、close_session）。未设置 "handler" 的工具只会回显入参。
@@ -276,7 +273,6 @@ mcp_config=
 mcp_llm_server=
 
 # 用于需要身份验证的服务的 MCP LLM API 密钥
-# OpenAI API 必需，其他服务可选
 # 示例：sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 # 默认：空（无 API 密钥）
 mcp_llm_key=
@@ -353,66 +349,19 @@ locale=
 你可以只保留需要修改的参数。 +
 未配置的参数将使用默认值。
 
-==== 服务发现：从注册机制迁移到组播
+==== 服务发现
 
-旧版本里，dbserver 通过 `remote_listener` 参数周期性地向一个固定的代理地址（`IP:PORT`）发送
-`REGISTER` 命令来完成登记，停止时发送 `UNREGISTER`。**该参数已被删除**，取而代之的是 UDP
-组播发现：dbserver 周期性向一个组播组喊"我在这儿"，代理加入同一个组收听，并据此维护
-别名到后端的映射。
+UDP组播发现：dbserver 周期性向一个组播组报告"我在这儿"，代理加入同一个组收听，并据此维护别名到后端的映射。
 
-.参数映射
-[cols="1,1,2",options="header"]
+[cols="1,2",options="header"]
 |===
-| 旧 | 新 | 说明
-| dbserver `remote_listener=IP:PORT` | dbserver `advertise_address=<组IP>:<端口>` | 语义变了：从"指向一台代理的单播地址"变成"一个网段内的组播组"
-| — | dbserver `advertise_nic=<网卡名或本机IP>` | 新增；留空自动选第一块可用网卡
-| — | dbproxy `listener_address=<组IP>:<端口>` | 新增；必须与 dbserver 的 `advertise_address` 逐字一致
+| 新 | 说明
+| dbserver `advertise_address=<组IP>:<端口>` | 语义变了：从"指向一台代理的单播地址"变成"一个网段内的组播组"
+| dbserver `advertise_nic=<网卡名或本机IP>` | 留空自动选第一块可用网卡
+| dbproxy `listener_address=<组IP>:<端口>` | 必须与 dbserver 的 `advertise_address` 逐字一致
 |===
 
-**没有默认值**：两端都不配置就是不启用，不会退回到某个"看起来能用"的组。
-**没有兜底通道**：旧的单播 `REGISTER` / `UNREGISTER` 命令已从代理删除，因此两端必须都升级到位。
-
-.升级方式
-[cols="1,3",options="header"]
-|===
-| 方式 | 说明
-| 停机整体升级（推荐） | 停掉两端 → 升级 → 改配置 → 启动。没有发现空窗
-| 滚动升级 | 会有空窗，且**先升哪一端都会空**：先升 dbserver，老代理收不到组播，新 dbserver 在窗口内不可见；先升代理，老 dbserver 的注册已无人接收，老 dbserver 在窗口内不可见。生产环境请安排维护窗口
-|===
-
-.升级步骤
-[cols="1,3",options="header"]
-|===
-| 步骤 | 操作
-| 1 | 停掉 dbserver 与 dbproxy
-| 2 | 升级 **dbproxy**，conf 里加上 `listener_address=<组IP>:<端口>`
-| 3 | 升级 dbserver：conf 里**删掉** `remote_listener=`，加上 `advertise_address=`（需要时再加 `advertise_nic=`）
-| 4 | 两端一起启动
-| 5 | 在代理上执行 `status`，确认别名已经出现（`Lease` 一栏应有剩余时间）
-|===
-
-WARNING: `remote_listener` 是**硬删除**。配置解析对未知参数是直接报错（`SLACKERDB-00004`），
-所以一份还留着 `remote_listener=` 的旧 conf 会让新版 dbserver **启动不起来**。这不是"注册不上"，
-而是进程退出。升级 dbserver 时必须同步改配置。
-
-WARNING: 回滚时两头都要回：先回滚 dbserver 与 dbproxy，配置文件也要一起回滚。
-
-.发现不通时的排查清单
-[cols="1,3",options="header"]
-|===
-| 现象 | 检查项
-| 代理上什么都没有 | 两端配置的组地址是否逐字一致；dbserver 的启动日志里有没有 `[DISCOVERY] Advertising ...` 这一行；代理的启动日志里有没有 `[DISCOVERY] Listening on ...`
-| dbserver 启动就失败 | 网卡名是否写错；本机是否有可用网卡（`advertise_nic=` 留空试试）
-| 代理日志出现 `Unknown admin command [REGISTER ...]` | 有 dbserver 还在用旧版本、旧的注册参数。它已经被发现机制无视，必须升级
-| 日志里有 `No announcement received ... for 60 seconds` | 防火墙是否放行了入站 UDP（默认端口 46666）；交换机是否开启了 IGMP snooping；是否跨了子网（组播 TTL 固定为 1，不出子网）
-| 别名出现过又消失 | 目标所在机器是否在 15 秒内都没有通告（进程被杀、机器休眠、网络抖动）
-| 容器 / Kubernetes 环境 | 多数 CNI 不转发组播，本机制在此类环境不可用，需要另行规划（例如宿主机网络模式或单播发现）
-|===
-
-NOTE: 别名默认等于数据库名，与旧的 `AS <数据库名>` 完全一致，因此**客户端连接串不需要修改**。
-
-NOTE: 主机的实际通告地址默认取"UDP 报文的源地址"而不是报文里自报的地址——源地址天然是从代理
-视角可达的那个。多网卡机器请用 `advertise_nic` 明确指定，或核对启动日志里打印的选中结果。
+**没有默认值**：两端都不配置就是不启用，
 
 ==== JDBC 支持
 
@@ -827,7 +776,7 @@ $$;
 ===== 值得了解的语义
 
 * 变量初始值为 `NULL`（而不是 `0`）。
-* `FOR i IN 1..5` 迭代 **1,2,3,4,5**（两端边界都包含）；`FOR i IN 5..1` 迭代 0 次；
+* `FOR i IN 1..5` 迭代 **1,2,3,4,5**（两端边界都包含）；
   `FOR i IN REVERSE 5..1` 迭代 5,4,3,2,1。
 * `EXIT` 只跳出最内层循环；`EXIT label` 跳出指定名称的循环。
 * `SELECT ... INTO` 返回 0 行时抛出 `NO_DATA_FOUND`，多于一行时抛出 `TOO_MANY_ROWS` ——
@@ -857,7 +806,7 @@ $$;
 ===== 客户端注意事项
 
 PL/SQL 块必须**不被拆分**地到达服务器。SlackerDB 自带的 JDBC 驱动在扩展协议中
-会按顶层分号拆分语句；它能识别美元引用，因此 `DO $$ ... $$` 会作为一条语句发送，
+会按顶层分号拆分语句；它能识别$$引用，因此 `DO $$ ... $$` 会作为一条语句发送，
 而未包裹的 `DECLARE ... END;` 块则不会。
 
 [cols=",",options="header",]
@@ -1538,7 +1487,7 @@ java -jar slackerdb-dbserver-0.2.1-standalone.jar --conf conf/dbserver.conf \
 
 每台服务器要用不同的 `serverName`；该命名空间属于本地配置，不采用服务端自称的名字。
 
-**3. 在客户端里提问验证。** 服务器上的工具会以 `mcp__<serverName>__<工具名>` 的形式交给模型，
+**3. 在客户端里提问验证。** 服务器上的工具会以 `+mcp__<serverName>__<工具名>+` 的形式交给模型，
 直接点名工具最省事：
 
 [source,text]
@@ -1546,7 +1495,12 @@ java -jar slackerdb-dbserver-0.2.1-standalone.jar --conf conf/dbserver.conf \
 用 mcp__slacker__run_sql 执行 SELECT 42 AS answer，把结果告诉我。
 ----
 
-模型会调用 `mcp__slacker__run_sql`，拿到 `rows = [[42]]`。不点名也能用
+// 下面两处写法不是笔误，既避开严格解析器的报错，也保证 HTML/PDF 渲染正确：
+// 1) `+...+` 是单加号行内透传：行内代码里的双下划线仍会触发强调替换（渲染成 mcp*slacker*run_sql，
+//    下划线被吃掉），透传只做特殊字符替换，既保住下划线也照常转义 < >。
+// 2) 两个相邻方括号会被当成块 ID 定界符，而 `42` 作 ID 不合法（ID 不能以数字开头），
+//    严格的解析器会报 "Block ID pattern invalid"；故首方括号改用字符引用 &#91;，渲染结果不变。
+模型会调用 `+mcp__slacker__run_sql+`，拿到 `rows = &#91;[42]]`。不点名也能用
 （"用 SlackerDB 的 MCP 工具查一下 SELECT 42 AS answer"），但把工具名写出来命中率最稳。
 
 两点使用提醒：
@@ -2478,6 +2432,30 @@ SlackerDB 包含一个基于 Web 的 SQL 控制台，提供交互式界面，可
      . 启动后通过语句指定：ALTER DATABASE <dbName> SET Encrypt Key <key>。
 
 
+=== dbcli（命令行客户端）
+
+发行包里还带一个命令行客户端 `dbcli`（Java 17+）：交互式连库写 SQL，或在 CI/批处理里跑脚本并校验结果。
+它就是发行包里的 `jlib/slackerdb-dbcli-<版本>-standalone.jar`，由 `bin/dbcli.bat` / `bin/dbcli.sh` 启动。
+
+[cols="1,3",options="header"]
+|===
+| 能力 | 说明
+
+| SQL 客户端 | 交互式控制台 + 批处理脚本；语句以顶层 `;` 或行首 `/` 收尾，执行中可用 Ctrl-C 取消
+| 结果校验 | `--ref` 把本次输出与参考文件比对；脚本里用 `_assert` 断言、`_compare` 比对
+| 连接 | `_connect` 支持简写、`jdbc:slackerdb://` 与其它 `jdbc:<scheme>:` URL；`_load jdbcdriver` 可动态加载驱动
+| 会话与编排 | `_session` 保存/切换多个连接；`_job` 并发作业；`_ssh`/SFTP、`_host`
+| 输出 | `_set` 控制回显/摘要/结果集；`table`/`vertical`/`csv` 三种格式；`_spool` 落盘
+|===
+
+....
+dbcli                                           # 交互式控制台
+dbcli --execute script.sql                      # 跑脚本
+dbcli --execute script.sql --logfile run.log --ref golden.ref   # 跑脚本并与参考文件比对
+....
+
+完整用法见 `dbcli/README-CN.adoc`（English: `dbcli/README.adoc`），模块简介与构建方式见 `docs/dbcli.md`。
+
 === 已知问题
 
 ==== 1. 用户与密码授权
@@ -3054,6 +3032,14 @@ data/scheduler/projects/                 ← 模板根（projectHome）
 
 清单文件也可以放在模板根目录（`projects/conf/defaultSchedulerTask.json`）供所有模板共用；
 找不到清单不会报错，实例就是没有预置任务。任务列表也可以用创建实例接口的 `tasks` 参数直接传入。
+
+上表字段在**两种入口上通用**（模板清单与 `POST /scheduler/run/create` 的内联 `tasks[]`）。内联任务会**先校验后落地**：
+`taskScriptType` 只接受 `HOP`/`SHELL`/`COMMAND`（默认 `HOP`），策略、`taskRetryTimes`/`taskRetryInterval`、`taskMandatory`、
+`variables`（只支持扁平标量值）同样校验，**字段名拼错（未知字段）也会被拒绝**；任一条不合格返回 `400` 与 `problems`
+清单，且不会创建实例目录与运行记录。模板清单里出现未知字段只记一条 warning（不阻断装载）。
+
+创建实例请求的**顶层**同理：只接受 `projectType` / `configJson` / `runId` / `tasks`，且 `tasks` 必须是数组；
+顶层未知字段（例如把 `tasks` 拼成 `task`）一律 `400`，不会静默回落到模板任务。
 
 ===== 变量：给 HOP 传连接信息
 

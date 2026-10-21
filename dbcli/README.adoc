@@ -1,0 +1,512 @@
+= dbcli User Manual (SlackerDB command line client)
+:lang: en
+
+// This file mirrors dbcli/README-CN.adoc section by section: keep both in sync.
+
+== 1. What this is
+
+`dbcli` is the command line client for SlackerDB: it runs SQL, shows the results, and can execute a set of
+scripts automatically and verify their results.
+
+* **SQL client**: an interactive console plus a batch script runner. Statements end with `;` or with `/` alone
+  on a line; a running statement can be cancelled with Ctrl-C.
+* **Result checks**: `_assert` for statement-level assertions, `--ref` / `_compare` to compare output with a
+  reference file line by line.
+* **Orchestration**: `_job` runs several scripts concurrently, `_ssh` / SFTP works on remote hosts, `_host`
+  runs local commands.
+
+== 2. Requirements
+
+* JDK 17 or newer.
+* A reachable SlackerDB instance (local or remote).
+* The launcher from the distribution: `bin/dbcli.bat` (Windows) or `bin/dbcli.sh` (Linux/macOS).
+* JDK lookup order: `SLACKERDB_JAVA_HOME` -> `JAVA_HOME` -> `PATH`.
+
+== 3. Install and start
+
+In the distribution `dbcli` lives in:
+
+----
+jlib/slackerdb-dbcli-<version>-standalone.jar   main program (all dependencies included)
+bin/dbcli.bat | bin/dbcli.sh                    launcher (Windows | Linux/macOS)
+doc/dbcli/README*.adoc | README*.pdf            this manual (Chinese and English)
+----
+
+Common ways to start it:
+
+[source,bash]
+----
+dbcli                                   # no arguments: console, stdin-as-script, or usage help
+type script.sql | dbcli                 # run the output of another command as a dbcli script
+dbcli --execute script.sql              # run a script and exit
+dbcli --execute script.sql --logfile run.log --reference golden.ref   # run and compare with a reference
+dbcli --execute soak.sql --daemon true --pidfile pid/dbcli.pid        # run in the background
+dbcli --help                            # usage
+dbcli --version                         # version information
+----
+
+When a statement runs (the same rule in batch and in the console):
+
+[source,sql]
+----
+select 1;                       -- a top level ';': the statement is complete, Enter runs it
+select 'a;b'                    -- this ';' is inside a string: incomplete, keep waiting
+;                               -- now it runs (the whole select)
+create procedure p() begin      -- block statement: ';' inside the body does not terminate it
+  select 1;
+end;
+/                               -- a '/' at the start of a line: now it runs
+----
+
+* Commands starting with `_` (`_help`, `_exit`, `_set ...`, `_assert ...`) **end at the end of the line, no
+  `;` needed**.
+* In the console, Ctrl-C at the prompt cancels the line being typed; Ctrl-C while a statement runs cancels
+  that statement.
+
+=== 3.1 Version and banner
+
+`--version` (`-V` is a synonym) prints the version and the build time; the banner only shows the client name:
+
+[source,bash]
+----
+$ dbcli --version
+[CLIENT] VERSION: 0.2.1
+[CLIENT] Build Time: 2026-10-17 01:17:02 +08:00
+
+$ dbcli
+dbcli (SlackerDB command line client)
+dbcli>
+----
+
+=== 3.2 Command line history
+
+The console history is kept across sessions in `~/slackerdb/dbcli.history`: it is read at start-up (the
+up/down keys reach statements from earlier sessions) and written back on exit.
+
+== 4. Command line options
+
+[cols="1,3"]
+|===
+| Option | Meaning
+
+| `--execute <script>` | run this script and exit; `--execute -` reads the script from stdin
+| `--logon <connect-string>` | connect before running the script (same shapes as `_connect`); the default comes from `SLACKERDB_LOGON`, the command line wins
+| `--var NAME=VALUE` | define a script variable, repeatable; used by `${name}`
+| `--profile <script>` | run this script **before** the main script / console, repeatable, in the given order
+| `--silent` | completely silent: nothing on the terminal, only the exit code is left (log files are still written)
+| `--logfile <file>` | write this run to the file: the executed statements plus the same data/status output as the terminal
+| `--reference <file>`, `--ref <file>` | compare this run's data output with the reference file line by line (**the ref must already exist**)
+| `--report-dir <dir>` | write the `--ref` products into this directory (by default next to the work file)
+| `--daemon <bool>` | run the script in the background; a bare `--daemon` means `true`
+| `--pidfile <file>` | the process that runs the script writes its pid into this file. A **background copy keeps the file** after it exits (the parent reads it to report the pid); use the pid it holds to tell whether that copy is still alive. A foreground run removes it on exit
+| `-h`, `--help` | list the options and exit
+| `-V`, `--version` | print version and build time and exit
+|===
+
+**Inside a script** relative paths resolve against the directory of the `--execute <file>` file (stdin and the
+console use the process working directory); command line options always resolve against the process working
+directory.
+
+== 5. Connecting to the database
+
+`_connect` accepts three shapes:
+
+[source,sql]
+----
+_connect 127.0.0.1:3175/db1                                  # short form: host:port/service (all three required)
+_connect 127.0.0.1:3175/db1?param=value                      # connection parameters (passed through in every form)
+_connect user/password@jdbc:slackerdb://127.0.0.1:3175/db1   # slackerdb form: the driver URL
+_connect jdbc:slackerdb://127.0.0.1:3175/                    # slackerdb form without a database (default database)
+_connect jdbc:sqlite:/tmp/demo.db                            # any other jdbc:<scheme>: URL is passed through verbatim
+_connect user/password@jdbc:postgresql://127.0.0.1:5432/db   # (that driver has to be on the classpath)
+_disconnect
+----
+
+* The **short** form has no defaults: host, port and service are all required, and a user name/password is not
+  accepted there.
+* The **full** form hands the `jdbc:` URL to the driver as written; the `slackerdb` branch is validated by the
+  client (host/port required, database optional).
+* A URL that must contain `;` (the statement separator) has to be quoted:
+  `_connect "jdbc:h2:mem:t;DB_CLOSE_DELAY=-1"`.
+* Any other shape is reported as `Invalid connection string [...]` with the text that was written.
+
+=== Loading another JDBC driver
+
+Only the bundled drivers (SlackerDB and SQLite) are known up front; PostgreSQL, MySQL, ... have to be loaded
+before they can be used:
+
+[source,sql]
+----
+_load jdbcdriver C:\drivers\postgresql-42.7.2.jar
+_connect postgres/secret@jdbc:postgresql://127.0.0.1:5432/postgres
+select version();
+----
+
+The same jar is really loaded only once; after that every `_connect` in this run (jobs included) can use that
+driver. `--logon` runs before the script, so it cannot use a driver the script loads - put `_load` +
+`_connect` in a `--profile` script if you need that.
+
+== 6. Script basics
+
+* Blank lines and lines starting with `--` or `#` are ignored.
+* **SQL statements end with `;`**, or with a **`/` alone at the start of a line** (handy for blocks and
+  stored procedures).
+* One line may hold several statements: `select 1; select 2;`.
+* Command keywords are case-insensitive; a script may use `${variable}` (section 8).
+* Errors are handled according to `_whenever` (section 7.8) and do not change the exit code by default.
+
+== 7. Command reference
+
+The list below is generated from the same source `_HELP` uses (`help/HelpCatalog.java`, a test keeps both in
+sync); use `_help <command>` for the details of one command.
+
+// BEGIN GENERATED: help-catalog (source: help/HelpCatalog.java; checked by HelpCatalogReadmeTest)
+* `<SQL statement>`
+* `_ASSERT <l> <op> <r> [, n]`
+* `_COMPARE <work> <ref>`
+* `_CONNECT <host>:<port>/<service>[?k=v]`
+* `_CONNECT [<user>[/<password>]@]jdbc:slackerdb://<host>:<port>/[<database>]`
+* `_CONNECT [<user>[/<password>]@]jdbc:<scheme>:<url>`
+* `_DISCONNECT`
+* `_ECHO ... echo off`
+* `_EXIT [n] | _QUIT [n]`
+* `_HELP [topic]`
+* `_HOST <command>`
+* `_JOB ...`
+* `_LOAD JDBCDRIVER <jar>`
+* `_SESSION SAVE|RESTORE|RELEASE|SAVEURL|SHOW <name>`
+* `_SET @name <value>`
+* `_SET ECHO ON|OFF`
+* `_SET FEEDBACK ON|OFF`
+* `_SET TERMOUT ON|OFF`
+* `_SET TIMING ON|OFF`
+* `_SET TIME ON|OFF`
+* `_SET OUTFORMAT table|vertical|csv`
+* `_SET HEADER ON|OFF`
+* `_SET LINEWIDTH <n>`
+* `_SET COLWIDTH <n>`
+* `_SET DIFF_REPORT_HTML ON|OFF`
+* `_SET AUTOCOMMIT ON|OFF`
+* `_SET TIMEOUT <n>`
+* `_SLEEP <seconds>`
+* `_SPOOL <file>`
+* `_SSH ...`
+* `_START <script> [args...]`
+* `_WHENEVER ERROR CONTINUE|EXIT <n>`
+// END GENERATED: help-catalog
+
+=== 7.1 SQL statements
+
+Just write SQL:
+
+[source,sql]
+----
+create table tab1 (id int, name varchar(20));
+insert into tab1 values (1, 'alpha');
+select * from tab1;
+with cte as (select 1 as x) select * from cte;
+truncate table tab1;
+commit;
+rollback;
+begin;                                          # transaction form: ends with ';'
+----
+
+=== 7.2 `_connect` / `_disconnect` / `_session`
+
+Multi-session support: keep several connections in one terminal and switch between them (names are
+references).
+
+[source,sql]
+----
+_connect 127.0.0.1:3175/db1
+_connect user/password@jdbc:slackerdb://127.0.0.1:3175/db1   # full form (user/password and database optional)
+_disconnect
+_session SAVE name1          # give the current connection another name
+_session RESTORE name1       # switch to it
+_session SAVEURL url1        # remember only the URL of the current connection
+_session RESTORE url1        # reconnect with that URL
+_session RELEASE name1       # drop the name (the connection closes when no name refers to it any more)
+_session SHOW                # result set: name / url / current
+----
+
+=== 7.3 `_assert`
+
+[source,sql]
+----
+_assert RESULT.ERRORCODE = 0, errorCodeCheck      // bare form; the text after the comma is the assertion name
+_assert {% RESULT.ROWS[0][0] = 10 %}              // {% %} form
+_assert {% 3==3 %}                                // constant assertion
+----
+
+[cols="1,3"]
+|===
+| Selector | Meaning
+
+| `RESULT.ERRORCODE` | error code of the last SQL statement (0 means fine)
+| `RESULT.ROWCOUNT` | affected rows of the last statement
+| `RESULT.ROWS.COUNT` | number of result rows
+| `RESULT.HEADERS.COUNT` / `RESULT.COLUMNS.COUNT` | number of columns
+| `RESULT.STATUS` | status text of the last statement
+| `RESULT.ROWS[r][c]` | row r, column c of the result (**0-based**)
+| `RESULT.HEADERS[i]` / `RESULT.COLUMNS[i]` | column label / column type name (0-based)
+| `VAR.<name>` / `ENV.<name>` | script variable / environment variable
+| `RUN.EXITCODE` / `JOB.<name>.STATUS` | child-script exit code / job state
+|===
+
+Comparators: `=` (`==`), `<>` (`!=`), `>`, `>=`, `<`, `<=`, `CONTAINS`, `NOTCONTAINS`, `MATCHES` (whole-string
+regex), `EXISTS` (left side is not NULL; no right side). Two numbers compare numerically, otherwise as text
+(case-sensitive).
+
+A passing assertion prints `Assert successful.` (`Assert [name] successful.` when named); a failing one prints
+`Assert [name] fail.` and counts as an error; a failure triggers `_whenever error exit n`.
+
+=== 7.4 `_compare`
+
+[source,sql]
+----
+_compare work.txt reference.txt MASK NOCASE
+_compare SET MASK CASE IGBLANK NOTRIM
+_compare SKIPLINE "temporary lines.*"
+_compare MASKLINE "<id>[0-9]+" => "<id>N"
+_compare SET                     # print the current settings
+_compare RESET                   # back to the defaults, drop every rule
+----
+
+* The first path is the **work/target file**, the second is the **reference file**.
+* Options: `CASE` / `NOCASE` (case-sensitive by default), `TRIM` / `NOTRIM` (whitespace is significant by
+  default), `MASK` / `NOMASK` (off by default; when on, a reference line is a regex matched against the whole
+  work line), `IGBLANK` / `NOIGBLANK` (off by default; when on, blank lines are not compared).
+* Differences write `<work file without extension>.dif`; a match writes `<work file without extension>.suc`.
+  Example: `_compare work.txt ref.txt` writes `work.dif`, or `work.suc` when they match.
+* `_set diff_report_html on` (default off) also writes a `.html` report when there are differences.
+* Line rules apply as soon as they are declared: `MASKLINE "<regex>" => "<replacement>"` replaces the matched
+  text, `SKIPLINE "<regex>"` drops whole matching lines, `NOMASKLINE` / `NOSKIPLINE` remove a rule.
+
+=== 7.5 `_set`
+
+[source,sql]
+----
+_set                    # print the option table (Option / Current value / Default value)
+_set echo off           # do not write the executed SQL/commands to the log (default on)
+_set feedback off       # print neither summaries nor errors (default on)
+_set termout off        # result sets go nowhere: not on screen, not into the logfile / _SPOOL (default on)
+_set timing on          # print one elapsed line after every statement (default off)
+_set time on            # print the current time after every statement (default off)
+_set outformat csv      # result format table|vertical|csv (default table)
+_set header off         # do not print the header row (default on)
+_set linewidth 200      # max display columns per line, longer lines wrap (default 200, not for csv)
+_set colwidth 40        # max display columns per cell, longer cells end with ... (default 40, not for csv)
+_set diff_report_html on  # also write HTML when a _compare differs (default off)
+_set autocommit off     # switch JDBC autocommit (default on)
+_set timeout 30         # per-statement server timeout in seconds (default 0 = none)
+_set @name value        # define a script variable (same as --var; falls back to the environment)
+----
+
+`echo`, `feedback`, `termout` and `autocommit` default to `on`; `timing`, `time` and `diff_report_html`
+default to `off`; the switches only accept `on` / `off`.
+
+* `echo`: whether the log records "what was run" (the text of the executed statements). In the console the log
+  is a transcript of the whole session.
+* `feedback`: whether summaries and errors are printed (`N rows selected.`, `Not connected.`, ...). Turning it
+  off does not change the error count or the exit code.
+* `termout`: whether result sets are printed (off means they are also missing from the log and `_SPOOL`).
+* `timing` / `time`: an extra line with the elapsed time / current time after every statement.
+
+=== 7.6 `_spool` / `_echo`
+
+[source,sql]
+----
+_spool out.txt          # write this run's record to the file (same content as --logfile)
+_spool off              # stop spooling
+_echo a title
+first data line
+second data line
+echo off
+----
+
+The lines between `_echo` and `echo off` are printed as data (variables are resolved); the `echo off` line
+itself is not printed. `_SPOOL` needs a file name or `OFF`; `OFF` is a keyword, so to write to a file really
+named `off` give a path (`_spool ./off`).
+
+=== 7.7 `_start`
+
+[source,sql]
+----
+_start child.sql              # run another script serially
+_start child.sql arg1 arg2    # pass arguments: ${ARGV1}, ${ARGV2}, ...
+----
+
+The child script shares the session state (connections, variables, `_set` options, spool). A relative script
+name is looked up in the working directory first, then next to the current script; nesting is limited to 16
+levels.
+
+=== 7.8 `_whenever`
+
+[source,sql]
+----
+_whenever error continue    # keep going after an error (default)
+_whenever error exit 3      # stop with exit code 3 on an error
+----
+
+Every error is printed and counted; without `_whenever error exit n` the script keeps going and the exit code
+is unaffected (still 0).
+
+=== 7.9 `_sleep` / `_host` / `_help` / `_exit`
+
+[source,sql]
+----
+_sleep 1.5                  # seconds, fractions allowed
+_host ls -l                 # run a local system command
+_help                       # command list
+_help _compare              # details for one command
+_exit 0                     # stop the whole run (_quit is a synonym)
+----
+
+`_host` runs the command through `cmd.exe /c` (Windows) or `/bin/sh -c` (elsewhere) in the script working
+directory: stdout lines become data lines, stderr lines become error lines, both on stdout; a non-zero exit
+code counts as an error.
+
+=== 7.10 `_job`
+
+A job is another script running concurrently with the current one, with its own connection, variables and
+output file.
+
+[source,sql]
+----
+_job jobmanager on                              # enable the job manager
+_job create JOB1 script=child.sql k1=v1         # define a job (script is required; other k=v are variables)
+_job create JOB2 script=child.sql mode=process  # run it as its own process (harder isolation)
+_job start JOB1                                 # start it
+_job wait JOB1 timeout=10                       # wait for it (seconds; without a timeout it waits forever)
+_job show JOB1                                  # name/state/thread/elapsed/exitCode
+_job timer GO                                   # release timer point GO
+_job wait TIMER:GO                              # wait at timer point GO
+_job abort JOB1                                 # request a stop and interrupt it
+_job shutdown JOB1                              # request a stop, interrupt if it outlives the grace period
+_job jobmanager off                             # stop accepting new jobs
+----
+
+* `mode=thread` (default) runs in a thread of the same JVM; `mode=process` is its own dbcli process (it can be
+  hard-timed out and the process tree killed).
+* A `timeout=` on `_job wait` only means "this wait did not get there" (the job keeps running and stays
+  `RUNNING`); use `abort` / `shutdown` to actually stop it.
+* Every job writes one output file `<job name>.out` (stdout + stderr), readable once `_job wait` returns.
+* A `FAILED` / `TIMEOUT` job counts as an error; a failure that no `_job wait` ever checked is reported at the
+  end of the run.
+* Synchronization barrier: one script releases `_job timer X`, another waits with `_job wait TIMER:X`; this
+  works in both modes.
+
+=== 7.11 `_ssh` and SFTP
+
+[source,sql]
+----
+_ssh connect 192.168.183.128 with user root password 123456
+_ssh connect 192.168.183.128 with user root keyfile ~/.ssh/id_rsa port 2222
+_ssh execute "uname -a; df -h"
+_ssh set encoding = UTF-8
+_ssh save node1
+_ssh restore node1
+_ssh sftp getcwd
+_ssh sftp chdir /tmp/dir
+_ssh sftp listdir /tmp
+_ssh sftp mkdir /tmp/dir 755
+_ssh sftp put local.txt /tmp/dir/remote.txt
+_ssh sftp get /tmp/dir/remote.txt local-copy.txt
+_ssh sftp remove /tmp/dir/remote.txt
+_ssh disconnect
+----
+
+Connection parameters: `_ssh connect <host> with user <user> [password <pw> | keyfile <file>] [port <port>]`,
+port defaults to 22. SFTP actions:
+
+[cols="1,2"]
+|===
+| Action | Arguments
+
+| `getcwd` | none (prints the current remote directory)
+| `chdir` / `listdir` | `<remote directory>`
+| `mkdir` / `chmod` | `<remote path> <mode>`; the mode is octal (`755`)
+| `chown` | `<remote file> <uid> <gid>` (decimal)
+| `truncate` | `<remote file> <bytes>`
+| `put` / `get` | `<local file> <remote file>` / `<remote file> <local file>`
+| `rename` | `<remote old name> <remote new name>`
+| `remove` | `<remote file>`
+|===
+
+`_ssh execute` prints the remote output line by line, the last line is `< Command finished with [exit code]`.
+Using `_ssh` or an SFTP action without a connection reports `SSH not connected.` / `SFTP not connected.`.
+
+== 8. Variables
+
+A script reads `${name}`; this is the only placeholder syntax:
+
+[source,sql]
+----
+_set @table orders
+_echo t
+table=${table}  argv1=${ARGV1}
+echo off
+_start child.sql AAA 123        # inside the child ${ARGV1}=AAA, ${ARGV2}=123
+----
+
+Sources and priority (first match wins): script variable `_set @name value` -> command line
+`--var NAME=VALUE` -> child-script arguments `${ARGV1}`, `${ARGV2}`, ... -> the same-named environment
+variable.
+
+* A defined name does not look at the environment; an undefined name without an environment variable is left
+  **as written** (never an empty string).
+* Variable names are case-sensitive; substitution happens once (the result is not scanned again).
+* To keep `${...}` literally, escape it with a backslash: `\${name}`.
+* To preset a batch of variables, run a setup script with `--profile <script>`.
+
+== 9. Output and exit codes
+
+=== 9.1 Result formats
+
+The format is decided by `_set outformat` (the command line has no format option); it only changes how results
+are printed, never what the database returns:
+
+[cols="1,3"]
+|===
+| Format | Output
+
+| `table` (default) | bordered, with a row-number column, aligned by column type
+| `vertical` | one block per record (`-[ RECORD 1 ]`), one field per line; easier on wide tables
+| `csv` | comma separated, quoted when needed, LF line endings, no row-number column
+|===
+
+`_set header on|off` (default on) controls the header row; `_set colwidth <n>` (default 40) limits a cell and
+`_set linewidth <n>` (default 200) limits a whole line (the latter two only apply to `table` / `vertical`).
+
+=== 9.2 Run record and reference comparison
+
+`--logfile <file>` keeps the complete record of this run: the executed statements plus the same data/status
+output as the terminal. `--ref <file>` (an alias of `--reference`) compares this run's data output with the
+reference file line by line; the products are:
+
+[cols="1,1,2"]
+|===
+| Product | When | Content
+
+| `<work file without extension>.suc` | the comparison matches | `SUCCESS<TAB><script><TAB><reference path>`
+| `<work file without extension>.dif` | it differs | the same format as `_compare`'s `.dif`
+|===
+
+`--report-dir <dir>` sets the directory for those two products (by default next to the work file). Recording a
+reference for the first time:
+
+[source,bash]
+----
+dbcli --execute orders.sql --logfile orders.log     # first run: the output lands in orders.log
+mv orders.log orders.sql.ref                        # after reviewing it, rename it into the reference
+dbcli --execute orders.sql --ref orders.sql.ref     # later runs: compare this run with the ref
+----
+
+=== 9.3 Exit codes
+
+* Normal end `0`; `_EXIT n` / `_WHENEVER ERROR EXIT n` return `n`.
+* An ordinary script error (printed and counted) **does not change the exit code**: it stays `0`.
+* `--ref` differences or a missing reference file: `1` when the script's own exit code is 0 (the script's own
+  non-zero code wins).
+* Command line / file errors `1`; option usage errors `2`.
+* An uncaught exception `255`; a JVM-level Error (e.g. OOM) `70`.

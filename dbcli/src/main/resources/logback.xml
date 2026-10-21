@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  dbcli 的日志纪律：
+
+  dbcli **从不写 stderr**：数据、状态行、错误、诊断、日志全都走 stdout；
+  文件产物（logfile / ref 的 log、spool、作业的 .out/.err）另算。
+
+  因此下面这个 ConsoleAppender 的 target 是 System.out。默认 root 只放到 WARN：
+  正常执行时 stdout 应当干净到可以直接与 golden 夹具比对。
+
+  注意：XML 注释里不能出现连续两个减号，所以上面不写选项全名。
+-->
+<configuration>
+
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.out</target>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- 默认只出 WARN 以上：正常执行的 stdout 应该干净到可以直接与 golden 夹具比对 -->
+    <root level="WARN">
+        <appender-ref ref="STDOUT"/>
+    </root>
+
+</configuration>

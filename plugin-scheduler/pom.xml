@@ -11,8 +11,6 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
         <hop.version>2.17.0</hop.version>
     </properties>
 
@@ -115,8 +113,6 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
-                    <source>17</source>
-                    <target>17</target>
                     <encoding>UTF-8</encoding>
                     <compilerArgs>
                         <arg>-Xlint:all</arg>
@@ -186,23 +182,24 @@
                     <workingDirectory>${project.basedir}</workingDirectory>
                 </configuration>
             </plugin>
-            <plugin>
+                        <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-source-plugin</artifactId>
+                <artifactId>maven-assembly-plugin</artifactId>
                 <executions>
+                    <!--
+                      源码包（<artifactId>-<version>-sources.jar）：口径见 build/sources-assembly.xml ——
+                      与 git 里提交的 src/main 树一致（java + antlr4 语法 + 资源），不含任何构建产物。
+                    -->
                     <execution>
-                        <id>attach-sources</id>
+                        <id>sources-jar</id>
                         <phase>package</phase>
                         <goals>
-                            <goal>jar</goal>
+                            <goal>single</goal>
                         </goals>
                         <configuration>
-                            <classifier>sources</classifier>
-                            <includes>
-                                <include>**/*.java</include>
-                                <include>**/*.adoc</include>
-                                <include>**/plugin.properties</include>
-                            </includes>
+                            <descriptors>
+                                <descriptor>${project.basedir}/../build/sources-assembly.xml</descriptor>
+                            </descriptors>
                         </configuration>
                     </execution>
                 </executions>

@@ -54,6 +54,13 @@ SlackerDB is aimed at teams that want DuckDB's analytical performance but need i
     #        rebuild everything from source.
 ....
 
+TIP: On a zh-CN Windows box building with **JDK 8~17**, add
+`MAVEN_OPTS=-Dfile.encoding=UTF-8` (JDK 18+ already defaults to UTF-8, nothing to do).
+Without it the documentation PDF step prints one extra line,
+`error reading or parsing <M2_HOME>/conf/settings.xml`: it comes from the `jar-dependencies`
+gem inside JRuby reading the (UTF-8) Maven settings with the platform GBK charset.
+It is **harmless** (the PDF is produced as usual), but it reads like a build error.
+
 ==== Start db server
 
 ....
@@ -1611,14 +1618,22 @@ Use a unique `serverName` per server; the namespace is local configuration and n
 server's advertised name.
 
 **3. Verify by asking a question in the client.** Server tools reach the model as
-`mcp__<serverName>__<tool>`, and naming the tool is the most reliable form:
+`+mcp__<serverName>__<tool>+`, and naming the tool is the most reliable form:
 
 [source,text]
 ----
 Run SELECT 42 AS answer with mcp__slacker__run_sql and tell me the result.
 ----
 
-The model calls `mcp__slacker__run_sql` and gets back `rows = [[42]]`. Naming no tool also works
+// The two constructs below are deliberate, not typos; they keep strict parsers quiet and the
+// HTML/PDF output correct:
+// 1) `+...+` is a single-plus inline passthrough. Inside inline code, double underscores still
+//    trigger quote substitution (rendered as mcp*slacker*run_sql, underscores dropped), whereas
+//    the passthrough applies only special-character substitution, so they survive and < > are escaped.
+// 2) Two adjacent square brackets read as a block-ID delimiter, and `42` is not a valid ID (IDs
+//    cannot start with a digit) -- strict parsers report "Block ID pattern invalid". Writing the
+//    leading bracket as a character reference avoids that and renders identically.
+The model calls `+mcp__slacker__run_sql+` and gets back `rows = &#91;[42]]`. Naming no tool also works
 ("query SELECT 42 AS answer with SlackerDB's MCP tools"), but naming it makes the hit certain.
 
 Two things to keep in mind:
@@ -2563,6 +2578,31 @@ To use this feature, you need to:
      . After startup, specify it via the statement:  ALTER DATABASE <dbName> SET Encrypt Key <key>.
 
 
+=== dbcli (command line client)
+
+The distribution also ships a command line client, `dbcli` (Java 17+): connect interactively to write SQL, or
+run scripts in CI/batch and verify their output. It is `jlib/slackerdb-dbcli-<version>-standalone.jar` and is
+started with `bin/dbcli.bat` / `bin/dbcli.sh`.
+
+[cols="1,3",options="header"]
+|===
+| Feature | Description
+
+| SQL client | interactive console plus batch scripts; statements end with `;` or with `/` alone on a line; Ctrl-C cancels a running statement
+| Result checks | `--ref` compares this run with a reference file; `_assert` and `_compare` inside a script
+| Connecting | `_connect` takes the short form, `jdbc:slackerdb://` and any other `jdbc:<scheme>:` URL; `_load jdbcdriver` loads a driver at runtime
+| Sessions and orchestration | `_session` keeps/switches connections; `_job` concurrent jobs; `_ssh`/SFTP, `_host`
+| Output | `_set` controls echo/summaries/result sets; `table`/`vertical`/`csv`; `_spool` to a file
+|===
+
+....
+dbcli                                           # interactive console
+dbcli --execute script.sql                      # run a script
+dbcli --execute script.sql --logfile run.log --ref golden.ref   # run and compare with a reference
+....
+
+Full usage: `dbcli/README.adoc` (Chinese: `dbcli/README-CN.adoc`); module overview and build: `docs/dbcli.md`.
+
 === Known Issues
 
 ==== 1. User and password authorization
@@ -3154,6 +3194,17 @@ The task list `conf/defaultSchedulerTask.json` is **keyed by task name**:
 The task list may also be placed at the template root (`projects/conf/defaultSchedulerTask.json`) and shared by all
 templates; a missing task list is not an error — the instance simply has no pre-configured tasks. Tasks can also be
 supplied directly through the `tasks` parameter of the create-instance endpoint.
+
+The field set above applies to **both** entry points (template list and the inline `tasks[]` of
+`POST /scheduler/run/create`). Inline tasks are validated before anything is created: `taskScriptType` only accepts
+`HOP`/`SHELL`/`COMMAND` (default `HOP`), and policies, `taskRetryTimes`/`taskRetryInterval`, `taskMandatory` and
+`variables` (flat scalar values only) are checked too — **unknown field names are rejected as well**. Any invalid
+entry yields `400` with a `problems` array and no instance directory or run record is created. In a template list an
+unknown field only produces a warning (loading is not blocked).
+
+The same applies to the **top level** of the create-instance request: only `projectType` / `configJson` / `runId` /
+`tasks` are accepted and `tasks` must be an array; an unknown top-level field (e.g. `task` instead of `tasks`) yields
+`400` instead of silently falling back to the template task list.
 
 ===== Variables: Passing Connection Information to HOP
 

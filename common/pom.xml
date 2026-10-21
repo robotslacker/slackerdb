@@ -32,18 +32,24 @@
             </resource>
         </resources>
         <plugins>
-            <plugin>
+                        <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-source-plugin</artifactId>
+                <artifactId>maven-assembly-plugin</artifactId>
                 <executions>
+                    <!--
+                      源码包（<artifactId>-<version>-sources.jar）：口径见 build/sources-assembly.xml ——
+                      与 git 里提交的 src/main 树一致（java + antlr4 语法 + 资源），不含任何构建产物。
+                    -->
                     <execution>
-                        <id>attach-sources</id>
+                        <id>sources-jar</id>
                         <phase>package</phase>
                         <goals>
-                            <goal>jar</goal>
+                            <goal>single</goal>
                         </goals>
                         <configuration>
-                            <classifier>common-sources</classifier>
+                            <descriptors>
+                                <descriptor>${project.basedir}/../build/sources-assembly.xml</descriptor>
+                            </descriptors>
                         </configuration>
                     </execution>
                 </executions>

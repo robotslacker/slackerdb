@@ -14,6 +14,7 @@ import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.logger.AppLogger;
 import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.common.utils.Utils;
+import org.slackerdb.dbserver.BuildInfo;
 import org.slackerdb.dbserver.entity.SQLHistoryRecord;
 import org.slackerdb.dbserver.sql.SQLReplacer;
 import org.slackerdb.dbserver.sql.SqlCommentStripper;
@@ -23,7 +24,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.nio.channels.FileLock;
 import java.nio.file.Files;
@@ -498,20 +498,10 @@ public class DBInstance {
         }
     }
 
-    /** 读取版本号，仅用于通告报文里的排障字段；读不到就留空，不影响功能。 */
+    /** 读取版本号，仅用于通告报文里的排障字段；读不到时是 {@code unknown}，不影响功能。 */
     private static String readVersion()
     {
-        try (InputStream inputStream = DBInstance.class.getResourceAsStream("/version.properties")) {
-            if (inputStream == null) {
-                return "";
-            }
-            Properties properties = new Properties();
-            properties.load(inputStream);
-            return properties.getProperty("version", "");
-        }
-        catch (IOException ioe) {
-            return "";
-        }
+        return BuildInfo.version();
     }
 
     // 终止会话

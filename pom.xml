@@ -3,8 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <properties>
-        <maven.compiler.target>17</maven.compiler.target>
-        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <postgres.version>42.7.2</postgres.version>
         <spring-boot.version>3.5.14</spring-boot.version>
@@ -21,6 +20,7 @@
         <module>dbdriver</module>
         <module>dbserver</module>
         <module>dbproxy</module>
+        <module>dbcli</module>
         <module>plugin</module>
         <module>plugin-example</module>
         <module>plugin-scheduler</module>
@@ -49,6 +49,39 @@
                 <version>4.1.132.Final</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+
+            <!-- dbcli：命令行客户端专用依赖（版本在此统一仲裁） -->
+            <!-- 命令行参数解析 -->
+            <dependency>
+                <groupId>info.picocli</groupId>
+                <artifactId>picocli</artifactId>
+                <version>4.7.7</version>
+            </dependency>
+            <!-- 交互式控制台（行编辑/历史/补全/多行续行） -->
+            <dependency>
+                <groupId>org.jline</groupId>
+                <artifactId>jline</artifactId>
+                <version>3.25.1</version>
+            </dependency>
+            <!-- SSH/SFTP（_SSH 命令） -->
+            <dependency>
+                <groupId>com.github.mwiede</groupId>
+                <artifactId>jsch</artifactId>
+                <version>0.2.18</version>
+            </dependency>
+
+            <!--
+              跨进程会合点（_JOB 的 mode=process）：SQLite 单文件库。
+              选它的理由：无服务端、不占端口、跨进程可见、事务保证"放行"原子且幂等。
+              会合点只是它在本客户端的一个用途：`_CONNECT jdbc:sqlite:…` 同样能用
+              （其它 jdbc:<scheme>: URL 也按同一规则交给对应驱动）。
+              版本与本机仓库里已有的 3.51.1.0 一致（可离线解析）。
+            -->
+            <dependency>
+                <groupId>org.xerial</groupId>
+                <artifactId>sqlite-jdbc</artifactId>
+                <version>3.51.1.0</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -150,11 +183,6 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.2.5</version>
                 </plugin>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-source-plugin</artifactId>
-                    <version>3.2.1</version>
-                </plugin>
                 <!-- ========== Other Plugins ========== -->
                 <plugin>
                     <groupId>org.springframework.boot</groupId>
@@ -175,6 +203,12 @@
                     <groupId>org.antlr</groupId>
                     <artifactId>antlr4-maven-plugin</artifactId>
                     <version>4.13.2</version>
+                </plugin>
+                <!-- 依赖方向约束：各模块按需启用，把"不许依赖谁"变成构建失败（仅靠代码评审守不住） -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-enforcer-plugin</artifactId>
+                    <version>3.5.0</version>
                 </plugin>
             </plugins>
         </pluginManagement>

@@ -350,6 +350,13 @@ public class ParseRequest extends PostgresRequest {
             return;
         }
 
+        // 客户端常以 SET application_name='x' 上报来源，而该语句在下面会被替换成空语句
+        // （DuckDB 不支持）。必须在替换之前截留，记到会话上，供 /status.sessions 辨识来源。
+        String requestedApplicationName = SQLReplacer.extractApplicationName(parseRequest.sql);
+        if (requestedApplicationName != null) {
+            this.dbInstance.getSession(getCurrentSessionId(ctx)).applicationName = requestedApplicationName;
+        }
+
         // 由于PG驱动程序内置的一些语句在目标数据库上无法执行，所以这里要进行转换
         String executeSQL = SQLReplacer.replaceSQL(this.dbInstance, parseRequest.sql);
 

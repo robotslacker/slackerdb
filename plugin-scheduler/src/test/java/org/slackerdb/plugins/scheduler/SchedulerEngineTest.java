@@ -3,6 +3,7 @@ package org.slackerdb.plugins.scheduler;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
@@ -199,6 +200,24 @@ class SchedulerEngineTest {
     }
 
     @Test
+    @DisplayName("模板清单里的未知字段只记 warning，不阻断装载")
+    void templateLoaderWarnsOnUnknownFields(@TempDir Path tempDir) throws Exception {
+        Path conf = tempDir.resolve("projects/typo/conf");
+        Files.createDirectories(conf);
+        Files.writeString(conf.resolve(TaskTemplateLoader.FILE_NAME), """
+                {
+                  "拼错字段": { "taskScript": "ok.hwf", "taskTimeouts": 600 }
+                }
+                """, StandardCharsets.UTF_8);
+
+        TaskTemplateLoader.Loaded loaded = TaskTemplateLoader.load(tempDir.resolve("projects"), "typo", "R7");
+        assertEquals(1, loaded.tasks().size(), "未知字段不应让任务被跳过: " + loaded.warnings());
+        assertEquals(1, loaded.warnings().size(), "应给出未知字段告警: " + loaded.warnings());
+        assertTrue(loaded.warnings().get(0).contains("未知字段[taskTimeouts]"),
+                "告警应指出具体字段名: " + loaded.warnings());
+    }
+
+    @Test
     void templateLoaderNormalizesGroupOrder(@TempDir Path tempDir) throws Exception {
         Path conf = tempDir.resolve("projects/grp/conf");
         Files.createDirectories(conf);
@@ -339,12 +358,13 @@ class SchedulerEngineTest {
         assertTrue(Files.readString(Path.of(ok.logFile), StandardCharsets.UTF_8).contains("HELLO-FROM-TASK"),
                 "stdout 应落到日志文件");
 
-        TaskResult failed = new ProcessTaskExecutor(logger).execute(shell(runHome, "bad", "exit /b 7", 30));
+        TaskResult failed = new ProcessTaskExecutor(logger).execute(
+                shell(runHome, "bad", isWindows() ? "exit /b 7" : "exit 7", 30));
         assertEquals(7, failed.exitCode, "退出码应透传");
 
         long start = System.currentTimeMillis();
         TaskResult timedOut = new ProcessTaskExecutor(logger)
-                .execute(shell(runHome, "slow", "ping -n 30 127.0.0.1 > nul", 3));
+                .execute(shell(runHome, "slow", slowCommand(30), 3));
         long elapsed = System.currentTimeMillis() - start;
         assertEquals(TaskResult.EXIT_TIMEOUT, timedOut.exitCode, "超时应返回 -2: " + timedOut.describe());
         assertTrue(elapsed <= 15_000, "超时应在预期时间内终止，实际 " + elapsed + "ms");
@@ -352,13 +372,13 @@ class SchedulerEngineTest {
                 "超时说明应写入日志");
         Thread.sleep(1500);
         long leftover = ProcessHandle.allProcesses()
-                .filter(p -> p.info().commandLine().orElse("").contains("ping -n 30")).count();
+                .filter(p -> p.info().commandLine().orElse("").contains(slowCommandMarker(30))).count();
         assertEquals(0, leftover, "不应残留子孙进程");
 
         AtomicReference<TaskResult> canceled = new AtomicReference<>();
         ProcessTaskExecutor executor = new ProcessTaskExecutor(logger);
         Thread worker = new Thread(() -> canceled.set(executor.execute(
-                shell(runHome, "cancel", "ping -n 30 127.0.0.1 > nul", 600))));
+                shell(runHome, "cancel", slowCommand(600), 600))));
         worker.start();
         Thread.sleep(3000);
         executor.cancel();
@@ -379,6 +399,42 @@ class SchedulerEngineTest {
         missing.hop.runScript = tempDir.resolve("hop/hop-run.bat").toString();
         assertEquals(TaskResult.EXIT_START_FAILED,
                 new ProcessTaskExecutor(logger).execute(missing).exitCode, "工作流缺失应返回 -1");
+    }
+
+    @Test
+    @DisplayName("执行器按白名单派发：SQL / 未知类型明确失败，绝不当成命令行去执行")
+    void processExecutorRejectsUnsupportedTypes(@TempDir Path tempDir) throws Exception {
+        var logger = LoggerFactory.getLogger("test-executor-types");
+        Path runHome = tempDir.resolve("runs/R11");
+        Files.createDirectories(runHome);
+
+        // SQL 不是任务类型（SQL 写进 HOP 工作流的 SQL action）：必须明确失败，而不是被当成 shell 去跑
+        TaskRequest sql = shell(runHome, "sql", "echo SHOULD-NOT-RUN", 30);
+        sql.scriptType = "SQL";
+        TaskResult sqlResult = new ProcessTaskExecutor(logger).execute(sql);
+        assertEquals(TaskResult.EXIT_START_FAILED, sqlResult.exitCode,
+                "SQL 类型应直接失败: " + sqlResult.describe());
+        assertTrue(sqlResult.errorMessage.contains("不支持的任务类型")
+                        && sqlResult.errorMessage.contains("SQL"),
+                "错误信息应指出类型不受支持并给出 SQL 的出路，实际: " + sqlResult.errorMessage);
+        Path sqlLog = Path.of(sqlResult.logFile);
+        assertTrue(!Files.exists(sqlLog) || Files.readString(sqlLog, StandardCharsets.UTF_8).isEmpty(),
+                "被拒绝的类型不应产生任何命令输出（否则说明它真的被执行了）");
+
+        // 未知/历史类型同样拒绝，且不执行
+        TaskRequest unknown = shell(runHome, "unknown", "echo SHOULD-NOT-RUN", 30);
+        unknown.scriptType = "PYTHON";
+        TaskResult unknownResult = new ProcessTaskExecutor(logger).execute(unknown);
+        assertEquals(TaskResult.EXIT_START_FAILED, unknownResult.exitCode,
+                "未知类型应直接失败: " + unknownResult.describe());
+        assertTrue(unknownResult.errorMessage.contains("不支持的任务类型"),
+                "错误信息应指出类型不受支持，实际: " + unknownResult.errorMessage);
+
+        // SHELL / COMMAND 仍然照常执行
+        TaskRequest command = shell(runHome, "command", "echo HELLO-COMMAND", 30);
+        command.scriptType = "COMMAND";
+        TaskResult commandResult = new ProcessTaskExecutor(logger).execute(command);
+        assertTrue(commandResult.isSuccess(), "COMMAND 应正常执行: " + commandResult.describe());
     }
 
     // ==================================================================
@@ -480,13 +536,17 @@ class SchedulerEngineTest {
             long sizeAfterResume = Files.size(cronLog);
 
             quartz.pauseJob("Q1", "cron");
+            // 暂停那一刻可能已经有一次触发"在飞"（cron 每 2 秒一次）：先给它落盘的时间再取基准，
+            // 否则断言会与 in-flight 执行竞态 —— 这正是这条用例曾经偶发失败的原因。
+            Thread.sleep(1000);
+            long sizeAfterPause = Files.size(cronLog);
             Thread.sleep(3000);
-            assertEquals(sizeAfterResume, Files.size(cronLog), "暂停后不应继续触发");
+            assertEquals(sizeAfterPause, Files.size(cronLog), "暂停后不应继续触发");
 
             // RUN_ONCE 触发一次，且不得破坏周期触发器
             quartz.startJob("Q1", "cron", "RUN_ONCE");
             Thread.sleep(4000);
-            assertTrue(Files.size(cronLog) > sizeAfterResume, "RUN_ONCE 应实际执行一次");
+            assertTrue(Files.size(cronLog) > sizeAfterPause, "RUN_ONCE 应实际执行一次");
             Map<String, Object> afterOnce = quartz.getJobsForRun("Q1").get(0);
             assertNotNull(afterOnce.get("nextFireTime"),
                     "RUN_ONCE 不应删除周期触发器: " + afterOnce);
@@ -843,6 +903,19 @@ class SchedulerEngineTest {
         request.timeoutSeconds = timeoutSeconds;
         request.variables = VariableSet.resolve(Map.of(VariableSet.RUN_ID, "R10"));
         return request;
+    }
+
+    /**
+     * 一条"必定挂住足够久"的命令：Windows 上没有跨平台的 {sleep}，用 {@code ping -n} 的等待凑时长；
+     * POSIX 直接用 {@code sleep}。
+     */
+    private static String slowCommand(int seconds) {
+        return isWindows() ? "ping -n " + seconds + " 127.0.0.1 > nul" : "sleep " + seconds;
+    }
+
+    /** {@link #slowCommand} 对应的、能在进程表里认出它的命令行片段。 */
+    private static String slowCommandMarker(int seconds) {
+        return isWindows() ? "ping -n " + seconds + " 127.0.0.1" : "sleep " + seconds;
     }
 
     private static JSONObject findByKey(JSONArray array, String key, String value) {

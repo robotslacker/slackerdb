@@ -38,9 +38,16 @@ import org.slf4j.LoggerFactory;
  */
 public class AppLogger {
 
-    /** 默认日志行格式（与历史实现逐字符一致，改动会影响所有现网日志解析）。 */
+    /**
+     * 默认日志行格式。
+     *
+     * <p><b>不打印线程名</b>：服务是多线程的（{@code main}、{@code Listener}、连接池线程……），
+     * 一行里多一个 {@code [main]} 只会把它撑长，还会让同一件事在不同线程下看起来不一样；
+     * 排查时需要的"这是谁说的"由 {@code %logger} 承担。日志解析也按这个格式写
+     * （{@code 时间 级别 logger - 消息}）。</p>
+     */
     public static final String DEFAULT_PATTERN =
-            "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n";
+            "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level %logger{36} - %msg%n";
 
     private static final String CONSOLE_TARGET = "CONSOLE";
 

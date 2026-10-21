@@ -1,6 +1,7 @@
 package org.slackerdb.plugins.scheduler.controller;
 
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
@@ -8,6 +9,7 @@ import org.slackerdb.plugins.scheduler.entity.SchedulerRun;
 import org.slackerdb.plugins.scheduler.entity.SchedulerTask;
 import org.slackerdb.plugins.scheduler.entity.TaskHistory;
 import org.slackerdb.plugins.scheduler.meta.SchedulerMeta;
+import org.slackerdb.plugins.scheduler.meta.TaskTemplateLoader;
 import org.slackerdb.plugins.scheduler.quartz.DynamicQuartzScheduler;
 import org.slf4j.Logger;
 
@@ -107,6 +109,12 @@ public class SchedulerController {
         app.unsafe.routes.get("/scheduler/run/{runId}/variables", this::handleRunVariables);
         app.unsafe.routes.get("/scheduler/describeCrontabExpr", this::handleDescribeCrontabExpr);
 
+        // ========== 平台契约路由 ==========
+        // 能力声明：客户端据此显隐 ETL 入口与按钮，而不是探测 /scheduler/status
+        app.unsafe.routes.get("/scheduler/capabilities", this::handleCapabilities);
+        // 调度丢失（定义还在、Quartz 里已没有）：重启后"一键恢复"的权威来源
+        app.unsafe.routes.get("/scheduler/state/lost", this::handleLostSchedules);
+
         logger.info("[SCHEDULER] REST routes registered.");
     }
 
@@ -169,6 +177,132 @@ public class SchedulerController {
         }
     }
 
+    /**
+     * GET /scheduler/capabilities
+     *
+     * <p>插件的能力自描述：客户端（控制台/CLI）按它决定显隐与降级，**不再探测端点或猜字段**。
+     * 刻意做得便宜（不扫 Quartz 全量触发器）。</p>
+     */
+    private void handleCapabilities(Context ctx) {
+        try {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("contractVersion", 1);
+
+            Map<String, Object> features = new LinkedHashMap<>();
+            // 已具备：实例的创建/启动/停止/中止/删除
+            features.put("runCrud", true);
+            // 尚未提供的写能力一律如实声明 false —— 客户端据此隐藏按钮，而不是"点了才知道没有"
+            features.put("taskCrud", false);       // 任务增/改/删、改 cron 与策略
+            features.put("templateRead", true);    // 只能读项目模板目录
+            features.put("templates", false);      // 模板写（上传/删除/zip 导入）
+            features.put("globalHistory", false);  // 跨实例的执行流水
+            features.put("sqlTask", false);        // 恒为 false：SQL 不是任务类型（写进 HOP 工作流的 SQL action）
+            features.put("zipImport", false);
+            body.put("features", features);
+
+            Map<String, Object> quartz = new LinkedHashMap<>();
+            quartz.put("started", quartzScheduler.isStarted());
+            quartz.put("threads", quartzScheduler.getThreadCount());
+            int jobCount = 0;
+            for (org.slackerdb.plugins.scheduler.entity.SchedulerRun run : meta.listRuns()) {
+                jobCount += quartzScheduler.getJobsForRun(run.getRunId()).size();
+            }
+            quartz.put("jobCount", jobCount);
+            body.put("quartz", quartz);
+
+            body.put("home", workHome);
+            body.put("projectHome", projectHome);
+            body.put("hop", hopReadiness());
+
+            Map<String, Object> limits = new LinkedHashMap<>();
+            limits.put("logTailMax", 10000);
+            body.put("limits", limits);
+
+            ctx.json(body);
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] Error building capabilities: {}", e.getMessage(), e);
+            ctx.status(500).json(Map.of("error", "Failed to build capabilities: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * HOP 运行环境就绪判定。
+     *
+     * <p>把这个判断放在插件里（而不是控制台读服务器文件、或做一个 GUI 体检向导）的理由：
+     * 规则只有插件最清楚，判断一次、所有客户端都能复用。</p>
+     */
+    private Map<String, Object> hopReadiness() {
+        List<String> reasons = new ArrayList<>();
+        boolean runScriptConfigured = hopConfig != null
+                && hopConfig.runScript != null && !hopConfig.runScript.isBlank();
+        if (!runScriptConfigured) {
+            reasons.add("hop.runScript 未配置（HOP 类型任务无法执行）");
+        } else {
+            Path script = Paths.get(hopConfig.runScript);
+            if (!Files.isRegularFile(script)) {
+                reasons.add("hop.runScript 指向的文件不存在: " + hopConfig.runScript);
+            } else if (!Files.isExecutable(script)) {
+                reasons.add("hop.runScript 不可执行: " + hopConfig.runScript);
+            }
+        }
+        if (hopConfig != null && hopConfig.javaHome != null && !hopConfig.javaHome.isBlank()
+                && !Files.isDirectory(Paths.get(hopConfig.javaHome))) {
+            reasons.add("hop.javaHome 不存在: " + hopConfig.javaHome);
+        }
+        Path defaultProject = Paths.get(projectHome, "default");
+        if (!Files.isDirectory(defaultProject)) {
+            reasons.add("项目模板缺少 default/ 父项目: " + defaultProject);
+        }
+
+        Map<String, Object> hop = new LinkedHashMap<>();
+        hop.put("ready", reasons.isEmpty());
+        hop.put("reasons", reasons);
+        hop.put("runScript", hopConfig == null ? null : hopConfig.runScript);
+        hop.put("projectName", hopConfig == null ? null : hopConfig.projectName);
+        hop.put("environmentName", hopConfig == null ? null : hopConfig.environmentName);
+        return hop;
+    }
+
+    /**
+     * GET /scheduler/state/lost
+     *
+     * <p>"定义还在、调度已丢"的任务列表 —— 重启后一键恢复的**权威来源**。
+     * 让控制台 diff {@code run/list} 与 {@code task/list} 自己推断是不可靠的：
+     * 只有插件同时掌握 DuckDB 里的定义与 Quartz 里的登记情况。</p>
+     */
+    private void handleLostSchedules(Context ctx) {
+        try {
+            List<Map<String, Object>> lost = new ArrayList<>();
+            for (org.slackerdb.plugins.scheduler.entity.SchedulerRun run : meta.listRuns()) {
+                Map<String, Map<String, Object>> scheduled = new HashMap<>();
+                for (Map<String, Object> job : quartzScheduler.getJobsForRun(run.getRunId())) {
+                    Object taskName = job.get("taskName");
+                    if (taskName != null) {
+                        scheduled.put(String.valueOf(taskName), job);
+                    }
+                }
+                for (org.slackerdb.plugins.scheduler.entity.SchedulerTask task
+                        : meta.getTasksByRunId(run.getRunId())) {
+                    if (!task.isTaskEnabled() || scheduled.containsKey(task.getTaskName())) {
+                        continue;
+                    }
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("runId", run.getRunId());
+                    item.put("runStatus", run.getStatus());
+                    item.put("taskName", task.getTaskName());
+                    item.put("taskRunPolicy", task.getTaskRunPolicy());
+                    item.put("taskGroup", task.getTaskGroup());
+                    item.put("taskStartupOrder", task.getTaskStartupOrder());
+                    lost.add(item);
+                }
+            }
+            ctx.json(Map.of("lostSchedules", lost));
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] Error collecting lost schedules: {}", e.getMessage(), e);
+            ctx.status(500).json(Map.of("error", "Failed to collect lost schedules: " + e.getMessage()));
+        }
+    }
+
     // ========== Project Handlers ==========
 
     /**
@@ -227,20 +361,34 @@ public class SchedulerController {
      *     {
      *       "taskName": "...",
      *       "taskScript": "...",
-     *       "taskScriptType": "SQL|HOP|SHELL",
+     *       "taskScriptType": "HOP|SHELL|COMMAND",
      *       "taskRunPolicy": "RUN_ONCE|CRONTAB|INTERVAL",
      *       "taskFailPolicy": "STOP|CONTINUE|RETRY",
+     *       "taskRetryTimes": 0,
+     *       "taskRetryInterval": 60,
      *       "taskParallelPolicy": "PARALLEL|SERIAL_DISCARD|SERIAL_DELAY|SERIAL_CATCHUP",
      *       "taskCrontabExpr": "...",
      *       "taskInterval": 0,
      *       "taskTimeout": 0,
      *       "taskEnabled": true,
+     *       "taskMandatory": false,
      *       "taskGroup": "...",
      *       "taskStartupOrder": 0,
-     *       "taskDescription": "..."
+     *       "taskDescription": "...",
+     *       "variables": { "KEY": "value" }
      *     }
      *   ]
      * }
+     *
+     * <p>字段集合与模板清单（{@link TaskTemplateLoader}）一致，包括 {@code taskRetryTimes} /
+     * {@code taskRetryInterval} / {@code taskMandatory} / 任务级 {@code variables}（只支持扁平标量值）。</p>
+     *
+     * <p>顶层只接受 {@code projectType} / {@code configJson} / {@code runId} / {@code tasks}，且 {@code tasks}
+     * 必须是数组；未知字段（例如把 {@code tasks} 拼成 {@code task}）直接 400 —— 否则会静默回落到模板任务。
+     * 内联任务会**先校验后落地**：{@code taskScriptType} 只接受 {@code HOP}/{@code SHELL}/{@code COMMAND}
+     * （默认 {@code HOP}），策略与必填项同样校验；**未知字段也直接拒绝**（字段名拼错不再被静默忽略）。
+     * 任一条不合格则整单 400，响应形如 {@code {"error":"invalid tasks","problems":[...]}}，
+     * 且不会创建实例目录与运行记录。</p>
      */
     private void handleCreateRun(Context ctx) {
         try {
@@ -260,9 +408,30 @@ public class SchedulerController {
                         java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
             }
 
+            // 请求体顶层字段同样不许静默忽略：把 tasks 拼成 task 时会**静默回落到模板任务**，
+            // 症状极像“我明明传了任务却没生效”。这里先校验请求形状，再谈别的。
+            List<String> bodyProblems = validateRunBody(body);
+            if (!bodyProblems.isEmpty()) {
+                logger.warn("[SCHEDULER] 拒绝创建实例[{}]: 请求字段不合格: {}", runId, bodyProblems);
+                ctx.status(400).json(Map.of("error", "invalid request", "problems", bodyProblems));
+                return;
+            }
+
             // Check for duplicate runId
             if (meta.getRun(runId) != null) {
                 ctx.status(409).json(Map.of("error", "Run already exists: " + runId));
+                return;
+            }
+
+            // 内联任务定义：**先校验、后落地**。API 不是模板清单，没有“跳过并告警”的余地 ——
+            // 不合格就整单 400，不能留下“建了一半”的实例目录/运行记录。
+            List<JSONObject> inlineTasks = body.getJSONArray("tasks") != null
+                    ? body.getJSONArray("tasks").toList(JSONObject.class)
+                    : Collections.emptyList();
+            List<String> problems = validateInlineTasks(inlineTasks);
+            if (!problems.isEmpty()) {
+                logger.warn("[SCHEDULER] 拒绝创建实例[{}]: 任务定义不合格: {}", runId, problems);
+                ctx.status(400).json(Map.of("error", "invalid tasks", "problems", problems));
                 return;
             }
 
@@ -286,11 +455,7 @@ public class SchedulerController {
             run.setUpdateTime(LocalDateTime.now());
             meta.insertRun(run);
 
-            // If inline tasks are provided, use them; otherwise load from project template
-            List<JSONObject> inlineTasks = body.getJSONArray("tasks") != null
-                    ? body.getJSONArray("tasks").toList(JSONObject.class)
-                    : Collections.emptyList();
-
+            // 内联任务（已在上面校验过）；没有内联任务时从项目模板清单装载
             int taskCount;
             if (!inlineTasks.isEmpty()) {
                 taskCount = createTasksFromApi(runId, inlineTasks);
@@ -660,6 +825,17 @@ public class SchedulerController {
                 // 运行态与上次结果（来自任务执行器）
                 item.putAll(org.slackerdb.plugins.scheduler.quartz.QuartzJobStatusManager
                         .snapshot(runId + ":" + task.getTaskName()));
+
+                // 三态显式化：定义态（DuckDB）/ 调度态（Quartz 触发器）/ 运行态（内存快照）。
+                // 这三者来源不同、丢失条件也不同（重启只丢后两者），客户端不该靠字段名猜。
+                Map<String, Object> states = new LinkedHashMap<>();
+                states.put("definition", task.isTaskEnabled() ? "ENABLED" : "DISABLED");
+                Object triggerState = job == null ? null : job.get("state");
+                states.put("trigger", triggerState == null ? "NONE" : String.valueOf(triggerState));
+                states.put("runtime", isTruthy(item.get("running")) ? "RUNNING"
+                        : (isTruthy(item.get("queued")) ? "QUEUED" : "IDLE"));
+                item.put("states", states);
+
                 result.add(item);
             }
 
@@ -715,7 +891,11 @@ public class SchedulerController {
 
     /**
      * GET /scheduler/run/{runId}/variables?taskName=xxx
-     * 查看实例（可选叠加任务级）的变量，口令类键已脱敏。
+     * 查看实例（可选叠加任务级）的变量。
+     *
+     * <p><b>破坏性变更（已批准）</b>：过去这里返回脱敏后的值（{@code ******}），
+     * 现在返回**原值**。理由：该接口目前没有实际外部消费方，而排障时看不到真实变量反而有害；
+     * 平台是内部工具、无鉴权，脱敏不产生真实安全收益。需要遮蔽时由界面自行决定显示。</p>
      */
     private void handleRunVariables(Context ctx) {
         String runId = ctx.pathParam("runId");
@@ -742,7 +922,7 @@ public class SchedulerController {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("runId", runId);
             body.put("taskName", taskName);
-            body.put("variables", merged.masked());
+            body.put("variables", merged.asMap());
             body.put("frameworkVariables", org.slackerdb.plugins.scheduler.runner.VariableSet.FRAMEWORK_KEYS);
             ctx.json(body);
         } catch (Exception e) {
@@ -790,6 +970,17 @@ public class SchedulerController {
         } catch (NumberFormatException e) {
             return fallback;
         }
+    }
+
+    /** 宽松布尔判定：任务状态快照里的值可能是 Boolean，也可能是字符串。 */
+    private static boolean isTruthy(Object value) {
+        if (value == null) {
+            return false;
+        }
+        if (value instanceof Boolean b) {
+            return b;
+        }
+        return "true".equalsIgnoreCase(String.valueOf(value).trim());
     }
 
     private static List<String> listLogFiles(Path logDir) throws IOException {
@@ -892,7 +1083,7 @@ public class SchedulerController {
             for (String key : object.keySet()) {
                 Object value = object.get(key);
                 if (value == null || value instanceof JSONObject
-                        || value instanceof com.alibaba.fastjson2.JSONArray) {
+                        || value instanceof JSONArray) {
                     continue;
                 }
                 result.put(key, String.valueOf(value));
@@ -904,7 +1095,10 @@ public class SchedulerController {
     }
 
     /**
-     * Create tasks from API-provided task definitions.
+     * 写入 API 传入的任务定义（调用前必须已经过 {@link #validateInlineTasks(List)}）。
+     *
+     * <p>类型/策略一律按与模板装载相同的方式归一化（大写 + 默认值），默认类型与模板同源：
+     * {@link TaskTemplateLoader#DEFAULT_SCRIPT_TYPE}。SQL 不在支持之列，写进这里会先被校验拒绝。</p>
      */
     private int createTasksFromApi(String runId, List<JSONObject> taskConfigs) throws Exception {
         int count = 0;
@@ -913,24 +1107,166 @@ public class SchedulerController {
             task.setRunId(runId);
             task.setTaskName(taskConfig.getString("taskName"));
             task.setTaskScript(taskConfig.getString("taskScript"));
-            task.setTaskScriptType(taskConfig.getString("taskScriptType", "SQL"));
-            task.setTaskRunPolicy(taskConfig.getString("taskRunPolicy", "RUN_ONCE"));
-            task.setTaskFailPolicy(taskConfig.getString("taskFailPolicy", "CONTINUE"));
-            task.setTaskParallelPolicy(taskConfig.getString("taskParallelPolicy", "PARALLEL"));
+            task.setTaskScriptType(upper(taskConfig.getString("taskScriptType"),
+                    TaskTemplateLoader.DEFAULT_SCRIPT_TYPE));
+            task.setTaskRunPolicy(upper(taskConfig.getString("taskRunPolicy"), "RUN_ONCE"));
+            task.setTaskFailPolicy(upper(taskConfig.getString("taskFailPolicy"), "CONTINUE"));
+            task.setTaskRetryTimes(taskConfig.getIntValue("taskRetryTimes", 0));
+            task.setTaskRetryInterval(taskConfig.getIntValue("taskRetryInterval", 60));
+            task.setTaskParallelPolicy(upper(taskConfig.getString("taskParallelPolicy"), "PARALLEL"));
             task.setTaskCrontabExpr(taskConfig.getString("taskCrontabExpr"));
             task.setTaskInterval(taskConfig.getIntValue("taskInterval", 0));
             task.setTaskTimeout(taskConfig.getIntValue("taskTimeout", 0));
             task.setTaskEnabled(taskConfig.getBooleanValue("taskEnabled", true));
+            task.setTaskMandatory(taskConfig.getBooleanValue("taskMandatory", false));
             task.setTaskGroup(taskConfig.getString("taskGroup"));
             task.setTaskStartupOrder(taskConfig.getIntValue("taskStartupOrder", 0));
             task.setTaskDescription(taskConfig.getString("taskDescription"));
             task.setConfigJson(taskConfig.getString("configJson"));
+            // 任务级变量：与模板清单共用同一份拍平逻辑（只收标量值）
+            Map<String, String> variables = TaskTemplateLoader.flattenVariables(taskConfig.get("variables"));
+            if (!variables.isEmpty()) {
+                task.setVariablesJson(JSON.toJSONString(variables));
+            }
             task.setCreateTime(LocalDateTime.now());
             task.setUpdateTime(LocalDateTime.now());
             meta.insertTask(task);
             count++;
         }
         return count;
+    }
+
+    /**
+     * {@code POST /scheduler/run/create} 请求体允许的顶层字段。
+     *
+     * <p>为什么顶层也要白名单：把 {@code tasks} 拼成 {@code task} 时，旧实现会当成“没有内联任务”
+     * 而**静默回落到模板任务**——调用方拿到 201 和一堆自己没传的任务，这是最难排查的一类现象。</p>
+     */
+    private static final Set<String> RUN_BODY_FIELDS = Set.of("projectType", "configJson", "runId", "tasks");
+
+    /** 校验创建实例请求的形状；返回问题清单（空 = 合格）。 */
+    private static List<String> validateRunBody(JSONObject body) {
+        List<String> problems = new ArrayList<>();
+        for (String key : body.keySet()) {
+            if (!RUN_BODY_FIELDS.contains(key)) {
+                problems.add("请求体含未知字段[" + key + "]（可用: " + RUN_BODY_FIELDS + "）");
+            }
+        }
+        Object tasks = body.get("tasks");
+        if (tasks != null && !(tasks instanceof Collection)) {
+            problems.add("tasks 必须是数组（当前: " + tasks.getClass().getSimpleName() + "）");
+        }
+        return problems;
+    }
+
+    /**
+     * 校验 API 传入的任务定义，返回问题清单（空 = 全部合格）。
+     *
+     * <p>规则与模板装载（{@link TaskTemplateLoader}）一致，白名单（类型/策略/字段名）也全部取自它，
+     * 因此两条入口不会漂移；区别只在失败方式：模板是"跳过该任务 + 告警"，API 是"整单 400 + 逐条问题"，
+     * 因为调用方拿不到模板那种告警通道，静默少建任务（或字段名拼错被忽略）比报错更难排查。</p>
+     */
+    private static List<String> validateInlineTasks(List<JSONObject> taskConfigs) {
+        List<String> problems = new ArrayList<>();
+        for (int index = 0; index < taskConfigs.size(); index++) {
+            JSONObject config = taskConfigs.get(index);
+            String taskName = config == null ? null : config.getString("taskName");
+            String label = "tasks[" + index + "]" + (isBlank(taskName) ? "" : "(" + taskName + ")");
+
+            // 未知字段一律拒绝：字段名拼错（taskTimeouts / taskRetryLimits…）以前会被静默忽略
+            if (config != null) {
+                for (String key : config.keySet()) {
+                    if (!TaskTemplateLoader.TASK_FIELDS.contains(key)) {
+                        problems.add(label + " 含未知字段[" + key + "]（可用: "
+                                + TaskTemplateLoader.TASK_FIELDS + "）");
+                    }
+                }
+            }
+
+            if (isBlank(taskName)) {
+                problems.add(label + " 缺少 taskName");
+            }
+            if (config == null || isBlank(config.getString("taskScript"))) {
+                problems.add(label + " 缺少 taskScript");
+                continue;
+            }
+            String scriptType = upper(config.getString("taskScriptType"),
+                    TaskTemplateLoader.DEFAULT_SCRIPT_TYPE);
+            if (!TaskTemplateLoader.SCRIPT_TYPES.contains(scriptType)) {
+                problems.add(label + " 的 taskScriptType=[" + scriptType + "] 不受支持（可用: "
+                        + TaskTemplateLoader.SCRIPT_TYPES + "）");
+            }
+            String runPolicy = upper(config.getString("taskRunPolicy"), "RUN_ONCE");
+            if (!TaskTemplateLoader.RUN_POLICIES.contains(runPolicy)) {
+                problems.add(label + " 的 taskRunPolicy=[" + runPolicy + "] 不受支持（可用: "
+                        + TaskTemplateLoader.RUN_POLICIES + "）");
+            } else if ("CRONTAB".equals(runPolicy) && isBlank(config.getString("taskCrontabExpr"))) {
+                problems.add(label + " 的 taskRunPolicy=CRONTAB 但缺少 taskCrontabExpr");
+            } else if ("INTERVAL".equals(runPolicy) && config.getIntValue("taskInterval", 0) <= 0) {
+                problems.add(label + " 的 taskRunPolicy=INTERVAL 但 taskInterval<=0");
+            }
+            String failPolicy = upper(config.getString("taskFailPolicy"), "CONTINUE");
+            if (!TaskTemplateLoader.FAIL_POLICIES.contains(failPolicy)) {
+                problems.add(label + " 的 taskFailPolicy=[" + failPolicy + "] 不受支持（可用: "
+                        + TaskTemplateLoader.FAIL_POLICIES + "）");
+            }
+            int retryTimes = config.getIntValue("taskRetryTimes", 0);
+            int retryInterval = config.getIntValue("taskRetryInterval", 60);
+            if (retryTimes < 0) {
+                problems.add(label + " 的 taskRetryTimes 不能为负数，实际: " + retryTimes);
+            }
+            if (retryInterval < 0) {
+                problems.add(label + " 的 taskRetryInterval 不能为负数，实际: " + retryInterval);
+            }
+            // RETRY 却不可重试：QuartzJob.handleRetry 会在运行期静默降级为 CONTINUE，这里提前拒绝
+            if ("RETRY".equals(failPolicy) && retryTimes <= 0) {
+                problems.add(label + " 的 taskFailPolicy=RETRY 但 taskRetryTimes<=0（运行期会退化成 CONTINUE）");
+            }
+            Object mandatory = config.get("taskMandatory");
+            if (mandatory != null && !isBooleanValue(mandatory)) {
+                problems.add(label + " 的 taskMandatory 必须是布尔值，实际: " + mandatory);
+            }
+            Object variablesValue = config.get("variables");
+            if (variablesValue != null) {
+                if (!(variablesValue instanceof Map<?, ?> variables)) {
+                    problems.add(label + " 的 variables 必须是 JSON 对象（KEY→标量值）");
+                } else {
+                    for (Map.Entry<?, ?> entry : variables.entrySet()) {
+                        Object value = entry.getValue();
+                        if (value instanceof Map || value instanceof Collection) {
+                            problems.add(label + " 的 variables[" + entry.getKey()
+                                    + "] 是嵌套对象/数组（只支持标量值）");
+                        }
+                    }
+                }
+            }
+            String parallelPolicy = upper(config.getString("taskParallelPolicy"), "PARALLEL");
+            if (!TaskTemplateLoader.PARALLEL_POLICIES.contains(parallelPolicy)) {
+                problems.add(label + " 的 taskParallelPolicy=[" + parallelPolicy + "] 不受支持（可用: "
+                        + TaskTemplateLoader.PARALLEL_POLICIES + "）");
+            }
+        }
+        return problems;
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    /** JSON 布尔值（{@code true}/{@code false} 或文本 {@code "true"}/{@code "false"}）之外一律视为不合格。 */
+    private static boolean isBooleanValue(Object value) {
+        if (value instanceof Boolean) {
+            return true;
+        }
+        String text = String.valueOf(value);
+        return "true".equalsIgnoreCase(text) || "false".equalsIgnoreCase(text);
+    }
+
+    private static String upper(String value, String fallback) {
+        if (isBlank(value)) {
+            return fallback;
+        }
+        return value.trim().toUpperCase(Locale.ROOT);
     }
 
     /**

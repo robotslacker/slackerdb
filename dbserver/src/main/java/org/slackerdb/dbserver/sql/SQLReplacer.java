@@ -643,6 +643,36 @@ public class SQLReplacer {
         return result;
     }
 
+    /**
+     * 从 {@code SET application_name = 'x'} 里取出应用名；不是这条语句时返回 {@code null}。
+     *
+     * <p><b>为什么需要它</b>：pgjdbc 系驱动（含本项目 {@code dbdriver}）在握手完成后用一条
+     * {@code SET application_name = '...'} 上报来源，而这条语句在下面会被替换成空语句
+     * （DuckDB 不支持该设置）。要在管理端辨识"这条连接是谁的"（会话面板、安全地终止会话），
+     * 就必须在替换之**前**把值截留下来，记到 {@code DBSession.applicationName} 上。</p>
+     *
+     * <p>只做最小解析：支持 {@code =} 与 {@code TO} 两种写法、单引号字符串（{@code ''} 转义）、
+     * 大小写不敏感；不做完整 SQL 解析（真要完整解析请走 {@code plsql} 的分析器，代价不值得）。</p>
+     *
+     * @param sql 客户端发来的原始 SQL（替换前）
+     * @return 应用名；不是 SET application_name 语句时返回 {@code null}
+     */
+    public static String extractApplicationName(String sql) {
+        if (sql == null || sql.isEmpty()) {
+            return null;
+        }
+        java.util.regex.Matcher matcher = APPLICATION_NAME_PATTERN.matcher(sql);
+        if (!matcher.find()) {
+            return null;
+        }
+        return matcher.group(1).replace("''", "'");
+    }
+
+    /** {@code SET application_name = 'x'} / {@code SET application_name TO 'x'} 的取值模式。 */
+    private static final java.util.regex.Pattern APPLICATION_NAME_PATTERN =
+            java.util.regex.Pattern.compile(
+                    "(?is)\\bset\\s+application_name\\s*(?:=|\\bto\\b)\\s*'((?:[^']|'')*)'");
+
     // 对SQL进行替换，有些SQL无法通过PG的协议，所以需要进行特殊处理
     public static String replaceSQL(DBInstance pDbInstance, String sql) {
         // 如果有缓存的SQL记录，则直接读取缓存的内容

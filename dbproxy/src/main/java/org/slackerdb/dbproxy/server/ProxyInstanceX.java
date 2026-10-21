@@ -2,8 +2,11 @@ package org.slackerdb.dbproxy.server;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import com.alibaba.fastjson2.JSONArray;
+import com.alibaba.fastjson2.JSONObject;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
+import org.slackerdb.dbproxy.BuildInfo;
 import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
@@ -16,6 +19,7 @@ import java.net.http.HttpClient.Version;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
@@ -28,6 +32,12 @@ public class ProxyInstanceX {
             .version(Version.HTTP_2)
             .connectTimeout(Duration.ofSeconds(10))
             .build();
+
+    /** 进程启动时间，供 {@code /status} 计算运行时长。 */
+    private final long startedAt = System.currentTimeMillis();
+    /** 管理口 / pgwire 口（{@code start()} 时记录，供能力声明使用）。 */
+    private int managementPort = -1;
+    private int pgPort = -1;
 
     public ProxyInstanceX(
             Logger logger,
@@ -123,6 +133,70 @@ public class ProxyInstanceX {
                 : ctx.ip();
     }
 
+    /**
+     * 代理自身的状态。
+     *
+     * <p>过去代理只有一个 {@code /*} 前缀转发器，平台看不到"代理活着吗、它在转发给谁"。
+     * 这里如实报告已有信息；**后端健康状态目前没有采集**（{@code state} 恒为 {@code UNKNOWN}），
+     * 需要时再加探测（已在契约里标为后续项）。</p>
+     */
+    private JSONObject buildStatusJson() {
+        JSONObject status = new JSONObject();
+        status.put("role", "proxy");
+        status.put("version", readVersion());
+        status.put("pid", ProcessHandle.current().pid());
+        status.put("uptimeSeconds", (System.currentTimeMillis() - startedAt) / 1000L);
+        status.put("managementPort", managementPort);
+        status.put("pgPort", pgPort);
+
+        JSONArray backends = new JSONArray();
+        for (java.util.Map.Entry<String, String> entry : forwarderPathMappings.entrySet()) {
+            JSONObject backend = new JSONObject();
+            backend.put("alias", entry.getKey());
+            backend.put("target", entry.getValue());
+            backend.put("state", "UNKNOWN");
+            backends.add(backend);
+        }
+        status.put("backends", backends);
+        status.put("backendCount", backends.size());
+        return status;
+    }
+
+    /**
+     * 代理的能力声明（与 {@code dbserver} 用同一信封，客户端只需实现一次解析）。
+     */
+    private JSONObject buildCapabilitiesJson() {
+        JSONObject capabilities = new JSONObject();
+        capabilities.put("apiVersion", org.slackerdb.common.api.ApiVersion.MANAGEMENT);
+
+        JSONObject proxy = new JSONObject();
+        proxy.put("version", readVersion());
+        proxy.put("pid", ProcessHandle.current().pid());
+        capabilities.put("proxy", proxy);
+
+        JSONObject ports = new JSONObject();
+        ports.put("pg", pgPort);
+        ports.put("management", managementPort);
+        ports.put("managementEnabled", true);
+        capabilities.put("ports", ports);
+
+        // 前缀转发是代理的独有能力：客户端要"通过代理管多后端"时必须知道别名规则
+        JSONObject forwarding = new JSONObject();
+        forwarding.put("enabled", true);
+        forwarding.put("prefixMode", "alias");
+        capabilities.put("managementForwarding", forwarding);
+
+        JSONObject contracts = new JSONObject();
+        contracts.put("managementApi", org.slackerdb.common.api.ApiVersion.MANAGEMENT);
+        capabilities.put("contracts", contracts);
+        return capabilities;
+    }
+
+    /** 代理版本号（构建期生成的 {@code META-INF/build-info.properties}）；读不到时是 {@code unknown}。 */
+    private String readVersion() {
+        return BuildInfo.version();
+    }
+
     public void start(ServerConfiguration serverConfiguration)
     {
         // 关闭Javalin, 如果不是在trace下
@@ -161,6 +235,13 @@ public class ProxyInstanceX {
             // 设置请求开始时间作为属性
             ctx.attribute("startTime", System.currentTimeMillis());
         });
+
+        // 平台契约：代理自身的状态与能力。
+        // 必须在下面的 /* 通配转发之前注册，否则会被前缀转发吞掉（见 ProxyApiTest 的断言）。
+        this.managementPort = serverConfiguration.getPortX();
+        this.pgPort = serverConfiguration.getPort();
+        this.managementApp.unsafe.routes.get("/status", ctx -> ctx.json(buildStatusJson()));
+        this.managementApp.unsafe.routes.get("/capabilities", ctx -> ctx.json(buildCapabilitiesJson()));
 
         // 处理转发请求
         this.managementApp.unsafe.routes.get(

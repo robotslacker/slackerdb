@@ -291,6 +291,16 @@ public class PluginService {
                         if (plugin.getPlugin() instanceof org.slackerdb.plugin.DBPlugin dbPlugin) {
                             info.put("mountTime", dbPlugin.getMountTime());
                             info.put("mountTimeFormatted", dbPlugin.getMountTimeFormatted());
+
+                            // 插件自描述的能力（控制台据此显隐入口，不靠探测端点）
+                            org.slackerdb.plugin.PluginContribution contribution = dbPlugin.contributes();
+                            if (contribution != null) {
+                                Map<String, Object> contributes = new java.util.HashMap<>();
+                                contributes.put("routePrefix", contribution.routePrefix());
+                                contributes.put("contractVersion", contribution.contractVersion());
+                                contributes.put("capabilities", contribution.capabilities());
+                                info.put("contributes", contributes);
+                            }
                         } else {
                             info.put("mountTime", 0L);
                             info.put("mountTimeFormatted", "");

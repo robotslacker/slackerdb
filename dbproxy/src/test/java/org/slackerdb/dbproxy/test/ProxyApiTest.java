@@ -96,6 +96,39 @@ public class ProxyApiTest {
         System.out.println("TEST:: Proxy and DB stopped successful.");
     }
 
+    /**
+     * 代理必须能报告**自身**状态与能力，且不能被 {@code /*} 前缀转发吞掉。
+     *
+     * <p>这是平台契约的一部分：控制台要把代理显示成"一个带下游的节点"，而不是一个黑洞。
+     * 同时锁住路由注册顺序（自有路由必须在通配之前注册）。</p>
+     */
+    @Test
+    void proxyExposesOwnStatusAndCapabilities() throws Exception {
+        HttpClient client = HttpClient.newHttpClient();
+
+        HttpResponse<String> status = client.send(
+                HttpRequest.newBuilder(new URI("http://127.0.0.1:" + proxyPortX + "/status")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        org.junit.jupiter.api.Assertions.assertEquals(200, status.statusCode(),
+                "/status 必须由代理自己响应，不能被 /* 前缀转发吞掉；实际响应：" + status.body());
+        JSONObject statusBody = JSON.parseObject(status.body());
+        org.junit.jupiter.api.Assertions.assertEquals("proxy", statusBody.getString("role"),
+                "代理状态必须声明 role=proxy");
+        org.junit.jupiter.api.Assertions.assertTrue(statusBody.getJSONArray("backends").size() >= 1,
+                "应至少报告一个已配置的转发别名");
+
+        HttpResponse<String> capabilities = client.send(
+                HttpRequest.newBuilder(new URI("http://127.0.0.1:" + proxyPortX + "/capabilities")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        org.junit.jupiter.api.Assertions.assertEquals(200, capabilities.statusCode());
+        JSONObject capabilitiesBody = JSON.parseObject(capabilities.body());
+        org.junit.jupiter.api.Assertions.assertEquals(1, capabilitiesBody.getIntValue("apiVersion"),
+                "能力声明必须带管理 API 契约版本");
+        org.junit.jupiter.api.Assertions.assertEquals("alias",
+                capabilitiesBody.getJSONObject("managementForwarding").getString("prefixMode"),
+                "必须声明前缀转发的别名规则");
+    }
+
     @Test
     void testSimpleApiQueryThroughProxy() throws Exception {
         // 首先在数据库上注册一个服务

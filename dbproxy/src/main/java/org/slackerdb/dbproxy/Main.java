@@ -14,13 +14,6 @@ import org.slackerdb.common.logger.AppLogger;
 import org.slackerdb.dbproxy.client.AdminClient;
 import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.*;
 
 public class Main {
@@ -132,36 +125,10 @@ public class Main {
             // 返回 false 说明当前是开发模式（不是从 jar 启动），无法脱离当前进程，继续前台运行
         }
 
-        // 从资源信息中读取系统的版本号
-        String version, localBuildDate;
-        try {
-            InputStream inputStream = Main.class.getResourceAsStream("/version.properties");
-            Properties properties = new Properties();
-            properties.load(inputStream);
-            version = properties.getProperty("version", "{project.version}");
-            String buildTimestamp = properties.getProperty("build.timestamp", "${build.timestamp}");
-
-            // 转换编译的时间格式
-            try {
-                ZonedDateTime zdt = ZonedDateTime.parse(buildTimestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX"));
-                LocalDateTime localDateTime = LocalDateTime.ofInstant(zdt.toInstant(), ZoneId.systemDefault());
-                localBuildDate =
-                        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").format(localDateTime) + " " +
-                                TimeZone.getTimeZone(ZoneId.systemDefault()).getID();
-            }
-            catch (DateTimeParseException ex)
-            {
-                localBuildDate = buildTimestamp;
-            }
-            if (inputStream != null) {
-                inputStream.close();
-            }
-        }
-        catch (IOException ioe)
-        {
-            version = "{project.version}";
-            localBuildDate = "${build.timestamp}";
-        }
+        // 版本与构建时刻来自构建期生成的 META-INF/build-info.properties
+        // （spring-boot-maven-plugin 的 build-info 目标；读取与格式化见 BuildInfo）
+        String version = BuildInfo.version();
+        String localBuildDate = BuildInfo.buildTime();
         if (subCommand.equalsIgnoreCase("HELP"))
         {
             // 打印帮助信息

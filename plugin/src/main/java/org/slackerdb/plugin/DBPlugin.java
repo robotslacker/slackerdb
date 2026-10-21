@@ -74,6 +74,21 @@ public abstract class DBPlugin extends Plugin
     }
 
     /**
+     * 声明本插件向平台贡献的能力（路由前缀、契约版本、能力开关）。
+     *
+     * <p>默认返回 {@code null}，表示"不声明"。控制台/CLI 等消费方按声明决定是否显示对应入口，
+     * 因此**不声明的插件仍然可用**，只是不会被平台主动展示。</p>
+     *
+     * <p>实现方应在 {@code onStart()} 成功后能稳定返回同一份声明（不要在声明里做耗时操作）。</p>
+     *
+     * @return 贡献声明，或 {@code null}
+     */
+    public PluginContribution contributes()
+    {
+        return null;
+    }
+
+    /**
      * Get all plugin-specific properties from dbserver configuration.
      * Properties are passed via dbserver configuration file or command line
      * with the format: <code><pluginId>.<paramName></code>.

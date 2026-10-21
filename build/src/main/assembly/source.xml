@@ -75,6 +75,31 @@
                 <exclude>target/**</exclude>
             </excludes>
         </fileSet>
+        <!--
+            dbcli：根 pom.xml 把它列为 <module>，源码包里必须有，否则解压后
+            `mvn clean package` 会在解析反应堆时报"找不到子模块"直接失败。
+            除了 src/ 与 pom.xml，还要带上两处构建期输入：build-tools/（生成版本信息的
+            单文件源码程序，见 dbcli/pom.xml 的 exec-maven-plugin）与
+            src/build-resources/（版本信息的模板）。target/ 同样排除。
+        -->
+        <fileSet>
+            <directory>${project.basedir}/../dbcli</directory>
+            <outputDirectory>/dbcli</outputDirectory>
+            <excludes>
+                <exclude>target/**</exclude>
+            </excludes>
+        </fileSet>
+        <!--
+            docs：面向开发者的设计与行为规范（含 dbcli 的设计记录与 _COMPARE 行为规范）。
+            用户手册（dbcli/README*.adoc）不引用它们；随源码包分发只是为了开发者能拿到完整背景。
+        -->
+        <fileSet>
+            <directory>${project.basedir}/../docs</directory>
+            <outputDirectory>/docs</outputDirectory>
+            <excludes>
+                <exclude>target/**</exclude>
+            </excludes>
+        </fileSet>
         <fileSet>
             <directory>${project.basedir}/../dbserver</directory>
             <outputDirectory>/dbserver</outputDirectory>

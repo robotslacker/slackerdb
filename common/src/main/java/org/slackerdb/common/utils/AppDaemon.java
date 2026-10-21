@@ -209,7 +209,7 @@ public final class AppDaemon {
      *
      * @param intent     最终意图（{@link #resolve(DaemonIntent, boolean)} 的结果）
      * @param subCommand 子命令
-     * @param logger     用于告警的 logger，可为 null（此时打印到 {@code System.out}，与历史行为一致）
+     * @param logger     用于告警的 logger，可为 null（此时直打控制台，且只走 <b>stderr</b>）
      * @return 实际是否转后台
      */
     public static boolean applySubCommandRestriction(DaemonIntent intent, String subCommand, Logger logger) {
@@ -220,9 +220,10 @@ public final class AppDaemon {
         if (logger != null) {
             logger.warn("[DAEMON] {}", message);
         } else {
-            // 此时日志系统还没初始化（--log 的处理在配置解析之后），所以直打到控制台，
-            // 同时与历史输出逐字符一致
-            System.out.println(message);
+            // 此时日志系统还没初始化（--log 的处理在配置解析之后），所以直打到控制台：
+            // 只走 stderr —— 告警是**诊断信息**，而调用方的 stdout 纪律是"只放数据"
+            // （它会被重定向、被逐字节比对），一句 Warn 混进去就是污染
+            System.err.println(message);
         }
         return false;
     }
@@ -245,11 +246,36 @@ public final class AppDaemon {
     /**
      * 命令行拼装本体：与"当前进程是否从 jar 启动"解耦，便于单测直接喂一个假 jar 路径。
      *
+     * <p>返回值已经是<b>平台相关</b>的后台启动命令：Windows 上是
+     * {@code cmd /c start "" /B <前景命令>}，POSIX 上是 {@code <shell> -c "nohup ... &"}。
+     * 也就是说 POSIX 下整条前景命令被压进了 shell 行里，不再是一个一个的数组元素。
+     * 想检查"子进程收到哪些参数"，用 {@link #buildForegroundCommand(String, String, List)}
+     * （它是平台无关的），别去解包这里的返回值。</p>
+     *
      * @param jarPath 可执行 jar 的路径；null 表示开发模式（无法转后台）
      * @throws Exception 找不到可用的 shell（仅 POSIX 路径）
      */
     public static List<String> buildDaemonCommand(String jarPath, String subCommand,
                                                   List<Option> options) throws Exception {
+        List<String> foreground = buildForegroundCommand(jarPath, subCommand, options);
+        if (foreground == null) {
+            return null;
+        }
+        return List.of(OSUtil.buildDaemonCommand(foreground.toArray(new String[0])));
+    }
+
+    /**
+     * 拼出子进程的"前景形态"命令行，<b>不做</b>平台包装：{@code java -jar <jar> <选项...> --daemon false <子命令>}。
+     *
+     * <p>抽出来是为了让"子进程到底收到哪些参数"这件事能被平台无关地断言：
+     * {@link #buildDaemonCommand(String, String, List)} 的返回值在 POSIX 下是一条 shell 命令字符串，
+     * 参数边界已经被 {@code OSUtil} 的转义吃掉，不能按数组元素检查。</p>
+     *
+     * @param jarPath 可执行 jar 的路径；null 表示开发模式（无法转后台）
+     * @return 前景命令；开发模式返回 null
+     */
+    static List<String> buildForegroundCommand(String jarPath, String subCommand,
+                                               List<Option> options) {
         if (jarPath == null) {
             return null;
         }
@@ -282,13 +308,17 @@ public final class AppDaemon {
             foreground.add(subCommand);
         }
 
-        return List.of(OSUtil.buildDaemonCommand(foreground.toArray(new String[0])));
+        return List.copyOf(foreground);
     }
 
     // ------------------------------------------------------------------ 拉起后台副本
 
     /**
      * 拉起后台副本。
+     *
+     * <p><b>输出去向</b>：开发模式（不是从 jar 启动，无法转后台）的那条警告走 <b>stderr</b>
+     * ——警告是诊断信息，而调用方的 stdout 只放数据（见方法体里的注释）；
+     * "副本已在后台起来"这类状态行仍走 stdout，它是这条命令的产物。</p>
      *
      * @param anchor        用于推断当前 jar 的类
      * @param subCommand    子命令
@@ -309,7 +339,10 @@ public final class AppDaemon {
             if (logger != null) {
                 logger.warn("[DAEMON] {}", message);
             } else {
-                System.out.println(message);
+                // 走 stderr：这是**诊断信息**，不是命令的产物。调用方（dbcli 的 --execute、
+                // dbserver 的启动输出）的 stdout 纪律是"只放数据"——它会被重定向、被逐字节比对，
+                // 一句警告混进去就是污染（本条的日志系统此时还没初始化，所以只能直打控制台）。
+                System.err.println(message);
             }
             return false;
         }
@@ -325,7 +358,8 @@ public final class AppDaemon {
         String logDesc = logTarget == null || logTarget.isBlank() ? "CONSOLE" : logTarget;
         System.out.println("Daemon started in background (log: " + logDesc + ").");
         if (logTarget == null || logTarget.isBlank()) {
-            System.out.println("Warn: --" + (logOptionName == null ? "log" : logOptionName)
+            // 这一条是"提醒"，属于诊断信息 -> stderr（"副本已经起来"那句状态行才是命令产物，留 stdout）
+            System.err.println("Warn: --" + (logOptionName == null ? "log" : logOptionName)
                     + " was not given; background output stays on this console and may be lost when it closes.");
         }
         if (logger != null) {

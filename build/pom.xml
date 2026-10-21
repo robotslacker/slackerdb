@@ -15,6 +15,22 @@
 
     <build>
         <plugins>
+            <!--
+                文档 PDF 由 asciidoctor（JRuby）生成。JRuby 的 Encoding.default_external 取自 Maven
+                这个 JVM 的 file.encoding：在 zh-CN Windows 上用 JDK 8~17 构建时它是 GBK，于是
+                jruby-stdlib 里自带的 jar-dependencies 读 **UTF-8 的** conf/settings.xml 会报
+
+                    error reading or parsing <M2_HOME>/conf/settings.xml
+
+                （Kernel.warn 直打 stderr，没有 [WARNING] 前缀，容易被当成 Maven 自身的错误；
+                实际不影响产物，PDF 照常生成）。
+
+                仓库**不**固定构建 JVM 的字符集（不再放 .mvn/jvm.config），需要时在构建环境里给一条：
+
+                    MAVEN_OPTS=-Dfile.encoding=UTF-8 mvn clean package
+
+                或者直接用 JDK 18+（默认字符集已是 UTF-8）。详见 README 的“从源码构建”。
+            -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-clean-plugin</artifactId>
@@ -68,6 +84,9 @@
                                 <include>README-CN.adoc</include>
                                 <include>robotslacker.jpg</include>
                                 <include>imgs/**</include>
+                                <!-- dbcli 用户手册（中英双语，决策 13/15） -->
+                                <include>dbcli/README.adoc</include>
+                                <include>dbcli/README-CN.adoc</include>
                             </includes>
                         </resource>
                     </resources>
@@ -101,6 +120,43 @@
                         </goals>
                         <configuration>
                             <sourceDocumentName>README-CN.adoc</sourceDocumentName>
+                            <attributes>
+                                <icons>font</icons>
+                                <pdf-theme>${project.basedir}/src/main/resources/pdf/README-CN-theme.yml</pdf-theme>
+                            </attributes>
+                        </configuration>
+                    </execution>
+                    <!--
+                        dbcli 用户手册（中英双语）：源文件在 dbcli/ 下。
+                        **必须给独立输出目录**：asciidoctor-maven-plugin 的输出名取自
+                        sourceDocumentName 的**文件名**（README.adoc → README.pdf），不保留子目录，
+                        若沿用顶层 generated-docs 会把工程主手册的 README.pdf/README-CN.pdf 覆盖掉
+                        （实测发生过）。产物由 deployment.xml 收进发行包的 doc/ 目录。
+                        中文同样要换 CJK 主题。
+                    -->
+                    <execution>
+                        <id>generate-pdf-documentation-dbcli</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>process-asciidoc</goal>
+                        </goals>
+                        <configuration>
+                            <sourceDocumentName>dbcli/README.adoc</sourceDocumentName>
+                            <outputDirectory>${project.build.directory}/generated-docs-dbcli</outputDirectory>
+                            <attributes>
+                                <icons>font</icons>
+                            </attributes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>generate-pdf-documentation-dbcli-cn</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>process-asciidoc</goal>
+                        </goals>
+                        <configuration>
+                            <sourceDocumentName>dbcli/README-CN.adoc</sourceDocumentName>
+                            <outputDirectory>${project.build.directory}/generated-docs-dbcli</outputDirectory>
                             <attributes>
                                 <icons>font</icons>
                                 <pdf-theme>${project.basedir}/src/main/resources/pdf/README-CN-theme.yml</pdf-theme>

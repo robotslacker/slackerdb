@@ -1,5 +1,6 @@
 package org.slackerdb.plugins.scheduler.runner;
 
+import org.slackerdb.plugins.scheduler.meta.TaskTemplateLoader;
 import org.slf4j.Logger;
 
 import java.io.File;
@@ -178,32 +179,44 @@ public final class ProcessTaskExecutor {
         return request.runHome;
     }
 
-    /** 构造命令行：HOP 交给 {@link HopCommandBuilder}，其它类型切词后按平台包装。 */
+    /**
+     * 构造命令行：HOP 交给 {@link HopCommandBuilder}，SHELL/COMMAND 按平台包装成"经 shell 执行一条命令行"。
+     *
+     * <p>类型白名单只有一处（{@link TaskTemplateLoader#SCRIPT_TYPES}）：不在名单里的一律**明确失败**，
+     * 绝不当成命令行去执行。{@code SQL} 曾经是一条独立分支（只会抛错），现已并入这条通用判定——
+     * SQL 不再是一个"可选类型"，而是"未支持类型"，错误信息里仍给出正确的出路（写进 HOP 工作流）。</p>
+     */
     private List<String> buildCommand(TaskRequest request) {
-        String scriptType = request.scriptType == null ? "" : request.scriptType.trim().toUpperCase();
+        String scriptType = request.scriptType == null ? ""
+                : request.scriptType.trim().toUpperCase(java.util.Locale.ROOT);
         if ("HOP".equals(scriptType)) {
             return HopCommandBuilder.buildCommand(request);
         }
-        if ("SQL".equals(scriptType)) {
-            throw new IllegalStateException("SQL 任务不再由调度器直接执行（SQL 由 HOP 工作流内的 SQL action 执行）");
+        if (!TaskTemplateLoader.SCRIPT_TYPES.contains(scriptType)) {
+            throw new IllegalStateException("不支持的任务类型: [" + scriptType + "]（可用: "
+                    + TaskTemplateLoader.SCRIPT_TYPES + "；SQL 请写进 HOP 工作流的 SQL action）");
         }
         String script = request.script == null ? "" : request.script.trim();
         if (script.isEmpty()) {
             return List.of();
         }
+        if (!WINDOWS) {
+            // POSIX：{@code sh -c} 只把**紧跟 -c 的第一个参数**当作命令串，其余参数会变成 $0/$1…。
+            // 所以整条命令串必须原样作为唯一的 -c 操作数：
+            //   ["sh","-c","echo HELLO"]     -> 打印 HELLO
+            //   ["sh","-c","echo","HELLO"]   -> 只执行 echo，$0=HELLO，打印**空行**
+            // 后者会让 "my-job.sh --fast" 这类带参数的命令静默丢掉参数（只剩脚本名被当命令执行）。
+            return List.of("sh", "-c", script);
+        }
+        // Windows：.bat/.cmd 无法被 CreateProcess 直接执行，必须显式经 cmd /c 包装；
+        // 而 cmd 会把 argv 重新拼成一条命令行，所以这里切词后再逐个传是安全的。
         List<String> args = splitCommandLine(script);
         if (args.isEmpty()) {
             return List.of();
         }
         List<String> command = new ArrayList<>();
-        if (WINDOWS) {
-            // .bat/.cmd 无法被 CreateProcess 直接执行；显式经 cmd /c 包装
-            command.add("cmd");
-            command.add("/c");
-        } else {
-            command.add("sh");
-            command.add("-c");
-        }
+        command.add("cmd");
+        command.add("/c");
         command.addAll(args);
         return command;
     }

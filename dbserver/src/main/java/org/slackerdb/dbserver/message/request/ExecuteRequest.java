@@ -648,6 +648,13 @@ public class ExecuteRequest extends PostgresRequest {
                 continue;
             }
 
+            // 与单语句路径一致：SET application_name 会被 SQLReplacer 丢弃，
+            // 先在替换前把客户端自报的应用名记到会话上（供 /status 辨识来源）
+            String requestedApplicationName = SQLReplacer.extractApplicationName(statement.sql());
+            if (requestedApplicationName != null) {
+                session.applicationName = requestedApplicationName;
+            }
+
             // 脚本中的 SQL 与单语句路径一致：同样经过 SQLReplacer
             String statementSql = SQLReplacer.replaceSQL(this.dbInstance, statement.sql());
             if (statementSql.isEmpty()) {

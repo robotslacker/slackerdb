@@ -202,6 +202,7 @@ public class PostgresServer {
      *
      * @param timeoutMillis 最长等待时间（毫秒），必须 &gt; 0
      */
+    @SuppressWarnings("BusyWait")
     public void waitUntilReady(long timeoutMillis) throws ServerException, InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMillis;
         while (!portReady) {
@@ -645,8 +646,6 @@ public class PostgresServer {
         // Netty 的线程是首次派发任务时才真正创建，因此实际线程数约等于并发连接数，而非配置值。
         // 另外 Netty 会关闭这些线程上的 FastThreadLocal，无需额外维护。
         businessGroup = new DefaultEventExecutorGroup(businessThreads, new DefaultThreadFactory("pg-biz"));
-        logger.info("[SERVER] Business executor enabled with {} threads. " +
-                "Connection requests will be processed off the I/O threads.", businessThreads);
 
         try {
             // 启动TCP服务（如果端口不为-1）
@@ -705,7 +704,7 @@ public class PostgresServer {
                     throw bindFailure;
                 }
                 portReady = true;
-                logger.info("[SERVER] TCP listener started on {}:{}", bind, port);
+                logger.info("[SERVER][STARTUP    ] TCP listener started on {}:{}", bind, port);
             }
 
             // 启动UDS服务（如果socketPath不为空）

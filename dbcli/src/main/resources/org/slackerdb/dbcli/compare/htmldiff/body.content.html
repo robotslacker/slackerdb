@@ -1,0 +1,225 @@
+
+<div class="content-title">
+    <h4>Main content area:  {{ workFile }} vs {{ refFile }} </h4>
+    <button style="background-color:#ffffff;border:none" onclick="onLayoutClick()">
+        <svg id="layout_single" style="height:30px; width:30px;display:none"
+             class="icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+            <path d="M771.2 867.2H252.8l-32-32V188.8l32-32h518.4l32 32V832l-32 35.2z m-486.4-64h454.4V220.8H284.8v582.4z" fill="#707070"></path>
+        </svg>
+        <svg id="layout_double" style="height:30px; width:30px;display:none"
+             class="icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+            <path d="M835.2 156.8H188.8l-32 32V832l32 32H832l32-32V188.8l-28.8-32z m-614.4 64h339.2V800H220.8V220.8z m582.4 582.4h-211.2V220.8h211.2v582.4z" fill="#707070"></path>
+        </svg>
+    </button>
+</div>
+
+<div class="content">
+    <div id="loader" class="showbox">
+        <div class="loader">
+          <svg class="circular" viewBox="25 25 50 50">
+            <circle class="path" cx="50" cy="50" r="20" fill="none" stroke-width="2" stroke-miterlimit="10"/>
+          </svg>
+        </div>
+    </div>
+    
+    <div id="container">
+        <div id="left" class="left">
+            <div id="pleft"></div>
+        </div>
+        <div id="right" class="right">
+            <div id="pright"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    var data = [
+        {{#lines}}
+        {flag: '{{flag}}', number:"{{number}}", source:"{{source}}"},
+        {{/lines}}
+    ]
+
+    var layout = 2;
+    var current = data[0].number;
+
+    function generateSingleTable() {
+        let container = document.querySelector('#pleft');
+        data.forEach(function(row, index) {
+            let clone = container.querySelector("#l"+index);
+            if(clone == null) {
+                clone = document.createElement('div');
+                clone.className = "line";
+                const attr = document.createAttribute("id");
+                attr.value = "l" + index;
+                clone.setAttributeNode(attr);
+                container.appendChild(clone);
+            }
+            let source = row.source
+            if(row.flag === '+') {
+                clone.innerHTML = "<pre class=\"text plus\">" + row.flag + '  ' + '      ' + row.number.toString().padStart(6, ' ') + '  ' + source + "</pre>";
+            } else if(row.flag === '-') {
+                clone.innerHTML = "<pre class=\"text minus\">" + row.flag + '  ' + row.number.toString().padStart(6, ' ') + '      ' + '  ' + source + "</pre>";
+            } else if(row.flag === 'S') {
+                clone.innerHTML = "<pre class=\"text gray\">" + row.flag + '  ' + row.number.toString().padStart(6, ' ') + '      ' + '  ' + source + "</pre>";
+            } else {
+                clone.innerHTML = "<pre class=\"text\">" + row.flag + '  ' + row.number.toString().padStart(6, ' ') + '      ' + '  ' + source + "</pre>";
+            }
+        })
+    }
+
+    function generateDoubleTable() {
+        let container = document.querySelector('#container');
+        let leftContainer = container.querySelector('#pleft');
+        let rightContainer = container.querySelector('#pright');
+        data.forEach(function(row) {
+            let left = leftContainer.querySelector("#l"+row.number);
+            if (left == null) {
+                left = document.createElement('div');
+                left.className = "line";
+                const attr = document.createAttribute("id");
+                attr.value = "l" + row.number;
+                left.setAttributeNode(attr);
+                leftContainer.appendChild(left);
+            }
+
+            let right = rightContainer.querySelector("#r"+row.number);
+            if (right == null) {
+                right = document.createElement('div');
+                right.className = "line";
+                const attr = document.createAttribute("id");
+                attr.value = "r" + row.number;
+                right.setAttributeNode(attr);
+                rightContainer.appendChild(right);
+            }
+            let source = row.source
+            if (row.flag === '+') {
+                // 当前信息中有，但是ref中不存在的内容
+                right.innerHTML = "<pre class=\"text plus\">" + row.number.toString().padStart(6, ' ') + '  ' + source + "</pre>";
+                if (left.innerHTML === "") {
+                    left.innerHTML = "<pre class=\"text\">" + row.number.toString().padStart(6, ' ') + "</pre>";
+                }
+            } else if(row.flag === '-') {
+                // 当前信息中没有，但是ref中存在
+                if (right.innerHTML === "") {
+                    right.innerHTML = "<pre class=\"text\">" + row.number.toString().padStart(6, ' ') + "</pre>";
+                }
+                left.innerHTML = "<pre class=\"text minus\">" + row.number.toString().padStart(6, ' ') + '  ' + source + "</pre>";
+            } else if(row.flag === 'S') {
+                // 当前文件中有，但是应该过滤掉
+                if (right.innerHTML === "") {
+                    right.innerHTML = "<pre class=\"text\">" + row.number.toString().padStart(6, ' ') + "</pre>";
+                }
+                left.innerHTML = "<pre class=\"text gray\">" + row.number.toString().padStart(6, ' ') + '  ' + source + "</pre>";
+            } else {
+                // 两边内容完全一致
+                left.innerHTML = "<pre class=\"text\">" + row.number.toString().padStart(6, ' ') + '  ' + source + "</pre>";
+                right.innerHTML = "<pre class=\"text\">" + row.number.toString().padStart(6, ' ') + '  ' + source + "</pre>";
+            }
+        })
+    }
+
+    function onLayoutClick() {
+        var container = document.querySelector('#container');
+        var leftContainer = container.querySelector('#pleft');
+        var rightContainer = container.querySelector('#pright');
+        var loader = document.querySelector('#loader');
+        loader.style.display = "unset";
+        loader.style.opacity = 1;
+        loader.addEventListener("animationend", function(e){
+            loader.style.display = "none";
+        });
+        leftContainer.innerHTML="";
+        rightContainer.innerHTML="";
+        
+        if(layout === 1) {
+            let left = container.querySelector('#left');
+            let right = container.querySelector('#right');
+            left.classList.remove("left");
+            left.classList.add("single");
+            right.classList.remove("right");
+            right.classList.add("hidden");
+            right.style.display = "none";
+            generateSingleTable();
+            layout = 2;
+            let layout_single = document.getElementById("layout_single");
+			let layout_double = document.getElementById("layout_double");
+			layout_single.style.display = "none";
+			layout_double.style.display = "unset";
+        } else if(layout === 2){
+            let left = container.querySelector('#left');
+            let right = container.querySelector('#right');
+            left.classList.remove("single");
+            left.classList.add("left");
+            right.classList.remove("hidden");
+            right.classList.add("right");
+            right.style.display = "unset";
+            generateDoubleTable();
+            layout = 1;
+            let layout_single = document.getElementById("layout_single");
+			let layout_double = document.getElementById("layout_double");
+			layout_double.style.display = "none";
+			layout_single.style.display = "unset";
+            
+            left.addEventListener("scroll",function() {
+                right.scrollTop = left.scrollTop;    
+            })
+            right.addEventListener("scroll",function() {
+                left.scrollTop = right.scrollTop; 
+            })
+        }
+    }
+
+    function isVisible(rowNumber) {
+        let container = document.querySelector('#container');
+        let leftContainer = container.querySelector('#pleft');
+
+        let element = leftContainer.querySelector("#l"+rowNumber);
+        if(!element)
+            return false;
+
+        // 获取可视窗口的盖度。
+        const screenHeight = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight;
+        // 获取滚动条滚动的高度
+        const scrollTop = document.documentElement.scrollTop;
+        // 获取元素偏移的高度。就是距离可视窗口的偏移量。
+        const offsetTop = element.offsetTop;
+        return offsetTop - scrollTop <= screenHeight;
+    }
+
+    function visibleRow(rowNumber) {
+        var container = document.querySelector('#container');
+        var leftContainer = container.querySelector('#pleft');
+        let element = leftContainer.querySelector("#l" + rowNumber);
+        if (element !== null)
+        {
+            element.scrollIntoView();
+        }
+    }
+
+    function next( ) {
+        for (i = parseInt(current) + 1; i < data.length; i++) {
+            if ( data[i].flag ==='+' || data[i].flag ==='-') {
+                visibleRow(i.toString());
+                current = i.toString()
+                return;
+            }
+        }
+    }
+
+    function pre() {
+        for (i = parseInt(current) - 1; i < data.length; i--) {
+            if (i < 0)
+            {
+                return
+            }
+            if ( data[i].flag ==='+' || data[i].flag ==='-') {
+                visibleRow(i.toString());
+                current = i.toString()
+                return;
+            }
+        }
+    }
+    onLayoutClick();
+
+    
+</script>

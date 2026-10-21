@@ -4,6 +4,7 @@ import com.sun.management.OperatingSystemMXBean;
 import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.utils.Utils;
+import org.slackerdb.dbproxy.BuildInfo;
 import org.slackerdb.dbproxy.message.PostgresMessage;
 import org.slackerdb.dbproxy.message.response.AdminClientResp;
 import org.slackerdb.dbproxy.server.PostgresProxyTarget;
@@ -12,18 +13,13 @@ import org.slackerdb.dbproxy.message.PostgresRequest;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.Properties;
-import java.util.TimeZone;
 
 public class AdminClientRequest extends PostgresRequest {
     public static final byte[] AdminClientRequestHeader = {0x00, 0x00, 0x00, 0x08, 0x01, 0x01, 0x01, 0x01};
@@ -57,33 +53,9 @@ public class AdminClientRequest extends PostgresRequest {
         {
             LocalDateTime currentTime = LocalDateTime.now();
 
-            // 从资源信息中读取系统的版本号
-            String version, localBuildDate;
-            try {
-                InputStream inputStream = this.getClass().getResourceAsStream("/version.properties");
-                Properties properties = new Properties();
-                properties.load(inputStream);
-                version = properties.getProperty("version", "{project.version}");
-                String buildTimestamp = properties.getProperty("build.timestamp", "${build.timestamp}");
-
-                // 转换编译的时间格式
-                try {
-                    ZonedDateTime zdt = ZonedDateTime.parse(buildTimestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX"));
-                    LocalDateTime localDateTime = LocalDateTime.ofInstant(zdt.toInstant(), ZoneId.systemDefault());
-                    localBuildDate =
-                            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").format(localDateTime) + " " +
-                                    TimeZone.getTimeZone(ZoneId.systemDefault()).getID();
-                }
-                catch (DateTimeParseException ex)
-                {
-                    localBuildDate = buildTimestamp;
-                }
-            }
-            catch (IOException ioe)
-            {
-                version = "{project.version}";
-                localBuildDate = "${build.timestamp}";
-            }
+            // 版本与构建时刻来自构建期生成的 META-INF/build-info.properties
+            String version = BuildInfo.version();
+            String localBuildDate = BuildInfo.buildTime();
 
             // 显示当前服务状态
             feedBackMsg.append("PROXY STATUS: ").append(this.proxyInstance.instanceState).append("\n");

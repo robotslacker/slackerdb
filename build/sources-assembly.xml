@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  源码包（<artifactId>-<version>-sources.jar）的统一描述符。
+
+  口径就一句话：**源码包 = 这个模块在 git 里提交的源码树**（`src/main/` 下的 java / antlr4 语法 /
+  资源），不含任何构建产物。因此：
+
+    * 不装 `target/generated-sources/**`（ANTLR 生成的解析器、`*.interp`、`*.tokens`）；
+    * 不装 `target/classes/META-INF/build-info.properties`（由 spring-boot-maven-plugin 的 build-info 目标在构建期生成）；
+    * 装 `src/main/antlr4/**`：`.g4` 是提交进 git 的源文件，且是重新生成解析器所需的输入。
+
+  为什么用 assembly 而不是 maven-source-plugin：source 插件只会打 `project.compileSourceRoots`
+  （因此会把 ANTLR 生成物打进去、却打不进 `.g4`），口径与"和 git 一致"正好相反。
+
+  目录用相对路径：assembly 按**模块自身的 basedir** 解析；某个模块没有该目录时该 fileSet 为空，
+  不影响打包。
+-->
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0
+                              https://maven.apache.org/xsd/assembly-2.2.0.xsd">
+    <id>sources</id>
+    <formats>
+        <format>jar</format>
+    </formats>
+    <includeBaseDirectory>false</includeBaseDirectory>
+    <fileSets>
+        <fileSet>
+            <directory>src/main/java</directory>
+            <outputDirectory>/</outputDirectory>
+        </fileSet>
+        <fileSet>
+            <directory>src/main/antlr4</directory>
+            <outputDirectory>/</outputDirectory>
+        </fileSet>
+        <fileSet>
+            <directory>src/main/resources</directory>
+            <outputDirectory>/</outputDirectory>
+        </fileSet>
+    </fileSets>
+</assembly>

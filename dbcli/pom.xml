@@ -1,0 +1,299 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.robotslacker</groupId>
+        <artifactId>slackerdb</artifactId>
+        <version>0.2.1</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>slackerdb-dbcli</artifactId>
+    <packaging>jar</packaging>
+    <name>slackerdb-dbcli</name>
+    <description>SlackerDB 命令行客户端：交互式控制台 + 批处理脚本执行器</description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- 独立可执行 jar 的名字：jlib/slackerdb-dbcli-<ver>-standalone.jar -->
+        <dbcli.standalone.classifier>standalone</dbcli.standalone.classifier>
+    </properties>
+
+    <dependencies>
+        <!--
+          依赖方向：
+              dbcli → plsql → common
+          plsql 提供 SqlStatementSplitter / PlSqlDetector / PlSqlEngine（本地 PL/SQL 预检），
+          其 main 只依赖 java.sql + ANTLR runtime，是本仓最干净的可复用模块。
+        -->
+        <dependency>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-plsql</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!--
+          项目自带的 JDBC 驱动：提供 jdbc:slackerdb:// 前缀与 UDS 支持。
+          注意它只接受 jdbc:slackerdb: 前缀（dbdriver/.../Driver.java:81,276-278），
+          写 jdbc:postgresql:// 不会被它接管。
+        -->
+        <dependency>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-dbdriver</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- SSH/SFTP：用维护中的 JSch 分支 -->
+        <dependency>
+            <groupId>com.github.mwiede</groupId>
+            <artifactId>jsch</artifactId>
+        </dependency>
+
+        <!-- 命令行参数解析（命令树 / 自动 help / 类型校验） -->
+        <dependency>
+            <groupId>info.picocli</groupId>
+            <artifactId>picocli</artifactId>
+        </dependency>
+
+        <!--
+          交互式控制台（行编辑 / 历史 / 多行续行 / 中断）。
+
+          用聚合件 org.jline:jline（bundle）：它把 jline-terminal / jline-reader / jline-builtins
+          与 Windows/Linux 的本地终端实现打在一个 jar 里（约 1.4 MB），
+          这样"控制台能用"不依赖使用者再补 jline-terminal-jna / jansi 之类的小件。
+          版本由父 POM 的 dependencyManagement 统一仲裁，这里只写 artifactId（§2.3）。
+        -->
+        <dependency>
+            <groupId>org.jline</groupId>
+            <artifactId>jline</artifactId>
+        </dependency>
+
+        <!--
+          跨进程会合点（`_JOB CREATE … mode=process`）：SQLite 单文件库。
+
+          为什么是它：进程模式的"父放行、子等待"必须落到一个两个进程都能看见、且写入原子且幂等的地方；
+          SQLite 无服务端、不占端口、事务就能保证原子性，而且**同步库与脚本的库互不相干**
+          —— `_CONNECT` 也可以连 sqlite（`jdbc:sqlite:…` 原样交给这个驱动），会合点用的
+          只是它自己的一个临时文件。
+          版本由父 POM 的 dependencyManagement 统一仲裁（§2.3），这里只写 artifactId。
+          它会被打进 standalone jar（含各平台原生库，见 src/main/assembly/standalone.xml 的 runtime 解包）。
+        -->
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <!--
+          资源目录只有 src/main/resources（**不带** filtering）。
+
+          版本与构建时刻不在这里：它们由 spring-boot-maven-plugin 的 build-info 目标在
+          generate-resources 阶段生成到 target/classes/META-INF/build-info.properties，
+          键名是 Spring Boot 的公共约定（build.artifact / build.version / build.time），
+          读取统一走 common 的 org.slackerdb.common.version.BuildInfo。
+
+          为什么不再“在 src 里放一个 version.properties 再 filtering、也不用自写的生成器”：
+          手改得动的资源迟早会与 POM 不一致；而 spring-boot 的这个目标已经把“版本 + 构建时刻”
+          两件事都做对了（时刻是 UTC 瞬时、可用 project.build.outputTimestamp 固定），
+          三个模块因此共用一套口径，不再各写各的。
+        -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+            </resource>
+        </resources>
+
+        <plugins>
+            <!--
+              编译期警戒线：-Xlint:all 打开 javac 的全部警告。先按"警告清零"整理过一轮
+              （死代码/未用变量/过时用法都清掉了），之后新出现的警告就是真问题；
+              -Werror 把"新警告"变成构建失败，防止它再悄悄长回来。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <showWarnings>true</showWarnings>
+                    <compilerArgs>
+                        <arg>-Xlint:all</arg>
+                        <arg>-Werror</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+
+            <!--
+              构建信息（build-info 目标绑定在 generate-resources，早于 process-resources 的资源拷贝）：
+              生成 target/classes/META-INF/build-info.properties，内容为
+                build.artifact / build.group / build.name / build.version / build.time。
+
+              要点：
+                - build.time 取 project.build.outputTimestamp；没设置时取**本次 Maven 会话的启动时刻**
+                  （同一次 reactor 构建里各模块因此是同一个时刻）。写成 ISO-8601 的 UTC 瞬时（带 Z）：
+                  存储不带时区歧义，展示时才转本地时间并带偏移（见 common 的 BuildInfo）。
+                  要可复现构建就显式传 -Dproject.build.outputTimestamp=...（构建时刻也随之被固定）。
+                - additionalProperties 里的 product 会写成 build.product，是给人看的客户端名字（横幅用），
+                  不参与 -V 输出的两行。
+                - 本模块仍然是普通 jar：只跑 build-info，**不跑** repackage；主类由 assembly 的 manifest 指定。
+            -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>build-info</id>
+                        <goals>
+                            <goal>build-info</goal>
+                        </goals>
+                        <configuration>
+                            <additionalProperties>
+                                <product>dbcli (SlackerDB command line client)</product>
+                            </additionalProperties>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+              ANTLR 语法：本项目自有的 dbcli 语法（**按本项目范围裁剪**，
+              不支持的语句不写进 .g4，而不是留到运行期再拒绝）。
+              这里用本仓既有的 antlr4-maven-plugin 编译方式（与 plsql 一致），
+              生成物落在 target/generated-sources/antlr4，不要手工维护。
+
+              要点：
+                - libDirectory 必须指向语法所在目录，否则 SQLParser 里的 `import BaseParser;` 找不到被引入的语法；
+                - 只生成 SQLLexer/SQLParser 两个"组合后"的语法：BaseLexer/BaseParser 只作为被 import 的语法存在；
+                - visitor=true / listener=false：IR 走 visitor，不需要 listener。
+            -->
+            <plugin>
+                <groupId>org.antlr</groupId>
+                <artifactId>antlr4-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>antlr-generate-dbcli-grammars</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>antlr4</goal>
+                        </goals>
+                        <configuration>
+                            <sourceDirectory>${project.basedir}/src/main/antlr4</sourceDirectory>
+                            <libDirectory>${project.basedir}/src/main/antlr4/org/slackerdb/dbcli/antlr</libDirectory>
+                            <outputDirectory>${project.build.directory}/generated-sources/antlr4</outputDirectory>
+                            <visitor>true</visitor>
+                            <listener>false</listener>
+                            <includes>
+                                <include>**/SQLLexer.g4</include>
+                                <include>**/SQLParser.g4</include>
+                            </includes>
+                            <arguments>
+                                <argument>-package</argument>
+                                <argument>org.slackerdb.dbcli.antlr</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- 依赖方向硬约束：违反即构建失败（代码评审守不住的东西交给构建） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>dbcli-dependency-direction</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[17,)</version>
+                                </requireJavaVersion>
+                                <bannedDependencies>
+                                    <searchTransitive>true</searchTransitive>
+                                    <excludes>
+                                        <!-- 服务端/代理/插件：会把 Netty+Javalin+oshi+duckdb 拖进来，产物向 112MB 看齐 -->
+                                        <exclude>org.robotslacker:slackerdb-dbserver</exclude>
+                                        <exclude>org.robotslacker:slackerdb-dbproxy</exclude>
+                                        <exclude>org.robotslacker:slackerdb-plugin</exclude>
+                                        <exclude>org.robotslacker:slackerdb-plugin-example</exclude>
+                                        <exclude>org.robotslacker:slackerdb-plugin-scheduler</exclude>
+                                        <exclude>io.netty:*</exclude>
+                                        <exclude>io.javalin:*</exclude>
+                                        <exclude>org.duckdb:duckdb_jdbc</exclude>
+                                        <!-- 客户端不内嵌桌面 UI -->
+                                        <exclude>org.openjfx:*</exclude>
+                                    </excludes>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+              源码 jar（slackerdb-dbcli-<ver>-sources.jar）。
+
+              公共口径在父 POM 的 pluginManagement 里（只装 .java、不装资源、排除 .interp/.tokens），
+              各模块只声明 execution —— pluginManagement 只给版本、不绑定执行，所以每个模块要写这一小段。
+            -->
+            <!-- 独立可执行 jar -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <configuration>
+                    <!--
+                      产物名 = slackerdb-dbcli-<ver>-standalone.jar（id 来自 src/main/assembly/standalone.xml，
+                      appendAssemblyId=true 会把它接在版本号后面），并与瘦 jar 并存、不顶替主构件。
+                    -->
+                    <appendAssemblyId>true</appendAssemblyId>
+                    <descriptors>
+                        <descriptor>src/main/assembly/standalone.xml</descriptor>
+                    </descriptors>
+                    <archive>
+                        <manifest>
+                            <mainClass>org.slackerdb.dbcli.Main</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>make-standalone</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                    </execution>
+                    <!--
+                      源码包：口径见 build/sources-assembly.xml —— 与 git 里提交的 src/main 树一致，
+                      不含 target/ 下的任何构建产物。
+                    -->
+                    <execution>
+                        <id>sources-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <!--
+                              assembly 没有 classifier 参数：附件名 = <artifactId>-<version>-<descriptor/id>.jar，
+                              这里 id 就是 sources。
+                            -->
+                            <descriptors>
+                                <descriptor>${project.basedir}/../build/sources-assembly.xml</descriptor>
+                            </descriptors>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

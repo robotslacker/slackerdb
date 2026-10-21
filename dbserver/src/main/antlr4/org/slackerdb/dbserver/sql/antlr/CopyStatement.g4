@@ -66,18 +66,21 @@ IDENTIFIER  : ([a-z_] [a-z_0-9.]* );
 STRING_LITERAL: '\'' ( ~'\'' | '\'\'')* '\'' | '"' ( ~'"' | '""' )* '"';
 NUMBER: [0-9]+ ( '.' [0-9]+ )?;
 
-fragment A_: [aA];
-fragment D_: [dD];
-fragment E_: [eE];
-fragment F_: [fF];
-fragment I_: [iI];
-fragment L_: [lL];
-fragment N_: [nN];
-fragment O_: [oO];
-fragment R_: [rR];
-fragment S_: [sS];
-fragment T_: [tT];
-fragment U_: [uU];
+// 大小写不敏感由 `caseInsensitive = true` 负责：它会把这个**区间**展开成大小写两种情形
+// （见上面 STDIN/STDOUT 那段说明）。所以这里只写小写单字符——写成 `[aA]` 会与展开结果重复，
+// ANTLR 会报 warning(180) "chars a used multiple times in set [aA]"。
+fragment A_: [a];
+fragment D_: [d];
+fragment E_: [e];
+fragment F_: [f];
+fragment I_: [i];
+fragment L_: [l];
+fragment N_: [n];
+fragment O_: [o];
+fragment R_: [r];
+fragment S_: [s];
+fragment T_: [t];
+fragment U_: [u];
 
 // 忽略空格和注释
 NULL_CHAR: '\u0000';

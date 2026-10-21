@@ -1,0 +1,14 @@
+# 随包提供的 JDBC 驱动。
+#
+# 为什么这个文件必须存在：standalone jar 是把所有 runtime 依赖**解包拍平**到同一个 jar
+# （见 src/main/assembly/standalone.xml），而摊平后每个依赖自带的
+# META-INF/services/java.sql.Driver 只会留下一份 —— 于是 DriverManager 的自动发现
+# 只认得其中一个驱动，`_CONNECT jdbc:sqlite:…` 在分发包里会报 "No suitable driver"。
+#
+# 这里把随包的驱动**集中登记**：standalone 装配排掉依赖自带的同名文件，只留这一份
+# （见 src/main/assembly/standalone.xml 的 exclude），两条都在，DriverManager 才能
+# 按 URL 前缀各找各的驱动。
+#
+# 新增一个随包驱动时：把它的 Driver 实现类加到这里（并确认它真的被打进 standalone jar）。
+org.slackerdb.jdbc.Driver
+org.sqlite.JDBC

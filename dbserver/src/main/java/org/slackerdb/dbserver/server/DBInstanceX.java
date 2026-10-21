@@ -10,6 +10,7 @@ import io.javalin.plugin.bundled.CorsPluginConfig;
 import org.duckdb.DuckDBConnection;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.utils.BoundedQueue;
+import org.slackerdb.dbserver.BuildInfo;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.dbserver.service.APIService;
 import org.slackerdb.dbserver.service.PluginService;
@@ -24,20 +25,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.lang.management.ManagementFactory;
 import com.sun.management.OperatingSystemMXBean;
-import java.io.InputStream;
 import java.sql.*;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.io.IOException;
 import java.lang.management.ThreadMXBean;
 import com.alibaba.fastjson2.JSONArray;
 import java.util.Map;
 import java.util.Properties;
-import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -349,12 +345,20 @@ public class DBInstanceX {
         // 自定义404界面
         // 注意：/api/* 由数据服务自己用 JSON 表达"服务未注册"，不能被这里的 HTML 页面覆盖
         // （Javalin 的 error handler 会在端点写完响应之后触发）。
+        // 同一条规则适用于所有"以 JSON 信封表达错误"的管理端点：端点已经写了响应体时一律不要覆盖。
         ClassPathResource page404Resource = new ClassPathResource("web/404.html");
         this.managementApp.unsafe.routes.error(404, ctx -> {
-            if (ctx.path().startsWith("/api/")) {
-                if (ctx.result() == null) {
-                    ctx.json(Map.of("retCode", 404, "retMsg", ctx.path() + " is not found."));
-                }
+            String existing = ctx.result();
+            if (existing != null && !existing.isEmpty()) {
+                return;
+            }
+            String path = ctx.path();
+            boolean jsonApi = path.startsWith("/api/") || path.startsWith("/mcp")
+                    || path.startsWith("/sessions/") || path.startsWith("/capabilities")
+                    || path.startsWith("/health") || path.startsWith("/plugin/")
+                    || path.startsWith("/backups") || path.startsWith("/backup");
+            if (jsonApi) {
+                ctx.json(Map.of("retCode", 404, "retMsg", path + " is not found."));
                 return;
             }
             ctx.html(Files.readString(Path.of(page404Resource.getURI())));
@@ -619,6 +623,35 @@ public class DBInstanceX {
         // 状态服务
         this.managementApp.unsafe.routes.get("/status", ctx -> ctx.json(getStatusJson()));
 
+        // 能力声明：客户端（控制台/CLI）据此决定显示哪些功能，避免逐个端点探测
+        this.managementApp.unsafe.routes.get("/capabilities", ctx -> ctx.json(getCapabilitiesJson()));
+
+        // 轻量存活检查：供启动器与客户端轮询，刻意不做 /status 那套重逻辑
+        this.managementApp.unsafe.routes.get("/health", ctx -> ctx.json(getHealthJson()));
+
+        // 终止会话（HTTP 版）：UI/自动化使用；TCP 管理协议的 KILL 保留给 CLI/运维脚本
+        this.managementApp.unsafe.routes.post("/sessions/{sessionId}/kill", ctx -> {
+            String rawSessionId = ctx.pathParam("sessionId");
+            int sessionId;
+            try {
+                sessionId = Integer.parseInt(rawSessionId);
+            } catch (NumberFormatException nfe) {
+                ctx.status(400).json(Map.of(
+                        "retCode", 400,
+                        "retMsg", "Invalid session id [" + rawSessionId + "]; expected an integer.",
+                        "errorClass", "VALIDATION"));
+                return;
+            }
+            if (this.dbInstance.killSession(sessionId)) {
+                ctx.json(Map.of("killed", true, "sessionId", sessionId));
+            } else {
+                ctx.status(404).json(Map.of(
+                        "retCode", 404,
+                        "retMsg", "Session [" + sessionId + "] not found.",
+                        "errorClass", "NOT_FOUND"));
+            }
+        });
+
         // 帮助页面 - 显示 README.html
         ClassPathResource readmeResource = new ClassPathResource("web/README.html");
         this.managementApp.unsafe.routes.get("/help", ctx -> {
@@ -650,6 +683,100 @@ public class DBInstanceX {
         }
     }
 
+    /**
+     * 管理 API 契约版本（{@code /capabilities.apiVersion}）。只在破坏性变更时递增。
+     */
+    private static final int MANAGEMENT_API_VERSION = org.slackerdb.common.api.ApiVersion.MANAGEMENT;
+
+    /**
+     * 能力声明。
+     *
+     * <p>刻意做得**便宜**：只读启动期配置与插件注册表，不查库、不扫会话、不算 CPU
+     * （那些是 {@code /status} 的职责，调用方每 2 秒轮询的是 {@code /health}）。</p>
+     */
+    private JSONObject getCapabilitiesJson() {
+        JSONObject capabilities = new JSONObject();
+        capabilities.put("apiVersion", MANAGEMENT_API_VERSION);
+
+        ServerConfiguration serverConfiguration = this.dbInstance.serverConfiguration;
+        JSONObject server = new JSONObject();
+        server.put("name", serverConfiguration.getData() == null ? "" : serverConfiguration.getData());
+        server.put("version", readServerVersion());
+        server.put("pid", ProcessHandle.current().pid());
+        capabilities.put("server", server);
+
+        JSONObject ports = new JSONObject();
+        ports.put("pg", serverConfiguration.getPort());
+        ports.put("management", serverConfiguration.getPortX());
+        ports.put("managementEnabled", true);
+        capabilities.put("ports", ports);
+
+        capabilities.put("accessMode", serverConfiguration.getAccess_mode());
+
+        JSONObject features = new JSONObject();
+        features.put("dataService", true);
+        features.put("mcp", true);
+        features.put("plugins", this.dbInstance.getPluginManager() != null);
+        features.put("sqlRepl", true);
+        features.put("copyOut", true);
+        features.put("sqlHistory", "ON".equalsIgnoreCase(serverConfiguration.getSqlHistory()));
+        features.put("apiHistory", "ON".equalsIgnoreCase(serverConfiguration.getDataServiceHistory()));
+        capabilities.put("features", features);
+
+        // 插件及其自描述的能力：客户端据此显隐入口，而不是探测 /scheduler/* 之类的端点
+        JSONArray plugins = new JSONArray();
+        org.pf4j.PluginManager pluginManager = this.dbInstance.getPluginManager();
+        if (pluginManager != null) {
+            for (org.pf4j.PluginWrapper plugin : pluginManager.getPlugins()) {
+                JSONObject info = new JSONObject();
+                info.put("id", plugin.getPluginId());
+                info.put("version", plugin.getDescriptor().getVersion());
+                info.put("state", plugin.getPluginState().toString());
+                if (plugin.getPlugin() instanceof org.slackerdb.plugin.DBPlugin dbPlugin) {
+                    org.slackerdb.plugin.PluginContribution contribution = dbPlugin.contributes();
+                    if (contribution != null) {
+                        JSONObject contributes = new JSONObject();
+                        contributes.put("routePrefix", contribution.routePrefix());
+                        contributes.put("contractVersion", contribution.contractVersion());
+                        contributes.put("capabilities", contribution.capabilities());
+                        info.put("contributes", contributes);
+                    }
+                }
+                plugins.add(info);
+            }
+        }
+        capabilities.put("plugins", plugins);
+
+        JSONObject contracts = new JSONObject();
+        contracts.put("managementApi", MANAGEMENT_API_VERSION);
+        contracts.put("mcp", org.slackerdb.common.api.ApiVersion.MCP);
+        capabilities.put("contracts", contracts);
+
+        return capabilities;
+    }
+
+    /**
+     * 轻量存活检查：只读实例状态，不做任何 IO。
+     */
+    private JSONObject getHealthJson() {
+        String instanceState = this.dbInstance.instanceState;
+        boolean running = instanceState != null && instanceState.equalsIgnoreCase("RUNNING");
+        JSONObject health = new JSONObject();
+        health.put("status", running ? "UP" : "DEGRADED");
+        health.put("database", running ? "UP" : "DEGRADED");
+        health.put("management", "UP");
+        health.put("instanceState", instanceState == null ? "" : instanceState);
+        health.put("ts", System.currentTimeMillis() / 1000L);
+        return health;
+    }
+
+    /**
+     * 服务端版本号（构建期生成的 {@code META-INF/build-info.properties}）；读不到时是 {@code unknown}。
+     */
+    private String readServerVersion() {
+        return BuildInfo.version();
+    }
+
     private JSONObject getStatusJson() {
         JSONObject status = new JSONObject();
         Connection conn = null;
@@ -677,29 +804,9 @@ public class DBInstanceX {
                 wal_size = rs.getString("wal_size");
             }
 
-            // 从资源信息中读取系统的版本号
-            String version, localBuildDate;
-            try {
-                InputStream inputStream = this.getClass().getResourceAsStream("/version.properties");
-                Properties properties = new Properties();
-                properties.load(inputStream);
-                version = properties.getProperty("version", "{project.version}");
-                String buildTimestamp = properties.getProperty("build.timestamp", "${build.timestamp}");
-
-                // 转换编译的时间格式
-                try {
-                    ZonedDateTime zdt = ZonedDateTime.parse(buildTimestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX"));
-                    LocalDateTime localDateTime = LocalDateTime.ofInstant(zdt.toInstant(), ZoneId.systemDefault());
-                    localBuildDate =
-                            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").format(localDateTime) + " " +
-                                    TimeZone.getTimeZone(ZoneId.systemDefault()).getID();
-                } catch (DateTimeParseException ex) {
-                    localBuildDate = buildTimestamp;
-                }
-            } catch (IOException ioe) {
-                version = "{project.version}";
-                localBuildDate = "${build.timestamp}";
-            }
+            // 版本与构建时刻来自构建期生成的 META-INF/build-info.properties
+            String version = BuildInfo.version();
+            String localBuildDate = BuildInfo.buildTime();
 
             // 构建 server 对象
             JSONObject server = new JSONObject();
@@ -844,8 +951,20 @@ public class DBInstanceX {
                 }
                 JSONObject session = new JSONObject();
                 session.put("id", sessionId);
+                // 会话类型：目前只列 pgwire 会话；WS/REPL 会话尚未纳入（见契约文档的偏差记录）
+                session.put("type", "pgwire");
                 session.put("connectedTime", dbSession.connectedTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
                 session.put("clientIp", dbSession.clientAddress);
+                // application_name 由客户端上报：优先用 SET application_name 截下来的值
+                // （pgjdbc 系驱动走这条路），其次看握手参数（libpq/psql 会在 startup packet 里带）
+                Map<String, String> startupOptions = dbSession.startupOptions;
+                String applicationName = dbSession.applicationName;
+                if (applicationName == null || applicationName.isEmpty()) {
+                    applicationName = startupOptions == null ? null : startupOptions.get("application_name");
+                }
+                String sessionDatabase = startupOptions == null ? null : startupOptions.get("database");
+                session.put("applicationName", applicationName == null ? "" : applicationName);
+                session.put("database", sessionDatabase == null ? "" : sessionDatabase);
                 session.put("status", dbSession.status);
                 session.put("executingFunction", dbSession.executingFunction);
                 session.put("executingSql", dbSession.executingSQL);

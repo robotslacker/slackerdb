@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>dbcli compare report</title>
+    <style>
+
+      button:hover {
+          background: #eee;
+          cursor:pointer
+      }
+
+      button:focus {
+          border: 2px solid #3366ff;
+      }
+
+      button:active {
+        transform: scale(0.98);
+      }
+
+      .top-title {
+        width: 100%;
+        display: flex;
+        justify-content: space-between;
+        background-color: #ffffff;
+      }
+
+      .top-title h4 {
+        margin-left: 8px;
+      }
+
+      .top {
+        margin: 10px;
+        width: 100%;
+        border-radius: 20px;
+        background: #ffffff;
+      }
+
+      .top p {
+        margin-left: 8px;
+      }
+
+      .hide {
+        display: none;
+      }
+
+      #content {
+        padding: 8px 0 8px;
+      }
+
+      .content-title {
+        width: 100%;
+        display: flex;
+        justify-content: space-between;
+        background-color: #ffffff;
+        margin-top: 10px;
+      }
+      .content-title h4 {
+        margin-left: 4px;
+      }
+      .content {
+        margin: 10px 0 10px;
+        width: 100%;
+        border-radius: 20px;
+        background: #ffffffff;
+      }
+
+      #container {
+        width: 100%;
+        display: flex;
+      }
+
+      .single {
+        width: 100%;
+      }
+
+      .double {
+        width: 50%;
+      }
+
+        .left, .right {
+            border-width: 8px;
+            border-style: groove;
+            height: 600px;
+            overflow:scroll;
+            width: 50%;
+        }
+
+      #pleft, #pright {
+        width:fit-content;
+      }
+      .line {
+        clear: both;
+      }
+
+      .line .number {
+        width: 50px;
+        text-align: right;
+        overflow: hidden;
+        padding-right: 5px;
+      }
+
+      .line .text {
+        display: inline-block;
+        white-space:pre;
+      }
+
+      .line p {
+        float: left;
+        width: max-content;
+      }
+
+      .gray {
+        background-color: gray;
+      }
+
+      .diff {
+        color: #ee82ee;
+        display: contents;
+      }
+
+      .minus {
+        color: red;
+      }
+
+      .plus {
+        color: green;
+      }
+
+      .loader {
+        position: relative;
+        margin: 0 auto;
+        width: 100px;
+      }
+      .loader:before {
+        content: "";
+        display: block;
+        padding-top: 100%;
+      }
+      
+      .circular {
+        -webkit-animation: rotate 2s linear infinite;
+                animation: rotate 2s linear infinite;
+        height: 100%;
+        transform-origin: center center;
+        width: 100%;
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        margin: auto;
+      }
+      
+      .path {
+        stroke-dasharray: 1, 200;
+        stroke-dashoffset: 0;
+        -webkit-animation: dash 1.5s ease-in-out infinite, color 6s ease-in-out infinite;
+                animation: dash 1.5s ease-in-out infinite, color 6s ease-in-out infinite;
+        stroke-linecap: round;
+      }
+      
+      @-webkit-keyframes rotate {
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+      
+      @keyframes rotate {
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+      @-webkit-keyframes dash {
+        0% {
+          stroke-dasharray: 1, 200;
+          stroke-dashoffset: 0;
+        }
+        50% {
+          stroke-dasharray: 89, 200;
+          stroke-dashoffset: -35px;
+        }
+        100% {
+          stroke-dasharray: 89, 200;
+          stroke-dashoffset: -124px;
+        }
+      }
+      @keyframes dash {
+        0% {
+          stroke-dasharray: 1, 200;
+          stroke-dashoffset: 0;
+        }
+        50% {
+          stroke-dasharray: 89, 200;
+          stroke-dashoffset: -35px;
+        }
+        100% {
+          stroke-dasharray: 89, 200;
+          stroke-dashoffset: -124px;
+        }
+      }
+      @-webkit-keyframes color {
+        100%, 0% {
+          stroke: #d62d20;
+        }
+        40% {
+          stroke: #0057e7;
+        }
+        66% {
+          stroke: #008744;
+        }
+        80%, 90% {
+          stroke: #ffa700;
+        }
+      }
+      @keyframes color {
+        100%, 0% {
+          stroke: #d62d20;
+        }
+        40% {
+          stroke: #0057e7;
+        }
+        66% {
+          stroke: #008744;
+        }
+        80%, 90% {
+          stroke: #ffa700;
+        }
+      }
+      body {
+        background-color: #eee;
+      }
+      
+      #loader {
+        position: absolute;
+        left: 0;
+        right: 0;
+        padding: 5%;
+        opacity: 1;
+        animation: cssAnimation 0s ease-in 1s forwards;
+      }
+
+      @keyframes cssAnimation {
+        to {
+            opacity: 1;
+        }
+      }
+
+      .footer {
+        width: 100%;
+        background-color: #ffffff;
+        text-align: center;
+        display: flex;
+      }
+
+      .footer button {
+        border: none;
+        background-color: white;
+        width: 100px;
+        text-align: center;
+      }
+      
+    </style>
+  </head>
+  <body>

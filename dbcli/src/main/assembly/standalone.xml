@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  dbcli 独立可执行 jar 的装配描述。
+
+  为什么不用现成的 jar-with-dependencies descriptorRef：
+  它的 assembly id 固定为 "jar-with-dependencies"，产物名只能是
+  slackerdb-dbcli-<ver>-jar-with-dependencies.jar；而 maven-assembly-plugin 3.7.1 既不接受
+  <classifier>（已移除）也不接受 <id>（只认 descriptor 里的 id）。
+  所以这里自带 descriptor，用 <id>standalone</id> 得到发行包约定的名字：
+      jlib/slackerdb-dbcli-<ver>-standalone.jar
+
+  内容等价于 jar-with-dependencies：把 runtime 依赖全部解包进同一个 jar。
+
+  schema 版本与 build/sources-assembly.xml 一致：maven-assembly-plugin 3.7.1 的模型版本就是 2.2.0，
+  XSD 也发布在 https 下（https://maven.apache.org/xsd/assembly-2.2.0.xsd）。原来写的是
+  2.1.1 + http 的地址，IDEA 解析不到会报"无法解析符号 ...assembly-2.1.1.xsd"，描述符整份标红。
+-->
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0
+                              https://maven.apache.org/xsd/assembly-2.2.0.xsd">
+
+    <id>standalone</id>
+
+    <formats>
+        <format>jar</format>
+    </formats>
+
+    <!-- 生成物直接是 jar 内容，不要外面再套一层目录 -->
+    <includeBaseDirectory>false</includeBaseDirectory>
+
+    <dependencySets>
+        <dependencySet>
+            <outputDirectory>/</outputDirectory>
+            <useProjectArtifact>true</useProjectArtifact>
+            <unpack>true</unpack>
+            <scope>runtime</scope>
+            <!--
+              拍平时必须把各依赖自带的这份文件排掉：多条依赖各有一份，拍平后只会留下一份，
+              于是 DriverManager 的自动发现只认得其中一个驱动（实测留下的是 slackerdb，
+              `_CONNECT jdbc:sqlite:…` 在分发包里会报 "No suitable driver"）。
+              这份文件由下面的 fileSet 统一提供（本项目 src/main/resources 里那一份，两条驱动都在）。
+
+              同理，META-INF/build-info.properties 也在这里排掉、由下面的 fileSet 统一放本项目那一份：
+              拍平后同一条目只剩一份，如果留下的是某个依赖的，`dbcli -V` 就会安静地印出**别人的版本号**
+              （运行期按 build.artifact 精确匹配，匹配不上宁可报 unknown；这里从源头保证不会有别人的那份）。
+
+              注意排除项要写在 <unpackOptions> 里：dependencySet 自己的 <includes>/<excludes>
+              过滤的是**构件坐标**（groupId:artifactId…），拿文件名当模式会得到
+              "patterns were never triggered in this artifact exclusion filter"。
+            -->
+            <unpackOptions>
+                <excludes>
+                    <exclude>META-INF/services/java.sql.Driver</exclude>
+                    <exclude>META-INF/build-info.properties</exclude>
+                </excludes>
+            </unpackOptions>
+        </dependencySet>
+    </dependencySets>
+
+    <fileSets>
+        <!-- 随包驱动登记表：唯一的一份 META-INF/services/java.sql.Driver（见上面的 unpackOptions） -->
+        <fileSet>
+            <directory>${project.build.outputDirectory}</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>META-INF/services/java.sql.Driver</include>
+            </includes>
+        </fileSet>
+        <!-- 随包构建信息：唯一的一份 META-INF/build-info.properties（build-info 目标在构建期生成） -->
+        <fileSet>
+            <directory>${project.build.outputDirectory}</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>META-INF/build-info.properties</include>
+            </includes>
+        </fileSet>
+    </fileSets>
+</assembly>

@@ -15,8 +15,9 @@ import java.sql.Connection;
 /**
  * Scheduler plugin for Slackerdb.
  *
- * <p>Provides a cron-based job scheduling service that can execute SQL, HOP, and shell scripts
- * based on project templates defined on the filesystem.</p>
+ * <p>Provides a cron-based job scheduling service that can run HOP workflows ({@code .hwf}/{@code .hpl})
+ * and shell/command task types, based on project templates defined on the filesystem.
+ * (SQL is not a task type: SQL runs inside a HOP workflow's SQL action.)</p>
  *
  * <p>Key concepts:</p>
  * <ul>
@@ -45,12 +46,36 @@ public class PluginScheduler extends DBPlugin {
         super(wrapper);
     }
 
+    /**
+     * 向平台声明本插件的贡献：ETL 入口前缀、契约版本与能力开关。
+     *
+     * <p>控制台据此显隐 ETL 菜单，不再去探测 {@code /scheduler/status}（那个接口曾返回硬编码常量）。
+     * 本方法可能在 {@code onStart} 之前被调用（例如列插件列表时），因此必须容忍字段为 null。</p>
+     */
+    @Override
+    public org.slackerdb.plugin.PluginContribution contributes() {
+        java.util.Map<String, Object> capabilities = new java.util.LinkedHashMap<>();
+        capabilities.put("etl", true);
+        capabilities.put("hopReady", this.hopConfig != null && this.hopConfig.isUsable());
+        return new org.slackerdb.plugin.PluginContribution("/scheduler", 1, capabilities);
+    }
+
     @Override
     protected void onStart() {
         try {
             this.logger = getLogger();
             this.app = getJavalinApp();
             this.dbConnection = getDbConnection();
+
+            // 平台要求：管理口未启用时插件必须"可安全缺席"。
+            // 过去这里会继续走下去、在注册路由处 NPE，把"配置缺失"表现成"启动异常"；
+            // 现在显式失败并给出可操作的提示（服务端不受影响，插件标记为启动失败）。
+            if (this.app == null) {
+                String message = "scheduler plugin requires the management API port: "
+                        + "set port_x in dbserver.conf and restart. The plugin stays stopped.";
+                this.logger.warn("[SCHEDULER] {}", message);
+                throw new IllegalStateException(message);
+            }
 
             // 读取 workHome（工作目录）配置 - 必须配置
             this.workHome = getPluginProperty("home");

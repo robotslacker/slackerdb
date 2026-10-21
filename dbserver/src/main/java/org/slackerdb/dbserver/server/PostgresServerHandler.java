@@ -77,7 +77,7 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
 
         // 注意：这里**不能**再去 Thread.currentThread().setName("Session-" + sessionId)。
         // 启用业务线程组后，channelRegistered 跑在业务线程上，而一个业务线程会被多个连接复用，
-        // 重命名会把共享线程的名字改来改去（日志里的 [%thread] 反而更有误导性）。
+        // 重命名会把共享线程的名字改来改去（日志格式本来也不打印线程名，改了只会误导排查的人）。
         // 需要在日志里定位会话时，请直接打印 sessionId。
         logger.trace("[SERVER][PG PROTOCOL]: Accepted connection from {} (session {})", remoteAddressStr, sessionId);
 

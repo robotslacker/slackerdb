@@ -1,0 +1,51 @@
+
+<div id="title" class="top-title">
+	<h4>Comment area</h4>
+	<button style="background-color:#ffffff;border:none" onclick="onTileClick()">
+		<svg id="title_svg_plus" style="height:30px; width:30px;display:none"
+			 class="icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+			<path d="M479.725946 192.32426h63.96073v703.567014h-63.96073z" ></path>
+			<path d="M159.922293 512.12689h703.567013v63.960731H159.922293z"></path>
+			<path d="M511.706311 192.069457m-31.980365 0a31.980365 31.980365 0 1 0 63.96073 0 31.980365 31.980365 0 1 0-63.96073 0Z" ></path>
+			<path d="M863.489306 544.107255m-31.980365 0a31.980365 31.980365 0 1 0 63.960731 0 31.980365 31.980365 0 1 0-63.960731 0Z" ></path>
+			<path d="M511.706311 895.891274m-31.980365 0a31.980365 31.980365 0 1 0 63.96073 0 31.980365 31.980365 0 1 0-63.96073 0Z" ></path>
+			<path d="M159.922293 544.107255m-31.980366 0a31.980365 31.980365 0 1 0 63.960731 0 31.980365 31.980365 0 1 0-63.960731 0Z" ></path>
+		</svg>
+		<svg id="title_svg_minus" style="height:30px; width:30px;display:none"
+			 class="icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+			<path d="M875.263467 495.52477c0 11.307533-9.15859 20.466124-20.466124 20.466124l-655.325289 0c-11.307533 0-20.466124-9.15859-20.466124-20.466124 0-11.2973 9.15859-20.466124 20.466124-20.466124l655.325289 0C866.104877 475.058646 875.263467 484.22747 875.263467 495.52477z"></path>
+		</svg>
+	</button>
+</div>
+<div id="content" style="margin: 10px 0 10px; width: 100%; border-radius: 20px; background: #ffffff;">
+{{#lines}}
+<p>{{source}}</p>
+{{/lines}}
+</div>
+<script type="text/javascript">
+	let content = document.getElementById("content");
+	let title_hide = false;
+	function onTileClick() {
+		if (title_hide === false) {
+			let title_svg_plus = document.getElementById("title_svg_plus");
+			let title_svg_minus = document.getElementById("title_svg_minus");
+			title_svg_plus.style.display = "none";
+			title_svg_minus.style.display = "unset";
+			
+			content.className = "top";
+			
+			title_hide = true
+		}
+		else {
+			let title_svg_plus = document.getElementById("title_svg_plus");
+			let title_svg_minus = document.getElementById("title_svg_minus");
+			title_svg_plus.style.display = "unset";
+			title_svg_minus.style.display = "none";
+			
+			content.className = "top hide";
+			
+			title_hide = false
+		}
+	}
+	onTileClick();
+</script>
