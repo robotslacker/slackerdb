@@ -1,0 +1,146 @@
+<?xml version="1.0"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.robotslacker</groupId>
+        <artifactId>slackerdb</artifactId>
+        <version>0.2.2</version>
+    </parent>
+
+    <artifactId>slackerdb-dbdesk</artifactId>
+    <packaging>jar</packaging>
+    <name>slackerdb-dbdesk</name>
+    <description>SlackerDB 控制台（DbDesk）：Vaadin 本机 Web UI，T1 独立进程</description>
+
+    <!--
+        Spring Boot / JUnit 版本完全跟随父 pom（Boot 4.1.1 / JUnit 6.0.3），本模块不再单独覆盖。
+        Vaadin 25 要求 Java 21 + Boot 4.x + Servlet 6.1，与父 pom 的基线一致；
+        Vaadin 版本与 vaadin-maven-plugin 版本统一在根 pom 的 pluginManagement 中管理。
+    -->
+    <properties>
+        <playwright.version>1.59.0</playwright.version>
+        <archunit.version>1.5.1</archunit.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- 只额外导入 Vaadin BOM；Spring Boot / JUnit 由父 pom 统一管理 -->
+            <dependency>
+                <groupId>com.vaadin</groupId>
+                <artifactId>vaadin-bom</artifactId>
+                <version>${vaadin.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- 契约 C-5：一致性夹具（test-jar） -->
+        <dependency>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-common</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <!-- 契约 C-4：profiles.json 与 dbcli 共用（模型 + 读写都在 common） -->
+        <dependency>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.vaadin</groupId>
+            <artifactId>vaadin-spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <!-- Vaadin 25：vaadin-dev 不再是传递依赖；开发期显式引入（optional，不进生产包） -->
+        <dependency>
+            <groupId>com.vaadin</groupId>
+            <artifactId>vaadin-dev</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+            取数通道：pgwire（标准 PostgreSQL 协议）。DbDesk 只认协议、不认服务端 Java 类
+            （"不紧耦合"第 1 条），所以用 pgjdbc 而不是仓库自带的 dbdriver；M0 的所有取数数字也用它测的。
+            注意：父 pom 里这条是 **test** 作用域（仓库其它模块只在测试里用），这里必须显式提升，
+            否则打出来的 jar 里没有驱动，运行期报 "No suitable driver found for jdbc:postgresql://…"。
+
+            提升到 compile（而不是 runtime）：CSV 导入要调 pgjdbc 的 COPY API
+            （{@code org.postgresql.copy.CopyManager}），编译期就需要这个包。
+            它是标准 pgwire 驱动的客户端 API，不涉及服务端实现，不违反"只认协议"。
+        -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${postgres.version}</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <!--
+            M0-V4 浏览器冒烟：用 Playwright 的 Java API，不走 npm 链。
+            浏览器统一用系统已装的 Chrome/Chromium（executablePath），并置 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 ——
+            否则 Playwright 首次 create() 会去下载 ~180 MB 的 Chromium（内网实测会卡住）。
+            默认跳过：只有在 -Ddbdesk.ui.url=http://127.0.0.1:8090/ 时才启用（对称 dbcli 的 -Ddbcli.it.url）。
+        -->
+        <dependency>
+            <groupId>com.microsoft.playwright</groupId>
+            <artifactId>playwright</artifactId>
+            <version>${playwright.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+            Vaadin 25 的 Upload/Grid 等测试用 JUnit 6 运行；ArchUnit 从 1.5.x 起提供
+            archunit-junit6，API 与 archunit-junit5 相同，只是引擎换成 JUnit 6。
+        -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit6</artifactId>
+            <version>${archunit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>slackerdb-dbdesk-${project.version}-standalone</finalName>
+        <plugins>
+            <plugin>
+                <groupId>com.vaadin</groupId>
+                <artifactId>vaadin-maven-plugin</artifactId>
+                <configuration>
+                    <forceProductionBuild>true</forceProductionBuild>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>prepare-frontend</goal>
+                            <goal>build-frontend</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- 可执行 jar 的入口是启动器：只启动 DbDesk 本机 Web UI，不管理 dbserver -->
+                    <mainClass>org.slackerdb.dbdesk.launcher.Launcher</mainClass>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

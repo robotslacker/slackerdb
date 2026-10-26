@@ -6,7 +6,7 @@ package org.slackerdb.dbcli.job;
  * <p>状态只反映**作业的真相**，不反映调用方的等待结果：{@code _JOB WAIT} 超时**不**改变作业状态
  * （作业线程可能还在跑），超时由 {@code JobManager.WaitResult.timedOut()} 表达。</p>
  *
- * <p>状态迁移是单向的，除 {@link #RUNNING} 之外都是终态（终态不会变，只能重建同名作业）：</p>
+ * <p>状态迁移是单向的，除 {@link #CREATED} 与 {@link #RUNNING} 之外都是终态（终态不会变，只能重建同名作业）：</p>
  * <pre>
  *   CREATED ──start──▶ RUNNING ──┬─▶ DONE      （作业正常结束，退出码 0）
  *                                ├─▶ FAILED    （退出码非 0，或作业抛异常，或启动失败）

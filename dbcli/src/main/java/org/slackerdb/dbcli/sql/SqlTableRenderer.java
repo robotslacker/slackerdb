@@ -107,8 +107,7 @@ public final class SqlTableRenderer {
             StringBuilder headerLine = new StringBuilder("|   ##   |");
             for (int pos = 0; pos < headers.size(); pos++) {
                 String title = headers.get(pos);
-                int width = columnLength.get(pos) - wideChars(title);
-                headerLine.append(' ').append(centerIn(title, width)).append(" |");
+                headerLine.append(' ').append(centerIn(title, columnLength.get(pos))).append(" |");
             }
             lines.add(headerLine.toString());
             lines.add(box.toString());
@@ -155,9 +154,9 @@ public final class SqlTableRenderer {
                     // List.of(...).contains(null) 会抛 NPE，所以这里先取出来再判。
                     String columnType = columnTypes == null ? null : columnTypes.get(pos);
                     if (columnTypes == null || (columnType != null && LEFT_ALIGNED_TYPES.contains(columnType))) {
-                        // 字符串列：左对齐，且列宽要去掉宽字符多占的显示宽度
+                        // 字符串列：左对齐（列宽与补空格都按显示宽度算）
                         line.append(' ')
-                                .append(padRight(printValue, length - wideChars(printValue)))
+                                .append(padRight(printValue, length))
                                 .append(" |");
                     } else {
                         // 数值列：右对齐，不扣宽字符（保持与既有 golden 夹具一致）
@@ -261,31 +260,33 @@ public final class SqlTableRenderer {
                 || Character.UnicodeBlock.HANGUL_JAMO.equals(block);
     }
 
-    /** 右补空格到指定宽度（宽度不足时原样返回）。 */
+    /** 右补空格到指定**显示宽度**（宽度不足时原样返回）。 */
     static String padRight(String text, int width) {
-        if (text.length() >= width) {
+        int current = displayWidth(text);
+        if (current >= width) {
             return text;
         }
-        return text + " ".repeat(width - text.length());
+        return text + " ".repeat(width - current);
     }
 
-    /** 左补空格到指定宽度（宽度不足时原样返回）。 */
+    /** 左补空格到指定**显示宽度**（宽度不足时原样返回）。 */
     static String padLeft(String text, int width) {
-        if (text.length() >= width) {
+        int current = displayWidth(text);
+        if (current >= width) {
             return text;
         }
-        return " ".repeat(width - text.length()) + text;
+        return " ".repeat(width - current) + text;
     }
 
     /**
-     * 居中补空格：公式是 {@code left = marg // 2 + (marg & width & 1)}。
+     * 居中补空格到指定**显示宽度**：公式是 {@code left = marg // 2 + (marg & width & 1)}。
      *
      * <p>**不是**常见的"左边少、右边多"：多出的那 1 个空格落在哪边由 {@code marg} 与 {@code width}
      * 的最低位共同决定，例如 {@code centerIn("ab", 5)} → {@code "  ab "}（左 2 右 1）、
      * {@code centerIn("ab", 4)} → {@code " ab "}（左 1 右 1）。表格表头依赖它，不能用直觉实现。</p>
      */
     static String centerIn(String text, int width) {
-        int marg = width - text.length();
+        int marg = width - displayWidth(text);
         if (marg <= 0) {
             return text;
         }

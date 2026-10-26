@@ -1397,7 +1397,9 @@ public abstract class BaseDataSource implements CommonDataSource, Referenceable 
    */
   public String getUrl() {
     StringBuilder url = new StringBuilder(100);
-    url.append("jdbc:postgresql://");
+    // 必须是本驱动的协议前缀：Driver.connect() 只认 jdbc:slackerdb:，
+    // 写回 jdbc:postgresql:// 会让 DataSource 拼出来的 URL 被本驱动直接忽略（connect 返回 null）。
+    url.append("jdbc:slackerdb://");
     for (int i = 0; i < serverNames.length; i++) {
       if (i > 0) {
         url.append(",");

@@ -106,9 +106,12 @@ public class TypeInfoCache implements TypeInfo {
       {"timestamptz", Oid.TIMESTAMPTZ, Types.TIMESTAMP, "java.sql.Timestamp",
           Oid.TIMESTAMPTZ_ARRAY},
       {"refcursor", Oid.REF_CURSOR, Types.REF_CURSOR, "java.sql.ResultSet", Oid.REF_CURSOR_ARRAY},
-      {"json", Oid.JSON, Types.OTHER, "org.postgresql.util.PGobject", Oid.JSON_ARRAY},
-      {"point", Oid.POINT, Types.OTHER, "org.postgresql.geometric.PGpoint", Oid.POINT_ARRAY},
-      {"box", Oid.BOX, Types.OTHER, "org.postgresql.geometric.PGBox", Oid.BOX_ARRAY}
+      // 这三个类名原来还写着 org.postgresql.*，包里根本没有这些类 → getObject() 时按类名实例化失败，
+      // 只能退回通用 PGobject（json/point/box 的类型化行为丢失）。改成实际的全限定名；
+      // 注意 box 的真实类名是 PGbox（不是 PGBox），类名大小写敏感。
+      {"json", Oid.JSON, Types.OTHER, "org.slackerdb.jdbc.util.PGobject", Oid.JSON_ARRAY},
+      {"point", Oid.POINT, Types.OTHER, "org.slackerdb.jdbc.geometric.PGpoint", Oid.POINT_ARRAY},
+      {"box", Oid.BOX, Types.OTHER, "org.slackerdb.jdbc.geometric.PGbox", Oid.BOX_ARRAY}
   };
 
   /**

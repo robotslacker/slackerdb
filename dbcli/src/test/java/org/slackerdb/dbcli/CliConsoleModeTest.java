@@ -242,7 +242,7 @@ class CliConsoleModeTest {
         // 横幅只有名字：不带 project version、不带构建日期（版本信息只从 --version 取）
         assertFalse(console.out.contains("Build Time"), console.out);
         assertFalse(console.out.contains("+"), console.out);
-        assertFalse(console.out.contains("0.2.1"), console.out);
+        assertFalse(console.out.contains("0.2.2"), console.out);
         // dbcli 从不写 stderr：横幅与提示符都在 stdout
         assertEquals("", console.err);
 

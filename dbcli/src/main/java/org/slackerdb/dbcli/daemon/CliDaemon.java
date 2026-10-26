@@ -3,7 +3,6 @@ package org.slackerdb.dbcli.daemon;
 import org.slackerdb.common.utils.AppDaemon;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -140,32 +139,31 @@ public final class CliDaemon {
     public static StartResult startInBackground(Class<?> anchor, List<AppDaemon.Option> options,
                                                 String logTarget, String pidFileOption, Path pidFile)
             throws Exception {
+        PidFile target = pidFile == null ? null : new PidFile(pidFile);
         // 上一次运行留下的 pidfile 必须**先删掉**：这里等的是"这一次副本刚写的 pid"，
         // 而旧文件会被 waitForPidFile 当成新 pid 读走（父进程于是报出一个早就死掉的 pid）。
-        deletePidFileQuietly(pidFile);
+        // 删不掉就**不能**继续等：旧内容还在，第一次轮询就会把它当成本次的 pid 报出去。
+        if (target != null && !target.delete()) {
+            throw new IOException("Cannot remove the stale PID file [" + pidFileOption
+                    + "]; remove it or choose another --pidfile.");
+        }
         // 没有子命令：命令行由 AppDaemon 按**原始顺序**拼装，并显式带 --daemon false（否则无限 fork）
         if (!AppDaemon.startInBackground(anchor, null, options, logTarget, LOG_OPTION_NAME, null)) {
             return new StartResult(false, null);
         }
-        if (pidFile == null) {
+        if (target == null) {
             return new StartResult(true, null);
         }
-        return new StartResult(true, waitForPidFile(new PidFile(pidFile)));
+        return new StartResult(true, waitForPidFile(target));
     }
 
-    /** 尽力删掉旧的 pidfile（删不掉不影响结论：新副本会覆盖它）。 */
-    private static void deletePidFileQuietly(Path pidFile) {
-        if (pidFile == null) {
-            return;
-        }
-        try {
-            Files.deleteIfExists(pidFile);
-        } catch (IOException ignored) {
-            // 只读目录/句柄被占：让后面"等不到 pidfile"的结论如实报出来
-        }
-    }
+    // ------------------------------------------------------------------ 内部
 
-    /** 轮询等副本写 pidfile（写不出来就是超时，如实报告而不是假装成功）。 */
+    /**
+     * 轮询等副本写 pidfile（写不出来就是超时，如实报告而不是假装成功）。
+     *
+     * <p>调用之前旧文件已经删掉了，因此这里读到的任何内容都只可能是本次副本写的。</p>
+     */
     private static Long waitForPidFile(PidFile pidFile) {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(PID_WAIT_MILLIS);
         while (true) {
@@ -181,8 +179,6 @@ public final class CliDaemon {
             }
         }
     }
-
-    // ------------------------------------------------------------------ 内部
 
     /** 睡一小会儿；被中断时恢复标志并返回 false（调用方据此提前收尾）。 */
     private static boolean sleepQuietly(long millis) {

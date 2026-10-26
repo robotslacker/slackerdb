@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -82,9 +83,9 @@ public class SchedulerController {
         app.unsafe.routes.get("/scheduler/status", this::handleSchedulerStatus);
 
         // ========== Project routes ==========
-        app.unsafe.routes.get("/scheduler/project/{projectType}", this::handleGetProject);
+        // 静态路由必须在参数化路由**之前**注册：否则 /scheduler/project/list 会被 {projectType} 吃掉（实测 404）
         app.unsafe.routes.get("/scheduler/project/list", this::handleListProjects);
-
+        app.unsafe.routes.get("/scheduler/project/{projectType}", this::handleGetProject);
         // ========== Run routes ==========
         // IMPORTANT: Static routes must be registered BEFORE parameterized routes
         // to avoid path parameters matching literal path segments.
@@ -103,11 +104,23 @@ public class SchedulerController {
         app.unsafe.routes.post("/scheduler/run/{runId}/task/start", this::handleStartTask);
         app.unsafe.routes.post("/scheduler/run/{runId}/task/stop", this::handleStopTask);
         app.unsafe.routes.post("/scheduler/run/{runId}/task/abort", this::handleAbortTask);
+        // 任务写接口（M2）：只改元数据；真正调度仍走上面的 schedule/start/stop/abort
+        app.unsafe.routes.post("/scheduler/run/{runId}/task/create", this::handleCreateTask);
+        app.unsafe.routes.post("/scheduler/run/{runId}/task/update", this::handleUpdateTask);
+        app.unsafe.routes.post("/scheduler/run/{runId}/task/delete", this::handleDeleteTask);
         app.unsafe.routes.get("/scheduler/run/{runId}/task/list", this::handleListTasks);
         app.unsafe.routes.get("/scheduler/run/{runId}/task/history", this::handleTaskHistory);
         app.unsafe.routes.get("/scheduler/run/{runId}/log", this::handleViewLog);
         app.unsafe.routes.get("/scheduler/run/{runId}/variables", this::handleRunVariables);
+        // 跨 run 的执行流水（M2：globalHistory）
+        app.unsafe.routes.get("/scheduler/history", this::handleGlobalHistory);
         app.unsafe.routes.get("/scheduler/describeCrontabExpr", this::handleDescribeCrontabExpr);
+
+        // ========== 模板写接口（M2）：项目模板目录的读/写/删 ==========
+        app.unsafe.routes.get("/scheduler/project/{projectType}/file", this::handleReadTemplateFile);
+        app.unsafe.routes.post("/scheduler/project/{projectType}/upload", this::handleUploadTemplate);
+        app.unsafe.routes.post("/scheduler/project/{projectType}/delete", this::handleDeleteTemplate);
+        app.unsafe.routes.post("/scheduler/project/{projectType}/import", this::handleImportZip);
 
         // ========== 平台契约路由 ==========
         // 能力声明：客户端据此显隐 ETL 入口与按钮，而不是探测 /scheduler/status
@@ -192,12 +205,12 @@ public class SchedulerController {
             // 已具备：实例的创建/启动/停止/中止/删除
             features.put("runCrud", true);
             // 尚未提供的写能力一律如实声明 false —— 客户端据此隐藏按钮，而不是"点了才知道没有"
-            features.put("taskCrud", false);       // 任务增/改/删、改 cron 与策略
+            features.put("taskCrud", true);        // 任务增/改/删（/task/create|update|delete）
             features.put("templateRead", true);    // 只能读项目模板目录
-            features.put("templates", false);      // 模板写（上传/删除/zip 导入）
-            features.put("globalHistory", false);  // 跨实例的执行流水
+            features.put("templates", true);       // 模板写（上传/删除）
+            features.put("globalHistory", true);   // 跨 run 的执行流水（/scheduler/history）
             features.put("sqlTask", false);        // 恒为 false：SQL 不是任务类型（写进 HOP 工作流的 SQL action）
-            features.put("zipImport", false);
+            features.put("zipImport", true);
             body.put("features", features);
 
             Map<String, Object> quartz = new LinkedHashMap<>();
@@ -236,22 +249,22 @@ public class SchedulerController {
         boolean runScriptConfigured = hopConfig != null
                 && hopConfig.runScript != null && !hopConfig.runScript.isBlank();
         if (!runScriptConfigured) {
-            reasons.add("hop.runScript 未配置（HOP 类型任务无法执行）");
+            reasons.add("hop.runScript is not configured (HOP tasks cannot run)");
         } else {
             Path script = Paths.get(hopConfig.runScript);
             if (!Files.isRegularFile(script)) {
-                reasons.add("hop.runScript 指向的文件不存在: " + hopConfig.runScript);
+                reasons.add("hop.runScript points to a missing file: " + hopConfig.runScript);
             } else if (!Files.isExecutable(script)) {
-                reasons.add("hop.runScript 不可执行: " + hopConfig.runScript);
+                reasons.add("hop.runScript is not executable: " + hopConfig.runScript);
             }
         }
         if (hopConfig != null && hopConfig.javaHome != null && !hopConfig.javaHome.isBlank()
                 && !Files.isDirectory(Paths.get(hopConfig.javaHome))) {
-            reasons.add("hop.javaHome 不存在: " + hopConfig.javaHome);
+            reasons.add("hop.javaHome does not exist: " + hopConfig.javaHome);
         }
         Path defaultProject = Paths.get(projectHome, "default");
         if (!Files.isDirectory(defaultProject)) {
-            reasons.add("项目模板缺少 default/ 父项目: " + defaultProject);
+            reasons.add("project templates are missing the default/ parent project: " + defaultProject);
         }
 
         Map<String, Object> hop = new LinkedHashMap<>();
@@ -348,6 +361,269 @@ public class SchedulerController {
         ctx.json(Map.of("projects", projectTypes != null ? Arrays.asList(projectTypes) : Collections.emptyList()));
     }
 
+    // ========== 模板写接口（M2） ==========
+
+    /** 项目类型只允许字母数字下划线点横线：它是目录名，先挡住奇怪的输入再谈路径安全。 */
+    /** 导入上限：防止 zip 炸弹把磁盘写满。 */
+    private static final long MAX_IMPORT_BYTES = 50L * 1024 * 1024;
+    private static final int MAX_IMPORT_ENTRIES = 500;
+    private static final java.util.regex.Pattern PROJECT_TYPE_PATTERN =
+            java.util.regex.Pattern.compile("[A-Za-z0-9_.-]{1,64}");
+
+    /**
+     * 把相对路径解析到 {@code <projectHome>/<projectType>/} 之下，**越界直接拒绝**。
+     *
+     * <p>只靠 {@code resolve().normalize()} 不够：{@code ../} 会穿出去，绝对路径会直接覆盖别处。
+     * 这里先拒绝绝对路径，再校验规范化后的前缀。</p>
+     */
+    private Path resolveTemplatePath(String projectType, String relative) {
+        if (relative == null || relative.isBlank()) {
+            throw new IllegalArgumentException("path is required");
+        }
+        Path root = Paths.get(projectHome, projectType).toAbsolutePath().normalize();
+        Path candidate = Paths.get(relative);
+        if (candidate.isAbsolute()) {
+            throw new IllegalArgumentException("path must be relative to the project directory: " + relative);
+        }
+        Path target = root.resolve(candidate).toAbsolutePath().normalize();
+        if (!target.startsWith(root)) {
+            throw new IllegalArgumentException("path escapes the project directory: " + relative);
+        }
+        return target;
+    }
+
+    /** GET /scheduler/project/{projectType}/file?path=conf/defaultSchedulerTask.json */
+    private void handleReadTemplateFile(Context ctx) {
+        String projectType = ctx.pathParam("projectType");
+        try {
+            if (!PROJECT_TYPE_PATTERN.matcher(projectType).matches()) {
+                ctx.status(400).json(Map.of("error", "invalid project type: " + projectType));
+                return;
+            }
+            String relative = ctx.queryParam("path");
+            if (relative == null || relative.isBlank()) {
+                relative = "conf/" + TaskTemplateLoader.FILE_NAME;
+            }
+            Path target = resolveTemplatePath(projectType, relative);
+            if (!Files.isRegularFile(target)) {
+                ctx.status(404).json(Map.of("error", "template file not found: " + relative));
+                return;
+            }
+            ctx.json(Map.of("projectType", projectType, "path", relative,
+                    "content", Files.readString(target, StandardCharsets.UTF_8)));
+        } catch (IllegalArgumentException e) {
+            ctx.status(400).json(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] failed to read template: {}", e.getMessage(), e);
+            ctx.status(500).json(Map.of("error", "Failed to read template: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /scheduler/project/{projectType}/upload
+     * Body: {@code {"path":"conf/defaultSchedulerTask.json","content":"<JSON 文本>"}}
+     *
+     * <p><b>先校验 JSON、后落盘</b>：写坏一份模板比不写更糟 —— 下次建 run 会整单失败，
+     * 而且很难看出是哪一步坏的。落盘后再用 {@link TaskTemplateLoader} 读一遍，
+     * 把 warnings（字段拼错、策略不支持等）原样返回给调用方。</p>
+     */
+    private void handleUploadTemplate(Context ctx) {
+        String projectType = ctx.pathParam("projectType");
+        try {
+            if (!PROJECT_TYPE_PATTERN.matcher(projectType).matches()) {
+                ctx.status(400).json(Map.of("error", "invalid project type: " + projectType));
+                return;
+            }
+            JSONObject body = ctx.bodyAsClass(JSONObject.class);
+            String relative = body.getString("path");
+            if (relative == null || relative.isBlank()) {
+                relative = "conf/" + TaskTemplateLoader.FILE_NAME;
+            }
+            String content = body.getString("content");
+            if (content == null || content.isBlank()) {
+                ctx.status(400).json(Map.of("error", "content is required"));
+                return;
+            }
+            try {
+                JSON.parseObject(content);
+            } catch (Exception e) {
+                ctx.status(400).json(Map.of("error", "template is not valid JSON: " + e.getMessage()));
+                return;
+            }
+            Path target = resolveTemplatePath(projectType, relative);
+            Files.createDirectories(target.getParent());
+            Files.writeString(target, content, StandardCharsets.UTF_8);
+
+            org.slackerdb.plugins.scheduler.meta.TaskTemplateLoader.Loaded loaded =
+                    org.slackerdb.plugins.scheduler.meta.TaskTemplateLoader
+                            .load(Paths.get(projectHome), projectType, null);
+            logger.info("[SCHEDULER] template written: {} (tasks={})", target, loaded.tasks().size());
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("retCode", 0);
+            result.put("projectType", projectType);
+            result.put("path", relative);
+            result.put("file", target.toString());
+            result.put("taskCount", loaded.tasks().size());
+            result.put("warnings", loaded.warnings());
+            ctx.json(result);
+        } catch (IllegalArgumentException e) {
+            ctx.status(400).json(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] failed to write template: {}", e.getMessage(), e);
+            ctx.status(500).json(Map.of("error", "Failed to upload template: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /scheduler/project/{projectType}/import
+     * Body: {@code {"contentBase64":"<zip 的 base64>"}} —— 整包导入项目模板。
+     *
+     * <p>为什么用 base64 而不是 multipart：Javalin 的 multipart 需要额外的全局配置
+     * （maxRequestSize 等），而控制台只需要传一个文件；base64 放进 JSON 就够了，
+     * 也不用为一次导入改服务器配置。</p>
+     *
+     * <p>安全：每个条目都做**路径越界检查**（绝对路径/`..` 一律拒绝），并限制条目数与总大小，
+     * 避免 zip 炸弹把磁盘写满。</p>
+     */
+    private void handleImportZip(Context ctx) {
+        String projectType = ctx.pathParam("projectType");
+        try {
+            if (!PROJECT_TYPE_PATTERN.matcher(projectType).matches()) {
+                ctx.status(400).json(Map.of("error", "invalid project type: " + projectType));
+                return;
+            }
+            JSONObject body = ctx.bodyAsClass(JSONObject.class);
+            String base64 = body.getString("contentBase64");
+            if (base64 == null || base64.isBlank()) {
+                ctx.status(400).json(Map.of("error", "contentBase64 is required"));
+                return;
+            }
+            byte[] bytes;
+            try {
+                bytes = java.util.Base64.getDecoder().decode(base64);
+            } catch (IllegalArgumentException e) {
+                ctx.status(400).json(Map.of("error", "contentBase64 is not valid base64"));
+                return;
+            }
+            if (bytes.length > MAX_IMPORT_BYTES) {
+                ctx.status(400).json(Map.of("error", "zip exceeds the size limit of " + (MAX_IMPORT_BYTES / 1024 / 1024) + " MB"));
+                return;
+            }
+
+            Path root = Paths.get(projectHome, projectType).toAbsolutePath().normalize();
+            Files.createDirectories(root);
+            List<String> written = new ArrayList<>();
+            long total = 0;
+            int entries = 0;
+            try (java.util.zip.ZipInputStream zip = new java.util.zip.ZipInputStream(
+                    new java.io.ByteArrayInputStream(bytes))) {
+                java.util.zip.ZipEntry entry;
+                while ((entry = zip.getNextEntry()) != null) {
+                    if (++entries > MAX_IMPORT_ENTRIES) {
+                        throw new IllegalArgumentException(
+                                "too many entries in zip (limit " + MAX_IMPORT_ENTRIES + ")");
+                    }
+                    if (entry.isDirectory()) {
+                        continue;
+                    }
+                    String name = entry.getName().replace('\\', '/');
+                    Path target = root.resolve(name).normalize();
+                    if (!target.startsWith(root)) {
+                        throw new IllegalArgumentException("zip entry escapes the project directory: " + name);
+                    }
+                    Files.createDirectories(target.getParent());
+                    // 按上限"边读边判"，而不是 readAllBytes() 之后再判：单个条目的**解压后**大小
+                    // 由压缩包决定，一个几十 KB 的 deflate 条目可以解压出几 GB。先整块读进内存再
+                    // 比较上限，等于把这一步的判定白送给了攻击者（一次 POST 就能把堆打满）。
+                    byte[] content = readEntryBounded(zip, MAX_IMPORT_BYTES - total);
+                    total += content.length;
+                    Files.write(target, content);
+                    written.add(name);
+                }
+            }
+
+            org.slackerdb.plugins.scheduler.meta.TaskTemplateLoader.Loaded loaded =
+                    org.slackerdb.plugins.scheduler.meta.TaskTemplateLoader
+                            .load(Paths.get(projectHome), projectType, null);
+            logger.info("[SCHEDULER] template zip imported: project={} files={} tasks={}",
+                    projectType, written.size(), loaded.tasks().size());
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("retCode", 0);
+            result.put("projectType", projectType);
+            result.put("count", written.size());
+            result.put("files", written);
+            result.put("taskCount", loaded.tasks().size());
+            result.put("warnings", loaded.warnings());
+            ctx.json(result);
+        } catch (IllegalArgumentException e) {
+            ctx.status(400).json(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] failed to import template zip: {}", e.getMessage(), e);
+            ctx.status(500).json(Map.of("error", "Failed to import zip: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 读一个 zip 条目，最多 {@code budget} 字节；超了立刻放弃（而不是先全读进内存再比较）。
+     *
+     * <p>内存占用上限 = {@code budget}：调用方传的是"总量上限 - 已写字节数"，因此整个导入过程的
+     * 峰值内存也与 {@link #MAX_IMPORT_BYTES} 同阶。</p>
+     */
+    private static byte[] readEntryBounded(java.util.zip.ZipInputStream zip, long budget) throws java.io.IOException {
+        if (budget <= 0) {
+            throw new IllegalArgumentException(oversizeMessage());
+        }
+        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        byte[] chunk = new byte[8192];
+        long read = 0;
+        int count;
+        while ((count = zip.read(chunk)) > 0) {
+            read += count;
+            if (read > budget) {
+                throw new IllegalArgumentException(oversizeMessage());
+            }
+            buffer.write(chunk, 0, count);
+        }
+        return buffer.toByteArray();
+    }
+
+    /** 超上限的例外文本（只有一处，避免两条消息漂移）。 */
+    private static String oversizeMessage() {
+        return "zip exceeds the " + (MAX_IMPORT_BYTES / 1024 / 1024) + " MB limit after decompression";
+    }
+
+    /** POST /scheduler/project/{projectType}/delete，Body: {@code {"path":"conf/defaultSchedulerTask.json"}} */
+    private void handleDeleteTemplate(Context ctx) {
+        String projectType = ctx.pathParam("projectType");
+        try {
+            if (!PROJECT_TYPE_PATTERN.matcher(projectType).matches()) {
+                ctx.status(400).json(Map.of("error", "invalid project type: " + projectType));
+                return;
+            }
+            String relative = ctx.queryParam("path");
+            if (relative == null || relative.isBlank()) {
+                JSONObject body = ctx.bodyAsClass(JSONObject.class);
+                relative = body.getString("path");
+            }
+            if (relative == null || relative.isBlank()) {
+                relative = "conf/" + TaskTemplateLoader.FILE_NAME;
+            }
+            Path target = resolveTemplatePath(projectType, relative);
+            boolean deleted = Files.deleteIfExists(target);
+            if (!deleted) {
+                ctx.status(404).json(Map.of("error", "template file not found: " + relative));
+                return;
+            }
+            logger.info("[SCHEDULER] template deleted: {}", target);
+            ctx.json(Map.of("retCode", 0, "projectType", projectType, "path", relative, "deleted", true));
+        } catch (IllegalArgumentException e) {
+            ctx.status(400).json(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] failed to delete template: {}", e.getMessage(), e);
+            ctx.status(500).json(Map.of("error", "Failed to delete template: " + e.getMessage()));
+        }
+    }
+
     // ========== Run Handlers ==========
 
     /**
@@ -412,7 +688,7 @@ public class SchedulerController {
             // 症状极像“我明明传了任务却没生效”。这里先校验请求形状，再谈别的。
             List<String> bodyProblems = validateRunBody(body);
             if (!bodyProblems.isEmpty()) {
-                logger.warn("[SCHEDULER] 拒绝创建实例[{}]: 请求字段不合格: {}", runId, bodyProblems);
+                logger.warn("[SCHEDULER] rejecting run creation [{}]: invalid request fields: {}", runId, bodyProblems);
                 ctx.status(400).json(Map.of("error", "invalid request", "problems", bodyProblems));
                 return;
             }
@@ -430,7 +706,7 @@ public class SchedulerController {
                     : Collections.emptyList();
             List<String> problems = validateInlineTasks(inlineTasks);
             if (!problems.isEmpty()) {
-                logger.warn("[SCHEDULER] 拒绝创建实例[{}]: 任务定义不合格: {}", runId, problems);
+                logger.warn("[SCHEDULER] rejecting run creation [{}]: invalid task definitions: {}", runId, problems);
                 ctx.status(400).json(Map.of("error", "invalid tasks", "problems", problems));
                 return;
             }
@@ -782,6 +1058,185 @@ public class SchedulerController {
      * List all tasks for a run.
      */
     /**
+     * POST /scheduler/run/{runId}/task/create
+     * 新建任务（只写元数据表；要让 Quartz 跑起来还要调 /task/schedule）。
+     *
+     * <p>字段与 {@code /run/create} 里的内联任务一致，校验复用同一套
+     * {@code validateInlineTasks} —— 两条入口的规则必须一样，否则"建实例能过、单独加任务过不了"。</p>
+     */
+    private void handleCreateTask(Context ctx) {
+        String runId = ctx.pathParam("runId");
+        try {
+            if (meta.getRun(runId) == null) {
+                ctx.status(404).json(Map.of("error", "Run not found: " + runId));
+                return;
+            }
+            JSONObject body = ctx.bodyAsClass(JSONObject.class);
+            String taskName = body.getString("taskName");
+            if (taskName == null || taskName.isBlank()) {
+                ctx.status(400).json(Map.of("error", "taskName is required"));
+                return;
+            }
+            if (meta.getTask(runId, taskName) != null) {
+                ctx.status(409).json(Map.of("error", "Task already exists: " + taskName));
+                return;
+            }
+            List<String> problems = validateInlineTasks(List.of(body));
+            if (!problems.isEmpty()) {
+                ctx.status(400).json(Map.of("error", "invalid task", "problems", problems));
+                return;
+            }
+            int created = createTasksFromApi(runId, List.of(body));
+            logger.info("[SCHEDULER] task created: run={} task={}", runId, taskName);
+            ctx.status(201).json(Map.of("retCode", 0, "runId", runId, "taskName", taskName, "created", created));
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] create task failed: {}", e.getMessage(), e);
+            ctx.status(500).json(Map.of("error", "Failed to create task: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /scheduler/run/{runId}/task/update
+     * 改任务：**只改请求里出现的字段**（局部更新），任务名本身不可改（改名 = 删了重建）。
+     */
+    private void handleUpdateTask(Context ctx) {
+        String runId = ctx.pathParam("runId");
+        try {
+            JSONObject body = ctx.bodyAsClass(JSONObject.class);
+            String taskName = body.getString("taskName");
+            if (taskName == null || taskName.isBlank()) {
+                ctx.status(400).json(Map.of("error", "taskName is required"));
+                return;
+            }
+            SchedulerTask task = meta.getTask(runId, taskName);
+            if (task == null) {
+                ctx.status(404).json(Map.of("error", "Task not found: " + taskName));
+                return;
+            }
+            List<String> problems = new ArrayList<>();
+            applyTaskPatch(task, body, problems);
+            if (!problems.isEmpty()) {
+                ctx.status(400).json(Map.of("error", "invalid task", "problems", problems));
+                return;
+            }
+            task.setUpdateTime(LocalDateTime.now());
+            boolean updated = meta.updateTask(task);
+            logger.info("[SCHEDULER] task updated: run={} task={} hit={}", runId, taskName, updated);
+            ctx.json(Map.of("retCode", 0, "runId", runId, "taskName", taskName, "updated", updated));
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] update task failed: {}", e.getMessage(), e);
+            ctx.status(500).json(Map.of("error", "Failed to update task: " + e.getMessage()));
+        }
+    }
+
+    /** POST /scheduler/run/{runId}/task/delete（body: {taskName} 或 query ?taskName=） */
+    private void handleDeleteTask(Context ctx) {
+        String runId = ctx.pathParam("runId");
+        String taskName = ctx.queryParam("taskName");
+        try {
+            if (taskName == null || taskName.isBlank()) {
+                JSONObject body = ctx.bodyAsClass(JSONObject.class);
+                taskName = body.getString("taskName");
+            }
+            if (taskName == null || taskName.isBlank()) {
+                ctx.status(400).json(Map.of("error", "taskName is required"));
+                return;
+            }
+            boolean deleted = meta.deleteTask(runId, taskName);
+            if (!deleted) {
+                ctx.status(404).json(Map.of("error", "Task not found: " + taskName));
+                return;
+            }
+            logger.info("[SCHEDULER] task deleted: run={} task={}", runId, taskName);
+            ctx.json(Map.of("retCode", 0, "runId", runId, "taskName", taskName, "deleted", true));
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] delete task failed: {}", e.getMessage(), e);
+            ctx.status(500).json(Map.of("error", "Failed to delete task: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 把请求体里出现的字段打到任务上（局部更新）。枚举类字段统一大写；
+     * 取值域与内联任务的校验保持一致（脚本类型 / 运行策略 / 失败策略）。
+     */
+    private void applyTaskPatch(SchedulerTask task, JSONObject body, List<String> problems) {
+        if (body.containsKey("taskScript")) {
+            task.setTaskScript(body.getString("taskScript"));
+        }
+        if (body.containsKey("taskScriptType")) {
+            String type = upper(body.getString("taskScriptType"), TaskTemplateLoader.DEFAULT_SCRIPT_TYPE);
+            if (!TaskTemplateLoader.SCRIPT_TYPES.contains(type)) {
+                problems.add("taskScriptType is not supported: " + type + " (supported: " + TaskTemplateLoader.SCRIPT_TYPES + ")");
+            }
+            task.setTaskScriptType(type);
+        }
+        if (body.containsKey("taskRunPolicy")) {
+            String policy = upper(body.getString("taskRunPolicy"), "RUN_ONCE");
+            if (!Set.of("RUN_ONCE", "CRONTAB", "INTERVAL").contains(policy)) {
+                problems.add("taskRunPolicy is not supported: " + policy + " (supported: RUN_ONCE/CRONTAB/INTERVAL)");
+            }
+            task.setTaskRunPolicy(policy);
+        }
+        if (body.containsKey("taskFailPolicy")) {
+            String policy = upper(body.getString("taskFailPolicy"), "CONTINUE");
+            if (!Set.of("STOP", "CONTINUE", "RETRY").contains(policy)) {
+                problems.add("taskFailPolicy is not supported: " + policy + " (supported: STOP/CONTINUE/RETRY)");
+            }
+            task.setTaskFailPolicy(policy);
+        }
+        if (body.containsKey("taskRetryTimes")) {
+            task.setTaskRetryTimes(body.getIntValue("taskRetryTimes", 0));
+        }
+        if (body.containsKey("taskRetryInterval")) {
+            task.setTaskRetryInterval(body.getIntValue("taskRetryInterval", 60));
+        }
+        if (body.containsKey("taskParallelPolicy")) {
+            task.setTaskParallelPolicy(upper(body.getString("taskParallelPolicy"), "PARALLEL"));
+        }
+        if (body.containsKey("taskCrontabExpr")) {
+            task.setTaskCrontabExpr(body.getString("taskCrontabExpr"));
+        }
+        if (body.containsKey("taskInterval")) {
+            task.setTaskInterval(body.getIntValue("taskInterval", 0));
+        }
+        if (body.containsKey("taskTimeout")) {
+            task.setTaskTimeout(body.getIntValue("taskTimeout", 0));
+        }
+        if (body.containsKey("taskEnabled")) {
+            task.setTaskEnabled(body.getBooleanValue("taskEnabled", true));
+        }
+        if (body.containsKey("taskMandatory")) {
+            task.setTaskMandatory(body.getBooleanValue("taskMandatory", false));
+        }
+        if (body.containsKey("taskGroup")) {
+            task.setTaskGroup(body.getString("taskGroup"));
+        }
+        if (body.containsKey("taskStartupOrder")) {
+            task.setTaskStartupOrder(body.getIntValue("taskStartupOrder", 0));
+        }
+        if (body.containsKey("taskDescription")) {
+            task.setTaskDescription(body.getString("taskDescription"));
+        }
+        if (body.containsKey("configJson")) {
+            task.setConfigJson(body.getString("configJson"));
+        }
+        if (body.containsKey("variables")) {
+            Map<String, String> variables = TaskTemplateLoader.flattenVariables(body.get("variables"));
+            if (!variables.isEmpty()) {
+                task.setVariablesJson(JSON.toJSONString(variables));
+            }
+        }
+        // cron 策略必须带表达式，interval 策略必须带正数间隔
+        if ("CRONTAB".equals(task.getTaskRunPolicy())
+                && (task.getTaskCrontabExpr() == null || task.getTaskCrontabExpr().isBlank())) {
+            problems.add("taskRunPolicy=CRONTAB requires taskCrontabExpr");
+        }
+        if ("INTERVAL".equals(task.getTaskRunPolicy()) && task.getTaskInterval() <= 0) {
+            problems.add("taskRunPolicy=INTERVAL requires a positive taskInterval");
+        }
+    }
+
+    /**
      * GET /scheduler/run/{runId}/task/list
      * 任务列表：DB 里的定义 + Quartz 运行态（触发器状态/下次触发/上次结果/是否运行中）。
      */
@@ -1028,6 +1483,35 @@ public class SchedulerController {
         }
     }
 
+    /**
+     * GET /scheduler/history?hours=24&runId=&taskName=&limit=200
+     * 跨 run 的执行流水：默认最近 24 小时，`hours=0` 表示不限时间。
+     *
+     * <p>返回里带 {@code summary}（成功/失败/进行中），控制台不用自己数。</p>
+     */
+    private void handleGlobalHistory(Context ctx) {
+        try {
+            int hours = parseIntOrDefault(ctx.queryParam("hours"), 24);
+            int limit = parseIntOrDefault(ctx.queryParam("limit"), 200);
+            java.time.LocalDateTime to = java.time.LocalDateTime.now();
+            java.time.LocalDateTime from = hours > 0 ? to.minusHours(hours) : null;
+
+            List<org.slackerdb.plugins.scheduler.entity.TaskHistory> rows = meta.listHistory(
+                    from, to, ctx.queryParam("runId"), ctx.queryParam("taskName"), limit);
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("from", from == null ? null : from.toString());
+            body.put("to", to.toString());
+            body.put("count", rows.size());
+            body.put("summary", meta.historySummary(from, to));
+            body.put("history", rows);
+            ctx.json(body);
+        } catch (Exception e) {
+            logger.error("[SCHEDULER] Error listing history: {}", e.getMessage(), e);
+            ctx.status(500).json(Map.of("error", "Failed to list history: " + e.getMessage()));
+        }
+    }
+
     // ========== Helper Methods ==========
 
     /**
@@ -1089,7 +1573,7 @@ public class SchedulerController {
                 result.put(key, String.valueOf(value));
             }
         } catch (Exception e) {
-            logger.warn("[SCHEDULER] {} 不是有效 JSON 对象，已忽略: {}", what, e.getMessage());
+            logger.warn("[SCHEDULER] {} is not a valid JSON object, ignored: {}", what, e.getMessage());
         }
         return result;
     }
@@ -1149,12 +1633,12 @@ public class SchedulerController {
         List<String> problems = new ArrayList<>();
         for (String key : body.keySet()) {
             if (!RUN_BODY_FIELDS.contains(key)) {
-                problems.add("请求体含未知字段[" + key + "]（可用: " + RUN_BODY_FIELDS + "）");
+                problems.add("request body has an unknown field [" + key + "] (available: " + RUN_BODY_FIELDS + ")");
             }
         }
         Object tasks = body.get("tasks");
         if (tasks != null && !(tasks instanceof Collection)) {
-            problems.add("tasks 必须是数组（当前: " + tasks.getClass().getSimpleName() + "）");
+            problems.add("tasks must be an array (actual: " + tasks.getClass().getSimpleName() + ")");
         }
         return problems;
     }
@@ -1177,73 +1661,73 @@ public class SchedulerController {
             if (config != null) {
                 for (String key : config.keySet()) {
                     if (!TaskTemplateLoader.TASK_FIELDS.contains(key)) {
-                        problems.add(label + " 含未知字段[" + key + "]（可用: "
-                                + TaskTemplateLoader.TASK_FIELDS + "）");
+                        problems.add(label + " has an unknown field [" + key + "] (available: "
+                                + TaskTemplateLoader.TASK_FIELDS + ")");
                     }
                 }
             }
 
             if (isBlank(taskName)) {
-                problems.add(label + " 缺少 taskName");
+                problems.add(label + " is missing taskName");
             }
             if (config == null || isBlank(config.getString("taskScript"))) {
-                problems.add(label + " 缺少 taskScript");
+                problems.add(label + " is missing taskScript");
                 continue;
             }
             String scriptType = upper(config.getString("taskScriptType"),
                     TaskTemplateLoader.DEFAULT_SCRIPT_TYPE);
             if (!TaskTemplateLoader.SCRIPT_TYPES.contains(scriptType)) {
-                problems.add(label + " 的 taskScriptType=[" + scriptType + "] 不受支持（可用: "
-                        + TaskTemplateLoader.SCRIPT_TYPES + "）");
+                problems.add(label + " has an unsupported taskScriptType=[" + scriptType + "] (available: "
+                        + TaskTemplateLoader.SCRIPT_TYPES + ")");
             }
             String runPolicy = upper(config.getString("taskRunPolicy"), "RUN_ONCE");
             if (!TaskTemplateLoader.RUN_POLICIES.contains(runPolicy)) {
-                problems.add(label + " 的 taskRunPolicy=[" + runPolicy + "] 不受支持（可用: "
-                        + TaskTemplateLoader.RUN_POLICIES + "）");
+                problems.add(label + " has an unsupported taskRunPolicy=[" + runPolicy + "] (available: "
+                        + TaskTemplateLoader.RUN_POLICIES + ")");
             } else if ("CRONTAB".equals(runPolicy) && isBlank(config.getString("taskCrontabExpr"))) {
-                problems.add(label + " 的 taskRunPolicy=CRONTAB 但缺少 taskCrontabExpr");
+                problems.add(label + " has taskRunPolicy=CRONTAB but no taskCrontabExpr");
             } else if ("INTERVAL".equals(runPolicy) && config.getIntValue("taskInterval", 0) <= 0) {
-                problems.add(label + " 的 taskRunPolicy=INTERVAL 但 taskInterval<=0");
+                problems.add(label + " has taskRunPolicy=INTERVAL but taskInterval<=0");
             }
             String failPolicy = upper(config.getString("taskFailPolicy"), "CONTINUE");
             if (!TaskTemplateLoader.FAIL_POLICIES.contains(failPolicy)) {
-                problems.add(label + " 的 taskFailPolicy=[" + failPolicy + "] 不受支持（可用: "
-                        + TaskTemplateLoader.FAIL_POLICIES + "）");
+                problems.add(label + " has an unsupported taskFailPolicy=[" + failPolicy + "] (available: "
+                        + TaskTemplateLoader.FAIL_POLICIES + ")");
             }
             int retryTimes = config.getIntValue("taskRetryTimes", 0);
             int retryInterval = config.getIntValue("taskRetryInterval", 60);
             if (retryTimes < 0) {
-                problems.add(label + " 的 taskRetryTimes 不能为负数，实际: " + retryTimes);
+                problems.add(label + " taskRetryTimes must not be negative, actual: " + retryTimes);
             }
             if (retryInterval < 0) {
-                problems.add(label + " 的 taskRetryInterval 不能为负数，实际: " + retryInterval);
+                problems.add(label + " taskRetryInterval must not be negative, actual: " + retryInterval);
             }
             // RETRY 却不可重试：QuartzJob.handleRetry 会在运行期静默降级为 CONTINUE，这里提前拒绝
             if ("RETRY".equals(failPolicy) && retryTimes <= 0) {
-                problems.add(label + " 的 taskFailPolicy=RETRY 但 taskRetryTimes<=0（运行期会退化成 CONTINUE）");
+                problems.add(label + " has taskFailPolicy=RETRY but taskRetryTimes<=0 (degrades to CONTINUE at runtime)");
             }
             Object mandatory = config.get("taskMandatory");
             if (mandatory != null && !isBooleanValue(mandatory)) {
-                problems.add(label + " 的 taskMandatory 必须是布尔值，实际: " + mandatory);
+                problems.add(label + " taskMandatory must be a boolean, actual: " + mandatory);
             }
             Object variablesValue = config.get("variables");
             if (variablesValue != null) {
                 if (!(variablesValue instanceof Map<?, ?> variables)) {
-                    problems.add(label + " 的 variables 必须是 JSON 对象（KEY→标量值）");
+                    problems.add(label + " variables must be a JSON object (key -> scalar value)");
                 } else {
                     for (Map.Entry<?, ?> entry : variables.entrySet()) {
                         Object value = entry.getValue();
                         if (value instanceof Map || value instanceof Collection) {
-                            problems.add(label + " 的 variables[" + entry.getKey()
-                                    + "] 是嵌套对象/数组（只支持标量值）");
+                            problems.add(label + " variables[" + entry.getKey()
+                                    + "] is a nested object/array (only scalar values are supported)");
                         }
                     }
                 }
             }
             String parallelPolicy = upper(config.getString("taskParallelPolicy"), "PARALLEL");
             if (!TaskTemplateLoader.PARALLEL_POLICIES.contains(parallelPolicy)) {
-                problems.add(label + " 的 taskParallelPolicy=[" + parallelPolicy + "] 不受支持（可用: "
-                        + TaskTemplateLoader.PARALLEL_POLICIES + "）");
+                problems.add(label + " has an unsupported taskParallelPolicy=[" + parallelPolicy + "] (available: "
+                        + TaskTemplateLoader.PARALLEL_POLICIES + ")");
             }
         }
         return problems;
@@ -1314,8 +1798,8 @@ public class SchedulerController {
 
         Path typeDir = root.resolve(projectType);
         if (!Files.isDirectory(typeDir)) {
-            throw new IOException("模板目录不存在: " + typeDir
-                    + "（scheduler.projectHome 下应有 <projectType>/ 目录）");
+            throw new IOException("template project directory not found: " + typeDir
+                    + " (expected <scheduler.projectHome>/<projectType>)");
         }
         copyDirectory(typeDir, targetFlow.resolve(projectType));
 
@@ -1331,7 +1815,7 @@ public class SchedulerController {
                 break;
             }
         }
-        logger.info("[SCHEDULER] 已拷贝 HOP 工程到 {}", targetFlow);
+        logger.info("[SCHEDULER] HOP project copied to {}", targetFlow);
 
         // 模板自检：default 项目不能把 default 声明为自己的父项目，否则 Hop 会报
         // "There is a loop in the parent projects hierarchy: project default references itself"
@@ -1341,11 +1825,11 @@ public class SchedulerController {
                 JSONObject config = JSON.parseObject(Files.readString(defaultProjectConfig, StandardCharsets.UTF_8));
                 String parent = config == null ? null : config.getString("parentProjectName");
                 if (parent != null && !parent.isBlank() && "default".equalsIgnoreCase(parent.trim())) {
-                    logger.warn("[SCHEDULER] 模板自检失败: {} 的 parentProjectName=[default]，"
-                            + "会导致 Hop 父项目自引用死循环，请改为空字符串", defaultProjectConfig);
+                    logger.warn("[SCHEDULER] template self-check failed: {} has parentProjectName=[default], "
+                            + "which makes the Hop parent project reference itself in a loop; use an empty string instead", defaultProjectConfig);
                 }
             } catch (Exception e) {
-                logger.warn("[SCHEDULER] 模板自检无法解析 {}: {}", defaultProjectConfig, e.getMessage());
+                logger.warn("[SCHEDULER] template self-check cannot parse {}: {}", defaultProjectConfig, e.getMessage());
             }
         }
     }
@@ -1382,7 +1866,7 @@ public class SchedulerController {
         try {
             List<SchedulerRun> runs = meta.listRunsByStatus(List.of("STARTING", "STARTED"));
             if (runs.isEmpty()) {
-                logger.info("[SCHEDULER] 重启 reconcile: 无需处理的 run");
+                logger.info("[SCHEDULER] restart reconcile: no run needs handling");
                 return;
             }
             for (SchedulerRun run : runs) {
@@ -1396,17 +1880,17 @@ public class SchedulerController {
                         scheduleTask(run, task);
                         restored++;
                     } catch (Exception e) {
-                        logger.warn("[SCHEDULER] 重启 reconcile: run[{}] 任务[{}] 登记失败: {}",
+                        logger.warn("[SCHEDULER] restart reconcile: run[{}] task[{}] registration failed: {}",
                                 run.getRunId(), task.getTaskName(), e.getMessage());
                     }
                 }
                 meta.updateRunStatus(run.getRunId(), "STOPPED");
-                logger.warn("[SCHEDULER] 重启 reconcile: run[{}] 原状态[{}] → STOPPED，"
-                                + "任务定义已重新登记 {} 个（保持暂停，需人工 start）",
+                logger.warn("[SCHEDULER] restart reconcile: run[{}] previous state[{}] -> STOPPED, "
+                                + "{} task definition(s) re-registered (kept paused, start them manually)",
                         run.getRunId(), run.getStatus(), restored);
             }
         } catch (Exception e) {
-            logger.error("[SCHEDULER] 重启 reconcile 失败: {}", e.getMessage(), e);
+            logger.error("[SCHEDULER] restart reconcile failed: {}", e.getMessage(), e);
         }
     }
 
@@ -1423,14 +1907,14 @@ public class SchedulerController {
             loaded = org.slackerdb.plugins.scheduler.meta.TaskTemplateLoader
                     .load(Paths.get(projectHome), projectType, runId);
         } catch (Exception e) {
-            logger.error("[SCHEDULER] 模板任务清单解析失败: {}", e.getMessage(), e);
+            logger.error("[SCHEDULER] failed to parse template task list: {}", e.getMessage(), e);
             return 0;
         }
         for (String warning : loaded.warnings()) {
-            logger.warn("[SCHEDULER] 模板任务清单: {}", warning);
+            logger.warn("[SCHEDULER] template task list: {}", warning);
         }
         if (loaded.isEmpty()) {
-            logger.info("[SCHEDULER] 实例[{}]未载入任务（{}）", runId, loaded.fileText());
+            logger.info("[SCHEDULER] instance[{}] loaded no tasks ({})", runId, loaded.fileText());
             return 0;
         }
 
@@ -1442,9 +1926,9 @@ public class SchedulerController {
                 meta.insertTask(task);
                 count++;
             }
-            logger.info("[SCHEDULER] 实例[{}]从 {} 载入 {} 个任务", runId, loaded.file(), count);
+            logger.info("[SCHEDULER] instance[{}] loaded {} task(s) from {}", runId, count, loaded.file());
         } catch (Exception e) {
-            logger.error("[SCHEDULER] 任务写入失败: {}", e.getMessage(), e);
+            logger.error("[SCHEDULER] failed to write tasks: {}", e.getMessage(), e);
         }
         return count;
     }

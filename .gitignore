@@ -8,4 +8,24 @@ logs
 localtest/
 */*.iml
 dbcli/gen/
+docs
+/offline
+/.offline.staging-*
 
+# ============================================================
+# dbdesk（Vaadin 控制台）
+# ============================================================
+# Vaadin 生成物：Flow 每次构建会往这里写数百个文件（组件 TS、路由、index.html 等）。
+**/frontend/generated/
+**/node_modules/
+**/.vite/
+**/.vaadin/
+**/tsconfig.tsbuildinfo
+# Vaadin 生产 bundle 缓存
+dbdesk/src/main/bundles/
+# Vaadin/Vite 在模块根目录生成的脚手架（每次构建都会重写，跟着 pom 里的 @NpmPackage 走）
+# package.json / package-lock.json **要入库**（锁版本），下面这些是纯生成物。
+dbdesk/vite.generated.ts
+dbdesk/vite.config.ts
+dbdesk/tsconfig.json
+dbdesk/types.d.ts

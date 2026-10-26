@@ -142,39 +142,39 @@ class SchedulerContractApiTest {
     }
 
     @Test
-    @DisplayName("/scheduler/capabilities 声明契约版本、能力开关、Quartz 真实状态与 HOP 就绪")
+    @DisplayName("/scheduler/capabilities declares contract version, feature switches, real Quartz state and HOP readiness")
     void capabilitiesDeclareContractAndReadiness() throws Exception {
         HttpResponse<String> response = get("/scheduler/capabilities");
-        assertEquals(200, response.statusCode(), "GET /scheduler/capabilities 应为 200");
+        assertEquals(200, response.statusCode(), "GET /scheduler/capabilities should return 200");
 
         JSONObject capabilities = JSONObject.parseObject(response.body());
-        assertEquals(1, capabilities.getIntValue("contractVersion"), "契约版本应为 1");
+        assertEquals(1, capabilities.getIntValue("contractVersion"), "contract version should be 1");
 
         JSONObject features = capabilities.getJSONObject("features");
-        assertNotNull(features, "必须声明 features");
-        assertTrue(features.getBooleanValue("runCrud"), "实例操作已可用");
-        assertFalse(features.getBooleanValue("taskCrud"), "任务写接口尚未提供，必须如实声明为 false");
+        assertNotNull(features, "features must be declared");
+        assertTrue(features.getBooleanValue("runCrud"), "run operations are available");
+        assertTrue(features.getBooleanValue("taskCrud"), "the task write API exists (M2), so the capability must be declared true");
 
         JSONObject quartzInfo = capabilities.getJSONObject("quartz");
-        assertTrue(quartzInfo.getBooleanValue("started"), "Quartz 应报告为已启动（不再是硬编码常量）");
+        assertTrue(quartzInfo.getBooleanValue("started"), "Quartz should report started (no longer a hard-coded constant)");
         assertEquals(4, quartzInfo.getIntValue("threads"));
 
         JSONObject hop = capabilities.getJSONObject("hop");
-        assertNotNull(hop, "必须声明 HOP 就绪判定");
-        assertFalse(hop.getBooleanValue("ready"), "未配置 hop.runScript 时 ready 必须为 false");
+        assertNotNull(hop, "HOP readiness must be declared");
+        assertFalse(hop.getBooleanValue("ready"), "ready must be false when hop.runScript is not configured");
         JSONArray reasons = hop.getJSONArray("reasons");
-        assertNotNull(reasons, "未就绪时必须给出原因");
-        assertTrue(reasons.size() >= 1, "未就绪时 reasons 不能为空");
+        assertNotNull(reasons, "reasons must be given when not ready");
+        assertTrue(reasons.size() >= 1, "reasons must not be empty when not ready");
     }
 
     @Test
-    @DisplayName("/scheduler/state/lost 报出'定义还在、调度已丢'的任务")
+    @DisplayName("/scheduler/state/lost reports tasks whose definition survived but whose schedule is gone")
     void lostSchedulesReportsDefinitionWithoutTrigger() throws Exception {
         HttpResponse<String> response = get("/scheduler/state/lost");
-        assertEquals(200, response.statusCode(), "GET /scheduler/state/lost 应为 200");
+        assertEquals(200, response.statusCode(), "GET /scheduler/state/lost should return 200");
 
         JSONArray lost = JSONObject.parseObject(response.body()).getJSONArray("lostSchedules");
-        assertNotNull(lost, "响应必须包含 lostSchedules 数组");
+        assertNotNull(lost, "the response must contain the lostSchedules array");
 
         boolean found = false;
         for (int i = 0; i < lost.size(); i++) {
@@ -185,12 +185,12 @@ class SchedulerContractApiTest {
                 assertEquals("dim", item.getString("taskGroup"));
             }
         }
-        assertTrue(found, "启用了但没有登记到 Quartz 的任务必须出现在 lostSchedules 中；实际："
+        assertTrue(found, "a task that is enabled but not registered with Quartz must appear in lostSchedules; actual: "
                 + lost.toJSONString());
     }
 
     @Test
-    @DisplayName("API 内联任务：不写 taskScriptType 时默认 HOP（与模板同源），小写类型归一化为大写")
+    @DisplayName("inline tasks: taskScriptType defaults to HOP (same rule as templates) and lower-case types are normalised")
     void inlineTasksDefaultToHopAndAreNormalized() throws Exception {
         String runId = "20260202000001";
         HttpResponse<String> response = post("/scheduler/run/create", """
@@ -198,31 +198,31 @@ class SchedulerContractApiTest {
                   "runId": "%s",
                   "projectType": "demo",
                   "tasks": [
-                    { "taskName": "无类型", "taskScript": "echo hi" },
-                    { "taskName": "小写类型", "taskScript": "echo hi", "taskScriptType": "command" }
+                    { "taskName": "no-type", "taskScript": "echo hi" },
+                    { "taskName": "lower-type", "taskScript": "echo hi", "taskScriptType": "command" }
                   ]
                 }
                 """.formatted(runId));
-        assertEquals(201, response.statusCode(), "合法任务应创建成功，实际响应: " + response.body());
+        assertEquals(201, response.statusCode(), "valid tasks should be created, actual response: " + response.body());
         assertEquals(2, JSONObject.parseObject(response.body()).getIntValue("taskCount"));
 
         List<SchedulerTask> tasks = meta.getTasksByRunId(runId);
-        assertEquals(2, tasks.size(), "两个任务都应入库");
+        assertEquals(2, tasks.size(), "both tasks should be persisted");
         for (SchedulerTask task : tasks) {
-            if ("无类型".equals(task.getTaskName())) {
+            if ("no-type".equals(task.getTaskName())) {
                 // 曾经这里默认落成 SQL（运行期必然被拒），现在与模板统一默认 HOP
                 assertEquals("HOP", task.getTaskScriptType(),
-                        "不写 taskScriptType 时应默认 HOP（与 TaskTemplateLoader 同源），实际: "
+                        "taskScriptType should default to HOP (same rule as TaskTemplateLoader), actual: "
                                 + task.getTaskScriptType());
             } else {
                 assertEquals("COMMAND", task.getTaskScriptType(),
-                        "小写类型应归一化为大写，实际: " + task.getTaskScriptType());
+                        "a lower-case type should be normalised to upper case, actual: " + task.getTaskScriptType());
             }
         }
     }
 
     @Test
-    @DisplayName("API 内联任务不合格时整单 400（含 SQL），且不留下实例目录/运行记录")
+    @DisplayName("invalid inline tasks reject the whole run with 400 (including SQL) and leave no run directory or record")
     void invalidInlineTasksAreRejectedWithoutSideEffects() throws Exception {
         String runId = "20260202000002";
         HttpResponse<String> response = post("/scheduler/run/create", """
@@ -230,29 +230,29 @@ class SchedulerContractApiTest {
                   "runId": "%s",
                   "projectType": "demo",
                   "tasks": [
-                    { "taskName": "sql任务", "taskScript": "select 1", "taskScriptType": "SQL" },
-                    { "taskName": "缺cron", "taskScript": "x.hwf", "taskRunPolicy": "CRONTAB" }
+                    { "taskName": "sql-task", "taskScript": "select 1", "taskScriptType": "SQL" },
+                    { "taskName": "missing-cron", "taskScript": "x.hwf", "taskRunPolicy": "CRONTAB" }
                   ]
                 }
                 """.formatted(runId));
-        assertEquals(400, response.statusCode(), "不合格的任务定义必须整单拒绝，实际响应: " + response.body());
+        assertEquals(400, response.statusCode(), "invalid task definitions must reject the whole run, actual response: " + response.body());
 
         JSONObject body = JSONObject.parseObject(response.body());
         JSONArray problems = body.getJSONArray("problems");
-        assertNotNull(problems, "拒绝时必须逐条给出问题，实际响应: " + response.body());
-        assertEquals(2, problems.size(), "两条不合格任务应各报一条，实际: " + problems);
+        assertNotNull(problems, "each problem must be listed on rejection, actual response: " + response.body());
+        assertEquals(2, problems.size(), "each of the two invalid tasks should report one problem, actual: " + problems);
         String text = problems.toJSONString();
-        assertTrue(text.contains("SQL"), "应指出 SQL 不受支持，实际: " + problems);
-        assertTrue(text.contains("CRONTAB"), "应指出 CRONTAB 缺少表达式，实际: " + problems);
+        assertTrue(text.contains("SQL"), "should point out that SQL is not supported, actual: " + problems);
+        assertTrue(text.contains("CRONTAB"), "should point out that CRONTAB lacks an expression, actual: " + problems);
 
         // 关键：先校验后落地 —— 不能留下“建了一半”的实例
-        assertNull(meta.getRun(runId), "任务定义不合格时不应写入运行记录");
+        assertNull(meta.getRun(runId), "invalid task definitions must not create a run record");
         assertFalse(Files.exists(tempDir.resolve("work").resolve("runs").resolve(runId)),
-                "任务定义不合格时不应创建实例目录");
+                "invalid task definitions must not create a run directory");
     }
 
     @Test
-    @DisplayName("API 内联任务支持与模板相同的字段：taskRetryTimes/Interval、taskMandatory、任务级 variables")
+    @DisplayName("inline tasks support the same fields as templates: taskRetryTimes/Interval, taskMandatory, task-level variables")
     void inlineTasksSupportRetryMandatoryAndVariables() throws Exception {
         String runId = "20260202000003";
         HttpResponse<String> response = post("/scheduler/run/create", """
@@ -261,7 +261,7 @@ class SchedulerContractApiTest {
                   "projectType": "demo",
                   "tasks": [
                     {
-                      "taskName": "重试任务",
+                      "taskName": "retry-task",
                       "taskScript": "echo hi",
                       "taskScriptType": "SHELL",
                       "taskFailPolicy": "RETRY",
@@ -273,23 +273,23 @@ class SchedulerContractApiTest {
                   ]
                 }
                 """.formatted(runId));
-        assertEquals(201, response.statusCode(), "合法任务应创建成功，实际响应: " + response.body());
+        assertEquals(201, response.statusCode(), "valid tasks should be created, actual response: " + response.body());
 
         List<SchedulerTask> tasks = meta.getTasksByRunId(runId);
         assertEquals(1, tasks.size());
         SchedulerTask task = tasks.get(0);
-        assertEquals(3, task.getTaskRetryTimes(), "taskRetryTimes 必须落库（曾被静默丢弃）");
-        assertEquals(15, task.getTaskRetryInterval(), "taskRetryInterval 必须落库（曾被静默丢弃）");
-        assertTrue(task.isTaskMandatory(), "taskMandatory 必须落库（否则必选语义丢失）");
+        assertEquals(3, task.getTaskRetryTimes(), "taskRetryTimes must be persisted (it used to be dropped silently)");
+        assertEquals(15, task.getTaskRetryInterval(), "taskRetryInterval must be persisted (it used to be dropped silently)");
+        assertTrue(task.isTaskMandatory(), "taskMandatory must be persisted (otherwise the mandatory semantic is lost)");
 
         JSONObject variables = JSONObject.parseObject(task.getVariablesJson());
-        assertNotNull(variables, "任务级 variables 应被拍平写入 variables_json，实际: " + task.getVariablesJson());
+        assertNotNull(variables, "task-level variables should be flattened into variables_json, actual: " + task.getVariablesJson());
         assertEquals("10.0.0.1", variables.getString("BIZ_HOST"));
-        assertEquals("1521", variables.getString("BIZ_PORT"), "数字值应转成字符串");
+        assertEquals("1521", variables.getString("BIZ_PORT"), "numeric values should become strings");
     }
 
     @Test
-    @DisplayName("RETRY 却 retryTimes<=0、嵌套 variables、非布尔 mandatory：整单 400")
+    @DisplayName("RETRY with retryTimes<=0, nested variables, non-boolean mandatory: the whole run is rejected with 400")
     void invalidRetryAndVariablesAreRejected() throws Exception {
         String runId = "20260202000004";
         HttpResponse<String> response = post("/scheduler/run/create", """
@@ -297,26 +297,26 @@ class SchedulerContractApiTest {
                   "runId": "%s",
                   "projectType": "demo",
                   "tasks": [
-                    { "taskName": "空重试", "taskScript": "echo hi", "taskFailPolicy": "RETRY" },
-                    { "taskName": "嵌套变量", "taskScript": "echo hi",
+                    { "taskName": "empty-retry", "taskScript": "echo hi", "taskFailPolicy": "RETRY" },
+                    { "taskName": "nested-vars", "taskScript": "echo hi",
                       "variables": { "NESTED": { "a": 1 } } },
-                    { "taskName": "坏必选", "taskScript": "echo hi", "taskMandatory": "yes" }
+                    { "taskName": "bad-mandatory", "taskScript": "echo hi", "taskMandatory": "yes" }
                   ]
                 }
                 """.formatted(runId));
         assertEquals(400, response.statusCode(),
-                "不可重试的 RETRY 与非法 variables/mandatory 必须整单拒绝，实际响应: " + response.body());
+                "a non-retryable RETRY plus invalid variables/mandatory must reject the whole run, actual response: " + response.body());
 
         String problems = JSONObject.parseObject(response.body()).getJSONArray("problems").toJSONString();
         assertTrue(problems.contains("taskRetryTimes"),
-                "应指出 RETRY 缺少 taskRetryTimes（运行期会静默降级），实际: " + problems);
-        assertTrue(problems.contains("variables[NESTED]"), "应指出嵌套变量不受支持，实际: " + problems);
-        assertTrue(problems.contains("taskMandatory"), "应指出 taskMandatory 必须是布尔值，实际: " + problems);
-        assertNull(meta.getRun(runId), "拒绝时不应写入运行记录");
+                "should point out that RETRY lacks taskRetryTimes (it would silently degrade at runtime), actual: " + problems);
+        assertTrue(problems.contains("variables[NESTED]"), "should point out that nested variables are unsupported, actual: " + problems);
+        assertTrue(problems.contains("taskMandatory"), "should point out that taskMandatory must be a boolean, actual: " + problems);
+        assertNull(meta.getRun(runId), "a rejected request must not create a run record");
     }
 
     @Test
-    @DisplayName("内联任务出现未知字段（拼错）时 400，不再静默忽略")
+    @DisplayName("an unknown (misspelled) inline task field returns 400 instead of being ignored silently")
     void unknownInlineTaskFieldIsRejected() throws Exception {
         String runId = "20260202000005";
         HttpResponse<String> response = post("/scheduler/run/create", """
@@ -324,56 +324,396 @@ class SchedulerContractApiTest {
                   "runId": "%s",
                   "projectType": "demo",
                   "tasks": [
-                    { "taskName": "拼错字段", "taskScript": "echo hi", "taskTimeouts": 600 }
+                    { "taskName": "typo-field", "taskScript": "echo hi", "taskTimeouts": 600 }
                   ]
                 }
                 """.formatted(runId));
-        assertEquals(400, response.statusCode(), "未知字段必须被拒绝，实际响应: " + response.body());
+        assertEquals(400, response.statusCode(), "unknown fields must be rejected, actual response: " + response.body());
 
         String problems = JSONObject.parseObject(response.body()).getJSONArray("problems").toJSONString();
-        assertTrue(problems.contains("未知字段[taskTimeouts]"),
-                "应指出拼错的字段名（taskTimeouts ≠ taskTimeout），实际: " + problems);
-        assertNull(meta.getRun(runId), "拒绝时不应写入运行记录");
+        assertTrue(problems.contains("unknown field [taskTimeouts]"),
+                "should point out the misspelled field (taskTimeouts is not taskTimeout), actual: " + problems);
+        assertNull(meta.getRun(runId), "a rejected request must not create a run record");
     }
 
     @Test
-    @DisplayName("创建实例请求顶层字段拼错（task 而非 tasks）时 400，不静默回落到模板任务")
+    @DisplayName("a misspelled top-level run field (task instead of tasks) returns 400 instead of falling back to template tasks")
     void unknownRunBodyFieldIsRejected() throws Exception {
         String runId = "20260202000006";
         HttpResponse<String> response = post("/scheduler/run/create", """
                 {
                   "runId": "%s",
                   "projectType": "demo",
-                  "task": [ { "taskName": "被拼错的任务", "taskScript": "echo hi" } ]
+                  "task": [ { "taskName": "misplaced-task", "taskScript": "echo hi" } ]
                 }
                 """.formatted(runId));
         assertEquals(400, response.statusCode(),
-                "顶层未知字段必须被拒绝（否则会静默回落到模板任务），实际响应: " + response.body());
+                "top-level unknown fields must be rejected (otherwise it silently falls back to template tasks), actual response: " + response.body());
 
         JSONObject body = JSONObject.parseObject(response.body());
         assertEquals("invalid request", body.getString("error"));
-        assertTrue(body.getJSONArray("problems").toJSONString().contains("未知字段[task]"),
-                "应指出顶层拼错的字段，实际: " + body.getJSONArray("problems"));
-        assertNull(meta.getRun(runId), "拒绝时不应写入运行记录");
+        assertTrue(body.getJSONArray("problems").toJSONString().contains("unknown field [task]"),
+                "should point out the misspelled top-level field, actual: " + body.getJSONArray("problems"));
+        assertNull(meta.getRun(runId), "a rejected request must not create a run record");
         assertFalse(Files.exists(tempDir.resolve("work").resolve("runs").resolve(runId)),
-                "拒绝时不应创建实例目录");
+                "a rejected request must not create a run directory");
     }
 
     @Test
-    @DisplayName("tasks 不是数组时 400（而不是 500 或静默回落）")
+    @DisplayName("a non-array tasks value returns 400 (not 500 and no silent fallback)")
     void nonArrayTasksAreRejected() throws Exception {
         String runId = "20260202000007";
         HttpResponse<String> response = post("/scheduler/run/create", """
                 {
                   "runId": "%s",
                   "projectType": "demo",
-                  "tasks": { "taskName": "对象形式", "taskScript": "echo hi" }
+                  "tasks": { "taskName": "object-form", "taskScript": "echo hi" }
                 }
                 """.formatted(runId));
-        assertEquals(400, response.statusCode(), "tasks 不是数组时应 400，实际响应: " + response.body());
+        assertEquals(400, response.statusCode(), "a non-array tasks value should return 400, actual response: " + response.body());
         assertTrue(JSONObject.parseObject(response.body()).getJSONArray("problems").toJSONString()
-                        .contains("tasks 必须是数组"),
-                "应指出 tasks 必须是数组，实际: " + response.body());
+                        .contains("tasks must be an array"),
+                "should point out that tasks must be an array, actual: " + response.body());
         assertNull(meta.getRun(runId));
+    }
+
+    // ========== 任务写接口（M2 桶 A） ==========
+
+    private static void insertStoppedRun(String runId) throws Exception {
+        SchedulerRun run = new SchedulerRun();
+        run.setRunId(runId);
+        run.setProjectType("demo");
+        run.setStatus("STOPPED");
+        run.setWorkDir(tempDir.resolve("work").resolve("runs").resolve(runId).toString());
+        run.setCreateTime(LocalDateTime.now());
+        run.setUpdateTime(LocalDateTime.now());
+        meta.insertRun(run);
+    }
+
+    @Test
+    @DisplayName("task write API: create -> list -> update -> delete end to end")
+    void taskCrudRoundTrip() throws Exception {
+        String runId = "20260202000010";
+        insertStoppedRun(runId);
+
+        HttpResponse<String> created = post("/scheduler/run/" + runId + "/task/create", """
+                {
+                  "taskName": "load_fact",
+                  "taskScript": "load_fact.hwf",
+                  "taskScriptType": "HOP",
+                  "taskRunPolicy": "CRONTAB",
+                  "taskCrontabExpr": "0 0 3 * * ?",
+                  "taskFailPolicy": "STOP",
+                  "taskStartupOrder": 20,
+                  "taskGroup": "fact"
+                }
+                """);
+        assertEquals(201, created.statusCode(), "creating a task should return 201, actual: " + created.body());
+        assertNotNull(meta.getTask(runId, "load_fact"), "the task should be persisted");
+
+        String listBody = get("/scheduler/run/" + runId + "/task/list").body();
+        assertTrue(listBody.contains("load_fact"), "the task list should contain the new task, actual: " + listBody);
+
+        HttpResponse<String> updated = post("/scheduler/run/" + runId + "/task/update", """
+                { "taskName": "load_fact", "taskCrontabExpr": "0 30 3 * * ?", "taskEnabled": false }
+                """);
+        assertEquals(200, updated.statusCode(), "updating a task should return 200, actual: " + updated.body());
+        SchedulerTask afterUpdate = meta.getTask(runId, "load_fact");
+        assertEquals("0 30 3 * * ?", afterUpdate.getTaskCrontabExpr(), "the cron expression should be updated");
+        assertFalse(afterUpdate.isTaskEnabled(), "taskEnabled should be updated");
+        assertEquals("load_fact.hwf", afterUpdate.getTaskScript(), "fields that were not sent keep their value (partial update)");
+
+        HttpResponse<String> deleted = post("/scheduler/run/" + runId + "/task/delete",
+                """
+                        { "taskName": "load_fact" }
+                        """);
+        assertEquals(200, deleted.statusCode(), "deleting a task should return 200, actual: " + deleted.body());
+        assertNull(meta.getTask(runId, "load_fact"), "the task should disappear from storage");
+
+        HttpResponse<String> again = post("/scheduler/run/" + runId + "/task/delete",
+                """
+                        { "taskName": "load_fact" }
+                        """);
+        assertEquals(404, again.statusCode(), "deleting a second time should return 404, actual: " + again.body());
+    }
+
+    @Test
+    @DisplayName("task write API validation: type / policy / cron / duplicate / unknown run")
+    void taskCrudValidation() throws Exception {
+        String runId = "20260202000011";
+        insertStoppedRun(runId);
+
+        HttpResponse<String> badType = post("/scheduler/run/" + runId + "/task/create", """
+                { "taskName": "t1", "taskScript": "a.sql", "taskScriptType": "SQL" }
+                """);
+        assertEquals(400, badType.statusCode(), "SQL is not a task type, so 400 is expected, actual: " + badType.body());
+        assertTrue(badType.body().contains("taskScriptType"), "should point at the script type, actual: " + badType.body());
+
+        HttpResponse<String> badCron = post("/scheduler/run/" + runId + "/task/create", """
+                { "taskName": "t2", "taskScript": "a.hwf", "taskRunPolicy": "CRONTAB" }
+                """);
+        assertEquals(400, badCron.statusCode(), "CRONTAB without an expression should return 400, actual: " + badCron.body());
+
+        HttpResponse<String> ok = post("/scheduler/run/" + runId + "/task/create", """
+                { "taskName": "t3", "taskScript": "a.hwf" }
+                """);
+        assertEquals(201, ok.statusCode(), "the minimal field set should be accepted, actual: " + ok.body());
+
+        HttpResponse<String> duplicate = post("/scheduler/run/" + runId + "/task/create", """
+                { "taskName": "t3", "taskScript": "a.hwf" }
+                """);
+        assertEquals(409, duplicate.statusCode(), "a duplicate name should return 409, actual: " + duplicate.body());
+
+        HttpResponse<String> unknownRun = post("/scheduler/run/no-such-run/task/create", """
+                { "taskName": "t4", "taskScript": "a.hwf" }
+                """);
+        assertEquals(404, unknownRun.statusCode(), "an unknown run should return 404, actual: " + unknownRun.body());
+
+        HttpResponse<String> caps = get("/scheduler/capabilities");
+        assertTrue(caps.body().contains("\"taskCrud\":true"),
+                "the capability taskCrud should be true, actual: " + caps.body());
+    }
+
+    // ========== 模板写接口（M2） ==========
+
+    @Test
+    @DisplayName("template upload -> read back -> delete end to end, re-validated right after upload")
+    void templateUploadReadDelete() throws Exception {
+        String projectType = "itpl";
+        String template = """
+                {
+                  "tasks": [
+                    { "taskName": "t1", "taskScript": "a.hwf", "taskRunPolicy": "CRONTAB",
+                      "taskCrontabExpr": "0 0 5 * * ?" }
+                  ]
+                }
+                """;
+        JSONObject uploadPayload = new JSONObject();
+        uploadPayload.put("path", "conf/defaultSchedulerTask.json");
+        uploadPayload.put("content", template);
+        String uploadBody = uploadPayload.toJSONString();
+
+        HttpResponse<String> response = post("/scheduler/project/" + projectType + "/upload", uploadBody);
+        assertEquals(200, response.statusCode(), "uploading a template should return 200, actual: " + response.body());
+        JSONObject body = JSONObject.parseObject(response.body());
+        assertEquals(1, body.getIntValue("taskCount"), "one task should be parsed right after upload, actual: " + response.body());
+
+        HttpResponse<String> project = get("/scheduler/project/" + projectType);
+        assertTrue(project.body().contains("t1"), "the project detail should contain the template task, actual: " + project.body());
+
+        HttpResponse<String> file = get("/scheduler/project/" + projectType
+                + "/file?path=conf/defaultSchedulerTask.json");
+        assertEquals(200, file.statusCode(), "reading a template file should return 200, actual: " + file.body());
+        assertTrue(file.body().contains("t1"), "the content read back should contain the task name, actual: " + file.body());
+
+        HttpResponse<String> deleted = post("/scheduler/project/" + projectType + "/delete",
+                "{\"path\":\"conf/defaultSchedulerTask.json\"}");
+        assertEquals(200, deleted.statusCode(), "deleting a template should return 200, actual: " + deleted.body());
+
+        HttpResponse<String> gone = get("/scheduler/project/" + projectType
+                + "/file?path=conf/defaultSchedulerTask.json");
+        assertEquals(404, gone.statusCode(), "reading after deletion should return 404, actual: " + gone.body());
+    }
+
+    @Test
+    @DisplayName("template API rejects escaping paths and bad JSON and truthfully declares templates=true")
+    void templateRejectsTraversalAndBadJson() throws Exception {
+        String projectType = "itpl2";
+
+        HttpResponse<String> traversal = post("/scheduler/project/" + projectType + "/upload",
+                "{\"path\":\"../../evil.json\",\"content\":\"{}\"}");
+        assertEquals(400, traversal.statusCode(), "an escaping path should return 400, actual: " + traversal.body());
+
+        HttpResponse<String> absolute = get("/scheduler/project/" + projectType + "/file?path=/etc/passwd");
+        assertEquals(400, absolute.statusCode(), "an absolute path should return 400, actual: " + absolute.body());
+
+        HttpResponse<String> badJson = post("/scheduler/project/" + projectType + "/upload",
+                "{\"path\":\"conf/x.json\",\"content\":\"{ not json\"}");
+        assertEquals(400, badJson.statusCode(), "bad JSON should return 400 (validated before writing), actual: " + badJson.body());
+
+        HttpResponse<String> caps = get("/scheduler/capabilities");
+        assertTrue(caps.body().contains("\"templates\":true"),
+                "the capability templates should be true, actual: " + caps.body());
+    }
+
+    @Test
+    @DisplayName("/scheduler/project/list is not swallowed by the {projectType} route")
+    void projectListRouteIsNotShadowed() throws Exception {
+        HttpResponse<String> response = get("/scheduler/project/list");
+        assertEquals(200, response.statusCode(),
+                "static routes must be registered before parameterised ones, actual: " + response.body());
+        assertTrue(response.body().contains("projects"),
+                "a projects array is expected, actual: " + response.body());
+        assertFalse(response.body().contains("Project not found"),
+                "it must not fall through to handleGetProject, actual: " + response.body());
+    }
+
+    // ========== 跨 run 执行流水（globalHistory） ==========
+
+    private static void seedHistory(String runId, String taskName, int retCode,
+                                    java.time.LocalDateTime start, java.time.LocalDateTime end) throws Exception {
+        org.slackerdb.plugins.scheduler.entity.TaskHistory row =
+                new org.slackerdb.plugins.scheduler.entity.TaskHistory();
+        row.setRunId(runId);
+        row.setTaskName(taskName);
+        row.setRetCode(retCode);
+        row.setRetMsg(retCode == 0 ? "ok" : "boom");
+        row.setStartTime(start);
+        row.setEndTime(end);
+        meta.insertTaskHistory(row);
+    }
+
+    @Test
+    @DisplayName("globalHistory: newest first across runs, filterable, with success/failure summary")
+    void globalHistoryAcrossRuns() throws Exception {
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        seedHistory("20260202000020", "t_ok", 0, now.minusMinutes(10), now.minusMinutes(9));
+        seedHistory("20260202000021", "t_fail", 1, now.minusMinutes(5), now.minusMinutes(4));
+
+        HttpResponse<String> response = get("/scheduler/history?hours=24&limit=50");
+        assertEquals(200, response.statusCode(), "listing history should return 200, actual: " + response.body());
+        JSONObject body = JSONObject.parseObject(response.body());
+        JSONArray history = body.getJSONArray("history");
+        assertNotNull(history, "the history array must be returned");
+        assertTrue(history.size() >= 2, "at least two history rows are expected, actual: " + history.size());
+        assertEquals("t_fail", history.getJSONObject(0).getString("taskName"),
+                "rows should be sorted newest first, actual: " + history.getJSONObject(0));
+
+        JSONObject summary = body.getJSONObject("summary");
+        assertEquals(1, summary.getIntValue("success"), "the success count should be 1, actual: " + summary);
+        assertEquals(1, summary.getIntValue("failed"), "the failed count should be 1, actual: " + summary);
+
+        HttpResponse<String> filtered = get("/scheduler/history?hours=24&runId=20260202000020");
+        assertTrue(JSONObject.parseObject(filtered.body()).getJSONArray("history").toJSONString()
+                        .contains("t_ok"),
+                "filtering by runId should leave only t_ok, actual: " + filtered.body());
+
+        HttpResponse<String> limited = get("/scheduler/history?hours=24&limit=1");
+        assertEquals(1, JSONObject.parseObject(limited.body()).getJSONArray("history").size(),
+                "limit should take effect");
+
+        HttpResponse<String> caps = get("/scheduler/capabilities");
+        assertTrue(caps.body().contains("\"globalHistory\":true"),
+                "the capability globalHistory should be true, actual: " + caps.body());
+    }
+
+    // ========== 模板 zip 导入（zipImport） ==========
+
+    private static String zipBase64(java.util.Map<String, String> files) throws Exception {
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(bytes)) {
+            for (java.util.Map.Entry<String, String> entry : files.entrySet()) {
+                zip.putNextEntry(new java.util.zip.ZipEntry(entry.getKey()));
+                zip.write(entry.getValue().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                zip.closeEntry();
+            }
+        }
+        return java.util.Base64.getEncoder().encodeToString(bytes.toByteArray());
+    }
+
+    @Test
+    @DisplayName("zipImport: import a whole template package and use it right away")
+    void zipImportProject() throws Exception {
+        String projectType = "itzip";
+        String taskList = """
+                { "tasks": [ { "taskName": "zip_task", "taskScript": "scripts/z.hwf" } ] }
+                """;
+        String base64 = zipBase64(java.util.Map.of(
+                "conf/defaultSchedulerTask.json", taskList,
+                "scripts/z.hwf", "// hello from zip"));
+
+        JSONObject payload = new JSONObject();
+        payload.put("contentBase64", base64);
+        HttpResponse<String> response = post("/scheduler/project/" + projectType + "/import", payload.toJSONString());
+        assertEquals(200, response.statusCode(), "importing a zip should return 200, actual: " + response.body());
+        JSONObject body = JSONObject.parseObject(response.body());
+        assertEquals(2, body.getIntValue("count"), "two files should be written, actual: " + response.body());
+        assertEquals(1, body.getIntValue("taskCount"), "one task should be parsed right after import, actual: " + response.body());
+
+        HttpResponse<String> project = get("/scheduler/project/" + projectType);
+        assertTrue(project.body().contains("zip_task"), "the project detail should contain the imported task, actual: " + project.body());
+
+        HttpResponse<String> caps = get("/scheduler/capabilities");
+        assertTrue(caps.body().contains("\"zipImport\":true"), "the capability zipImport should be true, actual: " + caps.body());
+    }
+
+    @Test
+    @DisplayName("zipImport: rejects escaping entries and bad base64")
+    void zipImportRejectsTraversal() throws Exception {
+        String projectType = "itzip2";
+        String base64 = zipBase64(java.util.Map.of(
+                "../evil.txt", "pwned",
+                "conf/defaultSchedulerTask.json", "{\"tasks\":[]}"));
+
+        JSONObject payload = new JSONObject();
+        payload.put("contentBase64", base64);
+        HttpResponse<String> response = post("/scheduler/project/" + projectType + "/import", payload.toJSONString());
+        assertEquals(400, response.statusCode(), "an escaping entry should return 400, actual: " + response.body());
+        assertFalse(Files.exists(tempDir.resolve("projects").resolve("evil.txt")),
+                "an escaping file must never be written outside the project directory");
+
+        HttpResponse<String> badBase64 = post("/scheduler/project/" + projectType + "/import",
+                "{\"contentBase64\":\"not-base64!!\"}");
+        assertEquals(400, badBase64.statusCode(), "bad base64 should return 400, actual: " + badBase64.body());
+    }
+
+    @Test
+    @DisplayName("zipImport: a single huge entry is stopped while decompressing (not after filling memory)")
+    void zipImportRejectsOversizedEntry() throws Exception {
+        // 51 MB 的零字节：deflate 后只有几十 KB，能轻松通过 base64 上传；解压却是 51 MB。
+        // 改造前是 readAllBytes() 之后再判大小，这条请求足以把服务端堆打满。
+        byte[] oversized = new byte[51 * 1024 * 1024];
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(bytes)) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("conf/defaultSchedulerTask.json"));
+            zip.write(oversized);
+            zip.closeEntry();
+        }
+        JSONObject payload = new JSONObject();
+        payload.put("contentBase64", java.util.Base64.getEncoder().encodeToString(bytes.toByteArray()));
+
+        HttpResponse<String> response = post("/scheduler/project/itzip3/import", payload.toJSONString());
+        assertEquals(400, response.statusCode(), "exceeding the decompression limit should return 400, actual: " + response.body());
+        assertTrue(response.body().contains("50 MB"), "the error should state the size limit, actual: " + response.body());
+        assertFalse(Files.exists(tempDir.resolve("projects").resolve("itzip3")
+                        .resolve("conf").resolve("defaultSchedulerTask.json")),
+                "a rejected entry must not be written (writing happens after the whole entry is read)");
+    }
+
+    // ========== 契约夹具（W0）：字段只增不减 ==========
+
+    /** 递归比较：夹具里的字段必须在实际响应里存在（多出来的新字段允许）。 */
+    private static void assertContainsAll(Object expected, Object actual, String path, List<String> missing) {
+        if (!(expected instanceof JSONObject eo) || !(actual instanceof JSONObject ao)) {
+            return;
+        }
+        for (String key : eo.keySet()) {
+            if (key.startsWith("_")) {
+                continue;
+            }
+            String where = path.isEmpty() ? key : path + "." + key;
+            if (!ao.containsKey(key)) {
+                missing.add(where);
+                continue;
+            }
+            assertContainsAll(eo.get(key), ao.get(key), where, missing);
+        }
+    }
+
+    @Test
+    @DisplayName("contract fixture: /scheduler/capabilities fields only grow, never shrink")
+    void capabilitiesMatchFixture() throws Exception {
+        java.nio.file.Path fixture = java.nio.file.Paths.get(
+                "..", "dbdesk-docs", "contract", "scheduler-capabilities.v1.json");
+        org.junit.jupiter.api.Assumptions.assumeTrue(java.nio.file.Files.isRegularFile(fixture),
+                "no contract fixture (module only checkout?), skipping");
+
+        JSONObject expected = JSONObject.parseObject(
+                java.nio.file.Files.readString(fixture, java.nio.charset.StandardCharsets.UTF_8));
+        JSONObject actual = JSONObject.parseObject(get("/scheduler/capabilities").body());
+
+        List<String> missing = new java.util.ArrayList<>();
+        assertContainsAll(expected, actual, "", missing);
+        assertTrue(missing.isEmpty(), "the actual response is missing contract fields (breaking change): " + missing);
     }
 }

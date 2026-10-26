@@ -3,7 +3,6 @@ package org.slackerdb.dbserver.service;
 import ch.qos.logback.classic.Logger;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.Iterator;
 import java.util.Map;
@@ -39,15 +38,13 @@ final class McpSessionStore {
     static final class Session {
         final String handle;
         final Connection connection;
-        final boolean readOnly;
         final long createdAtMillis;
         final AtomicLong statements = new AtomicLong();
         volatile long lastUsedMillis;
 
-        Session(String handle, Connection connection, boolean readOnly) {
+        Session(String handle, Connection connection) {
             this.handle = handle;
             this.connection = connection;
-            this.readOnly = readOnly;
             this.createdAtMillis = System.currentTimeMillis();
             this.lastUsedMillis = this.createdAtMillis;
         }
@@ -61,9 +58,6 @@ final class McpSessionStore {
     private final ConnectionFactory connectionFactory;
     private final Logger logger;
 
-    /** 单个会话的默认语句超时（毫秒）。0 表示不设。 */
-    private final int defaultStatementTimeoutMillis;
-
     /** 空闲多久后回收。 */
     private final long idleTimeoutMillis;
 
@@ -72,18 +66,12 @@ final class McpSessionStore {
 
     McpSessionStore(ConnectionFactory connectionFactory,
                     Logger logger,
-                    int defaultStatementTimeoutMillis,
                     long idleTimeoutMillis,
                     int maxSessions) {
         this.connectionFactory = connectionFactory;
         this.logger = logger;
-        this.defaultStatementTimeoutMillis = defaultStatementTimeoutMillis;
         this.idleTimeoutMillis = idleTimeoutMillis;
         this.maxSessions = maxSessions;
-    }
-
-    int defaultStatementTimeoutMillis() {
-        return defaultStatementTimeoutMillis;
     }
 
     long idleTimeoutMillis() {
@@ -108,10 +96,8 @@ final class McpSessionStore {
 
     /**
      * 铸造一个新 handle。
-     *
-     * @param readOnly 该会话是否只读（只读会话会拒绝任何写语句）
      */
-    Session create(boolean readOnly) throws SQLException {
+    Session create() throws SQLException {
         reapIdle();
         if (sessions.size() >= maxSessions) {
             throw new SQLException("Too many open MCP sessions (limit " + maxSessions
@@ -119,9 +105,9 @@ final class McpSessionStore {
         }
         Connection connection = connectionFactory.open();
         String handle = "mcp-" + UUID.randomUUID();
-        Session session = new Session(handle, connection, readOnly);
+        Session session = new Session(handle, connection);
         sessions.put(handle, session);
-        logger.debug("[SERVER][MCP] session handle created: {} (readOnly={})", handle, readOnly);
+        logger.debug("[SERVER][MCP] session handle created: {}", handle);
         return session;
     }
 
@@ -178,25 +164,6 @@ final class McpSessionStore {
             connection.close();
         } catch (SQLException ignored) {
             // 关闭失败不能掩盖业务异常
-        }
-    }
-
-    /**
-     * 给语句施加超时。
-     *
-     * <p>DuckDB 没有 per-query 超时（官方建议"在应用层做"），JDBC 的
-     * {@code setQueryTimeout} 在 duckdb_jdbc 上也不保证生效。所以超时的<b>真正</b>执行
-     * 由 {@link McpToolkit} 里的看门狗调用 {@link PreparedStatement#cancel()} 完成；
-     * 这里只是尽力把值透传给驱动。</p>
-     */
-    static void applyQueryTimeout(PreparedStatement statement, int timeoutMillis) {
-        if (timeoutMillis <= 0) {
-            return;
-        }
-        try {
-            statement.setQueryTimeout(Math.max(1, timeoutMillis / 1000));
-        } catch (SQLException ignored) {
-            // 驱动不支持时不阻断执行，由看门狗兜底
         }
     }
 }

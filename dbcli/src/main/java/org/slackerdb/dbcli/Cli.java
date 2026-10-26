@@ -144,6 +144,21 @@ public class Cli implements Callable<Integer> {
                     + "Defaults to the " + LOGON_ENV + " environment variable, which this option overrides."
     )
     private String logon;
+    /**
+     * 连接配置名（契约 C-4 的 {@code ~/.slackerdb/profiles.json}）。
+     *
+     * <p><b>为什么不叫 {@code --profile}</b>：dbcli 的 {@code --profile} 已经是"启动前执行的
+     * profile 脚本"（可重复）；同名会破坏既有用法，所以连接配置用 {@code --connect-profile}，
+     * 并在契约文档里记为偏差。优先级：{@code --logon} &gt; {@code --connect-profile} &gt; 环境变量。</p>
+     */
+    @Option(
+            names = "--connect-profile",
+            paramLabel = "<name>",
+            description = "Use a saved connection profile from ~/.slackerdb/profiles.json (contract C-4). "
+                    + "Ignored when --logon is given."
+    )
+    private String connectProfile;
+
 
     /**
      * 变量（可重复）。
@@ -480,7 +495,14 @@ public class Cli implements Callable<Integer> {
             String scriptName = runPlan.scriptName(stdinScript);
             ScriptRunner runner = new ScriptRunner(context);
             // 连接参数：命令行 --logon 优先，没给才用环境变量 SLACKERDB_LOGON；两者都没有就不自动连接
-            LogonRequest logonRequest = resolveLogon();
+            LogonRequest logonRequest;
+            try {
+                logonRequest = resolveLogon();
+            } catch (IllegalArgumentException e) {
+                // 配置名写错属于"命令行层面的错"：给一行可读信息，退出码 1（与 profile 文件不存在一致）
+                err.println(e.getMessage());
+                return 1;
+            }
             if (logonRequest != null) {
                 if (logonRequest.hasLineBreak()) {
                     // 多行校验只有这一份：命令行与环境变量走同一条判定
@@ -553,11 +575,32 @@ public class Cli implements Callable<Integer> {
         if (logon != null) {
             return new LogonRequest(logon, false);
         }
+        if (connectProfile != null && !connectProfile.isBlank()) {
+            org.slackerdb.common.profiles.ProfileStore store =
+                    org.slackerdb.common.profiles.ProfileStore.defaultStore();
+            org.slackerdb.common.profiles.ConnectionProfile profile = store.find(connectProfile);
+            if (profile == null) {
+                throw new IllegalArgumentException(
+                        "connection profile not found: " + connectProfile + " (file: " + store.file() + ")");
+            }
+            return new LogonRequest(logonStringFor(profile), false);
+        }
         String fromEnvironment = System.getenv(LOGON_ENV);
         if (fromEnvironment == null || fromEnvironment.isBlank()) {
             return null;
         }
         return new LogonRequest(fromEnvironment, true);
+    }
+
+    /**
+     * 把连接配置转成 dbcli 认的 {@code _connect} 串：{@code [user@]host:port/database}。
+     *
+     * <p>口令本来就不落盘（契约 C-4），所以这里不会带口令；需要口令时由用户交互输入，
+     * 或用 {@code --logon} 显式给。</p>
+     */
+    static String logonStringFor(org.slackerdb.common.profiles.ConnectionProfile profile) {
+        String prefix = profile.user() == null || profile.user().isBlank() ? "" : profile.user() + "@";
+        return prefix + profile.host() + ":" + profile.port() + "/" + profile.database();
     }
 
     /**

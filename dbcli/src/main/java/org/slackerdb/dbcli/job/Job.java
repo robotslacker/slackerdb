@@ -15,8 +15,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * 请求停止的那条线程。</p>
  *
  * <p><b>输出落到文件而不是父脚本的 stdout</b>：作业的 stdout 与 stderr 都写
- * {@code <工作目录>/<作业名>.out} 与 {@code .err}（见 {@link JobOutput}）。并发作业因此不会互相交错，
- * 父脚本的 stdout 也仍然是"父脚本的产出"。</p>
+ * {@code <日志目录>/<作业名>.out}（只有这一个文件，见 {@link JobOutput}）。
+ * 并发作业因此不会互相交错，父脚本的 stdout 也仍然是"父脚本的产出"。</p>
  *
  * <p><b>线程卫生</b>：作业线程一律 **daemon**，名字固定 {@code dbcli-job-<作业名>}；管理器
  * {@code close()} 只做"请求停止 + 限时 join"，绝不为了等一个不肯停的作业拖住 JVM 退出。</p>
@@ -29,6 +29,10 @@ public final class Job implements JobControl {
     /** 已经登记过的"取消当前长操作"回调（见 {@link #onStop(Runnable)}）。 */
     private final Set<Runnable> cancellers = ConcurrentHashMap.newKeySet();
 
+    /** 取消回调是否已经派发过（保证每个回调最多执行一次；见 {@link #requestStop}）。 */
+    private final java.util.concurrent.atomic.AtomicBoolean cancellersDispatched =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
     private volatile JobState state = JobState.CREATED;
     private volatile Thread thread;
     private volatile Instant startedAt;
@@ -36,6 +40,15 @@ public final class Job implements JobControl {
     private volatile int exitCode = Integer.MIN_VALUE;
     private volatile String failureMessage;
     private volatile boolean stopRequested;
+
+    /**
+     * 停止请求希望落到的终态（{@code ABORTED}/{@code SHUTDOWN}/{@code TIMEOUT}）。
+     *
+     * <p>终态由**确认作业线程已经结束**的一方落地：请求方 join 成功就自己落，join 不到就交给
+     * 作业线程在收尾时按这里记下的意图落。这样"状态说真话"——线程还在跑时不会显示 ABORTED，
+     * 而线程真正退出时也不会永远停在 RUNNING。</p>
+     */
+    private volatile JobState pendingStopState;
 
     /** 这次停止请求是否要求立刻强制（{@code _JOB ABORT} 与硬超时；{@code _JOB SHUTDOWN} 不是）。 */
     private volatile boolean forcedStop;
@@ -166,13 +179,16 @@ public final class Job implements JobControl {
             return () -> {
             };
         }
-        if (stopRequested) {
+        // 已经停止（且回调已派发过）：立即执行一次，不留"注册晚了一步"的窗口
+        if (stopRequested && cancellersDispatched.get()) {
             runQuietly(canceller);
             return () -> {
             };
         }
         cancellers.add(canceller);
-        // 注册与"请求停止"之间有一个窗口：这里复查一次，避免回调永远不被执行
+        // 注册与"请求停止"之间有一个窗口：这里复查一次。
+        // 用 remove 的结果作为"我拿到了这次执行权"的凭据——派发方会把集合清空，
+        // 因此同一个回调不可能既被派发方执行、又被这里执行。
         if (stopRequested && cancellers.remove(canceller)) {
             runQuietly(canceller);
         }
@@ -182,14 +198,27 @@ public final class Job implements JobControl {
     /**
      * 请求停止（幂等）：置位 + 触发所有"取消当前长操作"的回调。**不**中断线程（由调用方决定）。
      *
-     * @param forced {@code true} = 立刻强制（{@code _JOB ABORT}、硬超时）；{@code false} = 优雅
-     *               （{@code _JOB SHUTDOWN}、管理器关闭）。执行体据此选"强杀进程树"还是"先优雅再强杀"
+     * <p>回调只派发一次：{@code abort} 之后管理器关闭再请求一次不会让它们重复执行。
+     * {@code forced} 是单调的——一旦要求过强制，后续的优雅请求不会把它降级。</p>
+     *
+     * @param forced   {@code true} = 立刻强制（{@code _JOB ABORT}、硬超时）；{@code false} = 优雅
+     *                 （{@code _JOB SHUTDOWN}、管理器关闭）
+     * @param terminal 这次停止希望落到的终态（{@code ABORTED}/{@code SHUTDOWN}/{@code TIMEOUT}）；
+     *                 {@code null} 表示不改变既有意图
      */
-    void requestStop(boolean forced) {
-        this.forcedStop = forced;
+    void requestStop(boolean forced, JobState terminal) {
+        if (forced) {
+            this.forcedStop = true;
+        }
+        if (terminal != null && (pendingStopState == null || forced)) {
+            this.pendingStopState = terminal;
+        }
         this.stopRequested = true;
-        for (Runnable canceller : List.copyOf(cancellers)) {
-            runQuietly(canceller);
+        if (cancellersDispatched.compareAndSet(false, true)) {
+            for (Runnable canceller : List.copyOf(cancellers)) {
+                runQuietly(canceller);
+            }
+            cancellers.clear();
         }
     }
 
@@ -200,13 +229,28 @@ public final class Job implements JobControl {
 
     // ------------------------------------------------------------------ 包内状态推进
 
-    void markStarted(Thread startedThread) {
-        this.thread = startedThread;
+    /**
+     * 在**同一把锁内**发布 RUNNING 并启动作业线程。
+     *
+     * <p>为什么不能分成"发布 RUNNING"与 {@code thread.start()} 两步：中间那个窗口里
+     * 另一个线程可以 {@code _JOB ABORT} 落 ABORTED、或 {@code _JOB WAIT} 去 join 一个**还没启动**的
+     * 线程（{@code join} 对未启动线程立即返回，于是 WAIT 得到"已完成"的假结果）。
+     * 现在两者要么都还没发生，要么都已发生。</p>
+     *
+     * @return {@code false} 表示作业已经不在 CREATED（被并发 abort/shutdown 了），调用方不应再启动
+     */
+    synchronized boolean startThread(Thread worker) {
+        if (state != JobState.CREATED) {
+            return false;
+        }
+        this.thread = worker;
         this.state = JobState.RUNNING;
         this.startedAt = Instant.now();
         this.finishedAt = null;
         this.exitCode = Integer.MIN_VALUE;
         this.failureMessage = null;
+        worker.start();
+        return true;
     }
 
     /** 进程模式：记下子进程 pid（{@code _JOB SHOW} 的 {@code thread} 列据此显示 {@code pid <n>}）。 */
@@ -224,38 +268,56 @@ public final class Job implements JobControl {
     }
 
     /**
-     * 作业正常返回：按退出码落到 {@code DONE}/{@code FAILED}（带 {@code timeout=} 且已到点则落 {@code TIMEOUT}）。
+     * 作业正常返回：按退出码落到 {@code DONE}/{@code FAILED}；请求过停止则落到请求的终态。
      *
      * <p><b>顺序上的硬保证</b>：调用本方法的时机一定是"作业输出已经落盘并关闭"**之后**
-     * （见 {@code JobManager.runJob}），所以父脚本看到终态就等于输出完整。超时因此也**不**在这里之外
-     * 落地终态——看门狗只记下 {@link #requestTimeout()}，真正的终态由作业收尾时落地。</p>
+     * （见 {@code JobManager.runJob}），所以父脚本看到终态就等于输出完整。</p>
      *
-     * <p>已经请求过停止（且不是超时）时**不落地**：那时终态由请求方（{@code abort}/{@code shutdown}/
-     * 管理器关闭）决定，否则"被中止的作业"会显示成 DONE/FAILED，与 {@code Job [x] aborted.} 的文案矛盾。</p>
+     * <p><b>终态由谁落地</b>：请求方 join 到线程结束时自己落（{@code markAborted}/{@code markShutdown}）；
+     * join 不到时由这里落——按 {@link #pendingStopState} 记下的意图。否则一个不响应停止的线程
+     * 退出后会永远停在 RUNNING。</p>
      */
     synchronized void markFinished(int code) {
         if (state != JobState.RUNNING) {
             return;
         }
-        if (stopRequested && !timeoutRequested) {
+        JobState terminal = terminalFor(code);
+        if (terminal == null) {
+            // 请求过停止但调用方没给意图（理论上不会发生）：交给请求方，维持旧行为
             return;
         }
         this.exitCode = code;
-        this.state = timeoutRequested ? JobState.TIMEOUT : (code == 0 ? JobState.DONE : JobState.FAILED);
+        this.state = terminal;
         this.finishedAt = Instant.now();
     }
 
-    /** 作业抛出异常：记下原因，未请求停止时置 FAILED（超时收尾则置 TIMEOUT）。 */
+    /** 作业抛出异常：记下原因，按退出码/停止意图落终态。 */
     synchronized void markFailed(String message) {
         this.failureMessage = message;
         if (state != JobState.RUNNING) {
             return;
         }
-        if (stopRequested && !timeoutRequested) {
+        JobState terminal = terminalFor(1);
+        if (terminal == null) {
             return;
         }
-        this.state = timeoutRequested ? JobState.TIMEOUT : JobState.FAILED;
+        this.state = terminal;
         this.finishedAt = Instant.now();
+    }
+
+    /** 收尾时的终态：停止意图 > 超时 > 退出码；{@code null} 表示"交给请求方"。 */
+    private JobState terminalFor(int code) {
+        JobState pending = pendingStopState;
+        if (pending != null) {
+            return pending;
+        }
+        if (timeoutRequested) {
+            return JobState.TIMEOUT;
+        }
+        if (stopRequested) {
+            return null;
+        }
+        return code == 0 ? JobState.DONE : JobState.FAILED;
     }
 
     /**

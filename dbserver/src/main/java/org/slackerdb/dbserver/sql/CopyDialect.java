@@ -8,7 +8,7 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * {@code COPY ... FROM STDIN} 的数据格式与选项（PG 语义）。
+ * {@code COPY} 的数据格式与选项（PG 语义），{@code FROM STDIN} 与 {@code TO STDOUT} 两个方向共用。
  *
  * <p><b>为什么需要它</b>：改造前 {@code CopyProtocolHandler} 只认 {@code options.FORMAT}
  * 这一个键，而且是把值原样 {@code toUpperCase()} 后与 {@code CSV}/{@code BINARY} 比较。

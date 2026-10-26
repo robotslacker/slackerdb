@@ -20,6 +20,7 @@ import org.slackerdb.dbserver.sql.SQLReplacer;
 import org.slackerdb.dbserver.sql.SqlCommentStripper;
 import org.slackerdb.plugin.DBPluginContext;
 import org.slackerdb.plugin.DBPluginManager;
+import org.slackerdb.plsql.spi.DuckDbTransactionCompat;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
@@ -971,6 +972,12 @@ public class DBInstance {
             // 初始化数据库链接
             backendSysConnection = DriverManager.getConnection(backendConnectString, backendConnectProperties);
             backendSysConnection.setAutoCommit(false);
+
+            // DuckDB 2.0 默认把 catalog/binder 错误也视为"事务已中止"。PL/SQL 的
+            // EXCEPTION 处理器需要在捕获建表/查询错误后继续执行，这里在实例级别
+            // 恢复 1.5.x 的失效策略；设置是数据库全局的，之后从连接池取出的连接
+            // 与 duplicate() 出来的连接都会继承。
+            DuckDbTransactionCompat.configure(backendSysConnection);
 
             // 设置相关参数
             Statement stmt = backendSysConnection.createStatement();

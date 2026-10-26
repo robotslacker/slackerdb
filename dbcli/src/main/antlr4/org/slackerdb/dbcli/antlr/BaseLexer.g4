@@ -102,12 +102,18 @@ mode StartMode;
 START_SPACE        : [ \t]+ -> channel (HIDDEN);
 START_EXPRESSION   :
     (OBS_TEXT | UNRESERVED | SUBDELIMS | PCTENCODED | DoubleQuoteString | SingleQuoteString | ':' | '/' | '\\' )+;
+// 行尾分号必须是**本 mode 自己的 token**：START_EXPRESSION 的字符集不含 ';'，
+// 而 DEFAULT_MODE 的 SEMICOLON 在 mode 里不可见 —— 少了它，`_start a.sql;` 会变成
+// `token recognition error at: ';'`，整条命令被降级成 Unknown command。
+START_SEMICOLON    : ';';
 START_CRLF         : CRLF -> popMode;
 
 mode HostMode;
 HOST_SPACE         : [ \t]+ -> channel (HIDDEN);
 HOST_EXPRESSION    :
     (OBS_TEXT | UNRESERVED | SUBDELIMS | PCTENCODED | DoubleQuoteString | SingleQuoteString | ':' | '/' | '\\' |' ')+;
+// 同 START_SEMICOLON：`_host echo hi;` 必须能吞掉那个分号（否则报未知命令）。
+HOST_SEMICOLON     : ';';
 HOST_CRLF          : CRLF -> popMode;
 
 mode WheneverMode;

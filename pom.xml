@@ -3,15 +3,22 @@
     <modelVersion>4.0.0</modelVersion>
 
     <properties>
-        <maven.compiler.release>17</maven.compiler.release>
+        <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <postgres.version>42.7.2</postgres.version>
-        <spring-boot.version>3.5.14</spring-boot.version>
+        <spring-boot.version>4.1.1</spring-boot.version>
+
+        <!-- JDK21 关键运行时组件：版本在这里统一仲裁，模块里不再各写各的 -->
+        <jna.version>5.17.0</jna.version>
+        <waffle.version>3.5.1</waffle.version>
+        <jetty.version>12.1.12</jetty.version>
+        <!-- dbdesk 的 Vaadin 版本；BOM 与 vaadin-maven-plugin 共用 -->
+        <vaadin.version>25.3.2</vaadin.version>
     </properties>
 
     <groupId>org.robotslacker</groupId>
     <artifactId>slackerdb</artifactId>
-    <version>0.2.1</version>
+    <version>0.2.2</version>
     <packaging>pom</packaging>
 
     <modules>
@@ -24,6 +31,7 @@
         <module>plugin</module>
         <module>plugin-example</module>
         <module>plugin-scheduler</module>
+        <module>dbdesk</module>
         <module>build</module>
     </modules>
 
@@ -32,9 +40,31 @@
             <dependency>
                 <groupId>org.slf4j</groupId>
                 <artifactId>slf4j-api</artifactId>
-                <version>2.0.16</version>
+                <version>2.0.18</version>
             </dependency>
-            <!-- Spring Boot BOM -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-bom</artifactId>
+                <version>4.1.132.Final</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.jetty</groupId>
+                <artifactId>jetty-bom</artifactId>
+                <version>${jetty.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.jetty.ee10</groupId>
+                <artifactId>jetty-ee10-bom</artifactId>
+                <version>${jetty.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- Spring Boot BOM（放在 Jetty/Netty 之后，避免覆盖上面的版本） -->
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
@@ -42,13 +72,27 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            <!-- Netty BOM must come AFTER Spring Boot BOM to take precedence (last wins) -->
+
+            <!--
+              JDK21 关键运行时组件：dbcli 的 JLine（JNA provider）、oshi 需要 JNA 5.x，
+              这里统一给消费方 5.17.0 / Waffle 3.5.1。
+              dbdriver 为保持 JDK17 兼容，自己在模块内钉 JNA 4.5.1 / Waffle 1.9.1；
+              它的 SSPIClient 用反射同时兼容 JNA4/JNA5。
+            -->
             <dependency>
-                <groupId>io.netty</groupId>
-                <artifactId>netty-bom</artifactId>
-                <version>4.1.132.Final</version>
-                <type>pom</type>
-                <scope>import</scope>
+                <groupId>net.java.dev.jna</groupId>
+                <artifactId>jna</artifactId>
+                <version>${jna.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.java.dev.jna</groupId>
+                <artifactId>jna-platform</artifactId>
+                <version>${jna.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.waffle</groupId>
+                <artifactId>waffle-jna</artifactId>
+                <version>${waffle.version}</version>
             </dependency>
 
             <!-- dbcli：命令行客户端专用依赖（版本在此统一仲裁） -->
@@ -62,7 +106,7 @@
             <dependency>
                 <groupId>org.jline</groupId>
                 <artifactId>jline</artifactId>
-                <version>3.25.1</version>
+                <version>3.26.3</version>
             </dependency>
             <!-- SSH/SFTP（_SSH 命令） -->
             <dependency>
@@ -70,13 +114,8 @@
                 <artifactId>jsch</artifactId>
                 <version>0.2.18</version>
             </dependency>
-
             <!--
               跨进程会合点（_JOB 的 mode=process）：SQLite 单文件库。
-              选它的理由：无服务端、不占端口、跨进程可见、事务保证"放行"原子且幂等。
-              会合点只是它在本客户端的一个用途：`_CONNECT jdbc:sqlite:…` 同样能用
-              （其它 jdbc:<scheme>: URL 也按同一规则交给对应驱动）。
-              版本与本机仓库里已有的 3.51.1.0 一致（可离线解析）。
             -->
             <dependency>
                 <groupId>org.xerial</groupId>
@@ -104,17 +143,12 @@
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-core</artifactId>
-            <version>1.5.32</version>
+            <version>1.5.38</version>
         </dependency>
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
-            <version>1.5.32</version>
-        </dependency>
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-            <version>2.0.16</version>
+            <version>1.5.38</version>
         </dependency>
 
         <!-- 以下为测试组件 -->
@@ -127,19 +161,16 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-engine</artifactId>
-            <version>5.12.2</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
-            <version>5.12.2</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.platform</groupId>
             <artifactId>junit-platform-launcher</artifactId>
-            <version>1.12.2</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -147,7 +178,18 @@
     <build>
         <pluginManagement>
             <plugins>
-                <!-- ========== Apache Maven Plugins ========== -->
+                <!--
+                  ============================================================
+                  产品各模块的 Maven 插件版本统一在此维护（含 Vaadin 和
+                  offline-package 插件的使用版本）；各模块 POM 只写配置，
+                  不再写 <version>。
+                  offline-package-maven-plugin 作为独立构建工具不继承本 POM，
+                  它自身构建插件（compiler/plugin/surefire）的版本留在其 POM。
+                  plugin-example 是独立示例（无 parent），版本集中在它自己的
+                  pluginManagement 中，刻意与其他模块同版。
+                  ============================================================
+                -->
+                <!-- 核心生命周期插件 -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-clean-plugin</artifactId>
@@ -170,6 +212,11 @@
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-install-plugin</artifactId>
+                    <version>3.1.2</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-jar-plugin</artifactId>
                     <version>3.4.2</version>
                 </plugin>
@@ -181,9 +228,15 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.2.5</version>
+                    <version>3.5.5</version>
                 </plugin>
-                <!-- ========== Other Plugins ========== -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-enforcer-plugin</artifactId>
+                    <version>3.5.0</version>
+                </plugin>
+
+                <!-- Spring Boot / 文档 / 构建辅助插件 -->
                 <plugin>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>
@@ -204,13 +257,102 @@
                     <artifactId>antlr4-maven-plugin</artifactId>
                     <version>4.13.2</version>
                 </plugin>
-                <!-- 依赖方向约束：各模块按需启用，把"不许依赖谁"变成构建失败（仅靠代码评审守不住） -->
                 <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-enforcer-plugin</artifactId>
-                    <version>3.5.0</version>
+                    <groupId>com.vaadin</groupId>
+                    <artifactId>vaadin-maven-plugin</artifactId>
+                    <version>${vaadin.version}</version>
+                </plugin>
+
+                <!-- 项目内构建插件 -->
+                <plugin>
+                    <groupId>org.robotslacker.tools</groupId>
+                    <artifactId>offline-package-maven-plugin</artifactId>
+                    <version>1.0.0</version>
                 </plugin>
             </plugins>
         </pluginManagement>
+        <plugins>
+            <!--
+              JDK/Maven 硬门槛：避免在 17 或旧 Maven 上误构建。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-jdk21-maven39</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[21,)</version>
+                                </requireJavaVersion>
+                                <requireMavenVersion>
+                                    <version>[3.9.16]</version>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-clean-plugin</artifactId>
+                <inherited>false</inherited>
+                <configuration>
+                    <filesets>
+                        <fileset>
+                            <directory>${project.basedir}/offline</directory>
+                            <includes>
+                                <include>**</include>
+                            </includes>
+                        </fileset>
+                    </filesets>
+                </configuration>
+            </plugin>
+        </plugins>
     </build>
+
+    <profiles>
+        <!--
+            离线包插件自身：独立 POM，不继承本 POM。
+            用 profile 门控，正常 `mvn package` 不构建它。
+            先安装插件，再执行 collect：
+                mvn -f offline-package-maven-plugin/pom.xml install
+                mvn -Poffline-package validate
+        -->
+        <profile>
+            <id>offline-package</id>
+            <properties>
+                <offline.dir>${project.basedir}/offline</offline.dir>
+            </properties>
+            <!-- 让 collect 也看到插件自身，才能把构建插件所需的 Maven 插件收进 javarepo。 -->
+            <modules>
+                <module>offline-package-maven-plugin</module>
+            </modules>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.robotslacker.tools</groupId>
+                        <artifactId>offline-package-maven-plugin</artifactId>
+                        <inherited>false</inherited>
+                        <executions>
+                            <execution>
+                                <id>collect-offline-package</id>
+                                <phase>validate</phase>
+                                <goals>
+                                    <goal>collect</goal>
+                                </goals>
+                                <configuration>
+                                    <outputDirectory>${offline.dir}</outputDirectory>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

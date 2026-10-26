@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import io.netty.channel.ChannelHandlerContext;
 import org.duckdb.DuckDBConnection;
+import org.duckdb.DuckDBPreparedStatement;
 import org.slackerdb.dbserver.message.PostgresMessage;
 import org.slackerdb.dbserver.message.PostgresRequest;
 import org.slackerdb.dbserver.message.request.CopyDataRequest;
@@ -23,6 +24,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 
@@ -34,9 +36,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * {@code COPY ... FROM STDIN} 子协议的统一入口。
+ * {@code COPY ... FROM STDIN} / {@code COPY ... TO STDOUT} 的统一入口。
  *
- * <p><b>为什么需要它</b>：COPY 的识别与建流原先只做在简单查询路径（{@code QueryRequest}）上，
+ * <p><b>为什么需要它（COPY IN）</b>：COPY 的识别与建流原先只做在简单查询路径（{@code QueryRequest}）上，
  * 扩展协议（Parse/Bind/Execute）完全没有这段逻辑。于是同一条 SQL
  * （{@code COPY t FROM STDIN}）会因驱动走哪条协议而结果完全不同：
  * {@code CopyManager.copyIn()} 走简单查询（{@code QueryExecutorImpl.startCopy} 发送 {@code 'Q'}）
@@ -46,7 +48,9 @@ import java.util.Set;
  *
  * <p>把这段逻辑收敛到一处后，两条路径共用同一套校验与建流代码，不会再出现"只修好一条"的情况。</p>
  *
- * <p>子协议建立之后的报文（{@code 'd'} CopyData / {@code 'c'} CopyDone）与协议路径无关，
+ * <p><b>COPY OUT</b>：{@link #beginCopyOut} 同步推完整个导出流：TEXT/CSV 由
+ * {@link CopyOutEncoder} 编码，{@code FORMAT binary} 由 {@link CopyOutBinaryEncoder} 编码。
+ * 子协议建立之后的报文（{@code 'd'} CopyData / {@code 'c'} CopyDone）与协议路径无关，
  * 仍由 {@link CopyDataRequest} / {@link CopyDoneRequest} 处理。</p>
  */
 public final class CopyProtocolHandler {
@@ -164,15 +168,17 @@ public final class CopyProtocolHandler {
         }
 
         String copyTableName = parseObject.getString("table");
-        String targetTableName;
-        String targetSchemaName;
-        if (copyTableName.split("\\.").length > 1) {
-            targetSchemaName = copyTableName.split("\\.")[0];
-            targetTableName = copyTableName.split("\\.")[1];
-        } else {
-            targetSchemaName = "";
-            targetTableName = copyTableName;
-        }
+        // copyTableName 是客户端的原始文本，可能带引号：
+        //   COPY "main"."t2" FROM STDIN ...
+        // DuckDBAppender.createAppender(schema, table) 要的是**去引号后的标识符**，
+        // 而拼 SELECT 时保留原始文本（引号、点号）最稳妥。
+        List<String> qualifiedName = splitQualifiedName(copyTableName);
+        String targetTableName = unquoteIdentifier(qualifiedName.get(qualifiedName.size() - 1));
+        // 支持 catalog.schema.table：createAppender 只有 schema/table 两个参数，
+        // 取紧邻表名的前一段作为 schema（catalog 由当前连接决定）。
+        String targetSchemaName = qualifiedName.size() > 1
+                ? unquoteIdentifier(qualifiedName.get(qualifiedName.size() - 2))
+                : "";
 
         Map<String, Integer> targetColumnMap = new HashMap<>();
         JSONArray columnsJson = parseObject.getJSONArray("columns");
@@ -218,7 +224,7 @@ public final class CopyProtocolHandler {
         List<String> copyTableDbColumnName = new ArrayList<>();
 
         try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT * FROM " + (targetSchemaName.isEmpty() ? "" : targetSchemaName + ".") + targetTableName + " LIMIT 0");
+                "SELECT * FROM " + copyTableName + " LIMIT 0");
              ResultSet rs = ps.executeQuery()) {
 
             int columnCount = rs.getMetaData().getColumnCount();
@@ -413,14 +419,6 @@ public final class CopyProtocolHandler {
             return Result.REJECTED;
         }
 
-        if (copyDialect.binary) {
-            // 二进制 COPY OUT 尚未实现（需要按 DuckDB 实际类型逐列编码）。
-            // 显式报错，而不是发一段客户端解不开的字节。
-            sendErrorAndReady(request, ctx, out, "0A000",
-                    "COPY ... TO STDOUT with FORMAT binary is not supported yet; use text or csv");
-            return Result.REJECTED;
-        }
-
         // 组出等价的结果集查询：表形态 → SELECT（可带列清单）；子查询形态 → 去掉最外层括号的原文
         String querySql;
         if ("table".equalsIgnoreCase(copyType)) {
@@ -446,36 +444,31 @@ public final class CopyProtocolHandler {
 
         long sqlHistoryId = request.insertSqlHistory(ctx);
         long exportedRows = 0;
-        int pendingBytes = 0;
 
         try {
             try (PreparedStatement ps = session.dbConnection.prepareStatement(querySql)) {
                 long handleId = session.registerRunningStatement(ps);
-                try (ResultSet rs = ps.executeQuery()) {
-                    // 列数必须先于 CopyOutResponse 拿到（报文里就要带），
-                    // 因此这里先读一次元数据，再据此构造编码器。
-                    CopyOutEncoder encoder = new CopyOutEncoder(rs.getMetaData(), copyDialect);
+                try {
+                    if (copyDialect.binary) {
+                        // 二进制 COPY OUT：每个值按 PostgreSQL 的 *send 函数编码（见 CopyOutBinaryEncoder）。
+                        // 类型不支持时在发出 CopyOutResponse 之前就抛 0A000，客户端拿到干净的 ErrorResponse。
+                        dbInstance.logger.debug("[SERVER][COPY       ] COPY OUT path=[binary]");
+                        exportedRows = copyOutBinary(request, ctx, out, ps);
+                    } else {
+                        DuckDBPreparedStatement chunkStatement = unwrapDuckDBStatement(ps);
+                        ResultSetMetaData chunkMetaData = chunkStatement == null ? null : preparedMetaData(ps);
 
-                    CopyOutResponse copyOutResponse = new CopyOutResponse(dbInstance);
-                    copyOutResponse.copyColumnCount = (short) encoder.getColumnCount();
-                    copyOutResponse.binary = false;
-                    copyOutResponse.process(ctx, request, out);
-                    PostgresMessage.writeAndFlush(ctx, CopyOutResponse.class.getSimpleName(),
-                            out, dbInstance.logger);
-
-                    // 只有 CSV 支持 HEADER（PG 语义，CopyDialect 已把关）
-                    if (copyDialect.csv && copyDialect.header) {
-                        encoder.encodeHeader(out);
-                        pendingBytes += writeCopyData(ctx, out, dbInstance);
-                    }
-
-                    while (rs.next()) {
-                        encoder.encodeRow(rs, out);
-                        pendingBytes += writeCopyData(ctx, out, dbInstance);
-                        exportedRows++;
-                        if (pendingBytes >= PostgresMessage.FLUSH_THRESHOLD_BYTES) {
-                            ctx.flush();
-                            pendingBytes = 0;
+                        // 只要有一列是 chunk 读取器不支持的（BLOB/TIME/UUID/LIST/STRUCT...），
+                        // 整条 COPY 就走原来的 ResultSet 路径：不能"部分列走 chunk、部分列走 ResultSet"，
+                        // 因为 chunk 结果是惰性数据块，没法再回头从同一个查询里按行取值。
+                        boolean chunked = chunkStatement != null && supportsChunkedCopyOut(chunkMetaData);
+                        dbInstance.logger.debug("[SERVER][COPY       ] COPY OUT path=[{}]",
+                                chunked ? "chunk" : "resultset");
+                        if (chunked) {
+                            exportedRows = copyOutChunked(request, ctx, out, chunkStatement,
+                                    chunkMetaData, copyDialect);
+                        } else {
+                            exportedRows = copyOutResultSet(request, ctx, out, ps, copyDialect);
                         }
                     }
                 }
@@ -515,6 +508,213 @@ public final class CopyProtocolHandler {
                 copyType, exportedRows, copyDialect.format);
 
         return Result.COPY_STARTED;
+    }
+
+    /**
+     * 用 PostgreSQL 二进制 COPY 格式推送 COPY OUT 数据。
+     *
+     * <p>与文本路径的报文序列完全相同（{@code CopyOutResponse} →{@code CopyData} × N →
+     * {@code CopyDone} → {@code CommandComplete}），区别只有两点：</p>
+     * <ol>
+     *   <li>{@code CopyOutResponse} 声明为二进制（整体格式 1、每列格式码 1）；</li>
+     *   <li>{@code CopyData} 的载荷是 {@link CopyOutBinaryEncoder} 逐行写出的二进制行，
+     *       第一帧以 19 字节的 PGCOPY 头开始，最后一帧以 Int16 -1 结束。</li>
+     * </ol>
+     *
+     * <p>{@link CopyOutBinaryEncoder} 在发 {@code CopyOutResponse} <b>之前</b>构造：
+     * 类型不支持时抛 {@code 0A000}，客户端不会收到半截二进制流。</p>
+     */
+    private static long copyOutBinary(PostgresRequest request, ChannelHandlerContext ctx,
+                                      ByteArrayOutputStream out, PreparedStatement ps)
+            throws SQLException, IOException {
+
+        DBInstance dbInstance = request.getDbInstance();
+        long exportedRows = 0;
+        int pendingBytes = 0;
+
+        try (ResultSet rs = ps.executeQuery()) {
+            CopyOutBinaryEncoder encoder = new CopyOutBinaryEncoder(rs.getMetaData());
+            sendCopyOutResponse(request, ctx, out, encoder.getColumnCount(), true);
+
+            encoder.writeHeader(out);
+            while (rs.next()) {
+                encoder.encodeRow(rs, out);
+                exportedRows++;
+                // 与 chunk 路径同一套合帧策略：按字节阈值发 CopyData，不按行发。
+                if (out.size() >= PostgresMessage.FLUSH_THRESHOLD_BYTES) {
+                    pendingBytes += writeCopyData(ctx, out, dbInstance);
+                    if (pendingBytes >= PostgresMessage.FLUSH_THRESHOLD_BYTES) {
+                        ctx.flush();
+                        pendingBytes = 0;
+                    }
+                }
+            }
+
+            // 结束标志必须发，哪怕一行都没有：客户端靠它确认数据流完整。
+            encoder.writeTrailer(out);
+            pendingBytes += writeCopyData(ctx, out, dbInstance);
+            if (pendingBytes >= PostgresMessage.FLUSH_THRESHOLD_BYTES) {
+                ctx.flush();
+            }
+        }
+
+        return exportedRows;
+    }
+
+    /**
+     * 用 DuckDB 的 chunk API 推送 COPY OUT 数据。
+     *
+     * <p>与 ResultSet 路径的区别只在"取值方式"：这里按 2048 行的列向量批次读取，
+     * 每读一个值不再走一次 JDBC/JNI 转换。报文序列、转义、flush 阈值与审计口径
+     * 都与 {@link #copyOutResultSet} 完全一致。</p>
+     *
+     * <p>第一块在发 {@code CopyOutResponse} 之前先取：如果某一列的向量类型其实读不了，
+     * 失败会发生在客户端看到 COPY 流之前，收尾仍是干净的 ErrorResponse + ReadyForQuery。</p>
+     */
+    private static long copyOutChunked(PostgresRequest request, ChannelHandlerContext ctx,
+                                       ByteArrayOutputStream out, DuckDBPreparedStatement ps,
+                                       ResultSetMetaData metaData, CopyDialect copyDialect)
+            throws SQLException, IOException {
+
+        DBInstance dbInstance = request.getDbInstance();
+        long exportedRows = 0;
+        int pendingBytes = 0;
+
+        try (CopyOutChunkReader reader =
+                     new CopyOutChunkReader(ps.query(), metaData.getColumnCount())) {
+            boolean hasChunk = reader.nextChunk();
+
+            CopyOutEncoder encoder = new CopyOutEncoder(metaData, copyDialect);
+            sendCopyOutResponse(request, ctx, out, encoder.getColumnCount(), false);
+
+            // 只有 CSV 支持 HEADER（PG 语义，CopyDialect 已把关）
+            if (copyDialect.csv && copyDialect.header) {
+                encoder.encodeHeader(out);
+                pendingBytes += writeCopyData(ctx, out, dbInstance);
+            }
+
+            while (hasChunk) {
+                long chunkRows = reader.rowCount();
+                for (long row = 0; row < chunkRows; row++) {
+                    encoder.encodeChunkRow(reader, row, out);
+                    exportedRows++;
+                    // chunk 路径按"填满一个 CopyData 帧"发送，而不是一行一帧：
+                    // 2048 行的块通常正好落在 64KB 左右，帧数从"每行一个"降到"每块几个"。
+                    // 用 out.size() 而不是固定行数，宽行不会把内存顶爆。
+                    if (out.size() >= PostgresMessage.FLUSH_THRESHOLD_BYTES) {
+                        pendingBytes += writeCopyData(ctx, out, dbInstance);
+                        if (pendingBytes >= PostgresMessage.FLUSH_THRESHOLD_BYTES) {
+                            ctx.flush();
+                            pendingBytes = 0;
+                        }
+                    }
+                }
+                hasChunk = reader.nextChunk();
+            }
+
+            // 最后不足一个阈值的数据也要发出去；CopyDone 的 writeAndFlush 会把它刷出。
+            if (out.size() > 0) {
+                pendingBytes += writeCopyData(ctx, out, dbInstance);
+                if (pendingBytes >= PostgresMessage.FLUSH_THRESHOLD_BYTES) {
+                    ctx.flush();
+                    pendingBytes = 0;
+                }
+            }
+        }
+        catch (RuntimeException runtimeException) {
+            // 向量读取器在类型不匹配等情况下抛的是运行时异常；转成 SQLException，
+            // 让上层走统一的 ErrorResponse + ReadyForQuery 收尾，而不是让异常逃逸到 Netty。
+            throw new SQLException("COPY OUT chunk read failed: " + runtimeException.getMessage(),
+                    runtimeException);
+        }
+
+        return exportedRows;
+    }
+
+    /**
+     * 原有路径：逐行 JDBC {@link ResultSet}。chunk 读取器不支持任一列时走这里，
+     * 行为与本功能引入前完全一致。
+     */
+    private static long copyOutResultSet(PostgresRequest request, ChannelHandlerContext ctx,
+                                         ByteArrayOutputStream out, PreparedStatement ps,
+                                         CopyDialect copyDialect) throws SQLException, IOException {
+
+        DBInstance dbInstance = request.getDbInstance();
+        long exportedRows = 0;
+        int pendingBytes = 0;
+
+        try (ResultSet rs = ps.executeQuery()) {
+            // 列数必须先于 CopyOutResponse 拿到（报文里就要带），
+            // 因此这里先读一次元数据，再据此构造编码器。
+            CopyOutEncoder encoder = new CopyOutEncoder(rs.getMetaData(), copyDialect);
+            sendCopyOutResponse(request, ctx, out, encoder.getColumnCount(), false);
+
+            // 只有 CSV 支持 HEADER（PG 语义，CopyDialect 已把关）
+            if (copyDialect.csv && copyDialect.header) {
+                encoder.encodeHeader(out);
+                pendingBytes += writeCopyData(ctx, out, dbInstance);
+            }
+
+            while (rs.next()) {
+                encoder.encodeRow(rs, out);
+                pendingBytes += writeCopyData(ctx, out, dbInstance);
+                exportedRows++;
+                if (pendingBytes >= PostgresMessage.FLUSH_THRESHOLD_BYTES) {
+                    ctx.flush();
+                    pendingBytes = 0;
+                }
+            }
+        }
+
+        return exportedRows;
+    }
+
+    private static void sendCopyOutResponse(PostgresRequest request, ChannelHandlerContext ctx,
+                                            ByteArrayOutputStream out, int columnCount,
+                                            boolean binary)
+            throws IOException {
+        DBInstance dbInstance = request.getDbInstance();
+        CopyOutResponse copyOutResponse = new CopyOutResponse(dbInstance);
+        copyOutResponse.copyColumnCount = (short) columnCount;
+        copyOutResponse.binary = binary;
+        copyOutResponse.process(ctx, request, out);
+        PostgresMessage.writeAndFlush(ctx, CopyOutResponse.class.getSimpleName(),
+                out, dbInstance.logger);
+    }
+
+    /**
+     * 取出 DuckDB 的物理 PreparedStatement。
+     *
+     * <p>会话里的语句由连接池包了一层 JDK 动态代理（用于登记/注销），
+     * 但 {@code query()} 只存在于 {@link DuckDBPreparedStatement} 上。
+     * 代理会把 {@code unwrap/isWrapperFor} 原样委托给物理语句。</p>
+     */
+    private static DuckDBPreparedStatement unwrapDuckDBStatement(PreparedStatement ps) {
+        try {
+            if (ps.isWrapperFor(DuckDBPreparedStatement.class)) {
+                return ps.unwrap(DuckDBPreparedStatement.class);
+            }
+        } catch (SQLException | RuntimeException ignored) {
+            // 不是 DuckDB 语句：退回 ResultSet 路径
+        }
+        return null;
+    }
+
+    /** 预编译元数据拿不到时保守回退（旧路径会在 executeQuery() 后再取元数据）。 */
+    private static ResultSetMetaData preparedMetaData(PreparedStatement ps) {
+        try {
+            return ps.getMetaData();
+        } catch (SQLException | RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private static boolean supportsChunkedCopyOut(ResultSetMetaData metaData) {
+        try {
+            return CopyOutChunkReader.supports(metaData);
+        } catch (SQLException | RuntimeException ignored) {
+            return false;
+        }
     }
 
     /**
@@ -600,5 +800,62 @@ public final class CopyProtocolHandler {
 
         out.close();
         return message;
+    }
+
+    /**
+     * 按顶层 "." 切分 qualified name，忽略引号内的点。
+     *
+     * <p>例如 {@code "main"."t2"} → ["\"main\"", "\"t2\""]，
+     * {@code "a.b"."c"} → ["\"a.b\"", "\"c\""]，{@code main.t2} → ["main", "t2"]。</p>
+     */
+    private static List<String> splitQualifiedName(String name) {
+        List<String> parts = new ArrayList<>();
+        if (name == null || name.isEmpty()) {
+            parts.add("");
+            return parts;
+        }
+        StringBuilder current = new StringBuilder();
+        char quote = 0;
+        for (int i = 0; i < name.length(); i++) {
+            char ch = name.charAt(i);
+            if (quote != 0) {
+                current.append(ch);
+                if (ch == quote) {
+                    if (i + 1 < name.length() && name.charAt(i + 1) == quote) {
+                        // 双写引号（"" / ''）是转义，继续留在同一段
+                        current.append(name.charAt(++i));
+                    } else {
+                        quote = 0;
+                    }
+                }
+            } else if (ch == '"' || ch == '\'') {
+                quote = ch;
+                current.append(ch);
+            } else if (ch == '.') {
+                parts.add(current.toString());
+                current.setLength(0);
+            } else {
+                current.append(ch);
+            }
+        }
+        parts.add(current.toString());
+        return parts;
+    }
+
+    /** 去掉标识符两端的引号，并还原双写引号；未加引号的原样返回。 */
+    private static String unquoteIdentifier(String identifier) {
+        if (identifier == null) {
+            return "";
+        }
+        String value = identifier.trim();
+        if (value.length() >= 2) {
+            char first = value.charAt(0);
+            char last = value.charAt(value.length() - 1);
+            if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+                value = value.substring(1, value.length() - 1);
+                value = value.replace(String.valueOf(first) + first, String.valueOf(first));
+            }
+        }
+        return value;
     }
 }

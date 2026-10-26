@@ -175,3 +175,12 @@ SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.version()%' ORDER BY 1	SELECT *
 show standard_conforming_strings	select 'on' as standard_conforming_strings
 SELECT * FROM tbl_x WHERE col_y = 'show standard_conforming_strings'	SELECT * FROM tbl_x WHERE col_y = 'select 'on' as standard_conforming_strings'
 SELECT * FROM tbl_x WHERE col_y LIKE 'show standard_conforming_strings%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'select 'on' as standard_conforming_strings%' ORDER BY 1
+pg_catalog.pg_stat_get_	memory.duck_catalog.pg_stat_get_
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_stat_get_'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_stat_get_'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_stat_get_%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_stat_get_%' ORDER BY 1
+pg_catalog.pg_aggregate	memory.duck_catalog.pg_aggregate
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_aggregate'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_aggregate'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_aggregate%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_aggregate%' ORDER BY 1
+pg_catalog.pg_stat_activity	memory.duck_catalog.pg_stat_activity
+SELECT * FROM tbl_x WHERE col_y = 'pg_catalog.pg_stat_activity'	SELECT * FROM tbl_x WHERE col_y = 'memory.duck_catalog.pg_stat_activity'
+SELECT * FROM tbl_x WHERE col_y LIKE 'pg_catalog.pg_stat_activity%' ORDER BY 1	SELECT * FROM tbl_x WHERE col_y LIKE 'memory.duck_catalog.pg_stat_activity%' ORDER BY 1

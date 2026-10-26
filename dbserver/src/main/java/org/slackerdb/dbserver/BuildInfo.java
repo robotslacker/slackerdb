@@ -24,7 +24,7 @@ public final class BuildInfo {
     private BuildInfo() {
     }
 
-    /** 项目版本号，例如 {@code 0.2.1}；读不到时是 {@code unknown}。 */
+    /** 项目版本号，例如 {@code 0.2.2}；读不到时是 {@code unknown}。 */
     public static String version() {
         return INFO.version();
     }

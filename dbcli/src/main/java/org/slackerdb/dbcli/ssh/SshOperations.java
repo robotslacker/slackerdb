@@ -12,10 +12,22 @@ import java.util.List;
  */
 public interface SshOperations extends AutoCloseable {
 
+    /** 单条远端命令默认**没有**时限（{@code 0} 表示不限）。 */
+    long NO_COMMAND_TIMEOUT = 0L;
+
     /** 建立连接（认证失败等信息由异常带出）。 */
     void connect(SshConnectOptions options) throws Exception;
 
     boolean isConnected();
+
+    /**
+     * 设置单条远端命令的超时（毫秒；{@link #NO_COMMAND_TIMEOUT} 表示不限）。
+     *
+     * <p>{@code _SSH SET TIMEOUT = <秒>} 落到这里；默认实现什么都不做（假实现与嵌入方不必关心）。
+     * 设置对当前连接立即生效，并会被后续新建的连接继承。</p>
+     */
+    default void setCommandTimeout(long timeoutMillis) {
+    }
 
     /** 执行远程命令（stdout/stderr 分别收集，{@link SshCommandResult#combinedOutput()} 负责合并）。 */
     SshCommandResult execute(String command) throws Exception;

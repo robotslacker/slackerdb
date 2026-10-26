@@ -106,18 +106,20 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
 
   private static final String IN_HOT_STANDBY = "in_hot_standby";
 
+  private static final String SSPI_CLIENT_CLASS_NAME = "org.slackerdb.jdbc.sspi.SSPIClient";
+
   private ISSPIClient createSSPI(PGStream pgStream,
       @Nullable String spnServiceClass,
       boolean enableNegotiate) {
     try {
       @SuppressWarnings("unchecked")
-      Class<ISSPIClient> c = (Class<ISSPIClient>) Class.forName("org.slackerdb.jdbc.sspi.SSPIClient");
+      Class<ISSPIClient> c = (Class<ISSPIClient>) Class.forName(SSPI_CLIENT_CLASS_NAME);
       return c.getDeclaredConstructor(PGStream.class, String.class, boolean.class)
           .newInstance(pgStream, spnServiceClass, enableNegotiate);
     } catch (Exception e) {
       // This caught quite a lot of exceptions, but until Java 7 there is no ReflectiveOperationException
-      throw new IllegalStateException("Unable to load org.postgresql.sspi.SSPIClient."
-          + " Please check that SSPIClient is included in your pgjdbc distribution.", e);
+      throw new IllegalStateException("Unable to load " + SSPI_CLIENT_CLASS_NAME
+          + ". Please check that SSPIClient is included in the driver jar.", e);
     }
   }
 

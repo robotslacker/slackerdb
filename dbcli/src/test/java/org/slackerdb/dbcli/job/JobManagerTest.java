@@ -219,6 +219,45 @@ class JobManagerTest {
     }
 
     @Test
+    @DisplayName("不响应停止的作业：abort 不谎报 ABORTED；线程真正退出后才落终态，不会永远停在 RUNNING")
+    void abortDoesNotLieAboutAStubbornJob() throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean finish = new java.util.concurrent.atomic.AtomicBoolean(false);
+        JobExecutor stubborn = job -> {
+            // 故意吞掉中断：模拟"驱动/长操作不响应 interrupt"的作业
+            while (!finish.get()) {
+                try {
+                    Thread.sleep(20L);
+                } catch (InterruptedException ignored) {
+                    // 不响应
+                }
+            }
+            return 0;
+        };
+        JobManager own = new JobManager(this::spec, stubborn, tempDir.resolve("stubborn-logs"), tempDir);
+        own.start();
+        try {
+            own.create("STUBBORN", params("sleep", "0"));
+            Job job = own.start("STUBBORN");
+            Thread.sleep(100L);
+
+            Job aborted = own.abort("STUBBORN");
+            assertTrue(aborted.isRunning(),
+                    "线程还活着时不能报 ABORTED（状态必须说真话）: " + aborted.state());
+
+            finish.set(true);
+            long deadline = System.nanoTime() + 5_000_000_000L;
+            while (System.nanoTime() < deadline && job.state() != JobState.ABORTED) {
+                Thread.sleep(20L);
+            }
+            assertEquals(JobState.ABORTED, job.state(),
+                    "线程退出后必须按已记下的停止意图落终态，不能永远停在 RUNNING");
+        } finally {
+            finish.set(true);
+            own.close();
+        }
+    }
+
+    @Test
     @DisplayName("shutdown → 优雅停止并进入 SHUTDOWN 状态")
     void shutdownJob() {
         manager.create("SLOW2", params("sleep", "30000"));

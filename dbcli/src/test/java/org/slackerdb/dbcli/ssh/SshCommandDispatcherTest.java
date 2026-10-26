@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -44,6 +45,17 @@ class SshCommandDispatcherTest {
             this.commandOutput = output;
             this.commandError = error;
             this.exitStatus = status;
+            this.timedOut = false;
+        }
+
+        private boolean timedOut;
+
+        /** 模拟"命令超时被中断"：已读到部分输出，没有退出码。 */
+        void setCommandTimeout(String partialOutput, String message) {
+            this.commandOutput = partialOutput;
+            this.commandError = message;
+            this.exitStatus = SshCommandResult.TIMEOUT_EXIT_STATUS;
+            this.timedOut = true;
         }
 
         void failConnection(String message) {
@@ -53,6 +65,18 @@ class SshCommandDispatcherTest {
 
         void failNextCallWith(String message) {
             this.failNextCall = message;
+        }
+
+        @Override
+        public void setCommandTimeout(long timeoutMillis) {
+            this.commandTimeoutMillis = timeoutMillis;
+            calls.add("setCommandTimeout " + timeoutMillis);
+        }
+
+        private long commandTimeoutMillis = SshOperations.NO_COMMAND_TIMEOUT;
+
+        long commandTimeoutMillis() {
+            return commandTimeoutMillis;
         }
 
         @Override
@@ -72,7 +96,7 @@ class SshCommandDispatcherTest {
         @Override
         public SshCommandResult execute(String command) throws Exception {
             calls.add("execute " + command);
-            return new SshCommandResult(command, commandOutput, commandError, exitStatus);
+            return new SshCommandResult(command, commandOutput, commandError, exitStatus, timedOut);
         }
 
         @Override
@@ -257,6 +281,63 @@ class SshCommandDispatcherTest {
 
         List<CommandOutcome> outcomes = dispatcher.execute(ir("action", "execute", "command", "ls"));
         assertTexts(List.of("line1", "line2", "warn", "< Command finished with [3]"), outcomes);
+    }
+
+    @Test
+    @DisplayName("execute 超时：已读到的部分输出照常打印，最后是一条可读错误（不是 exit status）")
+    void executeTimeoutIsAnErrorWithPartialOutput() {
+        FakeSsh fake = new FakeSsh();
+        fake.setCommandTimeout("partial line\n", "SSH command timed out after 30 seconds.");
+        SshCommandDispatcher dispatcher = connected(fake);
+
+        List<CommandOutcome> outcomes = dispatcher.execute(ir("action", "execute", "command", "tail -f x"));
+        assertTexts(List.of("partial line", "SSH command timed out after 30 seconds."), outcomes);
+        assertTrue(firstError(outcomes) != null && firstError(outcomes).contains("timed out"),
+                "超时必须计入错误（_WHENEVER / 错误计数才会生效）: " + outcomes);
+        assertFalse(statusTexts(outcomes).stream().anyMatch(text -> text.startsWith("< Command finished")),
+                "超时的命令没有退出码，不能报'已结束'");
+    }
+
+    @Test
+    @DisplayName("_SSH SET TIMEOUT = <秒>：默认不限；设置对当前连接生效并被新连接继承；0 表示关闭")
+    void commandTimeoutSetting() {
+        FakeSsh first = new FakeSsh();
+        SshCommandDispatcher dispatcher = connected(first);
+        assertEquals(SshOperations.NO_COMMAND_TIMEOUT, first.commandTimeoutMillis(),
+                "默认不给远端命令加时限");
+
+        // 连接中设置：当前连接立即生效
+        assertTexts(List.of("SSH command timeout set to 30 seconds."),
+                dispatcher.execute(ir("action", "set", "option", "timeout", "value", "30")));
+        assertEquals(30_000L, first.commandTimeoutMillis());
+
+        // 新连接继承设置（timeout 是分派器级设置，先设置后连接也生效）
+        dispatcher.execute(ir("action", "disconnect"));
+        FakeSsh second = new FakeSsh();
+        SshCommandDispatcher inherited = new SshCommandDispatcher(dispatcher.registry(), () -> second);
+        assertTexts(List.of("SSH command timeout set to 45 seconds."),
+                inherited.execute(ir("action", "set", "option", "timeout", "value", "45")));
+        inherited.execute(ir("action", "connect", "host", "h", "user", "u", "password", "p"));
+        assertEquals(45_000L, second.commandTimeoutMillis(), "连接之前设置的值必须被新连接继承");
+
+        // 0 = 关闭
+        assertTexts(List.of("SSH command timeout disabled."),
+                inherited.execute(ir("action", "set", "option", "timeout", "value", "0")));
+        assertEquals(SshOperations.NO_COMMAND_TIMEOUT, second.commandTimeoutMillis());
+    }
+
+    @Test
+    @DisplayName("_SSH SET TIMEOUT 非法值：可读错误（不给远端命令留下半个设置）")
+    void commandTimeoutValidation() {
+        FakeSsh fake = new FakeSsh();
+        SshCommandDispatcher dispatcher = connected(fake);
+
+        assertEquals("Invalid SSH timeout [abc]: expected a non-negative number of seconds.",
+                firstError(dispatcher.execute(ir("action", "set", "option", "timeout", "value", "abc"))));
+        assertEquals("Invalid SSH timeout [-1]: expected a non-negative number of seconds.",
+                firstError(dispatcher.execute(ir("action", "set", "option", "timeout", "value", "-1"))));
+        assertEquals(SshOperations.NO_COMMAND_TIMEOUT, fake.commandTimeoutMillis(),
+                "非法值不得改动当前设置");
     }
 
     @Test

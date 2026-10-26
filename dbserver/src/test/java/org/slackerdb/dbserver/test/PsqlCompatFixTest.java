@@ -83,6 +83,21 @@ public class PsqlCompatFixTest {
         }
     }
 
+    /** DuckDB postgres 扩展的 attached INSERT 会发 schema-qualified 的带引号表名。 */
+    @Test
+    void copyQuotedSchemaQualifiedTableParses() {
+        JSONObject parsed = parseCopy("COPY \"main\".\"t2\" FROM STDIN (FORMAT BINARY)");
+        assertEquals("table", parsed.getString("copyType"));
+        assertEquals("\"main\".\"t2\"", parsed.getString("table"));
+        assertEquals("FROM", parsed.getString("copyDirection"));
+        assertEquals("STDIN", parsed.getString("copyFilePath").toUpperCase(java.util.Locale.ROOT));
+
+        JSONObject withColumns = parseCopy(
+                "COPY \"main\".\"t2\" (id, name) FROM STDIN (FORMAT BINARY)");
+        assertEquals("table", withColumns.getString("copyType"));
+        assertEquals("\"main\".\"t2\"", withColumns.getString("table"));
+    }
+
     @Test
     void copyStdoutIsCaseInsensitiveAndStillIdentifiedAsTo() {
         for (String sql : new String[]{"COPY t TO STDOUT;", "copy t to stdout;", "Copy t To Stdout;"}) {

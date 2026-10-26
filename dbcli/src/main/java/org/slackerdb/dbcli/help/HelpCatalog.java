@@ -319,7 +319,8 @@ public final class HelpCatalog {
         topics.put("SSH", List.of(
                 "_SSH CONNECT <host> WITH USER <user> (PASSWORD <pw> | KEYFILE <file>) [PORT <n>]",
                 "_SSH EXECUTE <command>        run a remote command; its output lines are data",
-                "_SSH SET <option> = <value>   only encoding = UTF-8 is accepted",
+                "_SSH SET ENCODING = UTF-8    only UTF-8 is accepted",
+                "_SSH SET TIMEOUT = <seconds> limit each remote command (default: no limit; 0 = no limit)",
                 "_SSH SAVE|RESTORE <name>      attach a name to / switch to a saved session",
                 "_SSH DISCONNECT               close the current SSH session",
                 "_SSH SFTP GETCWD|CHDIR|LISTDIR|MKDIR|CHMOD|CHOWN|TRUNCATE|PUT|GET|RENAME|REMOVE ...",

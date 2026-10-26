@@ -27,10 +27,10 @@ class SqlColumnTypesTest {
     }
 
     @Test
-    @DisplayName("jdbcType==0 → null；未登记类型 → 用驱动返回的名字")
+    @DisplayName("jdbcType==0 → null；未登记类型 → 用驱动返回的名字（归一成大写）")
     void fallbacks() {
         assertNull(SqlColumnTypes.nameOf(0, "whatever"), "类型 0 表示 SQL NULL，返回 null");
-        assertEquals("timestamptz", SqlColumnTypes.nameOf(Integer.MAX_VALUE, "timestamptz"),
-                "表里没有的类型要回退到驱动名字");
+        assertEquals("TIMESTAMPTZ", SqlColumnTypes.nameOf(Integer.MAX_VALUE, "timestamptz"),
+                "表里没有的类型回退到驱动名字，但必须归一成大写（对齐规则按大写类型名匹配）");
     }
 }

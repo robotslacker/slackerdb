@@ -17,7 +17,7 @@ scripts automatically and verify their results.
 
 == 2. Requirements
 
-* JDK 17 or newer.
+* JDK 21 or newer.
 * A reachable SlackerDB instance (local or remote).
 * The launcher from the distribution: `bin/dbcli.bat` (Windows) or `bin/dbcli.sh` (Linux/macOS).
 * JDK lookup order: `SLACKERDB_JAVA_HOME` -> `JAVA_HOME` -> `PATH`.
@@ -70,7 +70,7 @@ end;
 [source,bash]
 ----
 $ dbcli --version
-[CLIENT] VERSION: 0.2.1
+[CLIENT] VERSION: 0.2.2
 [CLIENT] Build Time: 2026-10-17 01:17:02 +08:00
 
 $ dbcli
@@ -80,7 +80,7 @@ dbcli>
 
 === 3.2 Command line history
 
-The console history is kept across sessions in `~/slackerdb/dbcli.history`: it is read at start-up (the
+The console history is kept across sessions in `~/.slackerdb/dbcli.history`: it is read at start-up (the
 up/down keys reach statements from earlier sessions) and written back on exit.
 
 == 4. Command line options
@@ -228,6 +228,8 @@ _session RESTORE url1        # reconnect with that URL
 _session RELEASE name1       # drop the name (the connection closes when no name refers to it any more)
 _session SHOW                # result set: name / url / current
 ----
+
+Reconnecting (`_connect` / `RESTORE`) keeps the current `_set autocommit` value.
 
 === 7.3 `_assert`
 
@@ -391,8 +393,12 @@ _job jobmanager off                             # stop accepting new jobs
 * A `timeout=` on `_job wait` only means "this wait did not get there" (the job keeps running and stays
   `RUNNING`); use `abort` / `shutdown` to actually stop it.
 * Every job writes one output file `<job name>.out` (stdout + stderr), readable once `_job wait` returns.
+* `_job abort` / `_job shutdown` **request** a stop: a job that responds goes to `ABORTED` / `SHUTDOWN`
+  immediately; a job that does not respond yet stays `RUNNING` (as `_job show` reports) and lands on the
+  requested state once it actually ends.
 * A `FAILED` / `TIMEOUT` job counts as an error; a failure that no `_job wait` ever checked is reported at the
-  end of the run.
+  end of the run (the process exit code still follows §9.3: errors inside a script do not change it — write
+  `_whenever error exit 1` if you want a gate).
 * Synchronization barrier: one script releases `_job timer X`, another waits with `_job wait TIMER:X`; this
   works in both modes.
 
@@ -404,6 +410,7 @@ _ssh connect 192.168.183.128 with user root password 123456
 _ssh connect 192.168.183.128 with user root keyfile ~/.ssh/id_rsa port 2222
 _ssh execute "uname -a; df -h"
 _ssh set encoding = UTF-8
+_ssh set timeout = 30
 _ssh save node1
 _ssh restore node1
 _ssh sftp getcwd
@@ -434,6 +441,9 @@ port defaults to 22. SFTP actions:
 |===
 
 `_ssh execute` prints the remote output line by line, the last line is `< Command finished with [exit code]`.
+Remote commands are **not** limited by default; use `_ssh set timeout = <seconds>` to set a limit
+(0 restores the unlimited default). On timeout the remote command is interrupted, the output produced so far
+is still printed, and an `SSH command timed out` error is reported.
 Using `_ssh` or an SFTP action without a connection reports `SSH not connected.` / `SFTP not connected.`.
 
 == 8. Variables

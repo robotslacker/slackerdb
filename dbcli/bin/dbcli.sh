@@ -34,13 +34,13 @@ fi
 case "${_DBCLI_JAVA}" in
     */*)
         if [ ! -x "${_DBCLI_JAVA}" ]; then
-            echo "[dbcli] Cannot start java [${_DBCLI_JAVA}]. Set SLACKERDB_JAVA_HOME or JAVA_HOME to a JDK 17 or newer." 1>&2
+            echo "[dbcli] Cannot start java [${_DBCLI_JAVA}]. Set SLACKERDB_JAVA_HOME or JAVA_HOME to a JDK 21 or newer." 1>&2
             exit 1
         fi
         ;;
     *)
         if ! command -v "${_DBCLI_JAVA}" >/dev/null 2>&1; then
-            echo "[dbcli] Cannot start java [${_DBCLI_JAVA}]: not found on PATH. Set SLACKERDB_JAVA_HOME or JAVA_HOME to a JDK 17 or newer." 1>&2
+            echo "[dbcli] Cannot start java [${_DBCLI_JAVA}]: not found on PATH. Set SLACKERDB_JAVA_HOME or JAVA_HOME to a JDK 21 or newer." 1>&2
             exit 1
         fi
         ;;

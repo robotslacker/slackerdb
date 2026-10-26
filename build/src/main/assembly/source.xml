@@ -4,7 +4,7 @@
     目标 —— 解开后等同于一次浅克隆（只取一层历史的 clone）后的工作区：
     只有代码、构建脚本与文档，没有编译产物、IDE 配置和 .git 历史。解压后可以立即：
 
-        cd slackerdb-0.2.1
+        cd slackerdb-0.2.2
         mvn clean package -Dmaven.test.skip=true
 
     编译产物会落在解压目录自己的 dist/ 下（含发布包 slackerdb-dist_<version>.zip）。
@@ -18,8 +18,8 @@
       1. 只列白名单（而不是排除 .git/.idea/backup 等），新增的临时目录、IDE 目录、
          本地日志目录因此不会被无意打进发行版；列进白名单的目录内部再排除 target/。
       2. build 模块必须保留：根 pom.xml 把它列为 <module>，缺了它 mvn package 直接失败。
-      3. 根目录的 pom.xml/LICENSE/README/*.jpg 与 imgs/ 必须保留：前两者是构建入口与授权，
-         README 与 imgs 是 build 模块生成 PDF 的输入（见 build/pom.xml 的 asciidoctor 配置）。
+      3. 根目录的 pom.xml/LICENSE/README/*.jpg 必须保留：前两者是构建入口与授权，
+         README 与封面图是 build 模块生成 PDF 的输入（见 build/pom.xml 的 asciidoctor 配置）。
       4. .gitignore 也保留（该 fileSet 关掉了默认排除，否则 .gitignore 会被 plexus 默认规则吃掉）：
          开发者重新 git init 时能直接复用，避免把 target/ 与 dist/ 提交进去。
       5. 顶层目录带版本号，多个版本解压到同一父目录时不会互相覆盖。
@@ -45,7 +45,6 @@
                 <include>LICENSE</include>
                 <include>.gitignore</include>
                 <include>robotslacker.jpg</include>
-                <include>imgs/**</include>
             </includes>
         </fileSet>
 
@@ -140,6 +139,32 @@
             <outputDirectory>/build</outputDirectory>
             <excludes>
                 <exclude>target/**</exclude>
+            </excludes>
+        </fileSet>
+        <!--
+            offline-package 插件：源码包里必须带上，否则目标机器只能构建产品，
+            无法再次生成 offline/javarepo、offline/npmrepo 和对应的 zip。
+        -->
+        <fileSet>
+            <directory>${project.basedir}/../offline-package-maven-plugin</directory>
+            <outputDirectory>/offline-package-maven-plugin</outputDirectory>
+            <excludes>
+                <exclude>target/**</exclude>
+            </excludes>
+        </fileSet>
+        <!--
+            dbdesk：控制台模块，已合入默认 reactor。源码包里必须带上，
+            否则新环境无法构建控制台。node_modules / frontend/generated / src/main/bundles
+            都是构建产物，一律排除。
+        -->
+        <fileSet>
+            <directory>${project.basedir}/../dbdesk</directory>
+            <outputDirectory>/dbdesk</outputDirectory>
+            <excludes>
+                <exclude>target/**</exclude>
+                <exclude>node_modules/**</exclude>
+                <exclude>src/main/frontend/generated/**</exclude>
+                <exclude>src/main/bundles/**</exclude>
             </excludes>
         </fileSet>
     </fileSets>

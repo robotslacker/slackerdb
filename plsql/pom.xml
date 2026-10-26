@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.robotslacker</groupId>
         <artifactId>slackerdb</artifactId>
-        <version>0.2.1</version>
+        <version>0.2.2</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -22,14 +22,13 @@
         <dependency>
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
-            <version>1.5.6.0</version>
+            <version>2.0.0.0</version>
             <scope>test</scope>
         </dependency>
-        <!-- 数据驱动一致性测试（@ParameterizedTest） -->
+        <!-- 数据驱动一致性测试（@ParameterizedTest）；版本由父 pom 的 Boot BOM 统一管理 -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-params</artifactId>
-            <version>5.12.2</version>
             <scope>test</scope>
         </dependency>
         <!-- PLSQL语法解析 -->

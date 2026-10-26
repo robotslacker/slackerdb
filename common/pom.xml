@@ -8,11 +8,17 @@
     <parent>
         <groupId>org.robotslacker</groupId>
         <artifactId>slackerdb</artifactId>
-        <version>0.2.1</version>
+        <version>0.2.2</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
     <dependencies>
+        <!-- 契约 C-4：profiles.json 由 dbcli 与控制台共用，模型与读写放在 common -->
+        <dependency>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
+            <version>2.0.61</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-core</artifactId>
@@ -51,6 +57,18 @@
                                 <descriptor>${project.basedir}/../build/sources-assembly.xml</descriptor>
                             </descriptors>
                         </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- 契约 C-5：发 test-jar，让 dbcli / 控制台的测试读同一份一致性夹具 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
                     </execution>
                 </executions>
             </plugin>

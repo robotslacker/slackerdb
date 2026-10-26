@@ -29,6 +29,9 @@ public final class LatchRendezvous implements RendezvousBackend {
     /** 点名（规范形）→ 到达过的参与者（只用于观察与排错，不参与同步语义）。 */
     private final Map<String, Set<String>> arrivals = new ConcurrentHashMap<>();
 
+    /** 后端已关闭：等待者必须被唤醒并如实返回 {@code false}（与 {@link SqliteRendezvous} 一致）。 */
+    private volatile boolean closed;
+
     @Override
     public void arrive(String point, String participant) {
         if (point == null) {
@@ -52,17 +55,38 @@ public final class LatchRendezvous implements RendezvousBackend {
 
     @Override
     public boolean await(String point, long timeoutMillis) throws InterruptedException {
+        if (closed) {
+            return false;
+        }
         CountDownLatch gate = gates.computeIfAbsent(RendezvousBackend.normalizePoint(point),
                 key -> new CountDownLatch(1));
-        if (timeoutMillis < 0L) {
-            // 没有时限（脚本没写 timeout=）：一直等，直到有人放行
-            gate.await();
-            return true;
+        // 分片等待 + 每片检查 closed：后端被换掉时（JobManager 从进程内闸门切到 SQLite），
+        // 已经阻塞的等待者必须被唤醒并得到"没等到"，否则它会永远挂住（见 RendezvousBackend.await）。
+        long deadline = timeoutMillis < 0L
+                ? Long.MAX_VALUE : System.nanoTime() + RendezvousBackend.nanosForMillis(timeoutMillis);
+        while (true) {
+            long remainingMillis = deadline == Long.MAX_VALUE
+                    ? CLOSE_POLL_MILLIS
+                    : Math.max((deadline - System.nanoTime()) / 1_000_000L, 0L);
+            if (remainingMillis <= 0L) {
+                // 时限已到：最后一次判"是否刚好放行"（与超时语义一致：超时是正常结果）
+                return gate.getCount() == 0L;
+            }
+            if (gate.await(Math.min(remainingMillis, CLOSE_POLL_MILLIS), TimeUnit.MILLISECONDS)) {
+                // close() 也会 countDown 所有闸门来唤醒等待者：那不是"放行"，必须返回 false
+                return !closed;
+            }
+            if (closed) {
+                return false;
+            }
         }
-        return gate.await(Math.max(timeoutMillis, 0L), TimeUnit.MILLISECONDS);
     }
 
+    /** 唤醒分片的长度（毫秒）：决定"后端被关掉"最多多久被等待者看见。 */
+    private static final long CLOSE_POLL_MILLIS = 50L;
+
     /** 某个点名是否已经出现过（作业管理器用它做"先作业名、再定时点名"的名字解析）。 */
+    @Override
     public boolean knows(String point) {
         return point != null && gates.containsKey(RendezvousBackend.normalizePoint(point));
     }
@@ -73,9 +97,18 @@ public final class LatchRendezvous implements RendezvousBackend {
         return seen == null ? Set.of() : Set.copyOf(seen);
     }
 
-    /** 进程内实现没有需要释放的资源。 */
+    /**
+     * 收尾：置 closed 并唤醒所有等待者（它们会看到 closed 并返回 {@code false}）。
+     *
+     * <p>为什么不能像以前那样留空：{@code JobManager} 在出现 {@code mode=process} 作业时会把后端换成
+     * SQLite，并 {@code close()} 旧闸门。正在 {@code _JOB WAIT timer:x}（不写 {@code timeout=}）的线程
+     * 若不被唤醒，就永远等不到那个点——一个静默的挂死。</p>
+     */
     @Override
     public void close() {
-        // 刻意留空：闸门是纯内存对象，随管理器一起被回收
+        closed = true;
+        for (CountDownLatch gate : gates.values()) {
+            gate.countDown();
+        }
     }
 }

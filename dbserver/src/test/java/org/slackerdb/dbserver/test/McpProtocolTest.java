@@ -250,27 +250,15 @@ public class McpProtocolTest {
     }
 
     @Test
-    @DisplayName("Read-only enforcement is parse-level and rejects write statements")
-    void readOnlyEnforcement() throws Exception {
-        String[] writes = {
-                "insert into mcp_probe values (99, 'nope')",
-                "delete from mcp_probe",
-                "update mcp_probe set name = 'x'",
-                "drop table mcp_probe",
-                "create table evil(a int)",
-                "with gone as (delete from mcp_probe returning *) select * from gone"
-        };
-        for (String write : writes) {
-            JSONObject envelope = rpc("tools/call", toolParams("run_sql", sqlArgs(write)), true);
-            JSONObject error = envelope.getJSONObject("error");
-            assertNotNull(error, "write statement must be rejected: " + write);
-            assertEquals(-32602, error.getIntValue("code"),
-                    "rejection should be an invalid-params error: " + write);
-        }
-        // 数据必须没被动过
-        JSONObject result = callTool("run_sql", sqlArgs("select count(*) as c from mcp_probe"));
-        assertEquals(3, result.getJSONObject("structuredContent").getJSONArray("rows")
-                .getJSONArray(0).getIntValue(0), "rejected writes must not have taken effect");
+    @DisplayName("Write statements are allowed (MCP is an internal tool)")
+    void writeStatementsAreAllowed() throws Exception {
+        callTool("run_sql", sqlArgs("drop table if exists mcp_write_probe"));
+        callTool("run_sql", sqlArgs("create table mcp_write_probe(a int)"));
+        callTool("run_sql", sqlArgs("insert into mcp_write_probe values (1), (2)"));
+        JSONObject result = callTool("run_sql", sqlArgs("select count(*) as c from mcp_write_probe"));
+        assertEquals(2, result.getJSONObject("structuredContent").getJSONArray("rows")
+                .getJSONArray(0).getIntValue(0), "write statements must take effect");
+        callTool("run_sql", sqlArgs("drop table mcp_write_probe"));
     }
 
     @Test
@@ -291,17 +279,15 @@ public class McpProtocolTest {
         JSONObject opened = callTool("open_session", new JSONObject()).getJSONObject("structuredContent");
         String handle = opened.getString("handle");
         assertNotNull(handle, "open_session must mint a handle");
-        assertTrue(opened.getBooleanValue("read_only"), "read-only is the default");
+        assertFalse(opened.getBooleanValue("read_only"), "MCP no longer enforces read-only");
 
         // 临时表跨调用存活——这正是"显式 handle"要解决的问题
         JSONObject args = new JSONObject();
         args.put("sql", "create temp table mcp_tmp as select 42 as answer");
         args.put("handle", handle);
-        JSONObject envelope = rpc("tools/call", toolParams("run_sql", args), true);
-        assertNotNull(envelope.getJSONObject("error"),
-                "default session is read-only, so CREATE TEMP TABLE must be rejected");
+        callTool("run_sql", args);
 
-        // 只读会话里查询仍然可用
+        // 同一会话里查询仍然可用
         JSONObject queryArgs = new JSONObject();
         queryArgs.put("sql", "select 5 as five");
         queryArgs.put("handle", handle);

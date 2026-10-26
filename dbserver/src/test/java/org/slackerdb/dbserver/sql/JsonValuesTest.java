@@ -1,6 +1,6 @@
 package org.slackerdb.dbserver.sql;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.alibaba.fastjson2.JSON;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -23,8 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * {@link JsonValues} 单元测试。
  *
- * <p>回归背景：DATE/TIME/TIMESTAMPTZ/BLOB/LIST/JSON 这些 DuckDB 取值直接交给 Jackson
- * 会序列化失败；HTTP 面表现为 500/内部错误，SQL REPL 面更糟——异常被吞掉，客户端
+ * <p>回归背景：DATE/TIME/TIMESTAMPTZ/BLOB/LIST/JSON 这些 DuckDB 取值直接交给 JSON
+ * 序列化器会失败；HTTP 面表现为 500/内部错误，SQL REPL 面更糟——异常被吞掉，客户端
  * 完全收不到响应。这里锁定"一定会被转成 JSON 安全形态"的契约。</p>
  */
 class JsonValuesTest {
@@ -84,13 +84,12 @@ class JsonValuesTest {
     }
 
     @Test
-    void jacksonJsonNodeBecomesPlainJson() throws Exception {
-        ObjectMapper mapper = new ObjectMapper();
-        Object converted = JsonValues.toJsonValue(mapper.readTree("{\"a\":[1,true,\"x\"],\"b\":null}"));
+    void fastjson2JsonBecomesPlainJson() {
+        Object converted = JsonValues.toJsonValue(JSON.parse("{\"a\":[1,true,\"x\"],\"b\":null}"));
         assertInstanceOf(Map.class, converted);
         @SuppressWarnings("unchecked")
         Map<String, Object> map = (Map<String, Object>) converted;
-        assertEquals(List.of(new BigDecimal(1), Boolean.TRUE, "x"), map.get("a"));
+        assertEquals(List.of(1, Boolean.TRUE, "x"), map.get("a"));
         assertNull(map.get("b"));
     }
 
@@ -121,13 +120,15 @@ class JsonValuesTest {
     }
 
     @Test
-    void jsonTextBecomesPlainJson() throws Exception {
-        // DuckDB 的 JSON 列在运行时是 org.duckdb.JsonNode（本项目依赖的驱动版本），
-        // 该分支通过软检测触发；这里用等价的 Jackson JsonNode 覆盖同样的语义。
-        ObjectMapper mapper = new ObjectMapper();
-        assertEquals("plain", JsonValues.toJsonValue(mapper.readTree("\"plain\"")));
-        assertEquals(new BigDecimal(1), JsonValues.toJsonValue(mapper.readTree("1")));
-        assertEquals(List.of(new BigDecimal(1), new BigDecimal(2)),
-                JsonValues.toJsonValue(mapper.readTree("[1,2]")));
+    void jsonTextBecomesPlainJson() {
+        // DuckDB 的 JSON 列在运行时是 org.duckdb.JsonNode，该分支通过软检测触发；
+        // 这里用等价的 fastjson2 JSON 值覆盖同样的语义。
+        assertEquals("plain", JsonValues.toJsonValue(JSON.parse("\"plain\"")));
+        Object one = JsonValues.toJsonValue(JSON.parse("1"));
+        assertInstanceOf(Number.class, one);
+        assertEquals(1, ((Number) one).intValue());
+        assertEquals(List.of(1, 2), JsonValues.toJsonValue(JSON.parse("[1,2]")));
+        assertEquals(new BigDecimal("1.25"),
+                JsonValues.toJsonValue(JSON.parse("1.25")));
     }
 }

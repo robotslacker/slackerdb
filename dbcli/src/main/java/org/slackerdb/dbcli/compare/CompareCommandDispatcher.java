@@ -294,19 +294,25 @@ public final class CompareCommandDispatcher {
 
         // 检查顺序已冻结：先文件存在性，再（没有别的检查了）；错误文案用**原始路径字符串**
         //（不做引号剥离，报错里就是脚本里写的那一串）
+        Path target = resolveQuietly(targetName);
+        Path reference = resolveQuietly(referenceName);
         if (targetName == null || !exists(workingDirectory, targetName)) {
+            // "没比成"不能留下上一轮的结论：旧的 .suc 会让按产物判断结果的 CI 读成成功
+            deleteStaleArtifacts(target, reference);
             outcomes.add(new CommandOutcome.Error("ERROR: File " + targetName + " does not exist!"));
             return;
         }
         if (referenceName == null || !exists(workingDirectory, referenceName)) {
+            deleteStaleArtifacts(target, reference);
             outcomes.add(new CommandOutcome.Error("ERROR: File " + referenceName + " does not exist!"));
             return;
         }
-        Path target = workingDirectory.resolve(targetName);
-        Path reference = workingDirectory.resolve(referenceName);
         try {
             CompareResult result = FileComparer.compare(reference, target, request, rules);
             CompareReporter reporter = new CompareReporter(result);
+            // 产物路径从目标文件派生：它可能正好等于某个**输入**文件（例如上一轮的 .dif 被当成参考再比一次）。
+            // 写/删之前先挡掉，否则会静默覆盖或删除使用者的输入。
+            ensureArtifactsDoNotClobberInputs(target, reference);
             if (result.identical()) {
                 // 一致：写 work.suc（一行 TSV），控制台只给状态行、没有表格
                 reporter.writeSuccessFile();
@@ -328,10 +334,66 @@ public final class CompareCommandDispatcher {
                 // 开关关掉时也要收掉上一次的 .html，否则它会冒充"这一次的差异报告"
                 Artifacts.deleteStale(reporter.htmlFilePath());
             }
-            outcomes.add(new CommandOutcome.Status(CompareReporter.STATUS_FAILED));
+            // "同时是状态行与失败"：由产出侧表达，引擎不需要靠匹配冻结文案来兜底
+            outcomes.add(new CommandOutcome.Failure(CompareReporter.STATUS_FAILED));
         } catch (IOException | IllegalArgumentException | CompareReporter.CompareReportException failure) {
             outcomes.clear();
+            deleteStaleArtifacts(target, reference);
             outcomes.add(new CommandOutcome.Error(messageOf(failure)));
+        }
+    }
+
+    /** 目标路径解析失败（非法字符）时返回 null：调用方只是用它清理旧产物，不值得因此报错。 */
+    private Path resolveQuietly(String name) {
+        if (name == null) {
+            return null;
+        }
+        try {
+            return workingDirectory.resolve(name);
+        } catch (java.nio.file.InvalidPathException invalidPath) {
+            return null;
+        }
+    }
+
+    /**
+     * 删掉目标文件旁边的三种比对产物（{@code .suc}/{@code .dif}/{@code .html}）。
+     *
+     * <p>用于"这次没有得出任何结论"的路径（输入文件不存在、比对抛异常）：不留旧结论，
+     * 否则按产物判断结果的 CI 会把一次没比成的运行读成成功。</p>
+     *
+     * @param reference 参考文件（可为 null）：它绝不参与删除——产物名可能正好撞上它
+     */
+    private static void deleteStaleArtifacts(Path target, Path reference) {
+        if (target == null) {
+            return;
+        }
+        java.util.Set<Path> inputs = reference == null ? java.util.Set.of()
+                : java.util.Set.of(reference.toAbsolutePath().normalize());
+        for (String extension : List.of(".suc", ".dif", ".html")) {
+            Path artifact = CompareReporter.artifactPath(target, extension).toAbsolutePath().normalize();
+            if (inputs.contains(artifact)) {
+                continue;
+            }
+            Artifacts.deleteStale(artifact);
+        }
+    }
+
+    /**
+     * 产物路径不得与任一输入文件重合。
+     *
+     * <p>产物名恒定由目标文件派生，而两个输入都是使用者给的任意路径：{@code _COMPARE a.txt a.suc}
+     * 会把参考文件本身当成"上一次的产物"删掉；{@code _COMPARE a.txt a.dif} 会把参考文件改写成本次差异。
+     * 两者都是静默数据丢失，因此在写/删之前先报一条可读错误。</p>
+     */
+    private static void ensureArtifactsDoNotClobberInputs(Path target, Path reference) {
+        java.util.Set<Path> inputs = java.util.Set.of(
+                target.toAbsolutePath().normalize(), reference.toAbsolutePath().normalize());
+        for (String extension : List.of(".suc", ".dif", ".html")) {
+            Path artifact = CompareReporter.artifactPath(target, extension).toAbsolutePath().normalize();
+            if (inputs.contains(artifact)) {
+                throw new CompareReporter.CompareReportException("Compare artifact [" + artifact
+                        + "] would overwrite an input file; choose another work file name.");
+            }
         }
     }
 

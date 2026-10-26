@@ -12,7 +12,7 @@
 
 == 2. 运行环境
 
-* JDK 17 或更高。
+* JDK 21 或更高。
 * 一个可连的 SlackerDB 实例（同机或远程）。
 * 发行包里的启动脚本：`bin/dbcli.bat`（Windows）或 `bin/dbcli.sh`（Linux/macOS）。
 * JDK 查找顺序：`SLACKERDB_JAVA_HOME` -> `JAVA_HOME` -> `PATH`。
@@ -63,7 +63,7 @@ end;
 [source,bash]
 ----
 $ dbcli --version
-[CLIENT] VERSION: 0.2.1
+[CLIENT] VERSION: 0.2.2
 [CLIENT] Build Time: 2026-10-17 01:17:02 +08:00
 
 $ dbcli
@@ -73,7 +73,7 @@ dbcli>
 
 === 3.2 命令行历史
 
-控制台的历史跨会话保存在 `~/slackerdb/dbcli.history`：启动时读入，上下键能翻到之前敲过的语句，退出时写回。
+控制台的历史跨会话保存在 `~/.slackerdb/dbcli.history`：启动时读入，上下键能翻到之前敲过的语句，退出时写回。
 
 == 4. 命令行选项
 
@@ -210,6 +210,8 @@ _session RESTORE url1        # 按该 URL 重新连接
 _session RELEASE name1       # 删掉这个名字（没有名字再引用该连接时才真正关闭）
 _session SHOW                # 结果集：name / url / current
 ----
+
+连接中途重连（`_connect` / `RESTORE`）会继承 `_set autocommit` 的当前取值。
 
 === 7.3 `_assert`
 
@@ -363,7 +365,10 @@ _job jobmanager off                             # 停止接受新作业
 * `mode=thread`（默认）跑在同一 JVM 的线程里；`mode=process` 是独立的 dbcli 进程（可以硬超时、杀进程树）。
 * `timeout=` 到点只表示"这次没等到"（作业继续跑、仍是 `RUNNING`），要收掉它得显式 `abort` / `shutdown`。
 * 每个作业写一个输出文件 `<作业名>.out`（stdout + stderr），`_job wait` 返回时可以读。
-* 作业 `FAILED` / `TIMEOUT` 算一次错误；没有被 `_job wait` 检查过的失败，脚本收尾时也会报出来。
+* `_job abort` / `_job shutdown` 是**请求**停止：作业正常响应时立即进入 `ABORTED` / `SHUTDOWN`；
+  作业暂时没有响应时状态保持 `RUNNING`（`_job show` 如实显示），并在它真正结束后落到对应终态。
+* 作业 `FAILED` / `TIMEOUT` 算一次错误；没有被 `_job wait` 检查过的失败，脚本收尾时也会报出来
+  （退出码仍按 §9.3：脚本内部错误不改退出码，要门禁就写 `_whenever error exit 1`）。
 * 同步屏障：一个脚本 `_job timer X` 放行，另一个脚本 `_job wait TIMER:X` 等待；两种模式都可用。
 
 === 7.11 `_ssh` 与 SFTP
@@ -374,6 +379,7 @@ _ssh connect 192.168.183.128 with user root password 123456
 _ssh connect 192.168.183.128 with user root keyfile ~/.ssh/id_rsa port 2222
 _ssh execute "uname -a; df -h"
 _ssh set encoding = UTF-8
+_ssh set timeout = 30
 _ssh save node1
 _ssh restore node1
 _ssh sftp getcwd
@@ -404,6 +410,8 @@ _ssh disconnect
 |===
 
 `_ssh execute` 把远端输出逐行打印，最后一行是 `< Command finished with [退出码]`。
+默认**不限**远端命令的运行时长；需要上限时用 `_ssh set timeout = <秒>`（0 表示恢复不限）。
+超时会中断远端命令，已产生的输出照常打印，并报一条 `SSH command timed out` 错误。
 没连接就用 `_ssh` 或 SFTP 动作会报 `SSH not connected.` / `SFTP not connected.`。
 
 == 8. 变量

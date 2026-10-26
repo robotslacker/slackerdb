@@ -110,15 +110,25 @@ public final class SqliteRendezvous implements RendezvousBackend {
         this.generation = generation;
         this.owner = owner;
         this.pollMillis = Math.max(pollMillis, 1L);
-        this.connection = connect();
-        ensureSchema();
-        claimRun();
+        Connection opened = connect();
+        try {
+            this.connection = opened;
+            ensureSchema();
+            claimRun();
+        } catch (RuntimeException | Error initializationFailed) {
+            // 构造没走完时不会有人调 close()：这里必须自己收掉连接，
+            // 否则 Windows 上库文件被锁住删不掉，下一次运行又要面对脏库
+            closeQuietly(opened);
+            throw initializationFailed;
+        }
     }
 
+    @Override
     public Path database() {
         return database;
     }
 
+    @Override
     public String generation() {
         return generation;
     }
@@ -184,10 +194,30 @@ public final class SqliteRendezvous implements RendezvousBackend {
     }
 
     @Override
+    public boolean knows(String point) {
+        if (point == null || closed) {
+            return false;
+        }
+        String normalized = RendezvousBackend.normalizePoint(point);
+        synchronized (lock) {
+            // 与 isReleased 同一条"读失败只是没出现"的规则：库被删/被锁时不冒充"点存在"
+            try (PreparedStatement query = connection.prepareStatement(
+                    "select 1 from sync_point where point = ?")) {
+                query.setString(1, normalized);
+                try (ResultSet row = query.executeQuery()) {
+                    return row.next();
+                }
+            } catch (SQLException readFailed) {
+                return false;
+            }
+        }
+    }
+
+    @Override
     public boolean await(String point, long timeoutMillis) throws InterruptedException {
         // 没有时限（脚本没写 timeout=）：一直轮询到放行或本库关闭
         boolean unlimited = timeoutMillis < 0L;
-        long deadline = System.nanoTime() + (unlimited ? 0L : Math.max(timeoutMillis, 0L) * 1_000_000L);
+        long deadline = System.nanoTime() + RendezvousBackend.nanosForMillis(timeoutMillis);
         while (true) {
             if (isReleased(point)) {
                 return true;
@@ -361,6 +391,18 @@ public final class SqliteRendezvous implements RendezvousBackend {
             Files.deleteIfExists(file);
         } catch (IOException | RuntimeException ignored) {
             // 尽力清理：删不掉（杀软/句柄）不影响任何结论
+        }
+    }
+
+    /** 关闭连接但不抛（用在构造失败/收尾这两条"已经在处理别的问题"的路径上）。 */
+    private static void closeQuietly(Connection connection) {
+        if (connection == null) {
+            return;
+        }
+        try {
+            connection.close();
+        } catch (SQLException ignored) {
+            // 关不掉无法补救：进程即将退出，句柄随之释放
         }
     }
 }

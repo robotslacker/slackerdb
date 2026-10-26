@@ -1,8 +1,8 @@
 package org.slackerdb.dbserver.repl;
 
 import ch.qos.logback.classic.Logger;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.core.type.TypeReference;
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.TypeReference;
 import io.javalin.Javalin;
 import io.javalin.websocket.WsContext;
 import org.duckdb.DuckDBConnection;
@@ -32,11 +32,12 @@ public class SqlReplServer {
      */
     private final Map<String, List<String>> connectionSessions = new ConcurrentHashMap<>();
     private final ExecutorService sqlExecutor = Executors.newCachedThreadPool();
-    private final ObjectMapper mapper = new ObjectMapper();
     /** 连接标识 -> 连接上第一次 onConnect 拿到的 WsContext（用于探活/ping）。 */
     private final Map<String, WsContext> activeConnections = new ConcurrentHashMap<>();
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
     private final AtomicBoolean heartbeatStarted = new AtomicBoolean(false);
+    /** stop() 的幂等保护：管理口关闭时可能被调用多次。 */
+    private final AtomicBoolean stopping = new AtomicBoolean(false);
     private final Logger logger;
     private final Javalin managementApp;
     private final DBInstance dbInstance;
@@ -72,9 +73,9 @@ public class SqlReplServer {
                         return;
                     }
 
-                    Map<String, Object> msg = mapper.readValue(
+                    Map<String, Object> msg = JSON.parseObject(
                             ctx.message(),
-                            new TypeReference<>() {}
+                            new TypeReference<Map<String, Object>>() {}
                     );
                     handleWebSocketMessage(ctx, msg);
                 } catch (Exception e) {
@@ -103,6 +104,33 @@ public class SqlReplServer {
                 }
             });
         });
+    }
+
+    /**
+     * 关闭 REPL 服务：释放所有会话、停止心跳/执行线程池。
+     *
+     * <p>SQL REPL 与 Web Console UI 无关，是独立的异步 SQL API；但它的线程池是
+     * 非守护线程，管理口停止时必须一起收掉，否则 JVM 会残留线程、连接也不会释放。
+     * 本方法幂等。</p>
+     */
+    public void stop() {
+        if (!stopping.compareAndSet(false, true)) {
+            return;
+        }
+        logger.debug("[REPL] stopping");
+        heartbeatExecutor.shutdownNow();
+        sqlExecutor.shutdownNow();
+
+        for (String key : new ArrayList<>(connectionSessions.keySet())) {
+            releaseConnection(key);
+        }
+        for (SqlSession session : new ArrayList<>(sessions.values())) {
+            closeSessionQuietly(session);
+        }
+        sessions.clear();
+        connectionSessions.clear();
+        activeConnections.clear();
+        logger.debug("[REPL] stopped");
     }
 
     private void handleWebSocketMessage(WsContext ctx, Map<String, Object> msg) {
@@ -249,7 +277,7 @@ public class SqlReplServer {
     private void sendJson(WsContext ctx, Map<String, Object> response) {
         String payload;
         try {
-            payload = mapper.writeValueAsString(response);
+            payload = JSON.toJSONString(response);
         } catch (Exception e) {
             logger.error("Failed to encode WebSocket response", e);
             sendError(ctx, "Failed to encode response: " + e.getMessage());
@@ -732,7 +760,7 @@ public class SqlReplServer {
         try {
             Map<String, Object> err = new HashMap<>();
             err.put("error", error);
-            ctx.send(mapper.writeValueAsString(err));
+            ctx.send(JSON.toJSONString(err));
         } catch (Exception e) {
             // 忽略
         }

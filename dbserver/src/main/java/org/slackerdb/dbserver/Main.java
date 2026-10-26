@@ -44,7 +44,7 @@ public class Main {
         System.out.println("  --access_mode               Set database access mode: READ_ONLY|READ_WRITE. Default: READ_WRITE.");
         System.out.println("  --locale                    Set default program locale.");
         System.out.println("  --log_level                 Set logging level. Default: INFO.");
-        System.out.println("  --log                       Specify log output file. Default: CONSOLE.");
+        System.out.println("  --log, --logfile            Specify log output file. Default: CONSOLE.");
         System.out.println("  --bind                      Set server binding IP address. Default: 0.0.0.0");
         System.out.println("  --host                      Set remote server address. Default: 127.0.0.1");
         System.out.println("  --advertise_address         Multicast group to announce this service to, as <group>:<port>"
@@ -96,7 +96,12 @@ public class Main {
         // 兼容既有代码：仍然按"选项名(小写) -> 取值"的 map 提供参数
         Map<String, String> appOptions = new HashMap<>();
         for (AppDaemon.Option option : parsedArguments.options()) {
-            appOptions.put(option.name().toLowerCase(), option.value());
+            String name = option.name();
+            // 插件参数形如 <pluginId>.<paramName>，**必须保留原样大小写**：
+            // 插件内部按 camelCase 取（例如 getPluginProperty("projectHome")），
+            // 一律 toLowerCase 会让这类参数永远查不到（实测 plugin-scheduler 因此起不来）。
+            String key = name.indexOf('.') > 0 ? name : name.toLowerCase();
+            appOptions.put(key, option.value());
         }
 
         List<AppDaemon.Option> orderedOptions = parsedArguments.options();
@@ -137,7 +142,8 @@ public class Main {
             // 先按命令行/配置文件里的日志设置把日志系统建起来：父进程只多打一条
             // "Daemon started"，但这条恰恰是排查"到底是哪个进程在跑"时唯一需要的线索，
             // 而子进程的启动日志本来就落在同一个文件里。
-            String logTarget = appOptions.get("log");
+            String logTarget = appOptions.containsKey("log")
+                    ? appOptions.get("log") : appOptions.get("logfile");
             logger = AppLogger.createLogger(subCommand, "INFO", logTarget);
             try {
                 if (AppDaemon.startInBackground(Main.class, subCommand, orderedOptions,
@@ -195,6 +201,10 @@ public class Main {
             if (appOptions.containsKey("log"))
             {
                 serverConfiguration.setLog(appOptions.get("log"));
+            }
+            else if (appOptions.containsKey("logfile"))
+            {
+                serverConfiguration.setLog(appOptions.get("logfile"));
             }
             if (appOptions.containsKey("bind"))
             {

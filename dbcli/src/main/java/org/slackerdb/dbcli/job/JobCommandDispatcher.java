@@ -36,13 +36,13 @@ import java.util.Map;
  *
  * <p><b>WAIT 的结论是失败还是状态</b>：等到的作业 {@code FAILED}/{@code TIMEOUT}、或者这次等待本身超时，
  * 一律产出 {@link CommandOutcome.Failure}——状态行照旧在 stdout 上（输出契约不变），
- * 但引擎同时计一次错误，于是退出码非 0、{@code _WHENEVER ERROR} 生效。
- * **没有"忽略"开关**（曾经的 {@code onfail=ignore} 已删除）：失败就是失败；不想让它影响结论，
- * 就把那个作业的 `_JOB WAIT` 放在自己显式处理的逻辑里，或干脆别 WAIT（收尾时仍会补算失败）。</p>
+ * 但引擎同时计一次错误：{@code _WHENEVER ERROR EXIT n} 会因此生效，进程退出码则仍按 README §9.3
+ * （脚本内部错误默认不改变退出码；要门禁就写 {@code _WHENEVER ERROR EXIT 1}）。
+ * **没有"忽略"开关**（曾经的 {@code onfail=ignore} 已删除）：失败就是失败。</p>
  *
  * <p>无论哪种结论，WAIT 都会**认领**该作业：它的终态已经被检查过，收尾时不该再算一次
  * （{@code JobManager.acknowledgedJobs}）。没有被任何 WAIT/ABORT/SHUTDOWN 检查过的失败作业
- * 由引擎收尾时补算一次失败（见 {@code JobManager.hasUnacknowledgedFailures()}）。</p>
+ * 由引擎收尾时补报一条错误行并计入错误数（见 {@code JobManager.hasUnacknowledgedFailures()}）。</p>
  *
  * <p><b>参数名大小写不敏感</b>（{@code create}/{@code set} 的参数映射见 {@code DbcliJobSpecFactory}）：
  * 代价是"参数名不再能当同名变量用"（{@code MODE=process} 被编排参数吃掉），
@@ -106,13 +106,17 @@ public final class JobCommandDispatcher {
                 }
                 case "abort" -> {
                     String name = requireText(ir, "jobName");
-                    manager.abort(name);
-                    outcomes.add(status("Job [" + name + "] aborted."));
+                    Job job = manager.abort(name);
+                    outcomes.add(status(job.state() == JobState.ABORTED
+                            ? "Job [" + name + "] aborted."
+                            : "Job [" + name + "] abort requested; it is still running."));
                 }
                 case "shutdown" -> {
                     String name = requireText(ir, "jobName");
-                    manager.shutdown(name);
-                    outcomes.add(status("Job [" + name + "] shutdown."));
+                    Job job = manager.shutdown(name);
+                    outcomes.add(status(job.state() == JobState.SHUTDOWN
+                            ? "Job [" + name + "] shutdown."
+                            : "Job [" + name + "] shutdown requested; it is still running."));
                 }
                 case "timer" -> {
                     String point = requireText(ir, "timerPoint");

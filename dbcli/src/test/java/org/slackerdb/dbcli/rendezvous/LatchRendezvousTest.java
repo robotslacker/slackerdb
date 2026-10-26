@@ -95,6 +95,31 @@ class LatchRendezvousTest {
     }
 
     @Test
+    @DisplayName("close() 会唤醒没有时限的等待者并返回 false（切后端不再造成静默挂死）")
+    void closeWakesUnlimitedWaiters() throws Exception {
+        LatchRendezvous rendezvous = new LatchRendezvous();
+        java.util.concurrent.atomic.AtomicBoolean released =
+                new java.util.concurrent.atomic.AtomicBoolean(true);
+        Thread waiter = new Thread(() -> {
+            try {
+                released.set(rendezvous.await("gate", RendezvousBackend.NO_TIMEOUT));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }, "latch-test-close-waiter");
+        waiter.setDaemon(true);
+        waiter.start();
+        Thread.sleep(100L);
+        assertTrue(waiter.isAlive(), "关闭之前应当还在等");
+
+        rendezvous.close();
+
+        waiter.join(5_000L);
+        assertFalse(waiter.isAlive(), "close() 必须唤醒等待者（接口承诺'等到放行或后端关闭'）");
+        assertFalse(released.get(), "被关闭不是被放行：必须返回 false");
+    }
+
+    @Test
     @DisplayName("规范化就是 toUpperCase(Locale.ROOT)（与跨进程后端同一份实现）")
     void normalizationIsSharedWithTheOtherBackend() {
         assertEquals("GO", RendezvousBackend.normalizePoint("go"));

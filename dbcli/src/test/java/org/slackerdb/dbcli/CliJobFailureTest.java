@@ -62,7 +62,7 @@ class CliJobFailureTest {
     }
 
     @Test
-    @DisplayName("_JOB WAIT 等到非 0 退出码：父脚本退出 1，状态行仍在 stdout，stderr 带位置")
+    @DisplayName("_JOB WAIT 等到非 0 退出码：状态行仍在 stdout 并计入错误数，退出码仍按 README §9.3 为 0")
     void waitOnFailedJobFailsTheParent() throws Exception {
         child("child.sql", 5);
         Path script = parent("parent.sql", """
@@ -74,7 +74,7 @@ class CliJobFailureTest {
 
         Result result = run("--execute", script.toString());
 
-        assertEquals(0, result.exitCode, "子作业失败必须让父脚本失败; stderr: " + result.out);
+        assertEquals(0, result.exitCode, "脚本内部错误默认不改变退出码（README §9.3）; stderr: " + result.out);
         assertTrue(result.out.contains("Job [j1] finished with exit code 5."),
                 "状态行属于输出契约，仍在 stdout: " + result.out);
         assertTrue(result.out.contains("Job [j1] finished with exit code 5."),
@@ -83,7 +83,7 @@ class CliJobFailureTest {
     }
 
     @Test
-    @DisplayName("失败作业没被 WAIT：脚本收尾时补算一次失败，退出码 1（stderr 说明原因）")
+    @DisplayName("失败作业没被 WAIT：脚本收尾时补报一条错误行（退出码仍为 0，除非脚本自己 _WHENEVER/_EXIT）")
     void failedJobWithoutWaitFailsTheParent() throws Exception {
         child("child.sql", 5);
         Path script = parent("forgot.sql", """
@@ -95,7 +95,7 @@ class CliJobFailureTest {
 
         Result result = run("--execute", script.toString());
 
-        assertEquals(0, result.exitCode, "没人检查的失败作业不能静默通过; stderr: " + result.out);
+        assertEquals(0, result.exitCode, "没人检查的失败作业要报错，但退出码语义不变; stderr: " + result.out);
         assertTrue(result.out.contains(
                         "Job [j1] failed with exit code 5 (it was started but never checked by _JOB WAIT)."),
                 "收尾时的失败要能指出是哪个作业、多少退出码: " + result.out);

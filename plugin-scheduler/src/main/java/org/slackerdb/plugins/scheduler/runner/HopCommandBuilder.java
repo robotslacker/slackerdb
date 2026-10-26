@@ -110,8 +110,13 @@ public final class HopCommandBuilder {
             env.put("HOP_AUDIT_FOLDER", request.runHome.resolve("audit").toAbsolutePath().toString());
             env.put("HOP_LOG_FOLDER", request.runHome.resolve("logs").toAbsolutePath().toString());
         }
-        if (request.hop != null && request.hop.javaHome != null && !request.hop.javaHome.isBlank()) {
-            env.put("HOP_JAVA_HOME", request.hop.javaHome);
+        // javaHome 为空时用当前 JVM 的 JDK；HOP 2.19 要求 JDK 21，而服务端本身就跑在 21 上。
+        String javaHome = request.hop == null ? null : request.hop.javaHome;
+        if (javaHome == null || javaHome.isBlank()) {
+            javaHome = System.getProperty("java.home");
+        }
+        if (javaHome != null && !javaHome.isBlank()) {
+            env.put("HOP_JAVA_HOME", javaHome);
         }
         return env;
     }

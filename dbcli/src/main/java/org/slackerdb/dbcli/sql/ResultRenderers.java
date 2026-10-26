@@ -30,7 +30,8 @@ public final class ResultRenderers {
     public static List<String> render(RenderOptions options, List<String> headers,
                                       List<String> columnTypes, List<List<Object>> rows) {
         RenderOptions effective = options == null ? RenderOptions.defaults() : options;
-        // CSV 是导出格式：不截断、不换行（截断或折断就是毁数据）。这两件事只用于"给人看"的两种格式。
+        // CSV 是导出格式：不截断、不换行（截断或折断就是毁数据）。换行/截断只作用于 table / vertical
+        // （README §7.5：LINEWIDTH 管整行宽度、COLWIDTH 管单元格宽度，两者都不作用于 csv）。
         boolean truncate = effective.format() != RenderOptions.Format.CSV;
         List<List<String>> cells = toCells(effective, rows, truncate);
         List<String> lines = switch (effective.format()) {

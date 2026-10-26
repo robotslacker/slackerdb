@@ -10,8 +10,8 @@ import org.slackerdb.dbproxy.configuration.ServerConfiguration;
 import org.slackerdb.dbproxy.server.ProxyInstance;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
-import org.springframework.boot.autoconfigure.sql.init.SqlInitializationAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceInitializationAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.ContextConfiguration;
@@ -30,13 +30,13 @@ import java.util.TimeZone;
  * existing ProxyApiTest.
  * Auto-configuration exclusions:
  * - DataSourceAutoConfiguration: we manage our own DuckDB connection via DBInstance
- * - SqlInitializationAutoConfiguration: we handle schema creation manually
+ * - DataSourceInitializationAutoConfiguration: we handle schema creation manually
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @ContextConfiguration(classes = SpringBootProxyTest.class)
 @EnableAutoConfiguration(exclude = {
         DataSourceAutoConfiguration.class,
-        SqlInitializationAutoConfiguration.class
+        DataSourceInitializationAutoConfiguration.class
 })
 @Configuration
 public class SpringBootProxyTest {

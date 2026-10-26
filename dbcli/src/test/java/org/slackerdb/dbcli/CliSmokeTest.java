@@ -31,7 +31,7 @@ class CliSmokeTest {
     /**
      * 项目版本号的形状：{@code <major>.<minor>.<patch>}。
      *
-     * <p>这里刻意不写死 {@code 0.2.1}：版本号来自 POM，改版本不该改测试；但**必须**是纯版本号
+     * <p>这里刻意不写死 {@code 0.2.2}：版本号来自 POM，改版本不该改测试；但**必须**是纯版本号
      * —— 第一行不得掺构建时刻，也不得掺 git 信息（{@code -<提交>} / {@code -dirty}）。</p>
      */
     private static final String PROJECT_VERSION = "\\d+\\.\\d+\\.\\d+";

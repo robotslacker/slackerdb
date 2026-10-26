@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.robotslacker</groupId>
         <artifactId>slackerdb</artifactId>
-        <version>0.2.1</version>
+        <version>0.2.2</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -17,6 +17,14 @@
     </properties>
 
     <dependencies>
+        <!-- Quartz：plugin-scheduler 把 quartz 声明成 provided（由宿主提供）。
+             不在这里带上，插件启动时会 NoClassDefFoundError，/scheduler/* 路由静默不注册。
+             版本由 Boot 4.1.1 BOM 统一管理（2.5.2），与 plugin-scheduler 编译版本一致。 -->
+        <dependency>
+            <groupId>org.quartz-scheduler</groupId>
+            <artifactId>quartz</artifactId>
+            <scope>runtime</scope>
+        </dependency>
         <dependency>
             <groupId>org.robotslacker</groupId>
             <artifactId>slackerdb-common</artifactId>
@@ -43,7 +51,7 @@
         <dependency>
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
-            <version>1.5.6.0</version>
+            <version>2.0.0.0</version>
         </dependency>
         <!-- PF4J 插件 -->
         <dependency>
@@ -56,6 +64,21 @@
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
             <version>4.1.132.Final</version>
+            <!--
+              Linux UDS 依赖 Netty epoll native，必须保留 epoll 分类器；
+              Windows 不使用 epoll（回退 NIO），macOS 不在目标范围。
+              kqueue / resolver-dns-native-macos 只服务 macOS，排除。
+            -->
+            <exclusions>
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-transport-native-kqueue</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-resolver-dns-native-macos</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <!-- 数据库连接池 -->
         <dependency>
@@ -70,16 +93,25 @@
             <artifactId>antlr4-runtime</artifactId>
             <version>4.13.2</version>
         </dependency>
-        <!-- javalin 用来实现portX请求-->
+        <!-- javalin 用来实现portX请求；不需要 Brotli 压缩，排除 bundle 里的 brotli4j，回退到 gzip -->
         <dependency>
             <groupId>io.javalin</groupId>
             <artifactId>javalin-bundle</artifactId>
-            <version>7.2.2</version>
+            <version>7.2.3</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.aayushatharva.brotli4j</groupId>
+                    <artifactId>brotli4j</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
+        <!--
+          Jetty 版本由父 POM 的 jetty-bom 统一为 12.1.12（与 Javalin 7.2.3 一致）。
+          这里只声明代码直接使用的 API，不写版本，避免 12.0/12.1 混用。
+        -->
         <dependency>
             <groupId>org.eclipse.jetty.websocket</groupId>
             <artifactId>jetty-websocket-jetty-api</artifactId>
-            <version>12.0.34</version>
         </dependency>
         <dependency>
             <groupId>org.java-websocket</groupId>
@@ -116,12 +148,22 @@
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-starter-tomcat</artifactId>
                 </exclusion>
-                <!-- Exclude JUnit 4 vintage engine since we use JUnit 5 -->
+                <!-- Exclude JUnit 4 vintage engine since we use JUnit 6 -->
                 <exclusion>
                     <groupId>org.junit.vintage</groupId>
                     <artifactId>junit-vintage-engine</artifactId>
                 </exclusion>
             </exclusions>
+        </dependency>
+        <!--
+            Boot 4 把自动配置拆到了独立模块：SpringBootDBTest 用到的
+            DataSourceAutoConfiguration / DataSourceInitializationAutoConfiguration
+            都在 spring-boot-jdbc，必须显式加入 test classpath。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-jdbc</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
     <build>
@@ -199,7 +241,7 @@
                 COPY BINARY 入库性能基准的入口（手工执行，不属于 mvn test 套件）。
 
                 基准类刻意不叫 *Test.java：性能数字必须能前后对比，写成用例既会让 mvn test
-                每次都跑百万行，又会把机器噪声变成断言。用法（须用 JDK 17）：
+                每次都跑百万行，又会把机器噪声变成断言。用法（须用 JDK 21）：
 
                   mvn -o -q -pl dbserver test-compile
                   mvn -o -pl dbserver exec:java -Dexec.classpathScope=test \
@@ -212,7 +254,6 @@
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
-                <version>3.6.3</version>
             </plugin>
                         <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

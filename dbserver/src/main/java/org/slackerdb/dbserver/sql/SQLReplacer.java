@@ -586,6 +586,37 @@ public class SQLReplacer {
                 )
         );
 
+        // 运行期统计函数：DuckDB 没有 pg_stat_* 视图，pg_catalog 下也没有任何 pg_stat_get_* 函数，
+        // 而客户端展示表/索引统计时会直接写 pg_catalog.pg_stat_get_numscans(i.indexrelid) 这类调用
+        // （缺函数时整条元数据查询报 "Scalar Function with name pg_stat_get_numscans does not exist"）。
+        // SlackerCatalog 为常用的一组建了返回 NULL 的空壳宏；这里只改写**命名空间前缀**：
+        // 客户端的函数名有几十个，逐个写规则既容易漏，又要在热路径上多跑几十次字面量预筛
+        // （见 applyRules 的预筛），而"前缀 + 宏"的组合补一个新函数只需要加一行宏。
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_stat_get_", catalogName + ".duck_catalog.pg_stat_get_",
+                        true, true)
+        );
+
+        // pg_aggregate：与 pg_proc 一样是"只满足存在 + 列齐全"的空关系（见 SlackerCatalog）。
+        // 客户端枚举聚合函数会写 `pg_proc p JOIN pg_aggregate a ON a.aggfnoid = p.oid`，
+        // 缺表时整条查询报 "Table with name pg_aggregate does not exist"。
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_aggregate", catalogName + ".duck_catalog.pg_aggregate",
+                        true, true)
+        );
+
+        // pg_stat_activity：同样是空关系。会话的**实时**信息不通过 PG 目录提供 ——
+        // SlackDB 自己的管理面才是权威入口（/status 的 sessions、POST /sessions/{id}/kill、
+        // 以及 SQL 的 KILL <sessionId>）。这里保留一张零行的表，只是让客户端的会话面板
+        // "显示为空"，而不是整条查询报 "Table with name pg_stat_activity does not exist"。
+        SQLReplaceItems.add(
+                new QueryReplacerItem(
+                        "pg_catalog.pg_stat_activity", catalogName + ".duck_catalog.pg_stat_activity",
+                        true, true)
+        );
+
         // 编译成不可变快照：规则级的常量工作只在这里做一次
         List<ReplacerRule> compiled = new ArrayList<>(SQLReplaceItems.size());
         for (QueryReplacerItem item : SQLReplaceItems) {
@@ -726,6 +757,62 @@ public class SQLReplacer {
             pDbInstance.logger.trace("[SERVER][SQL Rewrote]: [{}] -> [{}]", sql, replacedSQL);
         }
         return replacedSQL;
+    }
+
+    /** 未限定的 pg_namespace / pg_attribute / pg_type（前面不能是 "." 或标识符字符）。 */
+    private static final Pattern BARE_PG_NAMESPACE =
+            Pattern.compile("(?<![.\\w])pg_namespace\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern BARE_PG_ATTRIBUTE =
+            Pattern.compile("(?<![.\\w])pg_attribute\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern BARE_PG_TYPE =
+            Pattern.compile("(?<![.\\w])pg_type\\b", Pattern.CASE_INSENSITIVE);
+
+    /**
+     * 把 catalog introspection 查询里的未限定 {@code pg_namespace} / {@code pg_attribute} /
+     * {@code pg_type} 指到 fake catalog。
+     *
+     * <p>为什么需要单独一遍：{@link #replaceSQL} 的 REGEX 规则是<b>整串匹配</b>
+     * （{@link ReplacerRule.Kind#REGEX} 用 {@code matches()} 判断），无法做
+     * "语句中间出现的裸表名"替换；而 DuckDB postgres 扩展加载 catalog 时发的正是
+     * {@code pg_class JOIN pg_namespace JOIN pg_attribute JOIN pg_type} 这种未限定名。</p>
+     *
+     * <p>只在语句具备 catalog introspection 的特征时才改写（有 pg_class/attrelid/attnum/
+     * nspname/relnamespace/pg_indexes/typnamespace 等），避免把普通 SQL 里恰好出现的字符串改坏。</p>
+     */
+    public static String rewriteCatalogIntrospection(DBInstance pDbInstance, String sql) {
+        if (sql == null || sql.isEmpty()) {
+            return sql;
+        }
+        String lower = sql.toLowerCase(Locale.ROOT);
+        boolean namespace = lower.contains("pg_namespace")
+                && (lower.contains("nspname") || lower.contains("relnamespace")
+                || lower.contains("pg_class") || lower.contains("pg_indexes"));
+        boolean attribute = lower.contains("pg_attribute")
+                && (lower.contains("attrelid") || lower.contains("atttypid")
+                || lower.contains("attnum") || lower.contains("pg_class"));
+        boolean type = lower.contains("pg_type")
+                && (lower.contains("pg_class") || lower.contains("atttypid")
+                || lower.contains("typnamespace"));
+        if (!namespace && !attribute && !type) {
+            return sql;
+        }
+        String catalogName = pDbInstance.catalogName;
+        if (catalogName == null || catalogName.isBlank()) {
+            catalogName = "memory";
+        }
+        if (namespace) {
+            sql = BARE_PG_NAMESPACE.matcher(sql).replaceAll(
+                    Matcher.quoteReplacement(catalogName + ".duck_catalog.pg_namespace"));
+        }
+        if (attribute) {
+            sql = BARE_PG_ATTRIBUTE.matcher(sql).replaceAll(
+                    Matcher.quoteReplacement(catalogName + ".duck_catalog.pg_attribute"));
+        }
+        if (type) {
+            sql = BARE_PG_TYPE.matcher(sql).replaceAll(
+                    Matcher.quoteReplacement(catalogName + ".duck_catalog.pg_type"));
+        }
+        return sql;
     }
 
     /**

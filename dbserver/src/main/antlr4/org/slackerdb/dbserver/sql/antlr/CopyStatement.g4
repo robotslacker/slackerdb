@@ -16,8 +16,14 @@ copyStatment
         (NULL_CHAR)?
     ;
 
-// 表名（不含括号的标识符）
-tableName: IDENTIFIER | STRING_LITERAL;
+// 表名：支持单段名，也支持 schema-qualified 名。
+// DuckDB postgres 扩展的 attached INSERT 发的是
+//   COPY "main"."t2" FROM STDIN (FORMAT BINARY)
+// 旧规则 tableName: IDENTIFIER | STRING_LITERAL 只接受单段，遇到 "." 直接解析失败
+// （报 syntax error at or near ")"）。这里允许 IDENTIFIER/STRING_LITERAL 用 DOT 连接；
+// 未加引号的 main.t2 仍会被 IDENTIFIER（[a-z_][a-z_0-9.]*）整体吃掉，行为不变。
+tableName: tableNamePart (DOT tableNamePart)*;
+tableNamePart: IDENTIFIER | STRING_LITERAL;
 
 // 子查询：捕获括号内的任意内容（包括嵌套括号）
 query: LPAREN .*? RPAREN;       // 非贪婪匹配括号内所有文本
@@ -47,6 +53,7 @@ LPAREN: '(';
 RPAREN: ')';
 COMMA: ',';
 EQUAL: '=';
+DOT: '.';
 // STDIN/STDOUT/BOOLEAN 用**片段 + 字符类**显式声明大小写不敏感。
 //
 // 为什么不能只写 'STDIN'：实测 `caseInsensitive = true` 在 ANTLR 4.13.2 里只对

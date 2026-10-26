@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.robotslacker</groupId>
         <artifactId>slackerdb</artifactId>
-        <version>0.2.1</version>
+        <version>0.2.2</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -28,27 +28,33 @@
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
             <version>4.1.132.Final</version>
+            <!--
+              Linux UDS 依赖 Netty epoll native，必须保留 epoll 分类器；
+              Windows 不使用 epoll（回退 NIO），macOS 不在目标范围。
+              kqueue / resolver-dns-native-macos 只服务 macOS，排除。
+            -->
+            <exclusions>
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-transport-native-kqueue</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-resolver-dns-native-macos</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
-        <!-- javalin 用来实现portX请求-->
+        <!-- javalin 用来实现portX请求；不需要 Brotli 压缩，排除 bundle 里的 brotli4j，回退到 gzip -->
         <dependency>
             <groupId>io.javalin</groupId>
             <artifactId>javalin-bundle</artifactId>
-            <version>7.2.2</version>
-        </dependency>
-        <dependency>
-            <groupId>com.aayushatharva.brotli4j</groupId>
-            <artifactId>native-linux-x86_64</artifactId>
-            <version>1.17.0</version>
-        </dependency>
-        <dependency>
-            <groupId>com.aayushatharva.brotli4j</groupId>
-            <artifactId>native-windows-x86_64</artifactId>
-            <version>1.17.0</version>
-        </dependency>
-        <dependency>
-            <groupId>com.aayushatharva.brotli4j</groupId>
-            <artifactId>native-linux-aarch64</artifactId>
-            <version>1.17.0</version>
+            <version>7.2.3</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.aayushatharva.brotli4j</groupId>
+                    <artifactId>brotli4j</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <!-- oshi-core for system information -->
         <dependency>
@@ -68,12 +74,22 @@
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-starter-tomcat</artifactId>
                 </exclusion>
-                <!-- Exclude JUnit 4 vintage engine since we use JUnit 5 -->
+                <!-- Exclude JUnit 4 vintage engine since we use JUnit 6 -->
                 <exclusion>
                     <groupId>org.junit.vintage</groupId>
                     <artifactId>junit-vintage-engine</artifactId>
                 </exclusion>
             </exclusions>
+        </dependency>
+        <!--
+            Boot 4 把自动配置拆到了独立模块：SpringBootProxyTest 用到的
+            DataSourceAutoConfiguration / DataSourceInitializationAutoConfiguration
+            都在 spring-boot-jdbc，必须显式加入 test classpath。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-jdbc</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 

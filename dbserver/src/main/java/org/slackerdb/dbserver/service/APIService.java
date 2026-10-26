@@ -1,11 +1,10 @@
 package org.slackerdb.dbserver.service;
 
 import ch.qos.logback.classic.Logger;
+import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONException;
 import com.alibaba.fastjson2.JSONObject;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import io.javalin.Javalin;
@@ -40,14 +39,13 @@ public class APIService {
         public String searchPath;
         public String sql;
         public String description;
-        public Long snapshotLimit = 300*1000L;
+        public Long snapshotLimit = 0L;
         public Map<String, String> parameter = new ConcurrentHashMap<>();
     }
     private final Logger logger;
     private final DBInstance dbInstance;
 
     private final ConcurrentHashMap<String, DBServiceDefinition> registeredDBService = new ConcurrentHashMap<>();
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** SQL 模板中的参数占位符：{@code ${name}}。 */
     private static final Pattern SQL_PARAMETER_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
@@ -325,8 +323,8 @@ public class APIService {
     // 估计对象的大小
     private static int estimateSize(Map<String, Object> result) {
         try {
-            return MAPPER.writeValueAsBytes(result).length;
-        } catch (JsonProcessingException e) {
+            return JSON.toJSONBytes(result).length;
+        } catch (Exception e) {
             return 1024;
         }
     }

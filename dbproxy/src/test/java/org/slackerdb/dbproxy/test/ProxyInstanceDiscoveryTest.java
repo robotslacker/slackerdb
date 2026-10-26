@@ -48,7 +48,7 @@ class ProxyInstanceDiscoveryTest {
     }
 
     private static Announcement hello(String name, String host, int port, int portX) {
-        return Announcement.hello(name, name, host, port, portX, "0.2.1", 1);
+        return Announcement.hello(name, name, host, port, portX, "0.2.2", 1);
     }
 
     // ------------------------------------------------------------------ 登记

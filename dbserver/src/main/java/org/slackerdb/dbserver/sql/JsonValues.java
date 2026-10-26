@@ -1,12 +1,10 @@
 package org.slackerdb.dbserver.sql;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.alibaba.fastjson2.JSON;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.Reader;
-import java.math.BigDecimal;
 import java.sql.Blob;
 import java.sql.Clob;
 import java.sql.ResultSet;
@@ -14,7 +12,6 @@ import java.sql.SQLException;
 import java.sql.Struct;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,8 +22,8 @@ import java.util.UUID;
  *
  * <p>存在的原因：DuckDB JDBC 对 DATE / TIME / TIMESTAMPTZ 返回 {@code java.time} 类型，
  * 对 BLOB 返回 {@code InputStream}，对 LIST/ARRAY 返回 {@code java.sql.Array} 实现，
- * 对 JSON 返回 Jackson {@code JsonNode}，对 STRUCT 返回 {@code java.sql.Struct}。
- * 这些类型直接交给 Jackson 的默认 ObjectMapper 会抛异常（HTTP 面变成 500/内部错误，
+ * 对 JSON 返回 DuckDB 自己的 {@code org.duckdb.JsonNode}，对 STRUCT 返回 {@code java.sql.Struct}。
+ * 这些类型直接交给 JSON 序列化器会抛异常（HTTP 面变成 500/内部错误，
  * REPL 面更糟：异常被吞掉，客户端永远收不到响应）。</p>
  *
  * <p>约定（HTTP 数据服务与 SQL REPL 共用同一套转换，保证两个端点返回值一致）：</p>
@@ -35,16 +32,14 @@ import java.util.UUID;
  *       {@code 2026-10-09T12:34:56} / {@code 2026-10-09T12:34:56Z}；</li>
  *   <li>BLOB / 二进制统一为 Base64 字符串；</li>
  *   <li>LIST / ARRAY 为 JSON 数组，MAP / STRUCT 为 JSON 对象（STRUCT 使用字段名）；</li>
- *   <li>JSON 列还原为真实 JSON 值，而不是 JsonNode 的内部字段；</li>
+ *   <li>JSON 列还原为真实 JSON 值；</li>
  *   <li>无法识别的类型退化为字符串，绝不因为"序列化不了"而让整个响应失败。</li>
  * </ul>
  */
 public final class JsonValues {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
     /**
-     * DuckDB 的 JSON 列返回 {@code org.duckdb.JsonNode}——它不是 Jackson 的 JsonNode，
+     * DuckDB 的 JSON 列返回 {@code org.duckdb.JsonNode}——它不是 fastjson2 的类型，
      * 也没有公开的取值方法，只有 {@code isArray()/isObject()/...} 和 {@code toString()}。
      * 用类名做软检测（而不是直接 import），避免把本工具类硬绑定到某个驱动版本。
      */
@@ -124,9 +119,6 @@ public final class JsonValues {
             return v.toString();
         }
         // JSON 列
-        if (value instanceof JsonNode v) {
-            return jsonNode(v);
-        }
         if (DUCKDB_JSON_NODE != null && DUCKDB_JSON_NODE.isInstance(value)) {
             return duckDbJsonNode(value);
         }
@@ -194,50 +186,11 @@ public final class JsonValues {
     private static Object duckDbJsonNode(Object value) {
         String text = String.valueOf(value);
         try {
-            return jsonNode(MAPPER.readTree(text));
+            // fastjson2 默认把小数解析成 BigDecimal，不会像 Double 那样丢精度
+            return toJsonValue(JSON.parse(text));
         } catch (Exception e) {
             return text;
         }
-    }
-
-    private static Object jsonNode(JsonNode node) {
-        if (node == null || node.isNull() || node.isMissingNode()) {
-            return null;
-        }
-        if (node.isTextual()) {
-            return node.textValue();
-        }
-        if (node.isBoolean()) {
-            return node.booleanValue();
-        }
-        if (node.isNumber()) {
-            BigDecimal decimal = node.decimalValue();
-            return decimal;
-        }
-        if (node.isBinary()) {
-            try {
-                return Base64.getEncoder().encodeToString(node.binaryValue());
-            } catch (Exception e) {
-                return null;
-            }
-        }
-        if (node.isArray()) {
-            List<Object> list = new ArrayList<>(node.size());
-            for (JsonNode element : node) {
-                list.add(jsonNode(element));
-            }
-            return list;
-        }
-        if (node.isObject()) {
-            Map<String, Object> mapped = new LinkedHashMap<>();
-            Iterator<String> names = node.fieldNames();
-            while (names.hasNext()) {
-                String name = names.next();
-                mapped.put(name, jsonNode(node.get(name)));
-            }
-            return mapped;
-        }
-        return node.asText();
     }
 
     private static Object sqlArray(java.sql.Array array) {

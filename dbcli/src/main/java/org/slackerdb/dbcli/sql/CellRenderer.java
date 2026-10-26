@@ -113,7 +113,131 @@ public final class CellRenderer {
             return "0x" + HexFormat.of().formatHex(bytes).toUpperCase(java.util.Locale.ROOT)
                     + "(" + bytes.length + " bytes)";
         }
+        // LOB / ARRAY / SQLXML / ROWID：驱动允许把 getObject 的结果给成这些接口的实现类，
+        // 而它们的 toString() 是身份哈希（每次运行都不同 → golden 抖动）。这里按内容渲染。
+        if (value instanceof java.sql.Clob clob) {
+            return clobText(clob);
+        }
+        if (value instanceof java.sql.Blob blob) {
+            return blobText(blob);
+        }
+        if (value instanceof java.sql.Array array) {
+            return arrayText(array);
+        }
+        if (value instanceof java.sql.SQLXML xml) {
+            return sqlxmlText(xml);
+        }
+        if (value instanceof java.sql.RowId rowId) {
+            try {
+                return "0x" + HexFormat.of().formatHex(rowId.getBytes())
+                        .toUpperCase(java.util.Locale.ROOT);
+            } catch (RuntimeException unreadable) {
+                return unreadable("ROWID", unreadable);
+            }
+        }
         return String.valueOf(value);
+    }
+
+    /** CLOB 内容按文本渲染（读不到时给出可读占位，而不是身份哈希）。 */
+    private static String clobText(java.sql.Clob clob) {
+        try {
+            long length = clob.length();
+            // JDBC 的 getSubString 用 int 下标：超长 CLOB 只取前 Integer.MAX_VALUE 个字符
+            int size = (int) Math.min(length, Integer.MAX_VALUE);
+            return clob.getSubString(1, size);
+        } catch (java.sql.SQLException unreadable) {
+            return unreadable("CLOB", unreadable);
+        } finally {
+            freeQuietly(clob);
+        }
+    }
+
+    /** BLOB 内容按字节渲染（与 byte[] 同一形态：`0x…(N bytes)`）。 */
+    private static String blobText(java.sql.Blob blob) {
+        try {
+            long length = blob.length();
+            int size = (int) Math.min(length, Integer.MAX_VALUE);
+            byte[] bytes = blob.getBytes(1, size);
+            return "0x" + HexFormat.of().formatHex(bytes).toUpperCase(java.util.Locale.ROOT)
+                    + "(" + bytes.length + " bytes)";
+        } catch (java.sql.SQLException unreadable) {
+            return unreadable("BLOB", unreadable);
+        } finally {
+            freeQuietly(blob);
+        }
+    }
+
+    /** SQL ARRAY 按 `{a,b}` 渲染（元素各自走本类规则）。 */
+    private static String arrayText(java.sql.Array array) {
+        try {
+            Object content = array.getArray();
+            if (content instanceof Object[] items) {
+                StringBuilder builder = new StringBuilder("{");
+                for (int index = 0; index < items.length; index++) {
+                    if (index > 0) {
+                        builder.append(',');
+                    }
+                    builder.append(render(items[index]));
+                }
+                return builder.append('}').toString();
+            }
+            return String.valueOf(content);
+        } catch (java.sql.SQLException unreadable) {
+            return unreadable("ARRAY", unreadable);
+        } finally {
+            freeQuietly(array);
+        }
+    }
+
+    /** SQLXML 按字符串渲染。 */
+    private static String sqlxmlText(java.sql.SQLXML xml) {
+        try {
+            return xml.getString();
+        } catch (java.sql.SQLException unreadable) {
+            return unreadable("SQLXML", unreadable);
+        } finally {
+            freeQuietly(xml);
+        }
+    }
+
+    /** 读不出来的 LOB：给出可读占位（保留类型与原因，便于排查；绝不打身份哈希）。 */
+    private static String unreadable(String type, Throwable failure) {
+        String message = failure == null ? null : failure.getMessage();
+        return "<unreadable " + type
+                + (message == null || message.isBlank() ? "" : ": " + message) + ">";
+    }
+
+    /** 尽力释放 LOB/ARRAY（驱动侧临时资源；不支持 free 的实现会抛 SQLException）。 */
+    private static void freeQuietly(java.sql.Clob clob) {
+        try {
+            clob.free();
+        } catch (java.sql.SQLException | RuntimeException ignored) {
+            // free 是"尽力"：失败不影响已经渲染出来的文本
+        }
+    }
+
+    private static void freeQuietly(java.sql.Blob blob) {
+        try {
+            blob.free();
+        } catch (java.sql.SQLException | RuntimeException ignored) {
+            // 同上
+        }
+    }
+
+    private static void freeQuietly(java.sql.Array array) {
+        try {
+            array.free();
+        } catch (java.sql.SQLException | RuntimeException ignored) {
+            // 同上
+        }
+    }
+
+    private static void freeQuietly(java.sql.SQLXML xml) {
+        try {
+            xml.free();
+        } catch (java.sql.SQLException | RuntimeException ignored) {
+            // 同上
+        }
     }
 
     /**

@@ -377,7 +377,7 @@ public class InstanceXSqlReplTest {
     /**
      * DATE/TIME/TIMESTAMPTZ/BLOB/LIST 等列必须能回包。
      *
-     * <p>历史实现里这些值让 ObjectMapper 序列化失败，而异常被 catch 吞掉，
+     * <p>历史实现里这些值让 JSON 序列化器失败，而异常被 catch 吞掉，
      * 客户端永远收不到任何响应（不是报错，是彻底静默）。</p>
      */
     @Test

@@ -313,6 +313,42 @@ public class DBDataSourcePool {
         return true;
     }
 
+    /**
+     * 归还时"语句残留"的修复尝试：复位（回滚 + autoCommit）后用一条探活语句确认连接可用。
+     *
+     * <p><b>为什么需要它</b>：语句残留时直接退役会让长跑实例不断新建/销毁 DuckDB 连接
+     * （批处理失败、客户端异常断开都会留下残留）。残留语句在调用本方法前已被全部关闭，
+     * 这里只要证明"这条连接还能执行语句"，就说明没有未消费的 pending result，可以安全复用。</p>
+     *
+     * <p><b>探活为什么用 {@code SELECT 1} 而不是 {@code isValid}</b>：DuckDB 的 JDBC 驱动
+     * 对 {@code isValid} 的实现不保证触发一次真实执行，而残留的未消费结果正是要在执行路径上
+     * 才会暴露。{@code SELECT 1} 走的就是真实执行路径。</p>
+     *
+     * @return true 表示已复位并归还到空闲池；false 表示不可复用，调用方应退役该连接
+     */
+    boolean recoverConnectionAfterResidue(Connection connection) {
+        if (connection == null) {
+            return false;
+        }
+        if (!resetConnectionForReuse(connection)) {
+            return false;
+        }
+        try (java.sql.Statement probe = connection.createStatement()) {
+            probe.execute("SELECT 1");
+        } catch (SQLException | RuntimeException probeFailure) {
+            logger.warn("[SERVER][CONN POOL  ]: Pool [{}] Recovery probe failed ({}). Connection will be retired.",
+                    this.poolName, probeFailure.getMessage());
+            return false;
+        }
+        try {
+            releaseConnection(connection);
+            return true;
+        } catch (RuntimeException releaseFailure) {
+            logger.warn("[SERVER][CONN POOL  ]: Pool [{}] Recovery release failed ({}). Connection will be retired.",
+                    this.poolName, releaseFailure.getMessage());
+            return false;
+        }
+    }
     /** DuckDB 在"没有活动事务"时的固定报错：{@code cannot rollback - no transaction is active}。 */
     private static boolean isNoActiveTransaction(SQLException sqlException) {
         String message = sqlException.getMessage();
@@ -672,10 +708,11 @@ public class DBDataSourcePool {
     /**
      * 退役一条正由池句柄归还的连接：不放回空闲池，直接物理关闭。
      *
-     * <p>用于"归还时状态不可信"的情况——句柄上仍有未关闭或正在执行的语句
-     * （见 {@link PooledConnection#close()}）。这类连接若放回池里，会被下一个借用者
-     * <b>立刻</b>拿到，而语句可能仍在别的线程上执行：DuckDB 的单条连接不是线程安全的，
-     * 两个会话会在同一条连接上互相踩。退役（销毁）比复用安全，代价只是这一次连接创建。</p>
+     * <p>只用于"归还时状态不可信"的两种情况（见 {@link PooledConnection#recycle}）：
+     * ① 句柄上仍有语句<b>正在执行</b>（别的线程还卡在语句方法里）；② 语句残留的修复
+     * 尝试失败（{@link #recoverConnectionAfterResidue} 返回 false）。这类连接若放回池里，
+     * 会被下一个借用者<b>立刻</b>拿到：DuckDB 的单条连接不是线程安全的，两个会话会在同一条
+     * 连接上互相踩。退役（销毁）比复用安全，代价只是这一次连接创建。</p>
      *
      * <p>与 {@link #releaseConnection(Connection)} 互斥，由 {@link PooledConnection} 的
      * "只归还一次"原子标志保证一条连接只会走其中一条路径。本方法自己取锁，

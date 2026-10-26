@@ -33,7 +33,7 @@ import java.util.function.Function;
  *
  * <p>职责分两层：本类负责"有哪些工具/资源/服务"（注册表 + 管理面 + 私有 AI Chat），
  * {@link McpProtocol} 负责"这些内容怎么按 2026-07-28 规范落到线上"，
- * {@link McpToolkit} 负责工具的实际执行（只读判定、行数上限、语句超时），
+ * {@link McpToolkit} 负责工具的实际执行（SQL 执行与结果物化），
  * {@link McpSessionStore} 负责跨调用状态的显式 handle。</p>
  *
  * <p>传输为 Streamable HTTP 的单一 POST 端点（{@code /mcp}，兼容别名 {@code /jsonrpc}）。
@@ -76,11 +76,8 @@ public class McpServer {
     private final long toolsTtlMs = 30_000L;
     private final long resourcesTtlMs = 30_000L;
 
-    /** 只读模式下 run_sql 的行数上限与默认值。 */
+    /** 内省类工具的返回行数上限（run_sql 不设上限）。 */
     private static final int MAX_ROWS_CEILING = 5000;
-    private static final int DEFAULT_MAX_ROWS = 100;
-    private static final int STATEMENT_TIMEOUT_MS = 30_000;
-    private static final int MAX_STATEMENT_TIMEOUT_MS = 300_000;
     /** 会话 handle 的空闲回收时间。 */
     private static final long SESSION_IDLE_TIMEOUT_MS = 10 * 60 * 1000L;
     private static final int MAX_SESSIONS = 64;
@@ -121,32 +118,18 @@ public class McpServer {
         this.sessionStore = new McpSessionStore(
                 () -> openDefaultSchemaConnection(dbInstance, mcpDefaultSchema),
                 logger,
-                STATEMENT_TIMEOUT_MS,
                 SESSION_IDLE_TIMEOUT_MS,
                 MAX_SESSIONS);
-        // 只读默认：服务端本身就是 READ_ONLY 时，MCP 也必然是只读；
-        // 服务端可写时，MCP 仍然默认只读（2026 年生态门槛：只读默认、显式 opt-out）。
-        // opt-out 的粒度是会话：open_session(read_only=false) 或 run_sql 不带 handle 时的显式请求。
-        boolean serverReadOnly = "READ_ONLY".equalsIgnoreCase(
-                dbInstance.serverConfiguration.getAccess_mode());
-        boolean readOnlyDefault = true;
+        // MCP 是内部工具：不再施加只读、行数上限或语句超时；权限与
+        // access_mode 由服务器本身决定，run_sql 可以正常执行写语句。
         this.toolkit = new McpToolkit(sessionStore, new McpToolkit.Config(
-                readOnlyDefault,
-                serverReadOnly,
                 MAX_ROWS_CEILING,
-                DEFAULT_MAX_ROWS,
-                STATEMENT_TIMEOUT_MS,
-                MAX_STATEMENT_TIMEOUT_MS,
                 mcpDefaultSchema), logger);
-        if (!serverReadOnly) {
-            logger.info("[SERVER][MCP    ] MCP tools are read-only by default. "
-                    + "Write access requires an explicit session: open_session(read_only=false).");
-        }
         sessionReaper.scheduleWithFixedDelay(() -> {
             try {
                 sessionStore.reapIdle();
             } catch (Exception e) {
-                logger.warn("[SERVER][MCP] session reaper failed", e);
+                logger.warn("[SERVER][MCP        ] session reaper failed", e);
             }
         }, 60, 60, TimeUnit.SECONDS);
     }
@@ -603,14 +586,14 @@ public class McpServer {
 
     /** 给模型的服务器级说明：把"优先用已注册服务"这条策略写在握手阶段。 */
     private String instructions() {
-        return "SlackerDB exposes a DuckDB database read-only by default. "
+        return "SlackerDB exposes a DuckDB database. "
                 + "Start by calling list_services: the registered data services are parameterized SQL exposed "
                 + "as named, cached, versioned endpoints, and they are the curated queries for this database — "
                 + "prefer a matching service over writing ad-hoc SQL. "
                 + "If no service matches, inspect the schema with list_tables, then use describe_table or "
                 + "sample_rows before writing SQL. "
-                + "run_sql enforces read-only by parsing the statement; write statements are rejected. "
-                + "Rows are capped per call and every statement has a timeout. "
+                + "run_sql executes both read and write statements; permissions follow the server's access_mode. "
+                + "By default all rows are returned; pass max_rows to cap the result. "
                 + "(The same service list is also available as the resource slackerdb://services, for clients "
                 + "that consume resources.)";
     }

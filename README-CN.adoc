@@ -6,7 +6,7 @@ image::robotslacker.jpg[RobotSlacker]
 === 什么是 SlackerDB？
 
 SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。它能遵循 PostgreSQL 通讯协议，
-因此标准的 PostgreSQL 客户端无需任何专用驱动即可连接；同时它让多个客户端能够共用同一份
+因此标准的 PostgreSQL JDBC驱动无需任何专用驱动即可连接；同时它让多个客户端能够共用同一份
 DuckDB 库 —— 这是单进程的 DuckDB 做不到的。在此之上，它还提供了一条用于装载数据的批量 COPY 通道，
 以及一层注册式 SQL， 把查询变成可缓存的 HTTP 端点，。
 
@@ -14,10 +14,11 @@ DuckDB 库 —— 这是单进程的 DuckDB 做不到的。在此之上，它还
 
 ==== 能力
 
-* *PostgreSQL 通讯协议* —— 标准 PostgreSQL 客户端开箱即连：JDBC、ODBC、libpq、psql、Python，以及 DBeaver 这类数据库工具。系统目录兼容层（`pg_catalog` 仿真）保证第三方客户端的元数据查询可用。
+* *PostgreSQL 通讯协议* —— 标准 PostgreSQL 客户端开箱即连：JDBC、ODBC、libpq、psql、Python，
+* *PostgreSQL 数据字典兼容* - 对一些数据库连接工具需要访问的数据问题进行仿真处理。如 DBeaver，Postgres fdw。
 * *多会话访问* —— 一份 DuckDB 库同时服务多个并发客户端会话，具备连接池、会话级状态，SQL 在网络 I/O 线程之外执行。
 * *查询取消* —— 客户端取消与 `KILL SESSION` 能命中真正正在执行的那条语句。
-* *高性能数据导入* —— 支持 PostgreSQL `COPY … FROM STDIN` 的 CSV 与 BINARY 两种形式。
+* *高性能数据搬运* —— 支持 PostgreSQL `COPY … FROM STDIN` 与 `COPY … TO STDOUT` 的 CSV 与 BINARY 两种形式。
 * *注册式 SQL 服务* —— 在运行时把参数化 SQL 注册为具名 HTTP 端点，自带结果缓存、服务版本与按服务设定的搜索路径。
 * *服务器管理接口* —— 管理端口提供状态与指标、数据库备份、日志查看与文件上传下载。
 * *WebSocket 异步 SQL* —— 异步执行 SQL 并分页取回结果，适用于单次请求装不下或太慢的查询。
@@ -27,20 +28,25 @@ DuckDB 库 —— 这是单进程的 DuckDB 做不到的。在此之上，它还
 
 ==== 使用场景
 
-* *分析型应用后端* —— 作为期待 PostgreSQL 连接的 BI 工具、仪表盘和报表应用的数据引擎。
+* *分析型应用后端* —— 作为支持 PostgreSQL 连接的 BI 工具、仪表盘和报表应用的数据引擎。
 * *共享内部数据集* —— 把已有的 `.duckdb` 文件装载一次，让多个团队与工具并发查询，无需搬迁或更换平台。
 * *本地化数据处理* —— 在单机上完成批量导入、变换与查询，不必再起一套独立的数据库系统。
 * *Java 内嵌服务* —— 在 Java 应用内部提供一个可联网的分析型存储，并可用插件框架提供应用专属端点。
 
-SlackerDB 面向的是这样一类团队：想要 DuckDB 的分析性能，但需要它能通过网络访问、
-能被现有的 PostgreSQL 工具链使用、并且能在多个并发客户端之间共享。
+SlackerDB 面向的是这样一类团队：想要 DuckDB 的分析性能，但需要它能通过网络访问、不想让分析的过程成为黑箱，
+用 PostgreSQL 工具链就能直接使用、并且能在多个并发客户端之间共享。
 
 === 使用方式
 
 ==== 从源码构建：
 
 ....
-    # 确保已准备好 JDK17 和 maven 3.6+。
+    构建前请确认当前机器上已经存在如下必要的文件：
+    # 1：符合版本要求的JDK （JDK21）
+    # 2：符合版本要求的Maven （Maven 3.9.16）
+    # 3：符合版本要求Node （Node v24）
+    # 上述文件都应该存在于PATH内，可以直接被访问。
+
     # 下载源代码
     git clone ...
     # 编译
@@ -48,55 +54,76 @@ SlackerDB 面向的是这样一类团队：想要 DuckDB 的分析性能，但�
     mvn clean compile package -Dmaven.test.skip=true
 
     # 所有编译结果都会放在 dist 目录中：
-    #    slackerdb-dist_0.2.1.zip
+    #    slackerdb-dist_0.2.2.zip
     #        发布包 —— standalone 形式的 Jar 包、插件 Jar 包、
     #        默认配置文件以及启停脚本。
-    #    slackerdb-src_0.2.1.zip
+    #    slackerdb-src_0.2.2.zip
     #        源码包 —— 完整的多模块 Maven 工程，内容等同于一次浅克隆
     #        （不含 git 历史，也不含任何编译产物）。解开后在该目录里
     #        执行同样的 maven 命令，即可从源码重新构建全部产物。
+
+    # 默认不构建 PDF；需要生成 PDF 并放入 dist/ 和发布包时加 -Ppdf：
+    #    mvn -Ppdf clean compile package -Dmaven.test.skip=true
 ....
 
-TIP: 在 zh-CN 的 Windows 上用 **JDK 8~17** 构建时，建议加上
-`MAVEN_OPTS=-Dfile.encoding=UTF-8`（JDK 18+ 默认就是 UTF-8，无需设置）。
-否则文档 PDF 阶段会多出一行 `error reading or parsing <M2_HOME>/conf/settings.xml`：
-那是 JRuby 里 jar-dependencies 按 GBK 读 UTF-8 的 Maven 配置导致的告警，
-**不影响产物**（PDF 照常生成），只是看着像构建错误。
+==== 如何在离线环境上进行开发
+
+在联网机器上安装一次插件，然后生成 `offline/javarepo` 和 `offline/npmrepo`：
+
+....
+    mvn -f offline-package-maven-plugin/pom.xml install
+    mvn -Poffline-package validate
+....
+
+命令同时生成 `offline/javarepo.zip` 和 `offline/npmrepo.zip`，并删除未压缩的
+`javarepo/`、`npmrepo/` 目录。把这两个 zip 拷到离线机器，解压到同一目录即可。
+
+构建前请确认当前机器上已经安装了必要的JDK，Maven，Node，并且文件都能够被通过PATH的方式正常访问。
+
+离线机上先用包内的 Maven 仓库安装插件（先把 `javarepo.zip`、`npmrepo.zip`
+解压到 `<offline>`）：
+
+执行如下命令完成构建：
+....
+    mvn -o -Dmaven.repo.local.tail=<offline>/javarepo clean package
+
+    NPM_CONFIG_CACHE=<offline>/npmrepo NPM_CONFIG_OFFLINE=true mvn -o -Dmaven.repo.local=/tmp/m2 -Dmaven.repo.local.tail=<offline>/javarepo package
+....
 
 ==== 启动数据库服务器
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar start
+    java -jar dbserver/target/slackerdb-dbserver-0.2.2-standalone.jar start
 ....
 
 ==== 停止数据库服务器
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar stop
+    java -jar dbserver/target/slackerdb-dbserver-0.2.2-standalone.jar stop
 ....
 
 ==== 查看数据库状态
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar status
+    java -jar dbserver/target/slackerdb-dbserver-0.2.2-standalone.jar status
 ....
 
 ==== 启动数据库代理
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.2.1-standalone.jar start
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.2-standalone.jar start
 ....
 
 ==== 停止数据库代理
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.2.1-standalone.jar stop
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.2-standalone.jar stop
 ....
 
 ==== 查看代理状态
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.2.1-standalone.jar status
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.2-standalone.jar status
 ....
 
 ==== 服务器配置文件模板
@@ -150,7 +177,7 @@ port=
 # 默认：false
 data_encrypt=false
 
-# 数据服务 API 端口
+# 管理 API 端口
 #  0 = 随机分配端口
 # -1 = 禁用接口（默认）
 port_x=
@@ -317,7 +344,7 @@ daemon=
 # 默认：0（随机分配端口）
 port=0
 
-# 数据服务 API 端口
+# 管理 API 端口
 #  0 = 随机分配端口
 # -1 = 禁用接口（默认）
 port_x=
@@ -327,10 +354,8 @@ bind=0.0.0.0
 
 # 组播服务发现：从哪个组播组接收后端数据库的通告。
 # 格式：<组IP>:<端口>（IPv6 组需加方括号：[ff02::1]:46666）
-# 没有默认值：留空即不启用发现，此时后端只能通过遗留的 REGISTER 命令登记（已弃用）。
-# 必须与 dbserver 的 advertise_address **逐字一致**。两者不一致时：什么都发现不了，
-# 也不会报任何错——后端一直不出现就先查这个值。
-# 示例：239.255.66.66:46666
+# 没有默认值：留空即不启用发现
+# 必须与 dbserver 的 advertise_address **逐字一致**
 listener_address=
 
 # 客户端连接空闲超时（秒）
@@ -356,12 +381,10 @@ UDP组播发现：dbserver 周期性向一个组播组报告"我在这儿"，代
 [cols="1,2",options="header"]
 |===
 | 新 | 说明
-| dbserver `advertise_address=<组IP>:<端口>` | 语义变了：从"指向一台代理的单播地址"变成"一个网段内的组播组"
+| dbserver `advertise_address=<组IP>:<端口>` | 一个网段内的组播组
 | dbserver `advertise_nic=<网卡名或本机IP>` | 留空自动选第一块可用网卡
 | dbproxy `listener_address=<组IP>:<端口>` | 必须与 dbserver 的 `advertise_address` 逐字一致
 |===
-
-**没有默认值**：两端都不配置就是不启用，
 
 ==== JDBC 支持
 
@@ -372,6 +395,8 @@ SlackerDB 提供完整的 PostgreSQL 线路协议兼容性，允许你使用标�
 
 *SlackerDB JDBC 驱动*
 为了更好的集成和更多特性，请使用原生 SlackerDB JDBC 驱动（`org.slackerdb.jdbc.Driver`）。连接 URL 格式为 `jdbc:slackerdb://host:port/database`。该驱动包含在发行包中，推荐用于新应用。
+
+原生驱动 `slackerdb-dbdriver` 保持 **Java 17 字节码**，JDK 17 应用可以直接加载；服务端、代理和 dbcli 等其余产物要求 Java 21。
 
 *连接示例*
 
@@ -390,13 +415,13 @@ conn.setAutoCommit(false);
 *IDE 集成*
 
 你可以从数据库工具 DBeaver 连接到 SlackerDB。（其他工具我们尚未验证。） +
+
 *使用 PostgreSQL 驱动* +
 下载 PostgreSQL 服务器，然后像连接 pg 一样连接数据库。
 
 *使用自定义驱动* +
 由于原生 Postgres 客户端经常使用一些 DuckDB 并不具备的数据字典信息， +
 你可以使用以下设置创建一个通用 JDBC 驱动： +
-
 ....
 Dbeaver:
 Database -> Driver Manager -> New
@@ -404,8 +429,6 @@ Database -> Driver Manager -> New
    Class name:    org.slackerdb.jdbc.Driver
    URL template:  jdbc:slackerdb://{host}:{port}/[{database}]
 ....
-
-
 
 *ODBC 与 Python*
 SlackerDB 还通过相同的 PostgreSQL 线路协议支持 ODBC 和 Python 连接。设置细节请参考相应客户端的文档。
@@ -428,7 +451,7 @@ socket=/tmp/.s.slackerdb.4309
 或者使用 `--socket` 命令行参数：
 
 ....
-java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar start --socket /tmp/.s.slackerdb.4309
+java -jar dbserver/target/slackerdb-dbserver-0.2.2-standalone.jar start --socket /tmp/.s.slackerdb.4309
 ....
 
 配置了 `socket` 后，服务器会同时监听 TCP 端口和 UDS 套接字。客户端可以通过任一方式连接。
@@ -451,7 +474,7 @@ Connection conn = DriverManager.getConnection(url, props);
 conn.setAutoCommit(false);
 ....
 
-`UnixDomainSocketFactory` 类包含在 SlackerDB JDBC 驱动中，它使用 Java 内置的 `UnixDomainSocketAddress` API（Java 16+）来建立 UDS 连接。
+`UnixDomainSocketFactory` 类包含在 SlackerDB JDBC 驱动中，它使用 Java 内置的 `UnixDomainSocketAddress` API来建立 UDS 连接。
 
 要点：
 * `socketFactory` 参数必须设置为 `org.slackerdb.jdbc.UnixDomainSocketFactory`
@@ -459,12 +482,82 @@ conn.setAutoCommit(false);
 * 使用 `jdbc:slackerdb://` 协议（而不是 `jdbc:postgresql://`）
 * 使用 UDS 时 URL 中的主机部分会被忽略；请使用 `///database` 格式
 
-==== 基础服务
-以下 HTTP 端点提供基础的管理功能，例如备份、文件上传/下载、日志查看和状态监控。当数据服务 API 端口（port_x）启用时，这些端点可用。
+==== 例子一：标准 JDBC
+
+以下示例使用发行包自带的 SlackerDB JDBC 驱动（`org.slackerdb.jdbc.Driver`）。
+如果使用标准 PostgreSQL JDBC 驱动，只需把 URL 改成 `jdbc:postgresql://...`，并把
+`CopyManager` / `BaseConnection` 的包名从 `org.slackerdb.jdbc.*` 换成 `org.postgresql.*`。
+
+===== 连接、建表、插入、查询
+
+[source,java]
+----
+import java.sql.*;
+
+public class JdbcDemo {
+    public static void main(String[] args) throws Exception {
+        Class.forName("org.slackerdb.jdbc.Driver");
+        String url = "jdbc:slackerdb://127.0.0.1:3175/db1";
+
+        try (Connection conn = DriverManager.getConnection(url, "main", "");
+             Statement stmt = conn.createStatement()) {
+            stmt.execute("CREATE TABLE IF NOT EXISTS demo(id INTEGER, name VARCHAR)");
+            stmt.executeUpdate("INSERT INTO demo VALUES (1, 'Alice'), (2, 'Bob')");
+
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT id, name FROM demo ORDER BY id")) {
+                while (rs.next()) {
+                    System.out.println(rs.getInt("id") + "\t" + rs.getString("name"));
+                }
+            }
+        }
+    }
+}
+----
+
+===== 使用 CopyManager 导入、导出
+
+[source,java]
+----
+import java.io.StringReader;
+import java.io.StringWriter;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import org.slackerdb.jdbc.copy.CopyManager;
+import org.slackerdb.jdbc.core.BaseConnection;
+
+public class CopyDemo {
+    public static void main(String[] args) throws Exception {
+        Class.forName("org.slackerdb.jdbc.Driver");
+        String url = "jdbc:slackerdb://127.0.0.1:3175/db1";
+
+        try (Connection conn = DriverManager.getConnection(url, "main", "")) {
+            CopyManager copy = new CopyManager((BaseConnection) conn);
+
+            long imported = copy.copyIn(
+                    "COPY demo (id, name) FROM STDIN WITH (FORMAT csv)",
+                    new StringReader("3,Carol\n4,Dave\n"));
+
+            StringWriter out = new StringWriter();
+            long exported = copy.copyOut(
+                    "COPY demo TO STDOUT WITH (FORMAT csv)", out);
+
+            System.out.println("imported=" + imported + ", exported=" + exported);
+            System.out.println(out);
+        }
+    }
+}
+----
+
+==== 性能调整
+* 在能满足要求的情况下，尽可能的使用COPY来导出，导入数据，其处理速度远超过标准SELECT和INSERT
+
+==== HTTP管理服务
+以下 HTTP 端点提供基础的管理功能，例如备份、文件上传/下载、日志查看和状态监控。当管理端口（port_x）启用时，这些端点可用。
 
 ===== /backup (POST)
 
-执行数据库备份。备份文件保存在服务器工作目录的 `backup/` 子目录中，文件名为 `<数据库名>_<backupTag>.db`。`backupTag` 不能为空，也不能包含路径符号或点号（`<>:"|?*\/.`）。
+执行同步数据库备份。备份文件保存在服务器工作目录的 `backup/` 子目录中，文件名为 `<backupTag>.db`。`backupTag` 不能为空，也不能包含路径符号或点号（`<>:"|?*\/.`）。
 
 .请求体（JSON）：
 [source,json]
@@ -479,16 +572,35 @@ conn.setAutoCommit(false);
 ----
 {
   "retCode": 0,
-  "retMsg": "Successful. Backup file has placed to [C:\\Work\\slackerdb\\backup\\mydb_mybackup.db]."
+  "retMsg": "Successful."
 }
 ----
 
-===== /download (GET)
+===== /backups (POST/GET)
 
-从服务器的 `./downloads/` 目录下载文件。
+异步备份任务，适用于需要查看进度并下载结果的调用方。
+
+* `POST /backups`，请求体 `{"backupTag":"mybackup"}`，返回 `202` 与 `{"id":"...","status":"RUNNING"}`。
+* `GET /backups` 列出已知任务。
+* `GET /backups/{id}` 返回任务状态（`RUNNING`、`COMPLETED`、`FAILED`）。
+* `GET /backups/{id}/download` 下载已完成的备份文件。
+
+===== /logfile (GET)
+
+以纯文本返回配置的服务端日志。
 
 .查询参数：
-* `filename`（必填）—— 相对 `./downloads/` 目录的文件路径。
+* `lines`（可选）—— 只返回最后 N 行（最大 10000）。不传则返回整个文件。
+
+.示例：
+ GET /logfile?lines=500
+
+===== /download (GET)
+
+从服务器的目录下载文件。
+
+.查询参数：
+* `filename`（必填）—— 目录的文件路径。
 
 .示例：
  GET /download?filename=logs/slackerdb.log
@@ -514,7 +626,7 @@ curl -X POST -F "file=@local.txt" "http://localhost:8080/upload?filename=uploads
 .响应：
 [source,json]
 ----
-"uploaded: C:\\Work\\slackerdb\\uploads\\remote.txt"
+"uploaded: uploads/remote.txt"
 ----
 
 ===== /viewLog (GET)
@@ -550,7 +662,7 @@ curl -X POST -F "file=@local.txt" "http://localhost:8080/upload?filename=uploads
 {
   "server": {
     "status": "RUNNING",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "build": "2025-12-04 10:00:00.000 UTC",
     "pid": 12345,
     "now": "2025-12-04 15:20:00",
@@ -934,8 +1046,7 @@ END LOOP outer_loop;
 
 * 数据服务依赖 port_x 工作，请确保你已在
 服务器配置中或通过命令参数启用它。需要特别注意的是，
-我们并未考虑数据安全性。这意味着数据服务必须在
-可信环境中工作。
+我们并未考虑数据安全性。这意味着数据服务必须在**可信环境**中工作。
 
 ===== 用户登录
 
@@ -1119,7 +1230,7 @@ END LOOP outer_loop;
 
 |category |服务分类（可选，用于按分类分组保存；不能包含 `\ / : * ? " < > \|` 等字符）
 
-|snapshotLimit |查询结果缓存时长（可选），例如 `3 hours` / `30 minutes` / `45 seconds`
+|snapshotLimit |查询结果缓存时长（可选），例如 `3 hours` / `30 minutes` / `45 seconds`；默认空（0），即不缓存
 
 |parameters |参数默认值列表（可选）：JSON **字符串**形式的数组，元素形如 `{"name":"var1","defaultValue":"..."}`；当查询 API 未提供该参数时使用这里的默认值。
 |===
@@ -1229,7 +1340,7 @@ snapshotLimit 格式：3 hours / 30 minutes / 45 seconds
       "sql": "SELECT 1",
       "description": "NO DESCRIPTION.",
       "serviceType": "GET",
-      "snapshotLimit": "",
+      "snapshotLimit": "0 seconds",
       "parameter": {}
     }
   ]
@@ -1376,8 +1487,8 @@ SlackerDB 在管理端口上运行一个 Model Context Protocol（模型上下�
 `run_sql`，即可让临时表、事务与会话设置在多次调用之间存活。会话空闲后过期，也可由
 `close_session` 关闭。
 |`close_session` |关闭会话并立即释放其连接。
-|`run_sql` |执行只读 SQL，最多返回 `max_rows` 行，并通过 `truncated` 报告是否被截断。
-结果里还带 `read_only`、`statement_type`（`query`/`update`）与 `elapsed_ms`。
+|`run_sql` |执行 SQL（默认返回全部行），可通过 `max_rows` 限制返回行数；结果里还带
+`read_only`、`statement_type`（`query`/`update`）与 `elapsed_ms`。
 |`list_tables` |以 `tables` 数组返回表与视图，每项为 `{schema, name, type}`，可按 schema 过滤。
 |`describe_table` |某个表或视图的列定义（名称、类型、是否可空、默认值），以 `columns` 结果网格返回，
 并带上解析后的 `schema`/`table`。
@@ -1390,16 +1501,14 @@ SlackerDB 在管理端口上运行一个 Model Context Protocol（模型上下�
 由于协议级会话已不存在，跨调用状态按规范规定的方式表达：作为普通工具参数传递的**显式 handle**
 （规范自己的指导里举的动机案例就是"一个数据库事务"）。
 
-===== 强制策略：默认只读、行数上限、语句超时
+===== 执行策略
 
-* **默认只读。** 写语句在**解析层**被拒绝，而不是靠把查询包进只读事务——`BEGIN TRANSACTION READ ONLY`
-  可以被 `WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x` 这类语句轻易绕过，所以判定发生在语句
-  进入引擎之前，并且默认拒绝。写权限需要显式开启会话：`open_session(read_only=false)`。
-  当服务器本身以 `access_mode=READ_ONLY` 运行时，该 opt-out 会被拒绝，因此 MCP 不会成为绕过
-  `access_mode` 的旁路。
-* **行数上限。** `run_sql` 最多返回 `max_rows` 行（默认 100，上限 5000），并报告 `truncated`。
-* **语句超时。** 每条语句都在超时约束下运行（默认 30 秒，上限 300 秒），在应用层强制，
-  因为 DuckDB 没有 per-query 超时。
+* **权限跟随服务器。** MCP 是内部工具，不再额外施加只读限制；`run_sql` 可以执行读写语句，
+  最终权限由服务器自身的 `access_mode` 决定。`open_session(read_only)` 仅为兼容旧客户端保留，
+  已不再生效。
+* **返回行数。** `run_sql` 默认返回全部行；可用 `max_rows` 限制返回行数，`0` 或负数表示不限制。
+  `truncated` 仅在显式设置正数上限并确实被截断时为 `true`。
+* **无语句超时。** MCP 不再施加应用层语句超时。
 * **与其它入口同一条执行路径。** 工具调用从 dbserver 的普通连接池取连接，
   因此连接数上限与会话处理对 agent 的作用与对其它客户端完全一致。
 
@@ -1431,7 +1540,7 @@ mcp_config=conf/mcp_config_example.service
 ----
 {
   "name": "query",
-  "description": "Execute a read-only SQL query",
+  "description": "Execute SQL",
   "handler": "builtin:run_sql"
 }
 ----
@@ -1464,7 +1573,7 @@ schema（含 `outputSchema`），声明因此不会与实现漂移。
 
 [source,shell]
 ----
-java -jar slackerdb-dbserver-0.2.1-standalone.jar --conf conf/dbserver.conf \
+java -jar slackerdb-dbserver-0.2.2-standalone.jar --conf conf/dbserver.conf \
   --port 15432 --portx 18080 start
 ----
 
@@ -1503,16 +1612,9 @@ java -jar slackerdb-dbserver-0.2.1-standalone.jar --conf conf/dbserver.conf \
 模型会调用 `+mcp__slacker__run_sql+`，拿到 `rows = &#91;[42]]`。不点名也能用
 （"用 SlackerDB 的 MCP 工具查一下 SELECT 42 AS answer"），但把工具名写出来命中率最稳。
 
-两点使用提醒：
-
-* **先起服务端，再起客户端。** 客户端只在启动时连接一次：服务端缺席会让它重试若干次后放弃并注销全部
-  工具，这时必须重启客户端才能恢复（只重启服务端不够）。
-* **资源不会随这类桥接进入模型上下文。** 只承载 tools 的客户端看不到 `slackerdb://` 资源，
-  资源本身仍可通过 HTTP 读取。
-
 ==== MCP 工具管理
 
-本节中的端点用于在运行时注册和管理 MCP 工具定义。它们是供脚本与 Web 控制台使用的管理操作，
+本节中的端点用于在运行时注册和管理 MCP 工具定义。它们是供脚本与管理客户端使用的管理操作，
 不属于 *MCP 服务器* 所描述的 MCP 协议面。
 
 ===== registerMCPTool
@@ -2028,7 +2130,7 @@ SQL REPL 服务器提供了一个异步 WebSocket 接口，用于执行 SQL 查�
 它适用于希望避免阻塞客户端的长时间运行查询，并使用双向 WebSocket 通道，
 使客户端能够取消正在执行的语句并分页取回结果。
 
-要使用它，请确保在服务器配置中启用了数据服务 API 端口（port_x）。
+要使用它，请确保在服务器配置中启用了管理端口（port_x）。
 
 ===== WebSocket 端点
 
@@ -2066,8 +2168,8 @@ SQL REPL 服务器提供了一个异步 WebSocket 接口，用于执行 SQL 查�
 `Field 'maxRows' must be a positive number`、`Invalid session`、
 `Invalid taskId`、`Another SQL is already running`。
 
-`maxRows` 必须为正数：旧实现接受 `0` 并返回"空页 + `hasMore = true`"，
-客户端会永远停在一个不会前进的分页上。
+`maxRows` 是 API 单次返回的行数（分页大小），不是数据库查询上限，必须为正数。
+旧实现接受 `0` 并返回"空页 + `hasMore = true`"，客户端会永远停在一个不会前进的分页上。
 
 ===== 会话管理
 
@@ -2344,47 +2446,6 @@ ws.send(JSON.stringify({
 
 *注意：* 上述示例假定你以异步方式处理收到的消息。在真实客户端中，你应按 `id` 匹配响应。
 
-==== 基于 Web 的 SQL 控制台
-
-image::imgs/console.png[Console]
-
-*注意：Web 控制台**并非生产就绪的功能**。它是一个演示工具，旨在帮助你以可视化、可交互的方式理解和验证后端服务（数据服务、MCP 工具和 MCP 资源）。*
-
-SlackerDB 包含一个基于 Web 的 SQL 控制台，提供交互式界面，可直接从浏览器执行 SQL 查询、查看结果并执行管理任务。除了核心 SQL REPL 之外，控制台还提供用于管理 **数据服务**、**MCP 工具** 和 **MCP 资源** 的专用面板 —— 这三者是 SlackerDB 生态中关键的扩展机制。
-
-*访问：* 在启用数据服务 API 端口（`port_x`）的情况下启动服务器后，在现代浏览器中打开 `http://<server>:<port_x>/console.html`。
-
-*功能：*
-
-* **交互式 SQL Shell：** 在提示符处输入 SQL 语句并按回车执行。可使用上/下方向键访问命令历史。
-* **WebSocket 连接：** 控制台会自动通过 WebSocket（`/sql/ws`）连接到 SQL REPL 服务器并管理会话。
-* **表格化结果：** 查询结果以格式化表格显示，包含列名和类型。
-* **侧边栏工具面板：** 提供以下功能的快速访问：
-** *服务器状态* —— 展示服务器指标、数据库参数、使用统计、扩展和活跃会话的详细弹窗。
-** *备份数据库* —— 创建备份并可选下载生成文件的弹窗。
-** *日志查看器* —— 实时查看服务器日志的弹窗。
-* **连接指示器：** 以可视化方式显示控制台是否已连接到服务器。
-* **异步执行：** 长时间运行的查询会异步执行；结果可以分页获取。
-* **数据服务管理面板：** 注册、列出、加载、保存和注销数据服务。你还可以将服务定义下载为 JSON 文件（下载时会通过浏览器的文件选择对话框提示你选择保存位置）。
-* **MCP 工具管理面板：** 列出、加载、保存和注销 MCP（Model Context Protocol）工具。将工具定义下载为 JSON（带文件选择对话框）。
-* **MCP 资源管理面板：** 列出、加载、保存和注销 MCP 资源。将资源定义下载为 JSON（带文件选择对话框）。
-
-*用法：*
-
-1. 确保服务器在配置了 `port_x` 的情况下运行（例如 `port_x=8080`）。
-2. 访问 `http://localhost:8080/console.html`。
-3. 控制台会尝试自动连接。连接成功后，你就可以开始输入 SQL。
-4. 使用左侧边栏按钮在 **控制台**、**数据服务**、**MCP 工具** 和 **MCP 资源** 视图之间切换。
-5. 在每个管理面板中，你可以：
-   * 刷新已注册条目的列表。
-   * 通过复选框选择条目并执行批量操作（注销、下载）。
-   * 从 JSON 文件加载定义。
-   * 将定义保存到服务器的配置目录。
-   * 将定义下载为 JSON 文件 —— 浏览器会弹出文件保存对话框，让你选择位置和文件名。
-6. 使用右侧边栏按钮打开状态、备份或日志弹窗。
-
-控制台无需额外安装。它面向可信环境中的开发、测试和管理用途，主要用于演示和试用后端的数据服务、MCP 工具和 MCP 资源子系统。
-
 ==== 在你的代码中嵌入数据库服务器
 
 ....
@@ -2434,7 +2495,7 @@ SlackerDB 包含一个基于 Web 的 SQL 控制台，提供交互式界面，可
 
 === dbcli（命令行客户端）
 
-发行包里还带一个命令行客户端 `dbcli`（Java 17+）：交互式连库写 SQL，或在 CI/批处理里跑脚本并校验结果。
+发行包里还带一个命令行客户端 `dbcli`（Java 21+）：交互式连库写 SQL，或在 CI/批处理里跑脚本并校验结果。
 它就是发行包里的 `jlib/slackerdb-dbcli-<版本>-standalone.jar`，由 `bin/dbcli.bat` / `bin/dbcli.sh` 启动。
 
 [cols="1,3",options="header"]
@@ -2454,8 +2515,9 @@ dbcli --execute script.sql                      # 跑脚本
 dbcli --execute script.sql --logfile run.log --ref golden.ref   # 跑脚本并与参考文件比对
 ....
 
-完整用法见 `dbcli/README-CN.adoc`（English: `dbcli/README.adoc`），模块简介与构建方式见 `docs/dbcli.md`。
+完整用法见 `dbcli/README-CN.adoc`（English: `dbcli/README.adoc`）。
 
+image::img/dbcli-select42.png[dbcli 连接成功后执行 select 42]
 === 已知问题
 
 ==== 1. 用户与密码授权
@@ -2470,9 +2532,16 @@ int、number、double、varchar…… 复杂类型要么仍在
 开发中，要么无法在 PG 协议中表示（blob、list、map……），
 它们会以显式错误被拒绝，而不是被静默转换。
 
+上游限制（基于 `duckdb_jdbc` 2.0.0.0；DuckDB 升级后回看）：
+
+* `COPY ... FROM STDIN` 写入 `BIGNUM`：DuckDB JDBC appender 没有 BIGNUM 的 C API 类型（`unsupported C API type: 35`），SlackerDB 当前无法支持。
+* `COPY ... FROM STDIN` 写入 `BIT`、`INTERVAL`、`TIME_NS`、`VARIANT`：同样缺少 appender 类型，只能拒绝。
+* `COPY ... TO STDOUT (FORMAT binary)` 导出 `INTERVAL`、`BIT`、`TIME_NS`、`BIGNUM`、`VARIANT`，以及嵌套的 `LIST`/`ARRAY`/`STRUCT`/`MAP`/`UNION`：这些类型在编码器里没有 PostgreSQL 的二进制表示，会在发出任何数据之前以 `0A000` 拒绝；这类查询请改用 CSV 或 text 格式。
+* 引擎错误的 SQLSTATE：`duckdb_jdbc` 返回 `null`，服务端继续按错误消息自行映射。
+
 ==== 3. postgresql-fdw
 
-SlackerDB 说 PostgreSQL 线协议，因此可以用 `postgres_fdw` 把 SlackDB 实例挂成外部服务器。
+SlackerDB 支持 PostgreSQL 线协议，因此可以用 `postgres_fdw` 把 SlackDB 实例挂成外部服务器。
 协议层已经能承接 fdw 的会话与语句流量，**包括它读取数据所依赖的游标通道**。
 
 PostgreSQL 17 的 `postgres_fdw` 实际会发的语句，以及当前状态：
@@ -2511,7 +2580,7 @@ PostgreSQL 17 的 `postgres_fdw` 实际会发的语句，以及当前状态：
 *尚未实现*
 
 * `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT`：DuckDB 没有子事务，
-  因此它们是**可预期的报错**而不是静默降级 —— 事务块外 `25P01`，事务块内 `0A000`（并说明原因）。
+  因此它们是**可预期的报错**。
   特别是 `ROLLBACK TO SAVEPOINT` **不会**把整个事务回滚掉。
   对 fdw 的后果：只要远端语句处于本地子事务里，`postgres_fdw` 就会发 `SAVEPOINT sN`，
   因此**子事务里不能用外部表**（显式 `SAVEPOINT`，或 PL/pgSQL 的 `EXCEPTION` 块），
@@ -2520,7 +2589,7 @@ PostgreSQL 17 的 `postgres_fdw` 实际会发的语句，以及当前状态：
 * `SELECT ... FOR UPDATE` / `FOR SHARE`：`postgres_fdw` 会把锁子句下推，而 DuckDB 直接拒绝
   （`Parser Error: SELECT locking clause is not supported!`），所以这类查询不可用。
   `ctid` 只有在外部表显式声明 `OPTIONS (rowid 'ctid')` 时才有意义；普通 `UPDATE`/`DELETE`
-  **不需要远端主键**就能工作 —— 已实测（包括远端存在重复行的表：整条谓词被下推，没用到 `ctid`）。
+  **不需要远端主键**就能工作 —— （fdw不需要事务编号 `ctid`）。
 * `SELECT ... FOR UPDATE` / `FOR SHARE`（DuckDB 没有行锁）以及
   `UPDATE`/`DELETE ... WHERE ctid = $1`（DuckDB 没有 `ctid`）。
 * `IMPORT FOREIGN SCHEMA` 只有在 `import_collate 'false'` 时可用
@@ -2551,13 +2620,6 @@ IMPORT FOREIGN SCHEMA "main" FROM SERVER sdb INTO public
   （PostgreSQL 会直接拒绝：`invalid option "import_collate"`）。
   `use_remote_estimate` 保持关闭：打开后 `postgres_fdw` 会去解析 PostgreSQL 的
   `EXPLAIN (cost=... rows=... width=...)` 文本，而 DuckDB 不产出这种格式。
-
-*已端到端实测*：PostgreSQL 18.6 + `postgres_fdw` 1.2，同时挂两个 SlackDB 实例
-（本地一条查询 JOIN 了两个实例上的外部表），并跑通 `INSERT`/`UPDATE`/`DELETE ... RETURNING`、
-`EXPLAIN (VERBOSE)` 与 `IMPORT FOREIGN SCHEMA`。SlackDB 自己的 SQL 历史里能看到
-`postgres_fdw` 实际发的语句序列：`SET search_path = pg_catalog` …… 
-`START TRANSACTION ISOLATION LEVEL REPEATABLE READ`、`DECLARE c1 CURSOR FOR SELECT …`、
-`FETCH 100 FROM c1`、`CLOSE c1`、`COMMIT TRANSACTION`。
 
 === 插件系统
 
@@ -2598,7 +2660,7 @@ SlackerDB 提供基于 PF4J 的插件框架，允许开发者扩展数据库服�
 <dependency>
     <groupId>org.slackerdb</groupId>
     <artifactId>slackerdb-plugin</artifactId>
-    <version>0.2.1</version>
+    <version>0.2.2</version>
     <scope>provided</scope>
 </dependency>
 ----
@@ -2798,7 +2860,7 @@ cd plugin-example
 mvn clean package
 ----
 +
-生成的 JAR 文件（`plugin‑example‑0.2.1.jar`）会放在 `target` 目录中。
+生成的 JAR 文件（`plugin‑example‑0.2.2.jar`）会放在 `target` 目录中。
 
 2. *部署到 SlackerDB 服务器*：
    - 将 JAR 文件复制到服务器的插件目录（通过 `plugins_dir` 参数配置）。
@@ -2833,7 +2895,7 @@ mvn compile exec:java -Dexec.mainClass="org.slackerdb.pluginExample.SimplePlugin
 ----
 plugin.id=plugin-example
 plugin.class=org.slackerdb.pluginExample.PluginExample
-plugin.version=0.2.1
+plugin.version=0.2.2
 plugin.requires=*
 ----
 
@@ -2936,7 +2998,9 @@ SlackerDB 可以加载一个作业调度插件，用于**按项目模板定时�
 
 ===== 快速开始
 
-. *准备 HOP*：插件包内不含 HOP，需要单独准备一份 HOP 发行版，记下 `hop-run.bat`/`hop-run.sh` 的路径。
+. *准备 HOP*：插件包内不含 HOP，需要单独准备一份 HOP 2.19+ 发行版，记下 `hop-run.bat`/`hop-run.sh` 的路径。
+  HOP 2.19 要求 JDK 21。`plugin-scheduler.hop.javaHome` 可留空；留空时使用 dbserver 当前运行的
+  JDK（`java.home`），通常就是启动服务端的那个 21。需要单独指定时再填写绝对路径。
 . *部署插件*：把插件 JAR 放进插件目录，并在服务器配置文件中启用：
 +
 [source,properties]
@@ -2945,7 +3009,8 @@ plugins_dir=plugins
 plugin-scheduler.home=data/scheduler
 plugin-scheduler.projectHome=data/scheduler/projects
 plugin-scheduler.hop.runScript=D:/hop/hop-run.bat
-plugin-scheduler.hop.javaHome=D:/jdk17
+# 可选；留空（或删除本行）表示使用当前 JDK
+# plugin-scheduler.hop.javaHome=D:/jdk21
 ----
 . *准备模板*：在 `data/scheduler/projects/` 下建一个以模板名命名的目录（见下一节）。
 . *创建并启动实例*（`<管理端口>` 为服务器管理端口）：
@@ -2955,7 +3020,7 @@ plugin-scheduler.hop.javaHome=D:/jdk17
 # 创建实例：projectType 就是模板目录名
 curl -X POST http://127.0.0.1:<管理端口>/scheduler/run/create \
      -H "Content-Type: application/json" \
-     -d '{"projectType":"jtls"}'
+     -d '{"projectType":"proj1"}'
 
 # 启动（按模板顺序编排：先跑一次性任务，成功后激活周期任务）
 curl -X POST http://127.0.0.1:<管理端口>/scheduler/run/<runId>/start
@@ -2977,7 +3042,7 @@ data/scheduler/projects/                 ← 模板根（projectHome）
 ├── default/                             ← HOP 的"父项目"（可选，供多个模板共用公共配置）
 │   ├── project-config.json
 │   └── metadata/
-└── jtls/                                ← 模板名，同时就是 HOP 工程目录
+└── proj1/                                ← 模板名，同时就是 HOP 工程目录
     ├── conf/
     │   ├── defaultSchedulerTask.json     ← 任务清单
     │   └── variables.properties          ← 变量（可选，见下一节）
@@ -2993,8 +3058,8 @@ data/scheduler/projects/                 ← 模板根（projectHome）
 ----
 {
   "groups": ["SETUP_GROUP", "MAIN_GROUP"],
-  "演习初始化": {
-    "taskScript": "演习初始化.hwf",
+  "初始化": {
+    "taskScript": "初始化.hwf",
     "taskRunPolicy": "RUN_ONCE",
     "taskTimeout": 600,
     "taskGroup": "SETUP_GROUP",
@@ -3047,7 +3112,7 @@ HOP 工作流里的 `${XXX}` 与 HOP 连接元数据（`metadata/rdbms/*.json` �
 都由这里取值。可以写在四个地方，后面的覆盖前面的：
 
 . `data/scheduler/variables.properties`（全局）
-. 模板目录 `jtls/conf/variables.properties`
+. 模板目录 `proj1/conf/variables.properties`
 . 创建实例时请求体的 `configJson`
 . 任务清单里该任务的 `variables`
 
@@ -3059,7 +3124,7 @@ DB_USER=main
 DB_PASSWORD=******
 ----
 
-变量值可以引用其它变量，例如 `EXERCISE_CODE=${RUN_ID}`（引用 `RUN_ID`、`PROJECT_TYPE`、`TASK_NAME` 等内置变量）。
+变量值可以引用其它变量，例如 `TEST_CODE=${RUN_ID}`（引用 `RUN_ID`、`PROJECT_TYPE`、`TASK_NAME` 等内置变量）。
 内置变量包括 `PROJECT_HOME`、`RUN_HOME`、`RUN_ID`、`PROJECT_TYPE`、`TASK_NAME`、`LOG_DIR`、`AUDIT_DIR`。
 `GET /scheduler/run/{runId}/variables` 可查看当前生效的变量（口令类自动打码）。
 
@@ -3104,8 +3169,8 @@ DB_PASSWORD=******
 
 ===== 注意事项
 
-* 插件包内**不含 HOP**，必须单独提供 HOP 发行版并配置 `plugin-scheduler.hop.runScript`；
-  HOP 以独立进程运行，因此不需要为数据库服务器调整任何 JVM 参数
+* 插件包内**不含 HOP**，必须单独提供 HOP 2.19+ 发行版并配置 `plugin-scheduler.hop.runScript`；
+  HOP 以独立进程运行，因此不需要为数据库服务器调整任何 JVM 参数；
 * HOP 工程需要满足（创建实例时会自检并提示）：
   **若模板的 `project-config.json` 写了 `"parentProjectName": "default"`，则模板根下必须有 `default/` 项目，
   且它的 `project-config.json` 里 `parentProjectName` 留空**（也可以不用父项目，此时模板自己的
@@ -3114,6 +3179,7 @@ DB_PASSWORD=******
 * 任务是"尽力终止"：超时/中止会终止 `hop-run` 及其子进程，但 HOP 内部的长事务不保证立即回滚
 * 当前为单实例调度，不支持多节点
 * 该插件未内置鉴权，请只在受信网络暴露管理端口
+
 ==== 插件管理 API
 
 SlackerDB 提供一组用于在运行时管理插件的 HTTP 端点。这些端点允许你在不重启服务器的情况下加载、卸载、启动、停止和列出插件。所有端点都返回标准格式的 JSON 响应：`{"retCode": 0/-1, "retMsg": "message"}`。
@@ -3246,10 +3312,12 @@ SlackerDB 提供一组用于在运行时管理插件的 HTTP 端点。这些端�
 ==== 注意事项
 
 1. *线程安全* —— 在服务器生命周期内，插件实例是单例；请确保 `onStart()` 之类的方法线程安全。
-2. *资源管理* —— 通过 `getDbConnection()` 获取的数据库连接必须由插件管理，并在插件停止时关闭。
+2. *资源管理* —— 通过 `getDbConnection()` 获取的数据库连接插件需要自行管理，并注意主动关闭。
 3. *依赖冲突* —— 避免引入与服务器依赖冲突的库版本；对于服务器已提供的库，建议使用 `provided` 作用域。
 4. *性能影响* —— 插件执行会消耗服务器资源；避免在插件中执行长时间阻塞的操作。
 
 === 路线图
+* **dbdesk**     计划中...  基于WEB的管理控制台，支持数据集，仪表板，数据门户的管理和应用平台。
+* **dbInstall**  计划中...  图形化的部署向导工具
 
 …

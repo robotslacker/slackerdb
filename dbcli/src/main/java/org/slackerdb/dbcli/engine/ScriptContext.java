@@ -27,8 +27,10 @@ import java.util.Map;
  *       （断言自身不改变它）；</li>
  *   <li>{@link #requestExit(int)} 一旦调用，整次运行立刻收尾（{@code _EXIT}/{@code _QUIT}/
  *       {@code _WHENEVER ERROR EXIT n}），且**显式退出码优先于错误计数**；</li>
- *   <li>{@link #finalExitCode()} 是"进程退出码"的唯一计算点（§3.7）：显式 {@code _EXIT n} 压过一切（含 0）→
- *       有错误则 1（覆盖 {@code _COMPARE} 失败 1 与断言失败）→ 否则 0。</li>
+ *   <li>{@link #finalExitCode()} 是"进程退出码"的唯一计算点（§3.7）：显式 {@code _EXIT n} 压过一切（含 0），
+ *       否则返回 <b>0</b>——脚本内部发生过多少错误都不改进程退出码（README §9.3）。要门禁就在脚本里写
+ *       {@code _WHENEVER ERROR EXIT 1} 或结尾 {@code _EXIT 1}；命令行层面的失败（用法错误、{@code --ref}
+ *       不一致、未捕获异常）由 {@code Cli}/{@code Main} 决定，不走这里。</li>
  * </ul>
  */
 public final class ScriptContext implements AutoCloseable {

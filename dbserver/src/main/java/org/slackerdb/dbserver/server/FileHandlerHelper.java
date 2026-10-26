@@ -33,7 +33,7 @@ public class FileHandlerHelper {
     private static final Path VIEW_BASE_DIR = Path.of("./logs").toAbsolutePath().normalize();
 
     // lines 参数的最大允许值，防止滥用
-    private static final int MAX_LINES = 10000;
+    public static final int MAX_LINES = 10000;
 
     // 每次 transferTo 的最大传输字节，避免单次调用受实现限制（如 2GB）
     private static final long TRANSFER_CHUNK_SIZE = 8L * 1024 * 1024; // 8MB
@@ -276,7 +276,8 @@ public class FileHandlerHelper {
             Files.copy(is, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
 
-        ctx.json("uploaded: " + target.toAbsolutePath());
+        String relativePath = Path.of("uploads").resolve(safeFilename).toString().replace('\\', '/');
+        ctx.json("uploaded: " + relativePath);
     }
 
     // 把 fileChannel 中 [start, start+count) 部分传输到 HTTP 响应输出流。
@@ -370,7 +371,7 @@ public class FileHandlerHelper {
      * - 使用 UTF-8 解码（若日志使用其它编码，请修改解码方式）
      * - 对非常大的单行或包含复杂 multi-byte 字符可能有极少数边界情况，但在常见日志场景下表现良好
      */
-    private static List<String> readLastNLines(File file, int numLines) throws Exception {
+    public static List<String> readLastNLines(File file, int numLines) throws Exception {
         LinkedList<String> result = new LinkedList<>();
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
             long fileLength = raf.length();

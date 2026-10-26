@@ -37,13 +37,13 @@ class BuildInfoTest {
     @DisplayName("多份 build-info.properties 时按 build.artifact 精确匹配，不取第一份")
     void picksTheEntryOfTheExpectedArtifact(@TempDir Path tempDir) throws IOException {
         Path other = writeCandidate(tempDir.resolve("other"), "slackerdb-aserver", "0.1.0");
-        Path mine = writeCandidate(tempDir.resolve("mine"), "slackerdb-dbserver", "0.2.1");
+        Path mine = writeCandidate(tempDir.resolve("mine"), "slackerdb-dbserver", "0.2.2");
 
         try (URLClassLoader classLoader = loader(other, mine)) {
             BuildInfo info = BuildInfo.load("slackerdb-dbserver", classLoader);
 
             assertEquals("slackerdb-dbserver", info.artifact());
-            assertEquals("0.2.1", info.version());
+            assertEquals("0.2.2", info.version());
             assertNotNull(info.time(), "build.time 应当被解析成 Instant");
         }
     }
@@ -96,7 +96,7 @@ class BuildInfoTest {
     @Test
     @DisplayName("build.time 存 UTC、展示本地时间并带偏移")
     void buildTimeIsStoredAsInstantAndShownLocallyWithOffset(@TempDir Path tempDir) throws IOException {
-        Path mine = writeCandidate(tempDir.resolve("mine"), "slackerdb-dbserver", "0.2.1");
+        Path mine = writeCandidate(tempDir.resolve("mine"), "slackerdb-dbserver", "0.2.2");
         try (URLClassLoader classLoader = loader(mine)) {
             BuildInfo info = BuildInfo.load("slackerdb-dbserver", classLoader);
 
@@ -117,7 +117,7 @@ class BuildInfoTest {
                 "build.artifact=slackerdb-dbcli",
                 "build.name=slackerdb-dbcli",
                 "build.product=dbcli (SlackerDB command line client)",
-                "build.version=0.2.1",
+                "build.version=0.2.2",
                 "build.time=" + BUILD_TIME), StandardCharsets.UTF_8);
 
         try (URLClassLoader classLoader = loader(mine)) {

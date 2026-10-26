@@ -9,15 +9,23 @@
     <parent>
         <groupId>org.robotslacker</groupId>
         <artifactId>slackerdb</artifactId>
-        <version>0.2.1</version>
+        <version>0.2.2</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
+
+    <properties>
+        <!-- 默认不生成 PDF；-Ppdf 才打开 asciidoctor -->
+        <asciidoctor.skip>true</asciidoctor.skip>
+        <!-- 默认指向空目录，发布包因此不带文档；-Ppdf 时指向生成目录 -->
+        <docs.main.dir>${project.basedir}/src/main/assembly/empty-docs</docs.main.dir>
+        <docs.dbcli.dir>${project.basedir}/src/main/assembly/empty-docs</docs.dbcli.dir>
+    </properties>
 
     <build>
         <plugins>
             <!--
                 文档 PDF 由 asciidoctor（JRuby）生成。JRuby 的 Encoding.default_external 取自 Maven
-                这个 JVM 的 file.encoding：在 zh-CN Windows 上用 JDK 8~17 构建时它是 GBK，于是
+                这个 JVM 的 file.encoding：在 zh-CN Windows 上用 JDK 17 及更早版本构建时它是 GBK，于是
                 jruby-stdlib 里自带的 jar-dependencies 读 **UTF-8 的** conf/settings.xml 会报
 
                     error reading or parsing <M2_HOME>/conf/settings.xml
@@ -29,7 +37,7 @@
 
                     MAVEN_OPTS=-Dfile.encoding=UTF-8 mvn clean package
 
-                或者直接用 JDK 18+（默认字符集已是 UTF-8）。详见 README 的“从源码构建”。
+                或者直接用当前最低要求的 JDK 21（默认字符集已是 UTF-8）。详见 README 的“从源码构建”。
             -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -67,11 +75,12 @@
                     </dependency>
                 </dependencies>
                 <configuration>
+                    <skip>${asciidoctor.skip}</skip>
                     <sourceDirectory>${project.basedir}/..</sourceDirectory>
                     <outputDirectory>${project.build.directory}/generated-docs</outputDirectory>
                     <backend>pdf</backend>
                     <!--
-                        只把 README 及其图片资源复制到输出目录。
+                        只把 README 及其封面图复制到输出目录。
                         如不限定 resources，插件会把整个 sourceDirectory（仓库根目录，
                         含各模块 target 与 dist 压缩包）整体复制进 generated-docs，
                         且输出目录位于被复制目录之内，会随每次构建自我嵌套。
@@ -83,7 +92,6 @@
                                 <include>README.adoc</include>
                                 <include>README-CN.adoc</include>
                                 <include>robotslacker.jpg</include>
-                                <include>imgs/**</include>
                                 <!-- dbcli 用户手册（中英双语，决策 13/15） -->
                                 <include>dbcli/README.adoc</include>
                                 <include>dbcli/README-CN.adoc</include>
@@ -219,4 +227,60 @@
             </plugin>
         </plugins>
     </build>
+
+    <!--
+        PDF profile：
+          mvn -Ppdf clean package
+        - 打开 asciidoctor，生成 README / README-CN 与 dbcli 中英文 PDF；
+        - 把 PDF 复制到 dist/ 根目录（dbcli 放 dist/doc/dbcli/）；
+        - 发布包描述符此时从 generated-docs 收取文档，默认构建则从空目录收取。
+    -->
+    <profiles>
+        <profile>
+            <id>pdf</id>
+            <properties>
+                <asciidoctor.skip>false</asciidoctor.skip>
+                <docs.main.dir>${project.build.directory}/generated-docs</docs.main.dir>
+                <docs.dbcli.dir>${project.build.directory}/generated-docs-dbcli</docs.dbcli.dir>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>copy-pdf-to-dist</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>copy-resources</goal>
+                                </goals>
+                                <configuration>
+                                    <outputDirectory>${project.basedir}/../dist</outputDirectory>
+                                    <overwrite>true</overwrite>
+                                    <resources>
+                                        <resource>
+                                            <directory>${project.build.directory}/generated-docs</directory>
+                                            <includes>
+                                                <include>README.pdf</include>
+                                                <include>README-CN.pdf</include>
+                                            </includes>
+                                        </resource>
+                                        <resource>
+                                            <directory>${project.build.directory}/generated-docs-dbcli</directory>
+                                            <targetPath>doc/dbcli</targetPath>
+                                            <includes>
+                                                <include>README.pdf</include>
+                                                <include>README-CN.pdf</include>
+                                            </includes>
+                                        </resource>
+                                    </resources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

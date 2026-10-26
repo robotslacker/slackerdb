@@ -3,12 +3,16 @@ package org.slackerdb.plugins.scheduler.runner;
 import org.slackerdb.plugins.scheduler.meta.TaskTemplateLoader;
 import org.slf4j.Logger;
 
+import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -22,7 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <p>行为对齐历史实现（老 scheduler 的 {@code SingleProcessRunner}），并修正其缺陷：</p>
  * <ul>
- *   <li>stdout+stderr 合并后 <b>追加</b>写入本次执行专属日志文件（不依赖调用方读取管道，无阻塞风险）；</li>
+ *   <li>stdout+stderr 合并后由泵线程读取，按本地编码解码并以 UTF-8 <b>追加</b>写入本次执行专属日志文件；</li>
  *   <li>超时到点先 {@code destroy()} 再 {@code destroyForcibly()}，最后按平台兜底
  *       （Windows {@code taskkill /F /T}，Unix {@code kill -9}），<b>连同子孙进程一起清理</b>；</li>
  *   <li>{@link #cancel()} 支持用户主动中止（老实现的 {@code terminate()}）；</li>
@@ -61,16 +65,28 @@ public final class ProcessTaskExecutor {
 
         List<String> command;
         Path workDir;
+        PrintWriter logWriter = null;
+        Thread pump = null;
         try {
             workDir = resolveWorkDir(request);
             command = buildCommand(request);
             prepareLogFile(logFile);
+            if (logFile != null) {
+                logWriter = new PrintWriter(Files.newBufferedWriter(logFile, StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE, StandardOpenOption.APPEND), true);
+            }
         } catch (Exception e) {
+            if (logWriter != null) {
+                logWriter.close();
+            }
             logger.error("[RUNNER] 任务[{}/{}]准备执行环境失败: {}", request.runId, request.taskName, e.getMessage(), e);
             return TaskResult.failed(e.getMessage(), System.currentTimeMillis() - start, logPath);
         }
 
         if (command.isEmpty()) {
+            if (logWriter != null) {
+                logWriter.close();
+            }
             return TaskResult.failed("empty command", System.currentTimeMillis() - start, logPath);
         }
 
@@ -90,15 +106,15 @@ public final class ProcessTaskExecutor {
             builder.directory(workDir.toFile());
         }
         builder.redirectErrorStream(true);
-        if (logFile != null) {
-            builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile.toFile()));
-        } else {
-            builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-        }
-
+        // 不能把子进程字节流直接 append 到日志：Windows 下 hop-run/cmd 输出本地代码页（GBK），
+        // 而调度器自己的日志是 UTF-8；混写后按 UTF-8 读取会抛 MalformedInputException。
+        // 这里改为管道 + 泵线程，按 native.encoding 解码后统一以 UTF-8 落盘。
         try {
             process = builder.start();
         } catch (IOException e) {
+            if (logWriter != null) {
+                logWriter.close();
+            }
             logger.error("[RUNNER] 任务[{}/{}] 进程启动失败: {}", request.runId, request.taskName, e.getMessage(), e);
             return TaskResult.failed("进程启动失败: " + e.getMessage(),
                     System.currentTimeMillis() - start, logPath);
@@ -107,6 +123,12 @@ public final class ProcessTaskExecutor {
         long pid = process.pid();
         logger.info("[RUNNER] 任务[{}/{}] 进程已启动, PID={}", request.runId, request.taskName, pid);
 
+        final Process started = process;
+        final PrintWriter writer = logWriter;
+        pump = new Thread(() -> pumpOutput(started, writer), "scheduler-task-log-" + pid);
+        pump.setDaemon(true);
+        pump.start();
+
         Integer exitCode = null;
         boolean timedOut = false;
         try {
@@ -114,7 +136,7 @@ public final class ProcessTaskExecutor {
                 boolean finished = process.waitFor(request.timeoutSeconds, TimeUnit.SECONDS);
                 if (!finished) {
                     timedOut = true;
-                    appendLog(logFile, String.format(
+                    appendLog(logWriter, String.format(
                             "[%s] 任务[%s/%s] 进程 PID[%d] 执行超时：已运行 %d 秒，上限 %d 秒，将清理该进程及其子进程。",
                             LocalDateTime.now().format(TIME_FORMAT), request.runId, request.taskName,
                             pid, (System.currentTimeMillis() - start) / 1000, request.timeoutSeconds));
@@ -148,6 +170,19 @@ public final class ProcessTaskExecutor {
             result.errorMessage = "任务被中止";
         } else {
             result.exitCode = exitCode == null ? TaskResult.EXIT_START_FAILED : exitCode;
+        }
+
+        if (pump != null) {
+            try {
+                pump.join(5000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        if (logWriter != null) {
+            synchronized (logWriter) {
+                logWriter.close();
+            }
         }
 
         logger.info("[RUNNER] 任务[{}/{}] 结束: {}", request.runId, request.taskName, result.describe());
@@ -234,17 +269,48 @@ public final class ProcessTaskExecutor {
         }
     }
 
-    /** 向日志文件追加一行（用于超时/中止说明；失败不影响主流程）。 */
-    private void appendLog(Path logFile, String message) {
-        if (logFile == null) {
+    /** 向日志追加一行（用于超时/中止说明）；与泵线程共用同一个 writer，避免字节交错。 */
+    private static void appendLog(PrintWriter logWriter, String message) {
+        if (logWriter == null) {
             return;
         }
-        try (FileWriter writer = new FileWriter(logFile.toFile(), StandardCharsets.UTF_8, true)) {
-            writer.write(message);
-            writer.write(System.lineSeparator());
-        } catch (IOException e) {
-            logger.warn("[RUNNER] 写入日志文件失败: {}", e.getMessage());
+        synchronized (logWriter) {
+            logWriter.println(message);
         }
+    }
+
+    /** 把子进程输出按本地编码解码后，统一以 UTF-8 写入任务日志。 */
+    private void pumpOutput(Process process, PrintWriter logWriter) {
+        Charset charset = nativeCharset();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), charset))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (logWriter != null) {
+                    synchronized (logWriter) {
+                        logWriter.println(line);
+                    }
+                }
+            }
+        } catch (IOException e) {
+            logger.debug("[RUNNER] 读取进程输出结束: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 子进程实际使用的本地编码。JDK18+ 的 defaultCharset 默认是 UTF-8（JEP 400），
+     * 但 Windows 的 cmd/hop-run 仍按控制台代码页输出，因此优先用 native.encoding。
+     */
+    private static Charset nativeCharset() {
+        String name = System.getProperty("native.encoding");
+        if (name != null && !name.isBlank()) {
+            try {
+                return Charset.forName(name);
+            } catch (RuntimeException ignored) {
+                // fall through to defaultCharset
+            }
+        }
+        return Charset.defaultCharset();
     }
 
     /**

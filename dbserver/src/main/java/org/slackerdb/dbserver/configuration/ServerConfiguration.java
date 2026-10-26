@@ -298,7 +298,7 @@ public class ServerConfiguration {
                         setExtension_dir(entry.getValue().toString().trim());
                     }
                 }
-                case "LOG" -> {
+                case "LOG", "LOGFILE" -> {
                     if (entry.getValue().toString().isEmpty()) {
                         log = this.default_log;
                     } else {

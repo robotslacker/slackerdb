@@ -58,7 +58,7 @@ public final class TaskRequest {
     public static final class HopConfig {
         /** {@code hop-run.bat|sh} 的绝对路径。 */
         public String runScript;
-        /** Hop 使用的 JDK 目录（{@code HOP_JAVA_HOME}），可为空。 */
+        /** Hop 使用的 JDK 目录（{@code HOP_JAVA_HOME}）；为空时使用当前 JVM 的 {@code java.home}。 */
         public String javaHome;
         /** Hop 项目名；为空时用 {@code projectType} 作为项目名。 */
         public String projectName;

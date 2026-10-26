@@ -6,7 +6,7 @@
     <parent>
         <groupId>org.robotslacker</groupId>
         <artifactId>slackerdb</artifactId>
-        <version>0.2.1</version>
+        <version>0.2.2</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>slackerdb-dbdriver</artifactId>
@@ -14,6 +14,11 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!--
+          驱动保持 Java 17 字节码：JDK 17 应用仍可直接加载该驱动，
+          不跟随根 POM 的 release 21。dbdriver 的依赖也保持原样（JNA 4.x / Waffle 1.9.x）。
+        -->
+        <maven.compiler.release>17</maven.compiler.release>
     </properties>
 
     <dependencies>
@@ -39,6 +44,13 @@
             <version>1.1.0</version>
             <scope>provided</scope>
         </dependency>
+        <!--
+          dbdriver 保持 JDK17 兼容，依赖也保持原版本（不跟随父 POM 的 JNA5/Waffle3）：
+            JNA 4.5.1 + jna-platform 4.5.2
+            Waffle 1.9.1
+          注意：dbcli 等消费方可通过父 POM 的 dependencyManagement 覆盖为
+          JNA 5.17.0 / Waffle 3.5.1；SSPIClient 的反射分支同时兼容两种 JNA。
+        -->
         <dependency>
             <groupId>net.java.dev.jna</groupId>
             <artifactId>jna</artifactId>

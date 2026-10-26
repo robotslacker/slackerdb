@@ -61,9 +61,15 @@ class CompareCommandDispatcherTest {
         return null;
     }
 
-    /** 第一条非空状态行的文本（{@code _COMPARE} 的结论行）。 */
+    /**
+     * 第一条结论行的文本：比对失败是 {@link CommandOutcome.Failure}（既是状态行又是失败），
+     * 成功是普通 {@link CommandOutcome.Status}。
+     */
     private static String firstStatus(List<CommandOutcome> outcomes) {
         for (CommandOutcome outcome : outcomes) {
+            if (outcome instanceof CommandOutcome.Failure failure && failure.text() != null) {
+                return failure.text();
+            }
             if (outcome instanceof CommandOutcome.Status status && status.text() != null) {
                 return status.text();
             }
@@ -224,9 +230,9 @@ class CompareCommandDispatcherTest {
 
 
         List<CommandOutcome> outcomes = dispatcher.execute(compareIr());
-        // 控制台恒定不打印差异表：只有一条状态行
-        assertEquals(List.of(new CommandOutcome.Status("Compare failed.")), outcomes,
-                "Compare failed. 不是 error（errorCode 记 0）");
+        // 控制台恒定不打印差异表：只有一条"既是状态行、又是失败"的结论
+        assertEquals(List.of(new CommandOutcome.Failure("Compare failed.")), outcomes,
+                "比对失败由产出侧表达成 Failure（不再靠引擎匹配文案）");
 
         // 相对路径 work.txt 落在 workingDirectory 里，故 .dif 也在那里（不是 JVM 的 cwd）
         // 差异时固定写 .dif；HTML 默认不写（要 _SET DIFF_REPORT_HTML ON）；不写 .suc
@@ -357,6 +363,51 @@ class CompareCommandDispatcherTest {
 
         // 没有"改回 UTF-8"这回事：本来就只有 UTF-8，比对照常
         assertEquals("Compare failed.", firstStatus(dispatcher.execute(compareIr())));
+    }
+
+    // ------------------------------------------------------------------ 产物与输入的安全边界
+
+    @Test
+    @DisplayName("产物路径撞上输入文件：报可读错误，绝不删除/覆盖参考文件")
+    void artifactsNeverClobberInputs(@TempDir Path dir) throws IOException {
+        write(dir, "work.txt", WORK);
+        // 参考文件恰好叫 work.suc（上一轮的产物被当成参考再比一次，是最自然的触发方式）
+        Path reference = write(dir, "work.suc", REF);
+        String original = Files.readString(reference, StandardCharsets.UTF_8);
+        CompareCommandDispatcher dispatcher = new CompareCommandDispatcher(dir);
+
+        List<CommandOutcome> outcomes = dispatcher.execute(ir("action", "compare",
+                "targetFile", "work.txt", "referenceFile", "work.suc"));
+
+        assertTrue(firstError(outcomes) != null && firstError(outcomes).contains("would overwrite an input file"),
+                "必须先挡下来: " + outcomes);
+        assertTrue(Files.exists(reference), "参考文件不得被当成旧产物删掉");
+        assertEquals(original, Files.readString(reference, StandardCharsets.UTF_8),
+                "参考文件内容不得被改写");
+    }
+
+    @Test
+    @DisplayName("没比成（输入文件不存在）时不留下上一轮的任何产物（旧的 .suc 会冒充成功）")
+    void errorVerdictLeavesNoStaleArtifacts(@TempDir Path dir) throws IOException {
+        write(dir, "work.txt", WORK);
+        write(dir, "ref.txt", REF);
+        CompareCommandDispatcher dispatcher = new CompareCommandDispatcher(dir);
+
+        // 先造出一份 .dif 与一份 .suc（不同结论各跑一次）
+        assertEquals("Compare failed.", firstStatus(dispatcher.execute(compareIr())));
+        assertTrue(Files.exists(dir.resolve("work.dif")));
+        write(dir, "work.txt", REF);
+        assertEquals("Compare successful.", firstStatus(dispatcher.execute(compareIr())));
+        assertTrue(Files.exists(dir.resolve("work.suc")));
+        // 再制造"比不成"：参考文件消失
+        Files.delete(dir.resolve("ref.txt"));
+        write(dir, "work.txt", WORK);
+
+        assertTrue(firstError(dispatcher.execute(compareIr())).contains("does not exist"));
+        assertFalse(Files.exists(dir.resolve("work.suc")),
+                "旧的 .suc 必须删掉：按产物判断结果的 CI 会把它读成成功");
+        assertFalse(Files.exists(dir.resolve("work.dif")), "旧的 .dif 也必须删掉");
+        assertFalse(Files.exists(dir.resolve("work.html")), "旧的 .html 也必须删掉");
     }
 
     // ------------------------------------------------------------------ 其它

@@ -3,18 +3,17 @@
 
     面向“拿来就跑”的使用者：standalone jar + conf + bin + 插件，加工程说明与许可声明。
     布局说明：
-      README.adoc / README-CN.adoc  工程说明（AsciiDoc 源；同内容的 PDF 由 build 模块生成）
-      README.pdf / README-CN.pdf    编译出来的工程说明
+      README.pdf / README-CN.pdf    工程说明（仅 -Ppdf 构建时包含）
       LICENSE                       许可声明
-      jlib/                         可执行 jar（dbserver/dbproxy standalone、dbdriver、plugin api）
+      jlib/                         可执行 jar（dbserver/dbproxy standalone、dbdriver、plugin api、dbcli、dbdesk）
       conf/                         运行期配置
       bin/                          启停脚本
       plugins/                      随包分发的可选插件（默认不加载）
+      doc/dbcli/                    dbcli 中英文手册（仅 -Ppdf 构建时包含）
 
     说明：
       * LICENSE 是发行物的一部分：源码包与发布包都必须带上，否则再分发时缺少许可声明。
-        早先这里只收 README.md —— 文档改为 .adoc（提交 3695c54）后该 include 已匹配不到
-        任何文件，结果是发布包里既没有工程说明源文件也没有 LICENSE，故一并修正。
+      * 默认构建不生成 PDF，发布包也不包含任何文档；-Ppdf 才生成并收取 README 与 dbcli 手册。
       * 各模块 target/ 下的产物由本描述符逐个点名收取，不整目录拷贝。
 -->
 <assembly>
@@ -31,13 +30,11 @@
             <directory>${project.basedir}/../</directory>
             <outputDirectory>/</outputDirectory>
             <includes>
-                <include>README.adoc</include>
-                <include>README-CN.adoc</include>
                 <include>LICENSE</include>
             </includes>
         </fileSet>
         <fileSet>
-            <directory>${project.basedir}/target/generated-docs</directory>
+            <directory>${docs.main.dir}</directory>
             <outputDirectory>/</outputDirectory>
             <includes>
                 <include>README.pdf</include>
@@ -182,30 +179,53 @@
             <filtered>true</filtered>
             <fileMode>0755</fileMode>
         </fileSet>
-        <!-- dbcli 的中英文用户手册（源文件 + 由 build 模块生成的 PDF）：放在 doc/dbcli/ 下，
-             避免与工程主手册的 README.pdf/README-CN.pdf 在同一个目录里混淆 -->
-        <fileSet>
-            <directory>${project.basedir}/../dbcli</directory>
-            <outputDirectory>doc/dbcli</outputDirectory>
-            <includes>
-                <include>README.adoc</include>
-                <include>README-CN.adoc</include>
-            </includes>
-        </fileSet>
         <!--
-            dbcli 的中英文用户手册 PDF：asciidoctor 用**独立输出目录**生成
-            （generated-docs-dbcli/README.pdf 与 README-CN.pdf，见 build/pom.xml 的注释：
-            沿用顶层目录会覆盖工程主手册的同名 PDF）。
+            dbdesk（Vaadin 控制台）：Spring Boot 可执行 jar，随主发行包分发。
+            没有 conf；端口用 DBDESK_PORT 环境变量或 port 参数覆盖。
+            它只是管理工具：不启动、不探测、不管理 dbserver，服务端由用户自行启动。
         -->
         <fileSet>
-            <directory>${project.basedir}/target/generated-docs-dbcli</directory>
+            <directory>${project.basedir}/../dbdesk/target</directory>
+            <outputDirectory>jlib</outputDirectory>
+            <includes>
+                <include>slackerdb-dbdesk-*-standalone.jar</include>
+            </includes>
+            <excludes>
+                <exclude>*-sources.jar</exclude>
+                <exclude>*.original</exclude>
+            </excludes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../dbdesk/bin</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>dbdesk.sh</include>
+            </includes>
+            <fileMode>0755</fileMode>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../dbdesk/bin</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>dbdesk.bat</include>
+            </includes>
+            <fileMode>0755</fileMode>
+        </fileSet>
+        <!--
+            dbcli 的中英文用户手册只带 PDF，放在 doc/dbcli/ 下，
+            避免与工程主手册的 README.pdf/README-CN.pdf 在同一个目录里混淆。
+            默认构建 docs.dbcli.dir 指向空目录，因此不会收进任何文档；
+            -Ppdf 时才指向 generated-docs-dbcli/。
+        -->
+        <fileSet>
+            <directory>${docs.dbcli.dir}</directory>
             <outputDirectory>doc/dbcli</outputDirectory>
             <includes>
                 <include>README.pdf</include>
             </includes>
         </fileSet>
         <fileSet>
-            <directory>${project.basedir}/target/generated-docs-dbcli</directory>
+            <directory>${docs.dbcli.dir}</directory>
             <outputDirectory>doc/dbcli</outputDirectory>
             <includes>
                 <include>README-CN.pdf</include>

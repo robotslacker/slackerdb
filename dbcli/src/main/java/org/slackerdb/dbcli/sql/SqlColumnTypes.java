@@ -42,6 +42,9 @@ public final class SqlColumnTypes {
     /**
      * 取列类型名。
      *
+     * <p>厂商自定义类型码不在 {@code java.sql.Types} 里，此时用驱动给的名字并**归一成大写**：
+     * 表格的对齐规则靠大写类型名匹配，返回小写 {@code varchar} 会让字符串列按数值列右对齐。</p>
+     *
      * @param jdbcType      {@code ResultSetMetaData.getColumnType(i)}；0 表示 SQL NULL 类型
      * @param typeNameFromDriver 驱动返回的 {@code getColumnTypeName(i)}，用于表里没登记的类型（同序优先用反射名）
      * @return 大写类型名；{@code jdbcType==0} 时返回 null
@@ -51,7 +54,13 @@ public final class SqlColumnTypes {
             return null;
         }
         String name = CONST_TO_NAME.get(jdbcType);
-        return name != null ? name : typeNameFromDriver;
+        if (name != null) {
+            return name;
+        }
+        if (typeNameFromDriver == null || typeNameFromDriver.isBlank()) {
+            return null;
+        }
+        return typeNameFromDriver.strip().toUpperCase(java.util.Locale.ROOT);
     }
 
     /** 供测试与排错用：当前 JVM 里登记了多少个类型常量。 */

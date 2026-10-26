@@ -1,6 +1,7 @@
 package org.slackerdb.dbcli.ssh;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
@@ -45,9 +46,19 @@ public final class SshSessionRegistry implements AutoCloseable {
         return sessions.get(currentSessionName);
     }
 
-    /** connect 之后调用：把连接登记到"当前名字"下。 */
+    /**
+     * connect 之后调用：把连接登记到"当前名字"下。
+     *
+     * <p>同名槽位上**旧的连接必须关掉**：{@code _SSH connect} 连错机器后直接再连一次、或
+     * {@code save prod} 之后 {@code connect other} 都会走到这里。不关的话旧 session/channel
+     * 一直开到进程结束（fd 与 JSch 内部线程堆积，对端 MaxSessions 打满后再也连不上），
+     * 而它已经没有任何名字指向，谁也再关不掉它。</p>
+     */
     public synchronized void registerCurrent(SshOperations operations) {
-        sessions.put(currentSessionName, operations);
+        SshOperations previous = sessions.put(currentSessionName, operations);
+        if (previous != null && previous != operations) {
+            previous.close();
+        }
     }
 
     public synchronized Set<String> sessionNames() {
@@ -97,10 +108,11 @@ public final class SshSessionRegistry implements AutoCloseable {
         operations.close();
     }
 
-    /** 关闭所有连接（进程退出/脚本结束/作业被中止时调用）。 */
+    /** 关闭所有连接（进程退出/脚本结束/作业被中止时调用）；同一个连接只关一次。 */
     @Override
     public synchronized void close() {
-        for (SshOperations operations : new LinkedHashMap<>(sessions).values()) {
+        // 名字是引用语义：多个别名可能指向同一个 client，按身份去重后各关一次
+        for (SshOperations operations : new LinkedHashSet<>(sessions.values())) {
             operations.close();
         }
         sessions.clear();

@@ -149,6 +149,25 @@ class SqlScriptParseTest {
     }
 
     @Test
+    @DisplayName("_START / _HOST 行尾的分号必须能解析（不得变成 token recognition error）")
+    void startAndHostAcceptTrailingSemicolon() {
+        assertTrue(ScriptParseProbe.parseOnce("_start a.sql;\n").ok(),
+                "_start 后面的 ';' 应当被语法吞掉，而不是报未知命令");
+        assertTrue(ScriptParseProbe.parseOnce("_host echo hi;\n").ok(),
+                "_host 后面的 ';' 应当被语法吞掉，而不是报未知命令");
+        assertTrue(ScriptParseProbe.parseOnce("_host echo hi\n").ok(),
+                "不带分号的写法照旧可用");
+    }
+
+    @Test
+    @DisplayName("_SSH SET TIMEOUT = <秒> 可解析（数值由引擎校验）")
+    void sshSetTimeoutParses() {
+        assertTrue(ScriptParseProbe.parseOnce("_ssh set timeout = 30\n").ok(),
+                "_SSH SET TIMEOUT = 30 必须能解析");
+        assertTrue(ScriptParseProbe.parseOnce("_ssh set timeout = 0.5;\n").ok());
+    }
+
+    @Test
     @DisplayName("不完整语句会判定为'需要续行'（missing SQL_END 语义）")
     void incompleteStatementNeedsMoreLines() {
         ScriptParseProbe.Outcome outcome = ScriptParseProbe.parseOnce("create table aaa (\n");

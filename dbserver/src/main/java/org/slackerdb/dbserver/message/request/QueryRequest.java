@@ -320,6 +320,9 @@ public class QueryRequest  extends PostgresRequest {
 
             // 在执行之前需要做替换
             sql = SQLReplacer.replaceSQL(this.dbInstance, sql);
+            // catalog introspection 的未限定名（pg_namespace/pg_attribute）需要额外指到
+            // fake catalog；SQLReplacer 的 REGEX 规则是整串匹配，做不到语句中间的裸表名替换。
+            sql = SQLReplacer.rewriteCatalogIntrospection(this.dbInstance, sql);
 
             // 事务块处于失败状态时，除 COMMIT/ROLLBACK/ABORT（用于结束事务块）之外的语句一律拒绝。
             // 这是 PG 的语义（SQLSTATE 25P02），也是 ReadyForQuery 上报 'E' 的配套行为：
@@ -684,7 +687,23 @@ public class QueryRequest  extends PostgresRequest {
                 continue;
             }
 
+            // 事务控制语句不能走 DuckDB 的 PreparedStatement：DuckDB 不认 PG 的
+            // BEGIN ... ISOLATION LEVEL ...，事务状态也必须由会话显式驱动。
+            // 多语句批次里同样要处理（典型：DuckDB postgres 扩展加载 catalog 时发送
+            // BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ; SELECT pg_...; ...），
+            // 否则整个批次会因这一条语法错误而失败。
+            TransactionHandler.TransactionResult transactionResult = TransactionHandler.handle(
+                    this.dbInstance, ctx, request, out, session, statement.sql(), false);
+            if (transactionResult != null) {
+                session.executingSQL = statement.sql();
+                // handle 已经写好了 CommandComplete 或 ErrorResponse，直接继续下一条。
+                continue;
+            }
+
             String statementSql = SQLReplacer.replaceSQL(this.dbInstance, statement.sql());
+            // catalog introspection 的未限定名（pg_namespace/pg_attribute）需要额外指到
+            // fake catalog；SQLReplacer 的 REGEX 规则是整串匹配，做不到语句中间的裸表名替换。
+            statementSql = SQLReplacer.rewriteCatalogIntrospection(this.dbInstance, statementSql);
             if (statementSql.isEmpty()) {
                 CommandComplete emptyComplete = new CommandComplete(this.dbInstance);
                 emptyComplete.setCommandResult(CommandTag.of(statement.sql(), 0, false));

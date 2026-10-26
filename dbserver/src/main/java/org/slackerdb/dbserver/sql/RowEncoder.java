@@ -581,6 +581,13 @@ public final class RowEncoder {
             // TIMETZ 两种写法都收：DuckDB 的 getColumnTypeName 给的是 "TIME WITH TIME ZONE"，
             // 而映射表里的键是 "TIMETZ"，两侧名字不一致会让告警继续出现。
             case "UUID", "JSON", "JSONB", "TIMETZ", "TIME WITH TIME ZONE" -> T_VARCHAR;
+            // "NULL" 是 DuckDB 对"裸 NULL 字面量"列报的类型名（`select null` 实测
+            // getColumnTypeName() == "\"NULL\"" —— NULL 是关键字，DuckDB 会把它用双引号括起来，
+            // 所以这里两种写法都收）。PG 对同一列的 RowDescription 给的是文本类型、值本来也是 NULL，
+            // 因此按 T_VARCHAR 编码即可；不登记会落进 T_UNKNOWN，
+            // 每次执行这种查询都刷一条 "Not implemented column type: \"NULL\"" 的 WARN
+            // （DBeaver 之类的客户端在元数据查询里很常用 `select null as ...`）。
+            case "NULL", "\"NULL\"" -> T_VARCHAR;
             case "DATE" -> T_DATE;
             case "BOOLEAN" -> T_BOOLEAN;
             case "FLOAT" -> T_FLOAT;

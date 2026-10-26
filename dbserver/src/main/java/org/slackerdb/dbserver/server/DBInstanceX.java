@@ -2,6 +2,9 @@ package org.slackerdb.dbserver.server;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.core.Appender;
+import ch.qos.logback.core.FileAppender;
 import com.alibaba.fastjson2.JSONException;
 import com.alibaba.fastjson2.JSONObject;
 import io.javalin.Javalin;
@@ -13,12 +16,12 @@ import org.slackerdb.common.utils.BoundedQueue;
 import org.slackerdb.dbserver.BuildInfo;
 import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.dbserver.service.APIService;
+import org.slackerdb.dbserver.service.BackupService;
 import org.slackerdb.dbserver.service.PluginService;
 import org.slackerdb.dbserver.entity.APIHistoryRecord;
 import org.slackerdb.dbserver.repl.SqlReplServer;
 import org.slackerdb.dbserver.service.McpServer;
 import org.slf4j.LoggerFactory;
-import org.springframework.core.io.ClassPathResource;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -32,6 +35,7 @@ import java.time.format.DateTimeFormatter;
 import java.io.IOException;
 import java.lang.management.ThreadMXBean;
 import com.alibaba.fastjson2.JSONArray;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
@@ -44,8 +48,14 @@ public class DBInstanceX {
     private final DBInstance dbInstance;
     private final AtomicLong backendApiHistoryId = new AtomicLong(1);
     private final APIService apiService;
+    /** M5 定义存储服务（构造时注册 /definitions/* 路由）。 */
+    private org.slackerdb.dbserver.service.DefinitionService definitionService;
+    /** M6 门户访问日志服务。 */
+    private org.slackerdb.dbserver.service.PortalAccessService portalAccessService;
     private final PluginService pluginService;
     private final McpServer mcpServer;
+    private SqlReplServer sqlReplServer;
+    private BackupService backupService;
     public BoundedQueue<APIHistoryRecord> apiHistoryList
             = new BoundedQueue<>(DBInstance.HISTORY_QUEUE_CAPACITY);
 
@@ -326,12 +336,6 @@ public class DBInstanceX {
                         {
                             // 不显示Javalin的启动提示信息
                             config.startup.showJavalinBanner = false;
-                            // 添加静态文件
-                            config.staticFiles.add(staticFiles -> {
-                                staticFiles.hostedPath = "/web";
-                                staticFiles.directory = "/web";
-                                staticFiles.location = io.javalin.http.staticfiles.Location.CLASSPATH;
-                            });
                             // 支持跨域
                             config.bundledPlugins.enableCors(
                                     cors -> cors.addRule(CorsPluginConfig.CorsRule::anyHost));
@@ -342,26 +346,16 @@ public class DBInstanceX {
                         serverConfiguration.getPortX()
                 );
 
-        // 自定义404界面
-        // 注意：/api/* 由数据服务自己用 JSON 表达"服务未注册"，不能被这里的 HTML 页面覆盖
-        // （Javalin 的 error handler 会在端点写完响应之后触发）。
-        // 同一条规则适用于所有"以 JSON 信封表达错误"的管理端点：端点已经写了响应体时一律不要覆盖。
-        ClassPathResource page404Resource = new ClassPathResource("web/404.html");
+        // 管理口只提供 JSON API，不再返回任何 HTML 页面。
+        // 注意：/api/*、/mcp 等端点自己已经写了响应体时，error handler 不要覆盖它。
         this.managementApp.unsafe.routes.error(404, ctx -> {
             String existing = ctx.result();
             if (existing != null && !existing.isEmpty()) {
                 return;
             }
-            String path = ctx.path();
-            boolean jsonApi = path.startsWith("/api/") || path.startsWith("/mcp")
-                    || path.startsWith("/sessions/") || path.startsWith("/capabilities")
-                    || path.startsWith("/health") || path.startsWith("/plugin/")
-                    || path.startsWith("/backups") || path.startsWith("/backup");
-            if (jsonApi) {
-                ctx.json(Map.of("retCode", 404, "retMsg", path + " is not found."));
-                return;
-            }
-            ctx.html(Files.readString(Path.of(page404Resource.getURI())));
+            ctx.status(404).json(Map.of(
+                    "retCode", 404,
+                    "retMsg", ctx.path() + " is not found."));
         });
 
         // 需要在记录器之前添加的过滤器
@@ -440,15 +434,6 @@ public class DBInstanceX {
             }
         });
 
-        // 默认页面
-        ClassPathResource consoleResource = new ClassPathResource("web/console.html");
-        this.managementApp.unsafe.routes.get("/" ,
-                ctx -> {
-                    ctx.contentType("text/html");
-                    ctx.result(Files.readString(Path.of(consoleResource.getURI())));
-                }
-        );
-
         /*
           顺序要求：APIService 必须在 McpServer 之前构造。
           MCP 的工具面复用语义层那一份服务注册表（不建第二份），因此它需要
@@ -456,14 +441,25 @@ public class DBInstanceX {
         */
         this.apiService = new APIService(dbInstance, this.managementApp, dbInstance.logger);
 
+        // M5：定义存储（数据集/图表/仪表板/门户）。路由必须在这里注册完，
+        // 且不能晚于下面的通配处理器（管理口有 "/{...}" 的兜底路由）。
+        this.definitionService = new org.slackerdb.dbserver.service.DefinitionService(
+                dbInstance, this.managementApp, dbInstance.logger);
+        this.portalAccessService = new org.slackerdb.dbserver.service.PortalAccessService(
+                dbInstance, this.managementApp, dbInstance.logger);
+
+        // 异步备份任务：DbDesk 通过 /backups 轮询并下载，避免长备份占住一个 HTTP 请求。
+        this.backupService = new BackupService(dbInstance, this.managementApp, dbInstance.logger);
+
         // 初始化SQLREPL服务,MCP服务
         try {
-            SqlReplServer sqlReplServer = new SqlReplServer(dbInstance, this.managementApp, dbInstance.logger);
+            // SQL REPL 是独立的异步 SQL API，不随 Web Console UI 一起移除。
+            this.sqlReplServer = new SqlReplServer(dbInstance, this.managementApp, dbInstance.logger);
             this.mcpServer = new McpServer(dbInstance, this.managementApp, dbInstance.logger);
             this.mcpServer.setServiceSupplier(this.apiService::describeRegisteredServices);
 
             mcpServer.run();
-            sqlReplServer.run();
+            this.sqlReplServer.run();
         } catch (Exception e) {
             this.logger.error("[SERVER][STARTUP    ] Management server failed. Can't init ws service. ", e);
             throw new ServerException("Management server failed. Can't init ws service. ", e);
@@ -556,7 +552,7 @@ public class DBInstanceX {
                 backupConnection.close();
                 JSONObject result = new JSONObject();
                 result.put("retCode", 0);
-                result.put("retMsg", "Successful. Backup file has placed to [" + new File(backupDbFile).getAbsolutePath() + "].");
+                result.put("retMsg", "Successful.");
                 result.put("success", true);
                 result.put("error", null);
                 result.put("filename", "backup/" + filename);
@@ -591,31 +587,38 @@ public class DBInstanceX {
 
         // 日志文件服务（返回纯文本）
         this.managementApp.unsafe.routes.get("/logfile", ctx -> {
-            String logConfig = this.dbInstance.serverConfiguration.getLog();
-            // 分割逗号分隔的配置
-            String[] parts = logConfig.split(",");
-            String filePath = null;
-            for (String part : parts) {
-                String trimmed = part.trim();
-                if (!trimmed.equalsIgnoreCase("CONSOLE") && !trimmed.isEmpty()) {
-                    filePath = trimmed;
-                    break;
-                }
-            }
-            if (filePath == null) {
+            Path file = resolveLogFile();
+            if (file == null) {
                 ctx.result("Logging to console, no log file.");
                 return;
             }
-            Path file = Path.of(filePath).toAbsolutePath();
-            if (!Files.exists(file) || !Files.isRegularFile(file)) {
-                ctx.status(404).result("Log file not found: " + filePath);
-                return;
-            }
             try {
+                String linesParam = ctx.queryParam("lines");
+                if (linesParam != null && !linesParam.isBlank()) {
+                    int lines;
+                    try {
+                        lines = Integer.parseInt(linesParam.trim());
+                    } catch (NumberFormatException nfe) {
+                        ctx.status(400).result("lines must be a positive number.");
+                        return;
+                    }
+                    if (lines <= 0) {
+                        ctx.status(400).result("lines must be a positive number.");
+                        return;
+                    }
+                    int capped = Math.min(lines, FileHandlerHelper.MAX_LINES);
+                    List<String> tail = FileHandlerHelper.readLastNLines(file.toFile(), capped);
+                    ctx.contentType("text/plain; charset=utf-8");
+                    ctx.result(String.join(System.lineSeparator(), tail));
+                    return;
+                }
                 String content = Files.readString(file);
                 ctx.result(content);
             } catch (IOException e) {
                 logger.error("Failed to read log file", e);
+                ctx.status(500).result("Failed to read log file: " + e.getMessage());
+            } catch (Exception e) {
+                logger.error("Failed to read log file tail", e);
                 ctx.status(500).result("Failed to read log file: " + e.getMessage());
             }
         });
@@ -652,22 +655,14 @@ public class DBInstanceX {
             }
         });
 
-        // 帮助页面 - 显示 README.html
-        ClassPathResource readmeResource = new ClassPathResource("web/README.html");
-        this.managementApp.unsafe.routes.get("/help", ctx -> {
-            try {
-                ctx.contentType("text/html; charset=utf-8");
-                ctx.result(Files.readString(Path.of(readmeResource.getURI())));
-            } catch (IOException e) {
-                logger.error("Failed to read README.html", e);
-                ctx.status(500).result("Internal server error");
-            }
-        });
-
         // API服务已在上面提前构造（MCP 的工具面要复用它的服务注册表）
 
         // Plugin服务处理
         this.pluginService = new PluginService(dbInstance, this.managementApp, dbInstance.logger);
+
+        // 管理口只提供 JSON API：没有页面入口，未知 GET 路径统一返回 JSON 404。
+        this.managementApp.unsafe.routes.get("/", this::notFound);
+        this.managementApp.unsafe.routes.get("/{...}*", this::notFound);
 
         // 异常处理
         this.managementApp.unsafe.routes.exception(Exception.class, (e, ctx) -> {
@@ -681,6 +676,13 @@ public class DBInstanceX {
                 this.dbInstance.serverConfiguration.getDataServiceHistory().equalsIgnoreCase("ON")) {
             logger.info("[SERVER][STARTUP    ] Data service history feature enabled.");
         }
+    }
+
+    /** 管理口没有 HTML 页面，未知路径统一返回 JSON 信封。 */
+    private void notFound(Context ctx) {
+        ctx.status(404).json(Map.of(
+                "retCode", 404,
+                "retMsg", ctx.path() + " is not found."));
     }
 
     /**
@@ -719,6 +721,11 @@ public class DBInstanceX {
         features.put("plugins", this.dbInstance.getPluginManager() != null);
         features.put("sqlRepl", true);
         features.put("copyOut", true);
+        features.put("definitions", true);
+        features.put("aiChat", serverConfiguration.getMcpLlmServer() != null
+                && !serverConfiguration.getMcpLlmServer().trim().isEmpty());
+        features.put("backupTasks", true);
+        features.put("logTail", true);
         features.put("sqlHistory", "ON".equalsIgnoreCase(serverConfiguration.getSqlHistory()));
         features.put("apiHistory", "ON".equalsIgnoreCase(serverConfiguration.getDataServiceHistory()));
         capabilities.put("features", features);
@@ -775,6 +782,46 @@ public class DBInstanceX {
      */
     private String readServerVersion() {
         return BuildInfo.version();
+    }
+
+    /**
+     * 找到当前进程实际写入的日志文件。先按配置路径找；配置写成 console 时回退到
+     * logback 已挂载的 FileAppender，避免“日志文件明明存在、界面却只显示 console”。
+     */
+    private Path resolveLogFile() {
+        String logConfig = this.dbInstance.serverConfiguration.getLog();
+        if (logConfig != null) {
+            for (String part : logConfig.split(",")) {
+                String trimmed = part.trim();
+                if (trimmed.isEmpty() || trimmed.equalsIgnoreCase("CONSOLE")) {
+                    continue;
+                }
+                Path candidate = Path.of(trimmed).toAbsolutePath();
+                if (Files.isRegularFile(candidate)) {
+                    return candidate;
+                }
+            }
+        }
+        if (logger instanceof Logger logbackLogger
+                && logbackLogger.getLoggerContext() instanceof LoggerContext context) {
+            for (Logger candidateLogger : context.getLoggerList()) {
+                java.util.Iterator<Appender<ch.qos.logback.classic.spi.ILoggingEvent>> appenders =
+                        candidateLogger.iteratorForAppenders();
+                while (appenders.hasNext()) {
+                    Appender<?> appender = appenders.next();
+                    if (appender instanceof FileAppender<?> fileAppender) {
+                        String file = fileAppender.getFile();
+                        if (file != null && !file.isBlank()) {
+                            Path candidate = Path.of(file).toAbsolutePath();
+                            if (Files.isRegularFile(candidate)) {
+                                return candidate;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private JSONObject getStatusJson() {
@@ -1000,6 +1047,17 @@ public class DBInstanceX {
 
     public void stop()
     {
+        // 先关闭 SQL REPL 的 WebSocket 会话与线程池，避免管理口停止后仍有非守护线程存活。
+        if (this.sqlReplServer != null)
+        {
+            this.sqlReplServer.stop();
+        }
+
+        if (this.backupService != null)
+        {
+            this.backupService.stop();
+        }
+
         // 关闭服务器
         this.managementApp.stop();
 

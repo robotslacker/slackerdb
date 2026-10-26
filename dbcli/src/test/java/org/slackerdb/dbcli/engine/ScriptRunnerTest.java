@@ -28,8 +28,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>覆盖的都是"引擎行为"而不是 JDBC 行为：语句累积（多行 / {@code create procedure} 的行首 {@code /}）、
  * {@code _ASSERT} 通过与失败、{@code _WHENEVER ERROR CONTINUE|EXIT n}、{@code _SPOOL} 的 tee、
- * {@code _ECHO}、{@code _START} 的递归与 {@code ARGVn}、{@code _EXIT} 退出码、未知命令、
- * 以及"错误 → 退出码 1 / 显式退出码优先"这条 §3.7 的核心语义。</p>
+ * {@code _ECHO}、{@code _START} 的递归与 {@code ARGVn}、{@code _EXIT} 退出码、未知命令，
+ * 以及"错误只计数、明文退出码优先"这条 §3.7 / README §9.3 的核心语义。</p>
  */
 class ScriptRunnerTest {
 
@@ -190,7 +190,7 @@ class ScriptRunnerTest {
 
         int code = harness.run("selec 1;\n");
 
-        assertEquals(0, code, "数据库报错 → 按既有错误语义退出码非 0");
+        assertEquals(0, code, "数据库报错只计数，不改变进程退出码（README §9.3）");
         assertEquals(List.of("selec 1;"), harness.sql.statements,
                 "原始文本（含语句终结符）必须送进执行层");
         assertTrue(harness.stderr().contains(databaseError), "要打印数据库的错误: " + harness.stderr());
@@ -439,7 +439,7 @@ class ScriptRunnerTest {
     }
 
     @Test
-    @DisplayName("_ASSERT 失败：状态文案进 stdout，同时按错误语句处理（stderr + 退出码 1）")
+    @DisplayName("_ASSERT 失败：状态文案进 stdout，同时按错误语句处理（计入错误数，退出码仍 0）")
     void assertFails() {
         int code = harness.run("_assert 1 = 2, bad;\n");
 
@@ -460,7 +460,7 @@ class ScriptRunnerTest {
     // ------------------------------------------------------------------- WHENEVER
 
     @Test
-    @DisplayName("_WHENEVER ERROR CONTINUE：出错后继续跑完，退出码为 1")
+    @DisplayName("_WHENEVER ERROR CONTINUE：出错后继续跑完，退出码仍为 0（错误只计数）")
     void wheneverContinueKeepsRunning() {
         harness.sql.setError("select broken", "ERROR: boom");
 

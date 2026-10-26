@@ -161,6 +161,26 @@ public class SqlIrVisitor extends SQLParserBaseVisitor<Object> {
         return builder.toString();
     }
 
+    /**
+     * 区间内**默认通道 + 隐藏通道**的原文（用于"原样回显"）。
+     *
+     * <p>{@code ParserRuleContext.getText()} 只拼接语法树里的 token，隐藏通道（{@code SPACE}）的空白
+     * 因此被丢掉：{@code _connect dbhost : 5432 / db1} 会回显成 {@code dbhost:5432/db1}，
+     * 使用者对着屏幕找不到自己写的那一串。这个版本把隐藏空白也拼回来。</p>
+     */
+    private String rawText(ParserRuleContext ctx) {
+        StringBuilder builder = new StringBuilder();
+        Interval interval = getSourceInterval(ctx);
+        for (int index = interval.a; index <= interval.b; index++) {
+            Token token = this.tokens.get(index);
+            int channel = token.getChannel();
+            if (channel == Token.DEFAULT_CHANNEL || channel == Token.HIDDEN_CHANNEL) {
+                builder.append(token.getText());
+            }
+        }
+        return builder.toString();
+    }
+
 
     /**
      * SQL 语句文本 = 起始关键字原文 + 该语句区间内 {@code SQLSTATEMENT_CHANNEL} 通道的全文
@@ -407,10 +427,10 @@ public class SqlIrVisitor extends SQLParserBaseVisitor<Object> {
     public SubResult visitConnectjdbc(SQLParser.ConnectjdbcContext ctx) {
         Map<String, Object> parsedObject = object();
         // 连接串原文（不含命令字与结尾 ';'）：IR 里的 host/port 等字段是被拆开的结果，
-        // 拼不回使用者的原话，而"无效连接串"的错误必须原样回显它。
-        // ctx.getText() 从命令字开始（隐藏通道的空白不参与拼接），去掉命令字就是连接串。
+        // 拼不回使用者的原话，而"无效连接串"的错误必须原样回显它（含其中写下的空白）。
+        String raw = rawText(ctx);
         String command = ctx.CONNECT().getText();
-        parsedObject.put("connectString", ctx.getText().substring(command.length()));
+        parsedObject.put("connectString", raw.substring(command.length()).strip());
         if (ctx.connectUserInfo() != null) {
             parsedObject.putAll(visitConnectUserInfo(ctx.connectUserInfo()).parsedObject());
         }
@@ -1126,19 +1146,10 @@ public class SqlIrVisitor extends SQLParserBaseVisitor<Object> {
             if (command.startsWith("'") && command.endsWith("'")) {
                 command = command.substring(1, command.length() - 1);
             }
-            boolean pairQuote = true;
-            for (char quoteChar : new char[] {'"', '\''}) {
-                for (int index = 0; index < command.length(); index++) {
-                    if (command.charAt(index) == quoteChar) {
-                        pairQuote = !pairQuote;
-                    }
-                }
-                if (!pairQuote) {
-                    // 引号配对失败
-                    this.isFinished = false;
-                    return apply(new SubResult(parsedObject, 1, "Missing <EOF> un-closed qutote string."));
-                }
-            }
+            // 引号是否成对由**词法**负责：SSH_EXPRESSION 里的字符串只匹配闭合的引号，
+            // 未闭合的引号在词法层就是 token recognition error。这里不再自己数奇偶——
+            // `_ssh execute "echo don't"` 的正文里出现落单撇号是合法的（shell 命令），
+            // 手工配对会把它误判成"没写完"，于是控制台永远等续行、命令正文也丢了。
             parsedObject.put("command", command);
         } else if (ctx.SSH_CONNECT() != null) {
             parsedObject.put("action", "connect");
@@ -1302,6 +1313,11 @@ public class SqlIrVisitor extends SQLParserBaseVisitor<Object> {
         }
         if (ctx.COMPARE_DIFFLIB() != null) {
             compareOptions.put("algorithm", "difflib");
+        }
+        // AUTO 与其余三个一样产出 IR 键：漏掉它时 `_compare set algorithm auto` 会得到空选项表，
+        // 分派器当成"SET 后面没跟选项"打印设置表并成功——同一语法位置三种写法三种待遇。
+        if (ctx.COMPARE_AUTO() != null) {
+            compareOptions.put("algorithm", "auto");
         }
         if (ctx.COMPARE_ENCODING() != null) {
             if (ctx.COMPARE_WORK() != null) {

@@ -2,25 +2,27 @@ package org.slackerdb.dbcli.daemon;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
+import java.nio.file.StandardCopyOption;
 
 /**
  * pidfile：一个只存"进程号"的小文件，用于回答"后台那份还在不在"。
  *
  * <h2>谁写、谁读、谁删</h2>
  * <ul>
- *   <li><b>写</b>：真正在跑脚本的那个进程写自己（{@code start --pidfile} 的进程，也就是后台副本本身），
- *       而不是拉起它的父进程 —— 父进程在 Windows 上拿到的是中间 shell 的 pid，报出去只会误导
- *       （这一点与 {@link org.slackerdb.common.utils.AppDaemon#startInBackground} 的取舍一致）；</li>
- *   <li><b>读</b>：{@code status}/{@code stop} 只读文件，不猜；</li>
+ *   <li><b>写</b>：真正在跑脚本的那个进程写自己（带 {@code --daemon} 的后台副本本身），
+ *       而不是拉起它的父进程 —— 父进程在 Windows 上拿到的是中间 shell 的 pid，报出去只会误导；</li>
+ *   <li><b>读</b>：父进程在读到自己要的 pid 之后立即返回（见 {@code CliDaemon}）；</li>
  *   <li><b>删</b>：<b>前台运行</b>结束时由本进程自己删（见 {@code Cli} 的 finally）；<b>后台副本</b>
  *       跑完<b>留着不删</b>——父进程正是靠读这个文件报出副本的 pid，而一份跑得很快的脚本会在
- *       父进程两次轮询（50ms）之间"写完又删掉"，父进程于是误报"pidfile 没写出来"
- *       （见 {@code Cli} 的 {@code --daemon-copy}）。留下的旧 pid 由 {@link #isAlive(long)}
- *       回答死活，下一轮启动时父进程也会先把旧文件删掉。</li>
+ *       父进程两次轮询之间"写完又删掉"，父进程于是误报"pidfile 没写出来"。</li>
  * </ul>
+ *
+ * <h2>写入是原子的</h2>
+ * <p>先写到同目录的临时文件，再整体替换：读方（父进程每 50ms 轮询一次）不会读到空文件或
+ * 半个数字。这一步很重要——读到的"半个 pid"会被当成真的报给使用者。</p>
  *
  * <h2>已知边界</h2>
  * <p>pidfile 是操作系统的老办法，只能回答"这个 pid 现在还活着吗"，答不了"这个 pid 还是不是当初那个进程"
@@ -44,7 +46,8 @@ public final class PidFile {
     }
 
     /**
-     * 写入 pid（覆盖写；父目录不存在时先建）。行尾固定 {@code \n}，便于跨平台读回。
+     * 写入 pid：先写同目录临时文件，再整体替换（读方永远看不到半个数字）。行尾固定 {@code \n}，
+     * 便于跨平台读回。
      *
      * @throws IOException 目录建不出来或文件写不进去
      */
@@ -53,8 +56,19 @@ public final class PidFile {
         if (parent != null) {
             Files.createDirectories(parent);
         }
-        Files.writeString(path, pid + "\n", StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+        Path temp = Files.createTempFile(parent, path.getFileName().toString(), ".tmp");
+        try {
+            Files.writeString(temp, pid + "\n", StandardCharsets.UTF_8);
+            try {
+                Files.move(temp, path, StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException notAtomic) {
+                // 少数文件系统不支持原子移动：退回普通替换（仍然是"整份内容就位"之后才出现）
+                Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temp);
+        }
     }
 
     /** 写入当前进程的 pid（{@code start --pidfile} 走这条）。 */
@@ -90,13 +104,24 @@ public final class PidFile {
         }
     }
 
-    /** 删掉 pidfile（幂等；删不掉也不算失败——它只是个提示文件）。 */
-    public void deleteQuietly() {
+    /**
+     * 删掉 pidfile。
+     *
+     * @return 是否确定已经不存在（文件本来就不存在也算成功）
+     */
+    public boolean delete() {
         try {
             Files.deleteIfExists(path);
-        } catch (IOException ignored) {
-            // 删不掉无法补救；调用方已经拿到结论（在跑/没在跑），不该因此报错
+            return true;
+        } catch (IOException failed) {
+            // 删不掉时以"文件是否还在"为准：调用方据此决定要不要继续（见 CliDaemon）
+            return !Files.exists(path);
         }
+    }
+
+    /** 删掉 pidfile（幂等；删不掉也不算失败——它只是个提示文件）。 */
+    public void deleteQuietly() {
+        delete();
     }
 
     /** 这个 pid 现在是否活着（{@code ProcessHandle} 是 JDK 9+ 的标准做法，不需要发信号）。 */

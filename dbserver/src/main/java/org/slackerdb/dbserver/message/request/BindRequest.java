@@ -17,6 +17,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.sql.ParameterMetaData;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
@@ -25,6 +26,8 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class BindRequest extends PostgresRequest {
     //  Bind (F)
@@ -74,6 +77,16 @@ public class BindRequest extends PostgresRequest {
 
     // PG 的时间纪元：date/timestamp 的二进制都是"相对 2000-01-01 的偏移"
     private static final LocalDate PG_EPOCH_DATE = LocalDate.of(2000, 1, 1);
+
+    /**
+     * pgjdbc formats {@code java.sql.Date} as {@code YYYY-MM-DD +HH[:MM]} in text
+     * mode (its {@code TimestampUtils.toString(Calendar, Date)} deliberately appends
+     * the zone). PostgreSQL accepts that trailing zone for DATE, DuckDB 1.5.x did too,
+     * but DuckDB 2.0's date parser only accepts {@code YYYY-MM-DD}. Strip the zone
+     * before handing the value to duckdb_jdbc; the date itself is unchanged.
+     */
+    private static final Pattern DATE_WITH_ZONE = Pattern.compile(
+            "^(\\d{4,}-\\d{2}-\\d{2})(?:\\s*[+-]\\d{2}(?::?\\d{2})?|Z)$");
     private static final LocalDateTime PG_EPOCH_TIMESTAMP = LocalDateTime.of(2000, 1, 1, 0, 0);
 
     /**
@@ -248,6 +261,29 @@ public class BindRequest extends PostgresRequest {
 
     private static String fractionText(long micros) {
         return micros == 0 ? "" : String.format(".%06d", micros);
+    }
+
+    /** DuckDB/JDBC 可能把 DATE 报成 {@code DATE} 或带精度/别名的形式，只看类型名主干。 */
+    private static boolean isDateTypeName(String typeName) {
+        if (typeName == null) {
+            return false;
+        }
+        String normalized = typeName.trim().toUpperCase(java.util.Locale.ROOT);
+        return normalized.equals("DATE") || normalized.startsWith("DATE(");
+    }
+
+    /**
+     * 去掉 pgjdbc 给 DATE 文本附带的时区后缀。
+     *
+     * <p>只处理"完整 ISO 日期 + 时区"的形状，其它文本（{@code infinity}、
+     * 带时间的日期、非 ISO 写法）原样透传：修正范围越小，越不会改变既有语义。</p>
+     */
+    private static String stripDateZone(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+        Matcher matcher = DATE_WITH_ZONE.matcher(text.trim());
+        return matcher.matches() ? matcher.group(1) : text;
     }
 
     private static void requireBinaryLength(String typeName, byte[] payload, int expected) throws SQLException {
@@ -487,6 +523,12 @@ public class BindRequest extends PostgresRequest {
                         // 获取参数的类型
                         int[] parameterDataTypeIds = parsedStatement.parameterDataTypeIds;
                         if (bindParameters != null) {
+                            // 参数类型在 Parse 阶段可能一个都没声明（OID=0）。文本模式下
+                            // 需要知道"这一列其实是 DATE"，才能修正 pgjdbc 的日期文本格式；
+                            // DuckDB 的 ParameterMetaData 能从 INSERT 目标列/CAST 推出类型。
+                            // 只在遇到未声明类型时才取一次，全声明的常见路径不多一次 JNI。
+                            ParameterMetaData bindParameterMetaData = null;
+                            boolean bindParameterMetaDataLoaded = false;
                             // 协议规定参数格式码个数只能是 0 / 1 / 参数个数。
                             // 个数不匹配时旧实现会在 formatCodes[i] 处抛 AIOOBE，
                             // 异常逃逸到 Netty 后**不产生任何应答**，客户端一直挂到空闲超时（默认 600s）。
@@ -509,8 +551,32 @@ public class BindRequest extends PostgresRequest {
                                     continue;
                                 }
                                 if (parameterFormatAt(i) == 0) {
-                                    // Text mode：所有类型都走字符串，由 DuckDB 自己做隐式转换
-                                    preparedStatement.setString(i + 1, new String(bindParameters[i], StandardCharsets.UTF_8));
+                                    // Text mode：所有类型都走字符串，由 DuckDB 自己做隐式转换。
+                                    // 例外：pgjdbc 的 DATE 文本带时区后缀（"1990-01-01 +00"），
+                                    // DuckDB 2.0 不再接受，先归一化再交给它。
+                                    String text = new String(bindParameters[i], StandardCharsets.UTF_8);
+                                    String effectiveTypeName = columnTypeName;
+                                    if (declaredTypeOid == 0) {
+                                        if (!bindParameterMetaDataLoaded) {
+                                            bindParameterMetaDataLoaded = true;
+                                            try {
+                                                bindParameterMetaData = preparedStatement.getParameterMetaData();
+                                            } catch (SQLException | RuntimeException ignored) {
+                                                // 推导不出类型时退回 Parse 声明；日期修正只对 DATE 生效，宁可少做
+                                            }
+                                        }
+                                        if (bindParameterMetaData != null) {
+                                            try {
+                                                effectiveTypeName = bindParameterMetaData.getParameterTypeName(i + 1);
+                                            } catch (SQLException ignored) {
+                                                // 类型推导失败：按 Parse 声明（未声明即 VARCHAR）处理
+                                            }
+                                        }
+                                    }
+                                    if (isDateTypeName(effectiveTypeName)) {
+                                        text = stripDateZone(text);
+                                    }
+                                    preparedStatement.setString(i + 1, text);
                                 } else {
                                     // Binary mode：按 PG 的二进制格式解码。
                                     // 这里再兜一层 RuntimeException：畸形载荷可能触发下标越界/数值溢出/

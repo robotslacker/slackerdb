@@ -24,7 +24,7 @@ import java.util.Map;
  *   <tr><th>自己的</th><th>共享的（必须共享）</th></tr>
  *   <tr>
  *     <td>{@link JdbcSqlExecutor}（独立连接）、{@link VariableResolver}（独立变量）、
- *         {@link ScriptOutput}（写 {@code <作业名>.out/.err}，并在给了 {@code logfile} 时 tee 一份给
+ *         {@link ScriptOutput}（写 {@code <作业名>.out}，并在给了 {@code logfile} 时 tee 一份给
  *         数据输出文件）、{@link CommandDispatcher}（独立 {@code _SSH} 会话）</td>
  *     <td>{@code job.JobManager}（**同一个**：定时点/屏障因此跨父脚本与任意深度的作业都成立，
  *         作业里再起的孙作业也登记在同一个管理器上）</td>
@@ -47,7 +47,7 @@ import java.util.Map;
  * </ul>
  *
  * <h2>异常不出作业线程</h2>
- * <p>任何异常都由 {@code job.JobManager} 兜住：写进 {@code <作业名>.err} 并把作业置为 {@code FAILED}，
+ * <p>任何异常都由 {@code job.JobManager} 兜住：写进 {@code <作业名>.out} 并把作业置为 {@code FAILED}，
  * 绝不会冒到父脚本线程或杀掉整次运行。{@link ScriptStoppedException}（被停掉）在这里就地转成退出码，
  * 不写错误行——它不是失败，是中止。</p>
  */

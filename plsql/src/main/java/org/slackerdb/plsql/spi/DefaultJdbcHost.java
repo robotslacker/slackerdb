@@ -23,6 +23,10 @@ public class DefaultJdbcHost implements PlSqlHost {
 
     public DefaultJdbcHost(Connection connection) {
         this.connection = connection;
+        // Oracle-style EXCEPTION handlers must be able to continue after a caught
+        // catalog/binder error. DuckDB 2.0's new invalidation policy would abort the
+        // transaction; restore the 1.5.x behavior when the setting is available.
+        DuckDbTransactionCompat.configure(connection);
     }
 
     /** 供嵌入方直接访问底层连接（引擎自身不得使用）。 */

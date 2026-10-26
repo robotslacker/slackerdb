@@ -5,13 +5,17 @@
     <parent>
         <groupId>org.robotslacker</groupId>
         <artifactId>slackerdb</artifactId>
-        <version>0.2.1</version>
+        <version>0.2.2</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <hop.version>2.17.0</hop.version>
+        <!--
+          HOP 运行时版本（仅用于文档/部署对齐；HOP 不是 Maven 依赖）。
+          2.19 起要求 JDK 21；Adoptium 不在官方支持列表，建议用 Microsoft/Oracle JDK 21。
+        -->
+        <hop.version>2.19.0</hop.version>
     </properties>
 
     <artifactId>slackerdb-plugin-scheduler</artifactId>
@@ -34,7 +38,7 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
-            <version>2.0.16</version>
+            <version>2.0.17</version>
             <scope>provided</scope>
         </dependency>
 
@@ -42,15 +46,21 @@
         <dependency>
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
-            <version>1.5.6.0</version>
+            <version>2.0.0.0</version>
             <scope>provided</scope>
         </dependency>
 
-        <!-- Javalin (compile scope so tests can use it) -->
+        <!-- Javalin (compile scope so tests can use it)；排除 brotli4j，统一走 gzip -->
         <dependency>
             <groupId>io.javalin</groupId>
             <artifactId>javalin-bundle</artifactId>
-            <version>7.2.2</version>
+            <version>7.2.3</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.aayushatharva.brotli4j</groupId>
+                    <artifactId>brotli4j</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- PF4J plugin framework -->
@@ -63,15 +73,14 @@
         <dependency>
             <groupId>org.robotslacker</groupId>
             <artifactId>slackerdb-plugin</artifactId>
-            <version>0.2.1</version>
+            <version>0.2.2</version>
             <scope>provided</scope>
         </dependency>
 
-        <!-- Quartz scheduler -->
+        <!-- Quartz scheduler；版本由 Boot 4.1.1 BOM 统一管理（2.5.2） -->
         <dependency>
             <groupId>org.quartz-scheduler</groupId>
             <artifactId>quartz</artifactId>
-            <version>2.5.0</version>
         </dependency>
 
         <!-- FastJSON -->
@@ -174,7 +183,6 @@
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
-                <version>3.6.3</version>
                 <configuration>
                     <mainClass>org.slackerdb.plugins.scheduler.SchedulerHopEndToEndTester</mainClass>
                     <classpathScope>test</classpathScope>

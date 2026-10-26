@@ -197,6 +197,20 @@ public class RowEncoderTest {
     }
 
     /**
+     * 回归：DuckDB 对"裸 NULL 字面量"列报的类型名是 {@code "NULL"} —— 带双引号
+     * （NULL 是关键字，DuckDB 会把它括起来），不是 Java 的 null，也不是 PG 的 unknown。
+     * 以前它按未识别类型处理，值虽然仍是对的（NULL），但每次执行都刷一条
+     * {@code Not implemented column type: "NULL"} 的 WARN。
+     */
+    @Test
+    void nullLiteralTypeIsTreatedAsText() {
+        // 带引号的是 DuckDB 实测形态；不带引号的写法一并钉住，避免换个驱动版本又漏
+        assertEquals(RowEncoder.T_VARCHAR, RowEncoder.typeCodeOf("\"NULL\""));
+        assertEquals(RowEncoder.T_VARCHAR, RowEncoder.typeCodeOf("NULL"));
+        assertEquals(1043, PostgresTypeOids.getTypeOidFromTypeName("NULL"));
+    }
+
+    /**
      * 回归：DECIMAL 列表（{@code DECIMAL(p,s)[]}）曾被当成**标量** DECIMAL。
      *
      * <p>DuckDB 的列表类型名是"&lt;元素类型&gt;[]"，而标量 DECIMAL 靠名称前缀识别，

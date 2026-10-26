@@ -21,7 +21,7 @@ import java.nio.file.StandardOpenOption;
  * <p>够用即可：上下键翻历史、行编辑与 Ctrl-C 中断；不做补全、语法高亮与 bottom toolbar。</p>
  *
  * <h2>历史是跨会话的</h2>
- * <p>翻的是 {@code ~/slackerdb/dbcli.history}（见 {@link #defaultHistoryFile()}）：启动时读进来，
+ * <p>翻的是 {@code ~/.slackerdb/dbcli.history}（见 {@link #defaultHistoryFile()}）：启动时读进来，
  * 退出时写回去，所以"上次敲过的语句"下一次还能上下键翻到。目录建不出来或不可写时**安静放弃**——
  * 历史只是顺手的事，不能因为它让控制台起不来，也不该为此打警告。</p>
  *
@@ -95,7 +95,7 @@ public final class JLineLineSource implements LineSource {
     }
 
     /**
-     * 历史文件：{@code ~/slackerdb/dbcli.history}。
+     * 历史文件：{@code ~/.slackerdb/dbcli.history}。
      *
      * <p>{@code user.home} 拿不到、目录建不出来、文件打不开（不可写/被占用）或读不出来（格式坏、权限）
      * 时返回 <b>null</b>：调用方据此只用内存历史。这条路径上**不打印任何东西**——历史保存失败不是
@@ -111,7 +111,7 @@ public final class JLineLineSource implements LineSource {
             if (home == null || home.isBlank()) {
                 return null;
             }
-            Path directory = Path.of(home, "slackerdb");
+            Path directory = Path.of(home, ".slackerdb");
             Files.createDirectories(directory);
             Path historyFile = directory.resolve("dbcli.history");
             try (OutputStream probe = Files.newOutputStream(historyFile,

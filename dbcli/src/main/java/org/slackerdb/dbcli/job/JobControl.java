@@ -3,7 +3,7 @@ package org.slackerdb.dbcli.job;
 /**
  * 作业线程眼里的"停止控制"：协作式中止的唯一判据。
  *
- * <p>由 {@link JobManager} 实现（实际是 {@link Job}），交给 {@link JobExecutor}：执行体在**长操作**
+ * <p>由 {@link Job} 实现（{@link JobManager} 只是创建与推进它），交给 {@link JobExecutor}：执行体在**长操作**
  * 前后查 {@link #stopRequested()}，并把"取消当前长操作"的回调登记到 {@link #onStop(Runnable)}
  * （JDBC 的 {@code Statement.cancel()}、SSH channel 断开……）。</p>
  *

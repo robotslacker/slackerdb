@@ -82,7 +82,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CliDaemonTest {
 
     /** 独立可执行 jar（package 阶段的产物）；优先用它，与生产形态逐字一致。 */
-    private static final String STANDALONE_JAR = "slackerdb-dbcli-0.2.1-standalone.jar";
+    private static final String STANDALONE_JAR = "slackerdb-dbcli-0.2.2-standalone.jar";
 
     /** 打包产物不存在时自建的启动器 jar 名前缀（见 {@link #launcherJar()}；实际文件名带唯一后缀）。 */
     private static final String LAUNCHER_JAR = "dbcli-daemon-launcher";

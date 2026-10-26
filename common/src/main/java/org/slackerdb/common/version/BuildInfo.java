@@ -126,7 +126,7 @@ public final class BuildInfo {
         return artifact();
     }
 
-    /** 版本号（{@code build.version}，即 {@code <project.version>}），例如 {@code 0.2.1}。 */
+    /** 版本号（{@code build.version}，即 {@code <project.version>}），例如 {@code 0.2.2}。 */
     public String version() {
         return version == null ? UNKNOWN : version;
     }

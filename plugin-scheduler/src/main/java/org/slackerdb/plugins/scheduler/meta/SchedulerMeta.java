@@ -9,6 +9,7 @@ import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Metadata persistence layer for the scheduler plugin.
@@ -82,6 +83,9 @@ public class SchedulerMeta {
                 ")";
 
         try (Statement stmt = dbConnection.createStatement()) {
+            // 自给自足：不能假设服务端已经建过 sysaux（只有开启 SQL 历史时服务端才会建它，
+            // 而 features.sqlHistory 默认 false —— 实测在默认配置的服务端上插件因此起不来）
+            stmt.execute("CREATE SCHEMA IF NOT EXISTS sysaux");
             stmt.execute(createRunTable);
             stmt.execute(createTaskTable);
             stmt.execute(createHistoryTable);
@@ -98,7 +102,7 @@ public class SchedulerMeta {
                 try {
                     stmt.execute(migration);
                 } catch (SQLException e) {
-                    logger.warn("[SCHEDULER] 元数据迁移跳过[{}]: {}", migration, e.getMessage());
+                    logger.warn("[SCHEDULER] metadata migration skipped [{}]: {}", migration, e.getMessage());
                 }
             }
             logger.info("[SCHEDULER] Scheduler metadata tables initialized successfully.");
@@ -280,6 +284,67 @@ public class SchedulerMeta {
     }
 
     /**
+     * 按 (runId, taskName) 更新一条任务；返回是否命中。
+     *
+     * <p>只更新**可编辑字段**（脚本/类型/策略/重试/cron/interval/超时/开关/分组/顺序/描述/变量/配置），
+     * `create_time` 保持不动 —— 它记录的是"任务第一次出现的时间"。</p>
+     */
+    public boolean updateTask(SchedulerTask task) throws SQLException {
+        String sql = "UPDATE sysaux.v$scheduler_task SET "
+                + "task_script = ?, task_script_type = ?, task_run_policy = ?, task_fail_policy = ?, "
+                + "task_retry_times = ?, task_retry_interval = ?, task_parallel_policy = ?, "
+                + "task_crontab_expr = ?, task_interval = ?, task_timeout = ?, task_enabled = ?, "
+                + "task_mandatory = ?, task_group = ?, task_startup_order = ?, task_description = ?, "
+                + "config_json = ?, variables_json = ?, update_time = ? "
+                + "WHERE run_id = ? AND task_name = ?";
+        try (PreparedStatement ps = dbConnection.prepareStatement(sql)) {
+            ps.setString(1, task.getTaskScript());
+            ps.setString(2, task.getTaskScriptType());
+            ps.setString(3, task.getTaskRunPolicy());
+            ps.setString(4, task.getTaskFailPolicy());
+            ps.setInt(5, task.getTaskRetryTimes());
+            ps.setInt(6, task.getTaskRetryInterval());
+            ps.setString(7, task.getTaskParallelPolicy());
+            ps.setString(8, task.getTaskCrontabExpr());
+            ps.setInt(9, task.getTaskInterval());
+            ps.setInt(10, task.getTaskTimeout());
+            ps.setBoolean(11, task.isTaskEnabled());
+            ps.setBoolean(12, task.isTaskMandatory());
+            ps.setString(13, task.getTaskGroup());
+            ps.setInt(14, task.getTaskStartupOrder());
+            ps.setString(15, task.getTaskDescription());
+            ps.setString(16, task.getConfigJson());
+            ps.setString(17, task.getVariablesJson());
+            ps.setObject(18, task.getUpdateTime());
+            ps.setString(19, task.getRunId());
+            ps.setString(20, task.getTaskName());
+            return ps.executeUpdate() > 0;
+        }
+    }
+
+    /** 按 (runId, taskName) 删除一条任务；返回是否命中。 */
+    public boolean deleteTask(String runId, String taskName) throws SQLException {
+        try (PreparedStatement ps = dbConnection.prepareStatement(
+                "DELETE FROM sysaux.v$scheduler_task WHERE run_id = ? AND task_name = ?")) {
+            ps.setString(1, runId);
+            ps.setString(2, taskName);
+            return ps.executeUpdate() > 0;
+        }
+    }
+
+    /** 取单条任务；没有返回 null。 */
+    public SchedulerTask getTask(String runId, String taskName) throws SQLException {
+        try (PreparedStatement ps = dbConnection.prepareStatement(
+                "SELECT * FROM sysaux.v$scheduler_task WHERE run_id = ? AND task_name = ?")) {
+            ps.setString(1, runId);
+            ps.setString(2, taskName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? mapTask(rs) : null;
+            }
+        }
+    }
+
+    /**
      * Delete all tasks for a run.
      */
     public void deleteTasksByRunId(String runId) throws SQLException {
@@ -388,6 +453,91 @@ public class SchedulerMeta {
             }
         }
         return histories;
+    }
+
+    /**
+     * 跨 run 的执行流水（M2 的 {@code globalHistory}）。
+     *
+     * <p>时间窗口用 {@code coalesce(start_time, end_time)} 过滤：正在跑的任务只有 start_time，
+     * 老数据可能只有 end_time，两者都算"发生在这个窗口里"。</p>
+     *
+     * @param from     起始（含），null 表示不限
+     * @param to       结束（不含），null 表示不限
+     * @param runId    可选：只看某个实例
+     * @param taskName 可选：只看某个任务
+     * @param limit    最多返回多少条（服务端已 clamp）
+     */
+    public List<TaskHistory> listHistory(java.time.LocalDateTime from, java.time.LocalDateTime to,
+                                         String runId, String taskName, int limit) throws SQLException {
+        StringBuilder sql = new StringBuilder("SELECT * FROM sysaux.v$scheduler_task_history WHERE 1 = 1");
+        List<Object> params = new ArrayList<>();
+        if (from != null) {
+            sql.append(" AND coalesce(start_time, end_time) >= ?");
+            params.add(from);
+        }
+        if (to != null) {
+            sql.append(" AND coalesce(start_time, end_time) < ?");
+            params.add(to);
+        }
+        if (runId != null && !runId.isBlank()) {
+            sql.append(" AND run_id = ?");
+            params.add(runId);
+        }
+        if (taskName != null && !taskName.isBlank()) {
+            sql.append(" AND task_name = ?");
+            params.add(taskName);
+        }
+        sql.append(" ORDER BY coalesce(start_time, end_time) DESC LIMIT ?");
+        params.add(Math.max(1, Math.min(limit, 2000)));
+
+        List<TaskHistory> histories = new ArrayList<>();
+        try (PreparedStatement ps = dbConnection.prepareStatement(sql.toString())) {
+            for (int i = 0; i < params.size(); i++) {
+                ps.setObject(i + 1, params.get(i));
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    histories.add(mapHistory(rs));
+                }
+            }
+        }
+        return histories;
+    }
+
+    /** 时间窗口内的成功/失败/进行中计数（控制台顶部一句话用）。 */
+    public Map<String, Integer> historySummary(java.time.LocalDateTime from, java.time.LocalDateTime to)
+            throws SQLException {
+        StringBuilder sql = new StringBuilder(
+                "SELECT sum(CASE WHEN end_time IS NULL THEN 1 ELSE 0 END) AS running, "
+                        + "sum(CASE WHEN end_time IS NOT NULL AND ret_code = 0 THEN 1 ELSE 0 END) AS success, "
+                        + "sum(CASE WHEN end_time IS NOT NULL AND coalesce(ret_code, -1) <> 0 THEN 1 ELSE 0 END) AS failed "
+                        + "FROM sysaux.v$scheduler_task_history WHERE 1 = 1");
+        List<Object> params = new ArrayList<>();
+        if (from != null) {
+            sql.append(" AND coalesce(start_time, end_time) >= ?");
+            params.add(from);
+        }
+        if (to != null) {
+            sql.append(" AND coalesce(start_time, end_time) < ?");
+            params.add(to);
+        }
+        Map<String, Integer> summary = new java.util.LinkedHashMap<>();
+        summary.put("running", 0);
+        summary.put("success", 0);
+        summary.put("failed", 0);
+        try (PreparedStatement ps = dbConnection.prepareStatement(sql.toString())) {
+            for (int i = 0; i < params.size(); i++) {
+                ps.setObject(i + 1, params.get(i));
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    summary.put("running", rs.getInt("running"));
+                    summary.put("success", rs.getInt("success"));
+                    summary.put("failed", rs.getInt("failed"));
+                }
+            }
+        }
+        return summary;
     }
 
     private TaskHistory mapHistory(ResultSet rs) throws SQLException {

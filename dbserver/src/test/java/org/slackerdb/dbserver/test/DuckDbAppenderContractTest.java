@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       所以服务端必须自己把文本解析成精确的 Java 值。</li>
  * </ul>
  *
- * <p><b>基线版本：duckdb_jdbc 1.5.6.0</b>（1.5.5.1 实测结果完全相同）。
+ * <p><b>基线版本：duckdb_jdbc 2.0.0.0</b>（1.5.5.1 实测结果完全相同）。
  * 若某天本类在<b>能力集合</b>上失败（例如 2.0 开始支持 BIT/INTERVAL），那不是"测试过时了"，
  * 而是明确的行动项：同步更新 {@link CopyColumnTypes} 的黑名单与注释、{@code PostgresTypeOids}
  * 的相关取舍说明，以及本类下面的基线表。</p>
@@ -90,7 +90,7 @@ public class DuckDbAppenderContractTest {
     /** 版本漂移提示：能力集合变化时的行动项，别让后人以为是"测试该改了"。 */
     private static final String DRIFT_HINT =
             "如果这是 DuckDB/JDBC 升级导致的能力变化：请同步更新 CopyColumnTypes.APPENDER_UNSUPPORTED、"
-                    + "它和 CopyValueWriters/PostgresTypeOids 里的版本注释，以及本类的基线表（当前基线 duckdb_jdbc 1.5.6.0）。";
+                    + "它和 CopyValueWriters/PostgresTypeOids 里的版本注释，以及本类的基线表（当前基线 duckdb_jdbc 2.0.0.0）。";
 
     @Test
     void appenderSupportMatchesBlacklistAndBaseline() throws SQLException {

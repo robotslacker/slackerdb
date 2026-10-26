@@ -20,13 +20,19 @@ import org.slackerdb.dbserver.sql.PostgresSQLUtil;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetTime;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 
 public class CopyDoneRequest extends PostgresRequest {
 
@@ -43,39 +49,74 @@ public class CopyDoneRequest extends PostgresRequest {
     private static final int TYPE_DECIMAL = 7;
     private static final int TYPE_TIMESTAMP = 8;
     private static final int TYPE_BOOLEAN = 9;
+    // 以下类型与 COPY OUT 的 CopyOutBinaryEncoder 一一对应：BINARY COPY 两个方向必须能互相读回。
+    // PostgreSQL 没有 int1，所以 TINYINT/UTINYINT 在线上是 int2；无符号 64/128 位用 numeric。
+    private static final int TYPE_TINYINT = 10;
+    private static final int TYPE_UTINYINT = 11;
+    private static final int TYPE_USMALLINT = 12;
+    private static final int TYPE_UINTEGER = 13;
+    private static final int TYPE_UBIGINT = 14;
+    private static final int TYPE_HUGEINT = 15;
+    private static final int TYPE_UHUGEINT = 16;
+    private static final int TYPE_BLOB = 17;
+    private static final int TYPE_UUID = 18;
+    private static final int TYPE_DATE = 19;
+    private static final int TYPE_TIME = 20;
+    private static final int TYPE_TIMETZ = 21;
+    private static final int TYPE_TIMESTAMPTZ = 22;
+
+    /** 2000-01-01 在 {@link java.time.LocalDate#toEpochDay()} 里的值。 */
+    private static final long PG_EPOCH_DAY = java.time.LocalDate.of(2000, 1, 1).toEpochDay();
+    /** UBIGINT（无符号 64 位）的上限；线上用 PostgreSQL numeric 表示。 */
+    private static final BigInteger MAX_UBIGINT =
+            BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
+    /** HUGEINT（有符号 128 位）的取值范围；线上用 PostgreSQL numeric 表示。 */
+    private static final BigInteger MIN_HUGEINT = BigInteger.ONE.shiftLeft(127).negate();
+    private static final BigInteger MAX_HUGEINT =
+            BigInteger.ONE.shiftLeft(127).subtract(BigInteger.ONE);
+    /** UHUGEINT 的 128 位无符号上限。 */
+    private static final BigInteger MAX_UHUGEINT =
+            BigInteger.ONE.shiftLeft(128).subtract(BigInteger.ONE);
+    private static final BigInteger UNSIGNED_LONG_MASK =
+            new BigInteger("FFFFFFFFFFFFFFFF", 16);
+    /** 一天的微秒数（PG time/timetz 的取值范围检查）。 */
+    private static final long MICROS_PER_DAY = 86_400_000_000L;
 
     /**
      * 把列类型名称解析为 PG 二进制载荷解码用的类型编码，未支持的类型返回 {@link #TYPE_UNSUPPORTED}。
      */
     private static int columnTypeCode(String columnType) {
-        if ("SMALLINT".equals(columnType)) {
-            return TYPE_SMALLINT;
+        if (columnType == null) {
+            return TYPE_UNSUPPORTED;
         }
-        if ("INTEGER".equals(columnType)) {
-            return TYPE_INTEGER;
-        }
-        if ("BIGINT".equals(columnType)) {
-            return TYPE_BIGINT;
-        }
-        if ("VARCHAR".equals(columnType)) {
-            return TYPE_VARCHAR;
-        }
-        if ("FLOAT".equals(columnType)) {
-            return TYPE_FLOAT;
-        }
-        if ("DOUBLE".equals(columnType)) {
-            return TYPE_DOUBLE;
-        }
-        if (columnType != null && columnType.startsWith("DECIMAL")) {
+        // DECIMAL 带精度/标度（如 DECIMAL(18,3)），单独判断
+        if (columnType.startsWith("DECIMAL") || columnType.startsWith("NUMERIC")) {
             return TYPE_DECIMAL;
         }
-        if ("TIMESTAMP".equals(columnType)) {
-            return TYPE_TIMESTAMP;
-        }
-        if ("BOOLEAN".equals(columnType)) {
-            return TYPE_BOOLEAN;
-        }
-        return TYPE_UNSUPPORTED;
+        return switch (columnType) {
+            case "SMALLINT", "INT2", "SHORT" -> TYPE_SMALLINT;
+            case "INTEGER", "INT4", "INT", "SIGNED" -> TYPE_INTEGER;
+            case "BIGINT", "INT8", "LONG" -> TYPE_BIGINT;
+            case "TINYINT", "INT1" -> TYPE_TINYINT;
+            case "UTINYINT" -> TYPE_UTINYINT;
+            case "USMALLINT" -> TYPE_USMALLINT;
+            case "UINTEGER" -> TYPE_UINTEGER;
+            case "UBIGINT" -> TYPE_UBIGINT;
+            case "HUGEINT" -> TYPE_HUGEINT;
+            case "UHUGEINT" -> TYPE_UHUGEINT;
+            case "VARCHAR", "TEXT", "STRING", "CHAR", "BPCHAR", "JSON", "ENUM" -> TYPE_VARCHAR;
+            case "FLOAT", "FLOAT4", "REAL" -> TYPE_FLOAT;
+            case "DOUBLE", "FLOAT8" -> TYPE_DOUBLE;
+            case "TIMESTAMP", "DATETIME", "TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP_NS" -> TYPE_TIMESTAMP;
+            case "TIMESTAMP WITH TIME ZONE", "TIMESTAMPTZ" -> TYPE_TIMESTAMPTZ;
+            case "BOOLEAN", "BOOL", "LOGICAL" -> TYPE_BOOLEAN;
+            case "BLOB", "BYTEA", "BINARY", "VARBINARY" -> TYPE_BLOB;
+            case "UUID" -> TYPE_UUID;
+            case "DATE" -> TYPE_DATE;
+            case "TIME" -> TYPE_TIME;
+            case "TIME WITH TIME ZONE", "TIMETZ" -> TYPE_TIMETZ;
+            default -> TYPE_UNSUPPORTED;
+        };
     }
     /** 列数不符时用于立即停止解析（不是错误，由调用方统一报错）。 */
     private static final class StopParsing extends RuntimeException {
@@ -397,7 +438,8 @@ public class CopyDoneRequest extends PostgresRequest {
                             TYPE_UNSUPPORTED, -1);
                     continue;
                 }
-                switch (columnTypeCode(columnType)) {
+                int columnKind = columnTypeCode(columnType);
+                switch (columnKind) {
                     case TYPE_SMALLINT -> decoders[tablePos] =
                             new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_SMALLINT, 2);
                     case TYPE_INTEGER -> decoders[tablePos] =
@@ -410,12 +452,35 @@ public class CopyDoneRequest extends PostgresRequest {
                             new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_DOUBLE, 8);
                     case TYPE_TIMESTAMP -> decoders[tablePos] =
                             new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_TIMESTAMP, 8);
+                    case TYPE_TIMESTAMPTZ -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_TIMESTAMPTZ, 8);
                     case TYPE_BOOLEAN -> decoders[tablePos] =
                             new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_BOOLEAN, 1);
                     case TYPE_VARCHAR -> decoders[tablePos] =
                             new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_VARCHAR, -1);
                     case TYPE_DECIMAL -> decoders[tablePos] =
                             new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_DECIMAL, -1);
+                    case TYPE_TINYINT -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_TINYINT, 2);
+                    case TYPE_UTINYINT -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_UTINYINT, 2);
+                    case TYPE_USMALLINT -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_USMALLINT, 4);
+                    case TYPE_UINTEGER -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_UINTEGER, 8);
+                    case TYPE_UBIGINT, TYPE_HUGEINT, TYPE_UHUGEINT -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType,
+                                    columnKind, -1);
+                    case TYPE_BLOB -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_BLOB, -1);
+                    case TYPE_UUID -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_UUID, 16);
+                    case TYPE_DATE -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_DATE, 4);
+                    case TYPE_TIME -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_TIME, 8);
+                    case TYPE_TIMETZ -> decoders[tablePos] =
+                            new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType, TYPE_TIMETZ, 12);
                     default -> decoders[tablePos] =
                             new BinaryColumnDecoder(copyPos, tablePos, columnName, columnType,
                                     TYPE_UNSUPPORTED, -1);
@@ -522,14 +587,155 @@ public class CopyDoneRequest extends PostgresRequest {
                 case TYPE_FLOAT -> appender.append(Float.intBitsToFloat(getIntAt(start)));
                 case TYPE_DOUBLE -> appender.append(Double.longBitsToDouble(getLongAt(start)));
                 case TYPE_BOOLEAN -> appender.append(payload[start] == 0x01);
-                case TYPE_TIMESTAMP -> appender.appendEpochMicros(
+                // appendEpochMicros 只接受 TIMESTAMP / TIMESTAMP_TZ；TIMESTAMP_S/MS/NS 列必须先
+                // 还原成 LocalDateTime，否则 Appender 会报 "invalid column type ... TIMESTAMP_S"。
+                case TYPE_TIMESTAMP -> appender.append(
+                        pgMicrosToLocalDateTime(getLongAt(start)));
+                case TYPE_TIMESTAMPTZ -> appender.appendEpochMicros(
                         getLongAt(start) + PostgresSQLUtil.PG_EPOCH_MICROS);
                 case TYPE_VARCHAR -> appender.append(new String(payload, start, length, StandardCharsets.UTF_8));
                 case TYPE_DECIMAL -> appender.append(PostgresSQLUtil.convertPGByteToBigDecimal(
                         slice(start, length)));
+                // PostgreSQL 没有 int1：TINYINT / UTINYINT 的线上表示是 int2
+                case TYPE_TINYINT -> {
+                    int value = getShortAt(start);
+                    if (value < -128 || value > 127) {
+                        throw outOfRange(decoder, value, "-128..127");
+                    }
+                    appender.append((byte) value);
+                }
+                case TYPE_UTINYINT -> {
+                    int value = getShortAt(start);
+                    if (value < 0 || value > 255) {
+                        throw outOfRange(decoder, value, "0..255");
+                    }
+                    appender.append((byte) value);
+                }
+                case TYPE_USMALLINT -> {
+                    int value = getIntAt(start);
+                    if (value < 0 || value > 65535) {
+                        throw outOfRange(decoder, value, "0..65535");
+                    }
+                    appender.append((short) value);
+                }
+                case TYPE_UINTEGER -> {
+                    long value = getLongAt(start);
+                    if (value < 0 || value > 4294967295L) {
+                        throw outOfRange(decoder, value, "0..4294967295");
+                    }
+                    appender.append((int) value);
+                }
+                case TYPE_UBIGINT -> {
+                    BigInteger value = numericAsBigInteger(start, length, decoder);
+                    if (value.signum() < 0 || value.compareTo(MAX_UBIGINT) > 0) {
+                        throw outOfRange(decoder, value, "0..18446744073709551615");
+                    }
+                    // Appender 的 append(long) 对 UBIGINT 只认位模式（BigInteger 重载只服务 HUGEINT/UHUGEINT）
+                    appender.append(value.longValue());
+                }
+                case TYPE_HUGEINT -> {
+                    BigInteger value = numericAsBigInteger(start, length, decoder);
+                    if (value.compareTo(MIN_HUGEINT) < 0 || value.compareTo(MAX_HUGEINT) > 0) {
+                        throw outOfRange(decoder, value, "-2^127..2^127-1");
+                    }
+                    appender.append(value);
+                }
+                case TYPE_UHUGEINT -> {
+                    BigInteger value = numericAsBigInteger(start, length, decoder);
+                    if (value.signum() < 0 || value.compareTo(MAX_UHUGEINT) > 0) {
+                        throw outOfRange(decoder, value, "0..2^128-1");
+                    }
+                    if (value.bitLength() > 127) {
+                        // 超出 int128 的正数：Appender 的 BigInteger 重载装不下，
+                        // 按低位/高位两段调用 appendHugeInt（与 CSV 路径的处理一致）。
+                        BigInteger low = value.and(UNSIGNED_LONG_MASK);
+                        BigInteger high = value.shiftRight(64);
+                        appender.appendHugeInt(low.longValue(), high.longValue());
+                    } else {
+                        appender.append(value);
+                    }
+                }
+                case TYPE_BLOB -> appender.append(
+                        java.util.Arrays.copyOfRange(payload, start, start + length));
+                case TYPE_UUID -> appender.append(readUuid(start));
+                case TYPE_DATE -> {
+                    int days = getIntAt(start);
+                    try {
+                        appender.append(LocalDate.ofEpochDay(days + PG_EPOCH_DAY));
+                    } catch (java.time.DateTimeException e) {
+                        throw outOfRange(decoder, days, "a valid PostgreSQL date");
+                    }
+                }
+                case TYPE_TIME -> {
+                    long micros = getLongAt(start);
+                    if (micros < 0 || micros >= MICROS_PER_DAY) {
+                        throw outOfRange(decoder, micros, "0..86399999999 microseconds");
+                    }
+                    appender.append(LocalTime.ofNanoOfDay(micros * 1_000L));
+                }
+                case TYPE_TIMETZ -> {
+                    long micros = getLongAt(start);
+                    int zone = getIntAt(start + 8);
+                    if (micros < 0 || micros >= MICROS_PER_DAY) {
+                        throw outOfRange(decoder, micros, "0..86399999999 microseconds");
+                    }
+                    // PG 的 zone 是"西为正"的秒数，Java 的 ZoneOffset 东为正
+                    try {
+                        appender.append(OffsetTime.of(
+                                LocalTime.ofNanoOfDay(micros * 1_000L),
+                                ZoneOffset.ofTotalSeconds(-zone)));
+                    } catch (java.time.DateTimeException e) {
+                        throw outOfRange(decoder, zone, "-64800..64800 seconds");
+                    }
+                }
                 default -> throw new BinaryUnsupportedTypeException(
                         "Binary Format error (column type not support) . " + decoder.columnType);
             }
+        }
+
+        /**
+         * PG timestamp 微秒（自 2000-01-01）→ 本地墙钟时间。
+         *
+         * <p>用 {@code floorDiv/floorMod} 而不是 {@code micros * 1000}：后者在远未来/远过去的
+         * 时间戳上会溢出 long（PG timestamp 的上限约 9.2e18 微秒）。</p>
+         */
+        private static LocalDateTime pgMicrosToLocalDateTime(long micros) {
+            long epochMicros = micros + PostgresSQLUtil.PG_EPOCH_MICROS;
+            long seconds = Math.floorDiv(epochMicros, 1_000_000L);
+            int nanos = (int) Math.floorMod(epochMicros, 1_000_000L) * 1_000;
+            return LocalDateTime.ofEpochSecond(seconds, nanos, ZoneOffset.UTC);
+        }
+
+        /** numeric 二进制 → 整数值；带小数或格式不合法时给出可读错误。 */
+        private BigInteger numericAsBigInteger(int start, int length, BinaryColumnDecoder decoder) {
+            try {
+                return PostgresSQLUtil.convertPGByteToBigDecimal(slice(start, length))
+                        .toBigIntegerExact();
+            } catch (RuntimeException e) {
+                throw new BinaryFormatException(
+                        "Binary Copy data type mismatch: Column [" + decoder.columnName
+                                + "], column type is " + decoder.columnType
+                                + ", but the numeric value is not a valid integer ("
+                                + e.getMessage() + ").");
+            }
+        }
+
+        /** PG uuid 的二进制表示就是 16 字节（两个大端 long）。 */
+        private UUID readUuid(int start) {
+            long most = 0;
+            long least = 0;
+            for (int i = 0; i < 8; i++) {
+                most = (most << 8) | (payload[start + i] & 0xFF);
+                least = (least << 8) | (payload[start + 8 + i] & 0xFF);
+            }
+            return new UUID(most, least);
+        }
+
+        private BinaryFormatException outOfRange(BinaryColumnDecoder decoder, Object value, String range) {
+            return new BinaryFormatException(
+                    "Binary Copy data out of range: Column [" + decoder.columnName
+                            + "], column type is " + decoder.columnType
+                            + ", value " + value + " is outside " + range + ".");
         }
 
         /** VARCHAR / DECIMAL 需要的连续字节切片；行内复用同一个缓冲，按需增长。 */

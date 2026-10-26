@@ -6,7 +6,7 @@
     <parent>
         <groupId>org.robotslacker</groupId>
         <artifactId>slackerdb</artifactId>
-        <version>0.2.1</version>
+        <version>0.2.2</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -22,6 +22,13 @@
     </properties>
 
     <dependencies>
+        <dependency>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-common</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
         <!--
           依赖方向：
               dbcli → plsql → common
@@ -124,7 +131,11 @@
                 <configuration>
                     <showWarnings>true</showWarnings>
                     <compilerArgs>
-                        <arg>-Xlint:all</arg>
+                        <!--
+                          JDK21 新增 this-escape lint；本模块带 -Werror，
+                          先关闭该单项，等存量构造函数清理完再打开，避免升级即断构建。
+                        -->
+                        <arg>-Xlint:all,-this-escape</arg>
                         <arg>-Werror</arg>
                     </compilerArgs>
                 </configuration>
@@ -215,7 +226,7 @@
                         <configuration>
                             <rules>
                                 <requireJavaVersion>
-                                    <version>[17,)</version>
+                                    <version>[21,)</version>
                                 </requireJavaVersion>
                                 <bannedDependencies>
                                     <searchTransitive>true</searchTransitive>

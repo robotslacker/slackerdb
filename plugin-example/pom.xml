@@ -4,14 +4,14 @@
 
     <groupId>org.robotslacker</groupId>
     <artifactId>slackerdb-plugin-example</artifactId>
-    <version>0.2.1</version>
+    <version>0.2.2</version>
     <packaging>jar</packaging>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!-- 这个模块没有 <parent>（独立示例工程），所以编译级别要自己写；
              不写就会退回 javac 默认的 1.8 并报 "-source 8 is obsolete"。 -->
-        <maven.compiler.release>17</maven.compiler.release>
+        <maven.compiler.release>21</maven.compiler.release>
     </properties>
 
     <dependencies>
@@ -31,7 +31,7 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
-            <version>2.0.16</version>
+            <version>2.0.17</version>
             <scope>provided</scope>
         </dependency>
 
@@ -39,30 +39,29 @@
         <dependency>
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
-            <version>1.5.6.0</version>
+            <version>2.0.0.0</version>
             <scope>provided</scope>
         </dependency>
 
-        <!-- Javalin -->
+        <!-- Javalin（示例不承担 HTTP 压缩；排除 brotli4j，统一走 gzip） -->
         <dependency>
             <groupId>io.javalin</groupId>
             <artifactId>javalin-bundle</artifactId>
-            <version>7.2.2</version>
+            <version>7.2.3</version>
             <scope>provided</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.aayushatharva.brotli4j</groupId>
+                    <artifactId>brotli4j</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
-        <!-- Jetty modules required for Javalin (version aligned with javalin-bundle 7.2.2) -->
-        <dependency>
-            <groupId>org.eclipse.jetty</groupId>
-            <artifactId>jetty-security</artifactId>
-            <version>11.0.25</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.jetty</groupId>
-            <artifactId>jetty-util</artifactId>
-            <version>11.0.25</version>
-            <scope>provided</scope>
-        </dependency>
+        <!--
+          Javalin 7.2.3 使用 Jetty 12.1.12（jakarta.servlet）。
+          本示例没有直接 import Jetty，因此不再显式声明 Jetty：
+          默认 provided 下不需要；standalone profile 里由 Javalin 的传递依赖带入。
+          原先钉的 Jetty 11.0.25 与 Javalin 7 不兼容，已移除。
+        -->
 
         <!-- PF4J plugin framework -->
         <dependency>
@@ -74,12 +73,65 @@
         <dependency>
             <groupId>org.robotslacker</groupId>
             <artifactId>slackerdb-plugin</artifactId>
-            <version>0.2.1</version>
+            <version>0.2.2</version>
             <scope>provided</scope>
         </dependency>
     </dependencies>
 
     <build>
+        <!--
+          本示例是独立工程（没有 <parent>），无法继承根 POM 的 pluginManagement；
+          插件版本只能在本 POM 集中管理，刻意与其他模块保持同版。
+        -->
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-clean-plugin</artifactId>
+                    <version>3.4.1</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.15.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-resources-plugin</artifactId>
+                    <version>3.3.1</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>3.4.2</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-assembly-plugin</artifactId>
+                    <version>3.7.1</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.5.5</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-install-plugin</artifactId>
+                    <version>3.1.2</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-deploy-plugin</artifactId>
+                    <version>3.1.2</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>exec-maven-plugin</artifactId>
+                    <version>3.6.3</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <finalName>${project.artifactId}-${project.version}</finalName>
         <resources>
             <resource>
@@ -94,7 +146,6 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.15.0</version>
                 <configuration>
                     <encoding>UTF-8</encoding>
                     <compilerArgs>
@@ -106,7 +157,6 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-resources-plugin</artifactId>
-                <version>3.3.1</version>
                 <configuration>
                     <encoding>UTF-8</encoding>
                 </configuration>
@@ -116,7 +166,6 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
-                <version>3.4.2</version>
                 <configuration>
                     <archive>
                         <manifest>
@@ -129,7 +178,6 @@
                         <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-assembly-plugin</artifactId>
-                <version>3.7.1</version>
                 <executions>
                     <!--
                       源码包（<artifactId>-<version>-sources.jar）：口径见 build/sources-assembly.xml ——
@@ -154,7 +202,6 @@
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
-                <version>3.6.3</version>
                 <configuration>
                     <mainClass>org.slackerdb.pluginExample.SimplePluginRunner</mainClass>
                 </configuration>
@@ -187,34 +234,28 @@
                 <dependency>
                     <groupId>org.slf4j</groupId>
                     <artifactId>slf4j-api</artifactId>
-                    <version>2.0.16</version>
+                    <version>2.0.17</version>
                     <scope>compile</scope>
                 </dependency>
                 <dependency>
                     <groupId>org.duckdb</groupId>
                     <artifactId>duckdb_jdbc</artifactId>
-                    <version>1.5.6.0</version>
+                    <version>2.0.0.0</version>
                     <scope>compile</scope>
                 </dependency>
                 <dependency>
                     <groupId>io.javalin</groupId>
                     <artifactId>javalin-bundle</artifactId>
-                    <version>7.2.2</version>
+                    <version>7.2.3</version>
                     <scope>compile</scope>
+                    <exclusions>
+                        <exclusion>
+                            <groupId>com.aayushatharva.brotli4j</groupId>
+                            <artifactId>brotli4j</artifactId>
+                        </exclusion>
+                    </exclusions>
                 </dependency>
-                <!-- Jetty modules required for Javalin (version aligned with javalin-bundle 7.2.2) -->
-                <dependency>
-                    <groupId>org.eclipse.jetty</groupId>
-                    <artifactId>jetty-security</artifactId>
-                    <version>11.0.25</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.eclipse.jetty</groupId>
-                    <artifactId>jetty-util</artifactId>
-                    <version>11.0.25</version>
-                    <scope>compile</scope>
-                </dependency>
+                <!-- Jetty 12.1.12 由 javalin-bundle 传递，不再显式声明（原 11.0.25 已移除） -->
                 <dependency>
                     <groupId>org.pf4j</groupId>
                     <artifactId>pf4j</artifactId>
@@ -224,7 +265,7 @@
                 <dependency>
                     <groupId>org.robotslacker</groupId>
                     <artifactId>slackerdb-plugin</artifactId>
-                    <version>0.2.1</version>
+                    <version>0.2.2</version>
                     <scope>compile</scope>
                 </dependency>
             </dependencies>
@@ -234,7 +275,6 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-jar-plugin</artifactId>
-                        <version>3.4.2</version>
                         <executions>
                             <execution>
                                 <id>standalone-jar</id>

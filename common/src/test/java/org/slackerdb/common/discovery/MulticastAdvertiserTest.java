@@ -100,7 +100,7 @@ class MulticastAdvertiserTest {
         assumeTrue(nic != null, "this machine exposes no network interface");
 
         MulticastAdvertiser advertiser = new MulticastAdvertiser(LoggerFactory.getLogger("test"),
-                options(nic).alias("mydb-alias").version("0.2.1"));
+                options(nic).alias("mydb-alias").version("0.2.2"));
 
         Announcement first = advertiser.nextHello();
         Announcement second = advertiser.nextHello();
@@ -111,7 +111,7 @@ class MulticastAdvertiserTest {
         assertEquals("192.168.1.10", first.getHost());
         assertEquals(5432, first.getPort());
         assertEquals(8000, first.getPortX());
-        assertEquals("0.2.1", first.getVersion());
+        assertEquals("0.2.2", first.getVersion());
         assertTrue(second.getSeq() > first.getSeq(), "sequence must increase so receivers can spot reordering");
     }
 

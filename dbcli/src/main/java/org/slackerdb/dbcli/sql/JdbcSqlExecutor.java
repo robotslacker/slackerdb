@@ -123,6 +123,15 @@ public final class JdbcSqlExecutor implements SqlExecutor {
     /** {@code _SET TIMEOUT}：单条语句的服务端超时秒数（0 = 不限）。 */
     private int queryTimeoutSeconds;
 
+    /**
+     * {@code _SET AUTOCOMMIT} 的**当前取值**：新连接必须继承它。
+     *
+     * <p>为什么执行器要自己记：{@code _SET AUTOCOMMIT OFF} 只作用于"当时那条 Connection"，
+     * 而 {@code _CONNECT}/{@code _SESSION RESTORE} 会打开一条新连接（默认 autocommit=true）。
+     * 不重新应用的话，脚本看起来还在事务里，实际每条语句都已经提交——ROLLBACK 什么也回滚不了。</p>
+     */
+    private boolean autoCommit = true;
+
     public JdbcSqlExecutor() {
     }
 
@@ -150,7 +159,7 @@ public final class JdbcSqlExecutor implements SqlExecutor {
         Connection connection;
         try {
             // 简写形态没有用户名/口令（服务端没有鉴权）；全写形态有就交给驱动，没有就与旧行为一致
-            connection = open(target);
+            connection = openWithState(target);
         } catch (SQLException connectFailed) {
             throw new SqlExecutorException("Cannot connect to [" + target.url() + "]: "
                     + connectFailed.getMessage(), connectFailed);
@@ -224,7 +233,7 @@ public final class JdbcSqlExecutor implements SqlExecutor {
         // SAVEURL 存下的名字只有 URL：按它重新连一条，再切为当前会话
         try {
             // 用户名/口令跟着目标一起存：全写形态的会话恢复后仍然连同一个身份
-            Connection connection = open(saved.target());
+            Connection connection = openWithState(saved.target());
             sessions.put(name, new SavedSession(saved.target(), connection));
             currentSessionName = name;
             outcomes.add(new CommandOutcome.Status("Session restored."));
@@ -258,6 +267,13 @@ public final class JdbcSqlExecutor implements SqlExecutor {
         }
         if (name == null || name.isEmpty()) {
             outcomes.add(new CommandOutcome.Error("Session name is missing."));
+            return;
+        }
+        if (name.equals(currentSessionName)) {
+            // 当前槽位被换成"只有 URL"的记录之后 isConnected() 立刻为 false，后续每条 SQL 都
+            // 报 Not connected：想记 URL 却把当前连接藏起来了。要重连请先 _SESSION SAVE 到另一个名字。
+            outcomes.add(new CommandOutcome.Error("Session [" + name
+                    + "] is the current session; use another name for _SESSION SAVEURL."));
             return;
         }
         closeIfUnreferenced(sessions.put(name, new SavedSession(current.target(), null)));
@@ -324,6 +340,11 @@ public final class JdbcSqlExecutor implements SqlExecutor {
             return results;
         } catch (SQLException executionFailed) {
             lastError = errorText(executionFailed.getMessage());
+            return List.of(errorModel());
+        } catch (RuntimeException driverFailure) {
+            // 驱动抛运行时异常（NPE/IllegalState 等）同样收敛成一条可读错误：
+            // SqlExecutor 的契约是 "execute 不抛异常"，否则使用者看到的是 Java 栈 + 退出码 255。
+            lastError = errorText(messageOf(driverFailure));
             return List.of(errorModel());
         } finally {
             runningStatement = null;
@@ -403,6 +424,10 @@ public final class JdbcSqlExecutor implements SqlExecutor {
 
     private ResultModel readResultSet(Statement jdbcStatement, boolean hasWarnings) throws SQLException {
         try (ResultSet resultSet = jdbcStatement.getResultSet()) {
+            if (resultSet == null) {
+                // execute() 说"有结果集"但驱动给不出（边界行为）：按 0 行结果处理，不要 NPE
+                return updateModel(0, hasWarnings);
+            }
             StoredResult stored = read(resultSet);
             lastError = null;
             return new ResultModel(0, stored.rows().size(),
@@ -438,6 +463,9 @@ public final class JdbcSqlExecutor implements SqlExecutor {
      */
     static StoredResult read(ResultSet resultSet) throws SQLException {
         ResultSetMetaData metaData = resultSet.getMetaData();
+        if (metaData == null) {
+            return new StoredResult(List.of(), List.of(), List.of());
+        }
         int columnCount = metaData.getColumnCount();
         List<String> headers = new ArrayList<>(columnCount);
         List<String> columnTypes = new ArrayList<>(columnCount);
@@ -506,6 +534,8 @@ public final class JdbcSqlExecutor implements SqlExecutor {
         }
         try {
             current.connection().setAutoCommit(autoCommit);
+            // 记住取值：之后 _CONNECT/_SESSION RESTORE 打开的新连接要继承它
+            this.autoCommit = autoCommit;
         } catch (SQLException autoCommitFailed) {
             throw new SqlExecutorException("Cannot switch autocommit: " + autoCommitFailed.getMessage(),
                     autoCommitFailed);
@@ -624,17 +654,74 @@ public final class JdbcSqlExecutor implements SqlExecutor {
                 user == null || user.isBlank() ? null : user, password);
     }
 
+    /**
+     * 打开连接并套用**会话级状态**：新连接要继承 {@code _SET AUTOCOMMIT} 的当前取值。
+     *
+     * <p>这是 {@code _CONNECT} / {@code _SESSION RESTORE} 的唯一开连接入口——两处都走它，
+     * "新连接忘了重新应用 autocommit"就只会是一个实现问题，不会各写一套。</p>
+     */
+    private Connection openWithState(ConnectionTarget target) throws SQLException {
+        Connection opened = open(target);
+        if (autoCommit) {
+            return opened;
+        }
+        try {
+            opened.setAutoCommit(false);
+            return opened;
+        } catch (SQLException applyFailed) {
+            closeQuietly(opened);
+            throw applyFailed;
+        }
+    }
+
+    /** 驱动抛出运行时异常时的可读原因（消息为空时退回类名）。 */
+    private static String messageOf(Throwable failure) {
+        String message = failure == null ? null : failure.getMessage();
+        return message == null || message.isBlank()
+                ? (failure == null ? "unknown failure" : failure.getClass().getSimpleName())
+                : message;
+    }
+
+    /**
+     * 会话标识（契约 L-1）：连接时带上 {@code application_name=slackerdb-dbcli/<ver>}，
+     * 服务端 {@code /status.sessions} 才能分辨"这条连接来自 dbcli"。
+     *
+     * <p>只对 pgwire 系的 URL（{@code jdbc:postgresql:} 与 dbcli 自己的
+     * {@code jdbc:slackerdb:}）追加：别的驱动可能不认识这个参数，直接拼上去会连不上。</p>
+     *
+     * <p><b>为什么必须包含 {@code jdbc:slackerdb:}</b>：dbcli 的 {@code _CONNECT} 与
+     * {@code --logon} 简写形态拼出来的就是 {@code jdbc:slackerdb://…}（见 {@link #open} 的上游
+     * {@code connectTarget}），而 {@code jdbc:slackerdb:} 是仓内驱动唯一接管的 scheme
+     * （{@code dbdriver/.../Driver.java} 的 {@code URL_PREFIX}）。只认 {@code jdbc:postgresql:}
+     * 会让 L-1 对 dbcli 的常规用法完全失效——用户在会话面板里仍然看不到来源。</p>
+     */
+    static String withApplicationName(String url) {
+        if (url == null) {
+            return null;
+        }
+        String lowerCaseUrl = url.toLowerCase(java.util.Locale.ROOT);
+        if (!lowerCaseUrl.startsWith("jdbc:postgresql:") && !lowerCaseUrl.startsWith("jdbc:slackerdb:")) {
+            return url;
+        }
+        if (lowerCaseUrl.contains("applicationname=")) {
+            return url; // 用户自己指定了，尊重用户
+        }
+        String applicationName = "slackerdb-dbcli/" + org.slackerdb.dbcli.BuildInfo.version();
+        return url + (url.contains("?") ? "&" : "?") + "ApplicationName=" + applicationName;
+    }
+
     /** 打开连接：有用户名就交给驱动（口令可选），没有就只用 URL（与旧行为完全一致）。 */
     private static Connection open(ConnectionTarget target) throws SQLException {
+        String url = withApplicationName(target.url());
         if (target.user() == null) {
-            return DriverManager.getConnection(target.url());
+            return DriverManager.getConnection(url);
         }
         Properties properties = new Properties();
         properties.setProperty("user", target.user());
         if (target.password() != null) {
             properties.setProperty("password", target.password());
         }
-        return DriverManager.getConnection(target.url(), properties);
+        return DriverManager.getConnection(url, properties);
     }
 
     /** 把 IR 的查询参数接到 URL 后面（没有参数就原样返回）。 */

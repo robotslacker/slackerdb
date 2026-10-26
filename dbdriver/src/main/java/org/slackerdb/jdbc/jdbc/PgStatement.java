@@ -48,8 +48,10 @@ public class PgStatement implements Statement, BaseStatement {
   /**
    * Default state for use or not binary transfers. Can use only for testing purposes
    */
+  // 新名字优先；旧名字（org.postgresql.forceBinary）保留兼容，否则从 pgjdbc 迁过来的测试脚本会静默失效。
   private static final boolean DEFAULT_FORCE_BINARY_TRANSFERS =
-      Boolean.getBoolean("org.postgresql.forceBinary");
+      Boolean.getBoolean("org.slackerdb.jdbc.forceBinary")
+          || Boolean.getBoolean("org.postgresql.forceBinary");
   // only for testing purposes. even single shot statements will use binary transfers
   private boolean forceBinaryTransfers = DEFAULT_FORCE_BINARY_TRANSFERS;
 

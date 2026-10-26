@@ -5,16 +5,17 @@ image::robotslacker.jpg[RobotSlacker]
 
 === What is SlackerDB?
 
-SlackerDB is a Java‑based service layer that puts DuckDB on the network. It speaks the PostgreSQL wire protocol, so standard PostgreSQL clients connect without any special driver, and it lets several clients use the same DuckDB database at once — something a plain DuckDB process cannot do. On top of that it adds a registered‑SQL layer that turns queries into cacheable HTTP endpoints, and a bulk COPY path for loading data.
+SlackerDB is a Java‑based service layer that puts DuckDB on the network. It speaks the PostgreSQL wire protocol, so standard PostgreSQL JDBC clients connect without any special driver, and it lets several clients use the same DuckDB database at once — something a plain DuckDB process cannot do. On top of that it adds a bulk COPY path for loading data and a registered‑SQL layer that turns queries into cacheable HTTP endpoints.
 
 It runs either as a standalone server (`dbserver`) or embedded directly in a Java application.
 
 ==== Capabilities
 
-* *PostgreSQL Wire Protocol* – Standard PostgreSQL clients connect as‑is: JDBC, ODBC, libpq, psql, Python, and database tools such as DBeaver. A system catalog compatibility layer (`pg_catalog` emulation) keeps third‑party client metadata queries working.
+* *PostgreSQL Wire Protocol* – Standard PostgreSQL clients connect as‑is: JDBC, ODBC, libpq, psql, Python.
+* *PostgreSQL Data Dictionary Compatibility* – Emulates the catalog data that database tools need to access, such as DBeaver and postgres_fdw.
 * *Multi‑Session Access* – One DuckDB database served to many concurrent client sessions, with a connection pool, per‑session state, and SQL executed off the network I/O threads.
 * *Query Cancellation* – Client‑side cancellation and `KILL SESSION` reach the statement that is actually running.
-* *High‑Performance Data Import* – PostgreSQL `COPY … FROM STDIN` in CSV and BINARY form, with a streaming decode path benchmarked at roughly 0.6–2.3 million rows/second depending on shape.
+* *High‑Performance Bulk Transfer* – PostgreSQL `COPY … FROM STDIN` and `COPY … TO STDOUT` in CSV and BINARY form, with a streaming decode path benchmarked at roughly 0.6–2.3 million rows/second depending on shape.
 * *Registered SQL Services* – Register parameterized SQL as named HTTP endpoints at runtime, with result caching, service versioning, and per‑service search paths.
 * *Server Management APIs* – Status and metrics, database backup, log viewing, and file upload/download on the management port.
 * *Asynchronous SQL over WebSocket* – Execute SQL asynchronously and page through results, for queries too large or too slow for a single request.
@@ -24,19 +25,24 @@ It runs either as a standalone server (`dbserver`) or embedded directly in a Jav
 
 ==== Use Cases
 
-* *Analytical Application Backends* – Serve as the data engine for BI tools, dashboards, and reporting applications that expect a PostgreSQL connection.
+* *Analytical Application Backends* – Serve as the data engine for BI tools, dashboards, and reporting applications that support PostgreSQL connections.
 * *Shared Internal Datasets* – Load an existing `.duckdb` file once and let several teams and tools query it concurrently without moving or re‑platforming the data.
 * *Local Data Processing* – Run bulk import, transformation, and querying on a single machine without standing up a separate database system.
 * *Embedded Service in Java* – Ship a networked analytical store inside a Java application, with the plugin framework available for application‑specific endpoints.
 
-SlackerDB is aimed at teams that want DuckDB's analytical performance but need it reachable over the network, usable by existing PostgreSQL tooling, and shareable between concurrent clients.
+SlackerDB is aimed at teams that want DuckDB's analytical performance but need it reachable over the network, do not want the analysis process to be a black box, want it usable directly with the PostgreSQL toolchain, and need it shareable between concurrent clients.
 
 === Usage
 
 ==== Build from source:
 
 ....
-    # make sure you have JDK17 and maven 3.6+ ready.
+    # Before building, make sure the following are installed and directly available on `PATH`:
+    # 1: JDK 21
+    # 2: Maven 3.9.16
+    # 3: Node v24
+    # All of them must be directly accessible from `PATH`.
+
     # Download source code
     git clone ...
     # compile it
@@ -44,57 +50,81 @@ SlackerDB is aimed at teams that want DuckDB's analytical performance but need i
     mvn clean compile package -Dmaven.test.skip=true
 
     # All compiled results will be placed in the dist directory:
-    #    slackerdb-dist_0.2.1.zip
+    #    slackerdb-dist_0.2.2.zip
     #        distribution package - standalone jar packages, plugin jar,
     #        default configuration files and start/stop scripts.
-    #    slackerdb-src_0.2.1.zip
+    #    slackerdb-src_0.2.2.zip
     #        source package - the complete multi-module Maven project, the same
     #        content a shallow clone would give you (no git history, no build
     #        output). Unzip it and run the very same maven command inside to
     #        rebuild everything from source.
+
+    # PDF documentation is not built by default. To generate the PDFs and
+    # include them in dist/ and the distribution zip, add -Ppdf:
+    #    mvn -Ppdf clean compile package -Dmaven.test.skip=true
 ....
 
-TIP: On a zh-CN Windows box building with **JDK 8~17**, add
-`MAVEN_OPTS=-Dfile.encoding=UTF-8` (JDK 18+ already defaults to UTF-8, nothing to do).
-Without it the documentation PDF step prints one extra line,
-`error reading or parsing <M2_HOME>/conf/settings.xml`: it comes from the `jar-dependencies`
-gem inside JRuby reading the (UTF-8) Maven settings with the platform GBK charset.
-It is **harmless** (the PDF is produced as usual), but it reads like a build error.
+==== How to develop in an offline environment
+
+On a machine with network access, install the plugin once and generate `offline/javarepo` and
+`offline/npmrepo`:
+
+....
+    mvn -f offline-package-maven-plugin/pom.xml install
+    mvn -Poffline-package validate
+....
+
+The command also writes `offline/javarepo.zip` and `offline/npmrepo.zip`, and removes the
+uncompressed `javarepo/` and `npmrepo/` directories. Copy those two zips to the offline
+machine and unzip them into the same directory.
+
+Before building, make sure the required JDK, Maven, and Node are installed and available on `PATH`.
+
+On the offline machine, use the packaged Maven repository (first unzip `javarepo.zip` and
+`npmrepo.zip` under `<offline>`):
+
+Run the following commands to complete the build:
+
+....
+    mvn -o -Dmaven.repo.local.tail=<offline>/javarepo clean package
+
+    NPM_CONFIG_CACHE=<offline>/npmrepo NPM_CONFIG_OFFLINE=true mvn -o -Dmaven.repo.local=/tmp/m2 -Dmaven.repo.local.tail=<offline>/javarepo package
+....
 
 ==== Start db server
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar start
+    java -jar dbserver/target/slackerdb-dbserver-0.2.2-standalone.jar start
 ....
 
 ==== Stop db server
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar stop
+    java -jar dbserver/target/slackerdb-dbserver-0.2.2-standalone.jar stop
 ....
 
 ==== Check db status
 
 ....
-    java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar status
+    java -jar dbserver/target/slackerdb-dbserver-0.2.2-standalone.jar status
 ....
 
 ==== Start db proxy
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.2.1-standalone.jar start
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.2-standalone.jar start
 ....
 
 ==== Stop db proxy
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.2.1-standalone.jar stop
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.2-standalone.jar stop
 ....
 
 ==== Check proxy status
 
 ....
-    java -jar dbproxy/target/slackerdb-dbproxy-0.2.1-standalone.jar status
+    java -jar dbproxy/target/slackerdb-dbproxy-0.2.2-standalone.jar status
 ....
 
 ==== Server configuration file template
@@ -151,7 +181,7 @@ port=
 # default: false
 data_encrypt=false
 
-# Data service API port
+# Management API port
 # 0 = random port assignment
 # -1 = disable interface (default)
 port_x=
@@ -165,18 +195,12 @@ client_timeout=600
 # Multicast service discovery: the group this server announces itself to.
 # Format: <group>:<port> (IPv6 groups must be bracketed: [ff02::1]:46666)
 # IPv4 groups must be inside 224.0.0.0/4; 224.0.0.0/24 is reserved and rejected.
-# There is NO default: leaving it empty disables service discovery entirely.
-# The proxy must use the EXACT same value in listener_address, otherwise nothing is
-# discovered and nothing is logged about it here either.
-# Example: 239.255.66.66:46666
+# Default: service discovery is disabled.
 advertise_address=
 
 # Local network interface used to send the multicast announcement.
-# Accepts an interface name (eth0, Ethernet) or a local IPv4 address. Leaving it empty
-# picks the first usable interface (up, multicast-capable, non-loopback, with a
-# non-link-local IPv4 address) using a deterministic rule, so the same machine always
-# picks the same one. The chosen interface and address are logged at startup -- check
-# there first when discovery does not work.
+# Accepts an interface name (eth0, Ethernet) or a local IPv4 address; leaving it empty
+# selects the first usable interface automatically.
 # Ignored when advertise_address is empty.
 advertise_nic=
 
@@ -326,13 +350,19 @@ daemon=
 # Default: 0 (disabled)
 port=0
 
-# Data service API port
+# Management API port
 # 0 = random port assignment
 # -1 = disable interface (default)
 port_x=0
 
 # Network binding address
 bind=0.0.0.0
+
+# Multicast service discovery: the group this proxy listens to.
+# Format: <group>:<port> (IPv6 groups must be bracketed: [ff02::1]:46666)
+# No default: leaving it empty disables discovery
+# Must match the dbserver's advertise_address exactly
+listener_address=
 
 # Client connection idle timeout (seconds)
 client_timeout=600
@@ -382,15 +412,10 @@ keeps its alias-to-backend map from those announcements.
 [cols="1,1,2",options="header"]
 |===
 | Old | New | Notes
-| dbserver `remote_listener=IP:PORT` | dbserver `advertise_address=<group>:<port>` | Semantics changed: from a unicast address pointing at one proxy to a multicast group shared by a subnet
+| dbserver `remote_listener=IP:PORT` | dbserver `advertise_address=<group>:<port>` | A multicast group within a subnet
 | — | dbserver `advertise_nic=<name or local IP>` | New. Empty means "pick the first usable interface"
 | — | dbproxy `listener_address=<group>:<port>` | New. Must match the dbserver `advertise_address` exactly
 |===
-
-There is **no default value**: leaving both sides unconfigured disables discovery entirely rather
-than falling back to a group that "looks usable".
-There is also **no fallback channel**: the legacy unicast `REGISTER` / `UNREGISTER` commands have
-been removed from the proxy, so both sides must be upgraded.
 
 .Upgrade style
 [cols="1,3",options="header"]
@@ -448,6 +473,8 @@ You can use the standard PostgreSQL JDBC driver (`org.postgresql.Driver`) with t
 *SlackerDB JDBC Driver*
 For better integration and additional features, use the native SlackerDB JDBC driver (`org.slackerdb.jdbc.Driver`). The connection URL format is `jdbc:slackerdb://host:port/database`. This driver is included in the distribution and is recommended for new applications.
 
+The native `slackerdb-dbdriver` artifact stays on **Java 17 bytecode**, so JDK 17 applications can load it directly; the server, proxy and dbcli artifacts require Java 21.
+
 *Connection Examples*
 
 ....
@@ -504,7 +531,7 @@ socket=/tmp/.s.slackerdb.4309
 Alternatively, use the `--socket` command-line parameter:
 
 ....
-java -jar dbserver/target/slackerdb-dbserver-0.2.1-standalone.jar start --socket /tmp/.s.slackerdb.4309
+java -jar dbserver/target/slackerdb-dbserver-0.2.2-standalone.jar start --socket /tmp/.s.slackerdb.4309
 ....
 
 When `socket` is configured, the server listens on both the TCP port and the UDS socket simultaneously. Clients can connect via either method.
@@ -527,7 +554,7 @@ Connection conn = DriverManager.getConnection(url, props);
 conn.setAutoCommit(false);
 ....
 
-The `UnixDomainSocketFactory` class is included in the SlackerDB JDBC driver and uses Java's built-in `UnixDomainSocketAddress` API (Java 16+) to establish UDS connections.
+The `UnixDomainSocketFactory` class is included in the SlackerDB JDBC driver and uses Java's built-in `UnixDomainSocketAddress` API to establish UDS connections.
 
 Key points:
 * The `socketFactory` parameter must be set to `org.slackerdb.jdbc.UnixDomainSocketFactory`
@@ -535,12 +562,83 @@ Key points:
 * The `jdbc:slackerdb://` protocol is used (not `jdbc:postgresql://`)
 * The host portion of the URL is ignored when using UDS; use `///database` format
 
-==== Basic Services
-The following HTTP endpoints provide basic administrative functions, such as backup, file upload/download, log viewing, and status monitoring. These endpoints are available when the Data Services API port (port_x) is enabled.
+==== Example 1: Standard JDBC
+
+The examples below use the SlackerDB JDBC driver bundled with the distribution
+(`org.slackerdb.jdbc.Driver`). With the standard PostgreSQL JDBC driver, change the URL to
+`jdbc:postgresql://...` and replace the `org.slackerdb.jdbc.*` `CopyManager` / `BaseConnection`
+packages with `org.postgresql.*`.
+
+===== Connect, create a table, insert, and query
+
+[source,java]
+----
+import java.sql.*;
+
+public class JdbcDemo {
+    public static void main(String[] args) throws Exception {
+        Class.forName("org.slackerdb.jdbc.Driver");
+        String url = "jdbc:slackerdb://127.0.0.1:3175/db1";
+
+        try (Connection conn = DriverManager.getConnection(url, "main", "");
+             Statement stmt = conn.createStatement()) {
+            stmt.execute("CREATE TABLE IF NOT EXISTS demo(id INTEGER, name VARCHAR)");
+            stmt.executeUpdate("INSERT INTO demo VALUES (1, 'Alice'), (2, 'Bob')");
+
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT id, name FROM demo ORDER BY id")) {
+                while (rs.next()) {
+                    System.out.println(rs.getInt("id") + "\t" + rs.getString("name"));
+                }
+            }
+        }
+    }
+}
+----
+
+===== Import and export with CopyManager
+
+[source,java]
+----
+import java.io.StringReader;
+import java.io.StringWriter;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import org.slackerdb.jdbc.copy.CopyManager;
+import org.slackerdb.jdbc.core.BaseConnection;
+
+public class CopyDemo {
+    public static void main(String[] args) throws Exception {
+        Class.forName("org.slackerdb.jdbc.Driver");
+        String url = "jdbc:slackerdb://127.0.0.1:3175/db1";
+
+        try (Connection conn = DriverManager.getConnection(url, "main", "")) {
+            CopyManager copy = new CopyManager((BaseConnection) conn);
+
+            long imported = copy.copyIn(
+                    "COPY demo (id, name) FROM STDIN WITH (FORMAT csv)",
+                    new StringReader("3,Carol\n4,Dave\n"));
+
+            StringWriter out = new StringWriter();
+            long exported = copy.copyOut(
+                    "COPY demo TO STDOUT WITH (FORMAT csv)", out);
+
+            System.out.println("imported=" + imported + ", exported=" + exported);
+            System.out.println(out);
+        }
+    }
+}
+----
+
+==== Performance Tuning
+
+* Where it fits the requirement, use COPY for import and export whenever possible; it is much faster than plain SELECT and INSERT.
+
+==== HTTP Management Services
 
 ===== /backup (POST)
 
-Performs a database backup. The backup file is saved in the `backup/` directory with the naming pattern `\{database\}_\{backupTag\}.db`.
+Performs a synchronous database backup. The backup file is saved in the `backup/` directory as `\{backupTag\}.db`.
 
 .Request body (JSON):
 [source,json]
@@ -555,16 +653,35 @@ Performs a database backup. The backup file is saved in the `backup/` directory 
 ----
 {
   "retCode": 0,
-  "retMsg": "Successful. Backup file has placed to [C:\\Work\\slackerdb\\backup\\mydb_mybackup.db]."
+  "retMsg": "Successful."
 }
 ----
 
-===== /download (GET)
+===== /backups (POST/GET)
 
-Downloads a file from the server's working directory.
+Asynchronous backup tasks, for callers that need progress and a downloadable result.
+
+* `POST /backups` with `{"backupTag":"mybackup"}` returns `202` and `{"id":"...","status":"RUNNING"}`.
+* `GET /backups` lists known tasks.
+* `GET /backups/{id}` returns the task status (`RUNNING`, `COMPLETED`, `FAILED`).
+* `GET /backups/{id}/download` downloads a completed backup file.
+
+===== /logfile (GET)
+
+Returns the configured server log as plain text.
 
 .Query parameters:
-* `filename` (required) – relative path to the file.
+* `lines` (optional) – return only the last N lines (max 10000). Without it the whole file is returned.
+
+.Example:
+ GET /logfile?lines=500
+
+===== /download (GET)
+
+Downloads a file from the server's directory.
+
+.Query parameters:
+* `filename` (required) – path to the file.
 
 .Example:
  GET /download?filename=logs/slackerdb.log
@@ -573,7 +690,7 @@ The endpoint supports Range requests for partial downloads.
 
 ===== /upload (POST)
 
-Uploads a file to the server's working directory.
+Uploads a file to the server's `uploads/` directory.
 
 .Query parameters:
 * `filename` (required) – target file path.
@@ -590,7 +707,7 @@ curl -X POST -F "file=@local.txt" "http://localhost:8080/upload?filename=uploads
 .Response:
 [source,json]
 ----
-"uploaded: C:\\Work\\slackerdb\\uploads\\remote.txt"
+"uploaded: uploads/remote.txt"
 ----
 
 ===== /viewLog (GET)
@@ -626,7 +743,7 @@ Returns comprehensive server status information, including server details, datab
 {
   "server": {
     "status": "RUNNING",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "build": "2025-12-04 10:00:00.000 UTC",
     "pid": 12345,
     "now": "2025-12-04 15:20:00",
@@ -1043,7 +1160,7 @@ edit only the `.g4` files and let the next build regenerate the rest.
 * Data service work with port_x, please make sure you have enabled it in
 server configuration or from command parameter. It’s important to note
 that we have no consider on data security. This means data services must
-work in a trusted environment.
+work in a **trusted environment**.
 
 ===== user login
 
@@ -1231,8 +1348,7 @@ request body:
 
 |description |description
 
-|snapshotLimit |how long the query result will be cached, Optional
-parameter
+|snapshotLimit |how long the query result will be cached (optional), for example `3 hours` / `30 minutes` / `45 seconds`; default empty (0), i.e. no caching
 
 |parameter |parameter default value when query api not provide parameter
 value
@@ -1335,7 +1451,7 @@ Success response (200)
       "searchPath" : "main",
       "sql" : "SELECT 1",
       "description" : "NO DESCRIPTION.",
-      "snapshotLimit" : "5 minutes",
+      "snapshotLimit" : "0 seconds",
       "parameter" : {}
     }
   ]
@@ -1348,7 +1464,7 @@ each item contains `serviceName`, `serviceVersion`, `serviceType`, `category`,
 Related management endpoints (all POST, empty body):
 
 * `/api/dumpRegisteredService` - same array, returned as a JSON attachment;
-* `/api/downloadRegisteredService` - same payload (the endpoint the web console uses);
+* `/api/downloadRegisteredService` - same payload (for download clients);
 * `/api/saveRegisterService` - writes the current definitions back to `data_service_schema`
   (a single file, or one `<category>.service` file per category when it is a directory);
 * `/api/loadRegisterService` - loads definitions from the request body (a single object or an array).
@@ -1495,7 +1611,7 @@ than being silently accepted. The `GET /sse` endpoint is gone; log level is per-
 `run_sql` to keep temporary tables, transactions and session settings across calls. Sessions expire when
 idle and are closed by `close_session`.
 |`close_session` |Closes a session and releases its connection immediately.
-|`run_sql` |Runs read-only SQL and returns at most `max_rows` rows, with `truncated` reported. The result
+|`run_sql` |Executes SQL (all rows by default) and can cap the result with `max_rows`. The result
 also carries `read_only`, `statement_type` (`query`/`update`) and `elapsed_ms`.
 |`list_tables` |Lists tables and views as a `tables` array of `{schema, name, type}`, optionally filtered by
 schema.
@@ -1512,17 +1628,16 @@ Because protocol-level sessions no longer exist, cross-call state is expressed t
 prescribes: as an explicit handle passed as an ordinary tool argument (the specification's own guidance
 names "a database transaction" as the motivating case).
 
-===== Enforcement: read-only by default, capped and timed
+===== Execution policy
 
-* **Read-only by default.** Write statements are rejected **at parse level**, not by wrapping the query in a
-  read-only transaction — `BEGIN TRANSACTION READ ONLY` is trivially escaped by statements such as
-  `WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x`, so the check happens before the statement reaches
-  the engine and defaults to deny. Write access requires an explicit session:
-  `open_session(read_only=false)`. When the server itself runs with `access_mode=READ_ONLY`, that opt-out is
-  refused, so MCP cannot become a bypass around `access_mode`.
-* **Row cap.** `run_sql` returns at most `max_rows` rows (default 100, ceiling 5000) and reports `truncated`.
-* **Statement timeout.** Every statement runs under a timeout (default 30 s, ceiling 300 s) enforced in the
-  application layer, since DuckDB has no per-query timeout.
+* **Permissions follow the server.** MCP is an internal tool and no longer adds a read-only
+  restriction; `run_sql` can execute read and write statements, and the final permissions come
+  from the server's `access_mode`. `open_session(read_only)` is kept only for compatibility with
+  older clients and no longer has any effect.
+* **Returned rows.** `run_sql` returns all rows by default; `max_rows` can cap the result,
+  and `0` or a negative value means unlimited. `truncated` is `true` only when a positive cap
+  was set and rows were actually cut off.
+* **No statement timeout.** MCP no longer applies an application-level statement timeout.
 * **Same execution path as everything else.** Tool calls take connections from the ordinary dbserver pool,
   so the connection cap and session handling apply to agents exactly as they do to other clients.
 
@@ -1555,7 +1670,7 @@ A tool entry may bind to a built-in implementation instead of being an echo stub
 ----
 {
   "name": "query",
-  "description": "Execute a read-only SQL query",
+  "description": "Execute SQL",
   "handler": "builtin:run_sql"
 }
 ----
@@ -1593,7 +1708,7 @@ port that a client configuration cannot address.
 
 [source,shell]
 ----
-java -jar slackerdb-dbserver-0.2.1-standalone.jar --conf conf/dbserver.conf \
+java -jar slackerdb-dbserver-0.2.2-standalone.jar --conf conf/dbserver.conf \
   --port 15432 --portx 18080 start
 ----
 
@@ -1636,18 +1751,10 @@ Run SELECT 42 AS answer with mcp__slacker__run_sql and tell me the result.
 The model calls `+mcp__slacker__run_sql+` and gets back `rows = &#91;[42]]`. Naming no tool also works
 ("query SELECT 42 AS answer with SlackerDB's MCP tools"), but naming it makes the hit certain.
 
-Two things to keep in mind:
-
-* **Start the server before the client.** The client connects once at start-up: with the server absent it
-  retries a few times, then gives up and unregisters every tool, and only a client restart brings them back
-  (restarting the server alone does not).
-* **Resources do not reach the model through this kind of bridge.** Clients that carry tools only cannot see
-  the `slackerdb://` resources, though the resources stay readable over HTTP.
-
 ==== MCP Tool administration
 
 The endpoints in this section register and manage MCP tool definitions at runtime. They are
-administration operations used by scripts and by the web console, and are not part of the MCP protocol
+administration operations used by scripts and administrative clients, and are not part of the MCP protocol
 surface described under *MCP Server*.
 
 ===== registerMCPTool
@@ -2163,7 +2270,7 @@ Response: JSON file download with Content-Disposition header.
 SQL REPL Server provides an asynchronous WebSocket interface for executing SQL queries and fetching results in pages.
 It is useful for long-running queries where you want to avoid blocking the client, and aligns with the MCP (Model Context Protocol) philosophy of using WebSocket for bidirectional communication.
 
-To use it, ensure the data service API port (port_x) is enabled in server configuration.
+To use it, ensure the management port (port_x) is enabled in server configuration.
 
 ===== WebSocket Endpoint
 
@@ -2201,8 +2308,9 @@ Validation errors you may see: `Field 'id' must be a string`, `Field 'type' must
 `Field 'maxRows' must be a number`, `Field 'maxRows' must be a positive number`,
 `Invalid session`, `Invalid taskId`, `Another SQL is already running`.
 
-`maxRows` must be a positive number: a previous version accepted `0` and answered an empty
-page with `hasMore = true`, which left clients looping forever on a page that never advances.
+`maxRows` is the number of rows the API returns per call (page size), not a database query limit, and must be
+positive. A previous version accepted `0` and answered an empty page with `hasMore = true`, which left
+clients looping forever on a page that never advances.
 
 ===== Session Management
 
@@ -2490,47 +2598,6 @@ ws.send(JSON.stringify({
 
 *Note:* The examples above assume you handle incoming messages asynchronously. In a real client you would match responses by their `id`.
 
-==== Web-based SQL Console
-
-image::imgs/console.png[Console]
-
-*Note: The web console is **not a production‑ready feature**. It is a demonstration tool designed to help you understand and verify the backend services (Data Service, MCP Tool, and MCP Resource) in a visual, interactive way.*
-
-SlackerDB includes a web‑based SQL console that provides an interactive interface for executing SQL queries, viewing results, and performing administrative tasks directly from your browser. In addition to the core SQL REPL, the console offers dedicated panels for managing **Data Service**, **MCP Tool**, and **MCP Resource** – three key extension mechanisms of the SlackerDB ecosystem.
-
-*Access:* After starting the server with the data‑service API port (`port_x`) enabled, open `http://<server>:<port_x>/console.html` in a modern browser.
-
-*Features:*
-
-* **Interactive SQL Shell:** Type SQL statements at the prompt and execute them with Enter. Command history is available with up/down arrows.
-* **WebSocket Connection:** The console automatically connects to the SQL REPL server via WebSocket (`/sql/ws`) and manages sessions.
-* **Tabular Results:** Query results are displayed as formatted tables with column names and types.
-* **Sidebar Tools Panel:** Provides quick access to:
-** *Server Status* – detailed modal with server metrics, database parameters, usage statistics, extensions, and active sessions.
-** *Backup Database* – modal to create a backup with optional download of the resulting file.
-** *Log Viewer* – modal to inspect server logs in real time.
-* **Connection Indicator:** Visual indicator shows whether the console is connected to the server.
-* **Asynchronous Execution:** Long‑running queries are executed asynchronously; results can be fetched in pages.
-* **Data Service Management Panel:** Register, list, load, save, and unregister data services. You can also download the service definitions as a JSON file (the download will prompt you to choose a save location via the browser’s file‑picker dialog).
-* **MCP Tool Management Panel:** List, load, save, and unregister MCP (Model Context Protocol) tools. Download the tool definitions as JSON (with file‑picker dialog).
-* **MCP Resource Management Panel:** List, load, save, and unregister MCP resources. Download the resource definitions as JSON (with file‑picker dialog).
-
-*Usage:*
-
-1. Ensure the server is running with `port_x` configured (e.g., `port_x=8080`).
-2. Navigate to `http://localhost:8080/console.html`.
-3. The console will attempt to connect automatically. Once connected, you can start typing SQL.
-4. Use the left‑sidebar buttons to switch between the **Console**, **Data Service**, **MCP Tool**, and **MCP Resource** views.
-5. In each management panel you can:
-   * Refresh the list of registered items.
-   * Select items with checkboxes and perform batch operations (unregister, download).
-   * Load definitions from a JSON file.
-   * Save definitions to the server’s configuration directory.
-   * Download definitions as a JSON file – the browser will show a file‑save dialog, allowing you to choose the location and filename.
-6. Use the right‑sidebar buttons to open status, backup, or log modals.
-
-The console is built with plain HTML/JavaScript and requires no additional installation. It is intended for development, testing, and administrative purposes in trusted environments. Its primary goal is to demonstrate how the backend services work and to provide a convenient way to experiment with the Data Service, MCP Tool, and MCP Resource subsystems.
-
 ==== Embed the db server in your code
 
 ....
@@ -2580,7 +2647,7 @@ To use this feature, you need to:
 
 === dbcli (command line client)
 
-The distribution also ships a command line client, `dbcli` (Java 17+): connect interactively to write SQL, or
+The distribution also ships a command line client, `dbcli` (Java 21+): connect interactively to write SQL, or
 run scripts in CI/batch and verify their output. It is `jlib/slackerdb-dbcli-<version>-standalone.jar` and is
 started with `bin/dbcli.bat` / `bin/dbcli.sh`.
 
@@ -2601,7 +2668,9 @@ dbcli --execute script.sql                      # run a script
 dbcli --execute script.sql --logfile run.log --ref golden.ref   # run and compare with a reference
 ....
 
-Full usage: `dbcli/README.adoc` (Chinese: `dbcli/README-CN.adoc`); module overview and build: `docs/dbcli.md`.
+Full usage: `dbcli/README.adoc` (Chinese: `dbcli/README-CN.adoc`).
+
+image::img/dbcli-select42.png[dbcli connected and running select 42]
 
 === Known Issues
 
@@ -2617,6 +2686,13 @@ Only some duckdb data types are supported, mainly simple types, such as
 int, number, double, varchar, … Complex types are either still under
 development or cannot be represented in the PG protocol (blob, list, map…),
 and they are rejected with an explicit error rather than silently converted.
+
+Upstream blockers as of `duckdb_jdbc` 2.0.0.0 (revisit after DuckDB upgrades):
+
+* `COPY ... FROM STDIN` into `BIGNUM`: DuckDB's JDBC appender has no BIGNUM C API type (`unsupported C API type: 35`), so SlackerDB cannot support it yet.
+* `COPY ... FROM STDIN` into `BIT`, `INTERVAL`, `TIME_NS`, or `VARIANT`: same missing appender type, so they are rejected too.
+* `COPY ... TO STDOUT (FORMAT binary)` for `INTERVAL`, `BIT`, `TIME_NS`, `BIGNUM`, `VARIANT`, and nested `LIST`/`ARRAY`/`STRUCT`/`MAP`/`UNION`: these have no PostgreSQL binary representation in the encoder, so the statement is rejected with `0A000` before any data is sent. Use CSV or text format for such queries.
+* Engine-error SQLSTATE: `duckdb_jdbc` returns `null` for engine errors, so SlackerDB maps them by message.
 
 ==== 3. postgresql-fdw
 
@@ -2668,18 +2744,18 @@ Statements PostgreSQL 17's `postgres_fdw` actually sends, and where we stand:
 *Not implemented yet*
 
 * `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT`: DuckDB has no subtransactions,
-  so these fail predictably instead of degrading — `25P01` outside a transaction block, and
-  `0A000` (with an explanation) inside one. In particular `ROLLBACK TO SAVEPOINT` never rolls
-  back the whole transaction. Consequence for the FDW: `postgres_fdw` emits `SAVEPOINT sN`
-  whenever a remote statement runs inside a local subtransaction, so **foreign tables cannot be
-  used inside a subtransaction** (an explicit `SAVEPOINT`, or a PL/pgSQL `EXCEPTION` block), and
-  the failure additionally leaves that foreign server's connection unusable for the rest of the
-  transaction (`connection to server "sdb" cannot be used due to abort cleanup failure`).
+  so these fail predictably. In particular `ROLLBACK TO SAVEPOINT` does **not** roll back the
+  whole transaction. Consequence for the FDW: `postgres_fdw` emits `SAVEPOINT sN` whenever a
+  remote statement runs inside a local subtransaction, so **foreign tables cannot be used inside
+  a subtransaction** (an explicit `SAVEPOINT`, or a PL/pgSQL `EXCEPTION` block), and the failure
+  additionally leaves that foreign server's connection unusable for the rest of the transaction
+  (`connection to server "sdb" cannot be used due to abort cleanup failure`).
 * `SELECT ... FOR UPDATE` / `FOR SHARE`: `postgres_fdw` pushes the locking clause to the remote,
   and DuckDB rejects it (`Parser Error: SELECT locking clause is not supported!`), so such queries
   fail. `ctid` matters only if you declare `OPTIONS (rowid 'ctid')` on a foreign table; ordinary
-  `UPDATE`/`DELETE` works without a remote key — verified, including on a table with duplicate
-  rows, where the whole predicate is pushed down instead of using `ctid`.
+  `UPDATE`/`DELETE` works without a remote key — the FDW does not need a transaction id (`ctid`).
+* `SELECT ... FOR UPDATE` / `FOR SHARE` (DuckDB has no row locks), and
+  `UPDATE`/`DELETE ... WHERE ctid = $1` (DuckDB has no `ctid`).
 * `IMPORT FOREIGN SCHEMA` only works with `import_collate 'false'`
   (`pg_collation.collnamespace` is not exposed); column defaults are not imported
   because `pg_get_expr` is unavailable.
@@ -2696,7 +2772,7 @@ CREATE USER MAPPING FOR CURRENT_USER SERVER sdb OPTIONS (user 'main', password '
 CREATE FOREIGN TABLE orders (id integer, amount numeric(38,4))
   SERVER sdb OPTIONS (schema_name 'main', table_name 'orders');
 
--- IMPORT FOREIGN SCHEMA 也可以直接把表导进来（需要 import_collate 'false'）
+-- IMPORT FOREIGN SCHEMA can also import the tables directly (requires import_collate 'false')
 IMPORT FOREIGN SCHEMA "main" FROM SERVER sdb INTO public
   OPTIONS (import_collate 'false');
 ----
@@ -2710,14 +2786,6 @@ Two points that are easy to get wrong:
   PostgreSQL rejects it in the server options (`invalid option "import_collate"`).
   Keep `use_remote_estimate` off: it makes `postgres_fdw` parse PostgreSQL's
   `EXPLAIN (cost=... rows=... width=...)` text, which DuckDB does not produce.
-
-*Verified end-to-end*: PostgreSQL 18.6 with `postgres_fdw` 1.2, two SlackDB instances
-attached at once (a local query joined a foreign table from each instance), plus
-`INSERT`/`UPDATE`/`DELETE ... RETURNING`, `EXPLAIN (VERBOSE)` and `IMPORT FOREIGN SCHEMA`.
-The remote statement stream captured in SlackDB's own SQL history shows exactly what
-`postgres_fdw` sends: `SET search_path = pg_catalog` … `START TRANSACTION ISOLATION LEVEL
-REPEATABLE READ`, `DECLARE c1 CURSOR FOR SELECT …`, `FETCH 100 FROM c1`, `CLOSE c1`,
-`COMMIT TRANSACTION`.
 
 === Plugin System
 
@@ -2758,7 +2826,7 @@ The plugin project needs to depend on the `slackerdb‑plugin` module. Add the f
 <dependency>
     <groupId>org.slackerdb</groupId>
     <artifactId>slackerdb-plugin</artifactId>
-    <version>0.2.1</version>
+    <version>0.2.2</version>
     <scope>provided</scope>
 </dependency>
 ----
@@ -2958,7 +3026,7 @@ cd plugin-example
 mvn clean package
 ----
 +
-The resulting JAR file (`plugin‑example‑0.2.1.jar`) will be placed in the `target` directory.
+The resulting JAR file (`plugin‑example‑0.2.2.jar`) will be placed in the `target` directory.
 
 2. *Deploy to a SlackerDB server*:
    - Copy the JAR file to the server's plugin directory (configured via `plugins_dir` parameter).
@@ -2993,7 +3061,7 @@ The `src/main/resources/plugin.properties` file contains the plugin metadata:
 ----
 plugin.id=plugin-example
 plugin.class=org.slackerdb.pluginExample.PluginExample
-plugin.version=0.2.1
+plugin.version=0.2.2
 plugin.requires=*
 ----
 
@@ -3096,7 +3164,10 @@ It is an **optional plugin**: whether it is loaded is decided by the server's `p
 
 ===== Quick Start
 
-. *Prepare HOP*: the plugin does not bundle HOP. Prepare a HOP distribution and note the path of `hop-run.bat`/`hop-run.sh`.
+. *Prepare HOP*: the plugin does not bundle HOP. Prepare a HOP 2.19+ distribution and note the path of `hop-run.bat`/`hop-run.sh`.
+  HOP 2.19 requires JDK 21. `plugin-scheduler.hop.javaHome` may be left empty; when empty, the JDK running
+  dbserver (`java.home`) is used — usually the same JDK 21 that started the server. Set it only when a
+  separate JDK is required.
 . *Deploy the plugin*: put the plugin JAR into the plugin directory and enable it in the server configuration file:
 +
 [source,properties]
@@ -3105,7 +3176,8 @@ plugins_dir=plugins
 plugin-scheduler.home=data/scheduler
 plugin-scheduler.projectHome=data/scheduler/projects
 plugin-scheduler.hop.runScript=D:/hop/hop-run.bat
-plugin-scheduler.hop.javaHome=D:/jdk17
+# Optional; leave empty (or remove this line) to use the current JDK
+# plugin-scheduler.hop.javaHome=D:/jdk21
 ----
 . *Prepare a template*: create a directory named after the template under `data/scheduler/projects/` (see the next section).
 . *Create and start an instance* (`<management port>` is the server's management port):
@@ -3115,7 +3187,7 @@ plugin-scheduler.hop.javaHome=D:/jdk17
 # Create an instance: projectType is the template directory name
 curl -X POST http://127.0.0.1:<management port>/scheduler/run/create \
      -H "Content-Type: application/json" \
-     -d '{"projectType":"jtls"}'
+     -d '{"projectType":"proj1"}'
 
 # Start it (orchestrated in template order: one-off tasks first, then periodic ones)
 curl -X POST http://127.0.0.1:<management port>/scheduler/run/<runId>/start
@@ -3138,7 +3210,7 @@ data/scheduler/projects/                 ← template root (projectHome)
 ├── default/                             ← HOP "parent project" (optional, shared configuration)
 │   ├── project-config.json
 │   └── metadata/
-└── jtls/                                ← template name, also the HOP project directory
+└── proj1/                                ← template name, also the HOP project directory
     ├── conf/
     │   ├── defaultSchedulerTask.json     ← task list
     │   └── variables.properties          ← variables (optional, see next section)
@@ -3212,7 +3284,7 @@ Both the `${XXX}` placeholders inside HOP workflows and the HOP connection metad
 `metadata/rdbms/*.json`) are resolved from these variables. They can be defined in four places; later ones win:
 
 . `data/scheduler/variables.properties` (global)
-. template directory `jtls/conf/variables.properties`
+. template directory `proj1/conf/variables.properties`
 . the `configJson` field of the create-instance request
 . the `variables` object of a specific task in the task list
 
@@ -3224,7 +3296,7 @@ DB_USER=main
 DB_PASSWORD=******
 ----
 
-A variable value may reference other variables, for example `EXERCISE_CODE=${RUN_ID}` (built-in variables such as
+A variable value may reference other variables, for example `TEST_CODE=${RUN_ID}` (built-in variables such as
 `RUN_ID`, `PROJECT_TYPE` and `TASK_NAME` are available). The built-in variables are `PROJECT_HOME`, `RUN_HOME`,
 `RUN_ID`, `PROJECT_TYPE`, `TASK_NAME`, `LOG_DIR` and `AUDIT_DIR`.
 `GET /scheduler/run/{runId}/variables` shows the currently effective values (secrets are masked).
@@ -3270,8 +3342,8 @@ queried through the API; expired history rows and log files are cleaned up autom
 
 ===== Notes
 
-* HOP is **not** bundled with the plugin; provide a HOP distribution and configure `plugin-scheduler.hop.runScript`.
-  HOP runs as a separate process, so no JVM parameters of the database server need to be changed
+* HOP is **not** bundled with the plugin; provide a HOP 2.19+ distribution and configure `plugin-scheduler.hop.runScript`.
+  HOP runs as a separate process, so no JVM parameters of the database server need to be changed.
 * The HOP project must satisfy the following (the plugin self-checks this when an instance is created and warns):
   **if the template's `project-config.json` declares `"parentProjectName": "default"`, a `default/` project must exist
   under the template root and its own `parentProjectName` must be empty** (a parent project is optional — in that case
@@ -3414,10 +3486,13 @@ The `pluginState` field can be one of: `CREATED`, `DISABLED`, `LOADED`, `STARTED
 ==== Notes
 
 1. *Thread safety* – The plugin instance is a singleton during the server's lifetime; ensure that methods like `onStart()` are thread‑safe.
-2. *Resource management* – Database connections obtained via `getDbConnection()` must be managed by the plugin and closed when the plugin stops.
+2. *Resource management* – Database connections obtained via `getDbConnection()` must be managed by the plugin itself; close them proactively.
 3. *Dependency conflicts* – Avoid introducing library versions that conflict with server dependencies; it is recommended to use the `provided` scope for libraries already provided by the server.
 4. *Performance impact* – Plugin execution consumes server resources; avoid performing long‑blocking operations in plugins.
 
 === Roadmap
+
+* *dbdesk* – planned… a web-based management console and application platform for datasets, dashboards, and data portals.
+* *dbInstall* – planned… a graphical deployment wizard.
 
 …

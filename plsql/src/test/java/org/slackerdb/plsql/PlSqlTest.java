@@ -1,5 +1,7 @@
 package org.slackerdb.plsql;
 
+import org.duckdb.DuckDBAppender;
+import org.duckdb.DuckDBConnection;
 import org.junit.jupiter.api.Test;
 import org.slackerdb.plsql.spi.DefaultJdbcHost;
 

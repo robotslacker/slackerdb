@@ -1,5 +1,7 @@
 package org.slackerdb.dbcli.rendezvous;
 
+import java.nio.file.Path;
+
 /**
  * 会合点后端：{@code _JOB TIMER <点名>}（放行）与 {@code _JOB WAIT <点名>}（等待）的落地点。
  *
@@ -57,6 +59,48 @@ public interface RendezvousBackend extends AutoCloseable {
 
     /** 放行某个点名（原子、幂等）。 */
     void release(String point);
+
+    /**
+     * 这个点名是否已经出现过（{@code _JOB WAIT <名字>} 用它决定"作业名还是定时点名"）。
+     *
+     * <p>默认 {@code false}：只有跨进程后端需要回答"别人（别的进程）见过这个点吗"。
+     * 进程内闸门重写它，{@link SqliteRendezvous} 用同步库回答——否则同一份脚本在两种模式下
+     * 会有两种名字解析结果（见 {@code job.JobManager#knowsTimerPoint}）。</p>
+     */
+    default boolean knows(String point) {
+        return false;
+    }
+
+    /** 这个后端背后的同步库（进程内闸门返回 null）。 */
+    default Path database() {
+        return null;
+    }
+
+    /** 这个后端绑定的运行代号（进程内闸门返回 null）。 */
+    default String generation() {
+        return null;
+    }
+
+    /**
+     * 把毫秒安全地换算成纳秒：溢出时**夹紧**而不是回绕。
+     *
+     * <p>回绕的后果是 {@code System.nanoTime() + 负数} 落到过去，等待/看门狗第一轮就判"已到点"：
+     * {@code _JOB WAIT TIMER:x timeout=99999999999} 会立刻 "wait timed out"，
+     * {@code _JOB CREATE … timeout=1e16} 会一启动就被判 TIMEOUT。夹紧之后这类超大取值等于"没有时限"，
+     * 与 {@link LatchRendezvous} 的行为一致。</p>
+     */
+    static long nanosForMillis(long millis) {
+        if (millis <= 0L) {
+            return 0L;
+        }
+        // 上界取 Long.MAX_VALUE/4（约 73 年）：足够把任何"实际意义上的永不超时"表达出来，
+        // 又留出与 nanoTime() 相加的余量。
+        long cap = Long.MAX_VALUE / 4L;
+        if (millis > cap / 1_000_000L) {
+            return cap;
+        }
+        return millis * 1_000_000L;
+    }
 
     /**
      * 在某个点名上等待放行。

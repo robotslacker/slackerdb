@@ -31,9 +31,9 @@ import java.util.concurrent.TimeUnit;
  * 独立的 JVM：{@code engine.ScriptJobExecutor} 在作业线程里新建一份上下文即可完成隔离，
  * 而换来的能力是子进程模型给不了的：</p>
  * <ul>
- *   <li><b>同步屏障可用</b>：定时点是本管理器里的 {@link CountDownLatch}，父脚本与任意深度的作业线程
- *       共享同一个管理器，于是"作业等、父放行""父等、作业放行""多个作业对齐后一起继续"都成立，
- *       **不需要任何 IPC**；</li>
+ *   <li><b>同步屏障可用</b>：定时点交给 {@link RendezvousBackend}（默认 {@link LatchRendezvous}，进程内闸门），
+ *       父脚本与任意深度的作业线程共享同一个管理器，于是"作业等、父放行""父等、作业放行"
+ *       "多个作业对齐后一起继续"都成立，**不需要任何 IPC**；</li>
  *   <li>启动开销从"几十毫秒到一秒（起一个 JVM）"降到"创建一个线程"；</li>
  *   <li>退出码、超时、中止语义与子进程模型完全一致（状态机不变），脚本里看到的东西不变。</li>
  * </ul>
@@ -179,6 +179,14 @@ public final class JobManager implements AutoCloseable {
         this.logDirectory = logDirectory;
         this.workingDirectory = workingDirectory;
         this.rendezvous = inherited != null ? inherited : new LatchRendezvous();
+        if (inherited != null) {
+            // 继承来的后端可能已经绑着一个同步库：把它记进字段，否则
+            // ① rendezvousEnvironment() 是空表（孙作业不知道用哪个库），
+            // ② prepareRendezvousFor() 会以为"还没切到进程模式"，用新代号在同一个库上重建，
+            //    而 SqliteRendezvous.claimRun 会把父进程已放行的点当成"上一代遗留"清空。
+            this.syncDatabase = inherited.database();
+            this.syncGeneration = inherited.generation();
+        }
     }
 
     /**
@@ -221,30 +229,32 @@ public final class JobManager implements AutoCloseable {
      */
     public Job create(String name, Map<String, String> parameters) {
         requireStarted();
-        if (jobs.containsKey(name)) {
-            throw new JobException("Job [" + name + "] already exists.");
+        String jobName = requireUsableName(name);
+        if (jobs.containsKey(jobName)) {
+            throw new JobException("Job [" + jobName + "] already exists.");
         }
-        JobSpec spec = define(name, parameters);
+        JobSpec spec = define(jobName, parameters);
         prepareRendezvousFor(spec);
-        Job job = new Job(spec, logFile(name, ".out"));
+        Job job = new Job(spec, logFile(jobName, ".out"));
         // 登记必须**原子**：并发（父脚本 + 作业线程）同名创建时，先检查后写入会让两个线程都成功，
         // 后一个覆盖前一个，于是有一个作业谁也 WAIT/ABORT 不到，两个线程还写同一个 <名字>.out。
-        if (jobs.putIfAbsent(name, job) != null) {
-            throw new JobException("Job [" + name + "] already exists.");
+        if (jobs.putIfAbsent(jobName, job) != null) {
+            throw new JobException("Job [" + jobName + "] already exists.");
         }
         return job;
     }
 
     /** {@code _JOB SET <名字> key=value...}：更新定义（运行中不允许改）。 */
     public Job setParameters(String name, Map<String, String> parameters) {
-        Job job = require(name);
+        String jobName = requireUsableName(name);
+        Job job = require(jobName);
         if (job.state() == JobState.RUNNING) {
-            throw new JobException("Job [" + name + "] is running; parameters cannot be changed.");
+            throw new JobException("Job [" + jobName + "] is running; parameters cannot be changed.");
         }
-        JobSpec spec = define(name, parameters);
+        JobSpec spec = define(jobName, parameters);
         prepareRendezvousFor(spec);
         Job updated = new Job(spec, job.stdoutFile());
-        jobs.put(name, updated);
+        jobs.put(jobName, updated);
         return updated;
     }
 
@@ -277,8 +287,11 @@ public final class JobManager implements AutoCloseable {
         Thread thread = new Thread(() -> runJob(job, output), THREAD_NAME_PREFIX + name);
         // 必须 daemon：作业线程绝不能拖住 JVM 退出（否则 surefire 一类宿主会等到超时并写 dump）
         thread.setDaemon(true);
-        job.markStarted(thread);
-        thread.start();
+        if (!job.startThread(thread)) {
+            // 发布 RUNNING 与 thread.start() 之间被 abort/shutdown 抢先：这个作业不该再跑
+            closeQuietly(output);
+            throw new JobException("Job [" + name + "] is already " + job.state() + ".");
+        }
         startTimeoutWatchdog(job);
         return job;
     }
@@ -312,16 +325,29 @@ public final class JobManager implements AutoCloseable {
             return waitTimer(point, timeout);
         }
         if (upper.startsWith(JOB_PREFIX)) {
-            return waitJob(name.substring(JOB_PREFIX.length()), timeout);
+            // 后缀同样 strip：`_JOB WAIT JOB: j1` 与 `_JOB WAIT JOB:j1` 必须等价
+            return waitJob(name.substring(JOB_PREFIX.length()).strip(), timeout);
         }
         if (jobs.containsKey(name)) {
             // 作业名区分大小写：`_JOB WAIT job1` 找不到 `JOB1`（标识符语义，刻意不跟着点名一起放宽）
             return waitJob(name, timeout);
         }
-        if (timerPoints.contains(RendezvousBackend.normalizePoint(name))) {
+        if (knowsTimerPoint(name)) {
             return waitTimer(name, timeout);
         }
         throw new JobException("Job or timer point [" + name + "] not found.");
+    }
+
+    /**
+     * 这个点名是否已经出现过（决定 {@code _JOB WAIT <名字>} 的第二种解释）。
+     *
+     * <p>本进程的 {@code timerPoints} 只记得"本进程见过"的点；进程模式作业里等父进程放行的点
+     * 只存在于跨进程后端（SQLite 同步库）里，所以必须同时问后端——否则同一份脚本在 thread 模式下
+     * 通过、在 process 模式下报 {@code Job or timer point [GO] not found.}。</p>
+     */
+    private boolean knowsTimerPoint(String name) {
+        String normalized = RendezvousBackend.normalizePoint(name);
+        return timerPoints.contains(normalized) || rendezvous.knows(name);
     }
 
     private WaitResult waitJob(String name, long timeout) {
@@ -431,9 +457,13 @@ public final class JobManager implements AutoCloseable {
     /**
      * 有没有"失败或超时、且没有被认领"的作业。
      *
-     * <p>引擎用它把"脚本没检查的失败"补进退出码：只要有一个作业以 {@code FAILED}/{@code TIMEOUT}
-     * 结束而脚本既没 {@code _JOB WAIT} 过它也没有显式停掉它，
-     * 这次运行就算失败。这条是"并发作业不能静默失败"的最后一道网。</p>
+     * <p>引擎用它把"脚本没检查的失败"补成一条**错误行**并计入错误数（{@code _JOB WAIT} 没写过、
+     * 也没有显式停掉它时）：这条文案是"并发作业不能静默失败"的最后一道网。</p>
+     *
+     * <p><b>它不直接改进程退出码</b>：错误计数只决定 {@code _WHENEVER ERROR} 的行为，而最终的
+     * 进程退出码由 {@code ScriptContext.finalExitCode()} 裁决——脚本内部错误默认**不**让进程失败
+     * （README §9.3）。要让"子作业失败"变成非 0，脚本里写 {@code _WHENEVER ERROR EXIT 1} 或
+     * {@code _EXIT 1}。</p>
      */
     public boolean hasUnacknowledgedFailures() {
         return !unacknowledgedFailureMessages().isEmpty();
@@ -480,33 +510,53 @@ public final class JobManager implements AutoCloseable {
         return messages;
     }
 
-    /** {@code _JOB ABORT <名字>}：请求**强制**停止 + 中断线程，状态落到 ABORTED。 */
+    /**
+     * {@code _JOB ABORT <名字>}：请求**强制**停止 + 中断线程。
+     *
+     * <p>终态只在线程**确实结束**之后才落（{@code ABORTED}）；1 秒宽限内没停下时状态保持
+     * {@code RUNNING}（{@code _JOB SHOW} 如实显示），线程真正退出时按已记下的停止意图落终态。</p>
+     */
     public Job abort(String name) {
         Job job = require(name);
         // 显式操作即结论：这个作业不会成功是使用者要求的，收尾时不再算失败
         acknowledge(name);
-        job.requestStop(true);
+        job.requestStop(true, JobState.ABORTED);
         Thread thread = job.thread();
         if (thread != null) {
             thread.interrupt();
-            joinQuietly(thread, STOP_GRACE_MILLIS);
+            if (joinQuietly(thread, STOP_GRACE_MILLIS)) {
+                job.markAborted();
+            }
+        } else {
+            // 还没启动就被 abort：没有线程可等，直接落终态
+            job.markAborted();
         }
-        job.markAborted();
         return job;
     }
 
-    /** {@code _JOB SHUTDOWN <名字>}：先只请求（优雅），宽限期后仍在跑才中断。 */
+    /**
+     * {@code _JOB SHUTDOWN <名字>}：先只请求（优雅），宽限期后仍在跑才中断。
+     *
+     * <p>与 {@link #abort} 同样的终态纪律：只有确认线程结束才落 {@code SHUTDOWN}。</p>
+     */
     public Job shutdown(String name) {
         Job job = require(name);
         // 同上：shutdown 是显式操作，不是"作业自己失败了"
         acknowledge(name);
-        job.requestStop(false);
+        job.requestStop(false, JobState.SHUTDOWN);
         Thread thread = job.thread();
-        if (thread != null && !joinQuietly(thread, STOP_GRACE_MILLIS)) {
-            thread.interrupt();
-            joinQuietly(thread, STOP_GRACE_MILLIS);
+        if (thread == null) {
+            job.markShutdown();
+            return job;
         }
-        job.markShutdown();
+        boolean stopped = joinQuietly(thread, STOP_GRACE_MILLIS);
+        if (!stopped) {
+            thread.interrupt();
+            stopped = joinQuietly(thread, STOP_GRACE_MILLIS);
+        }
+        if (stopped) {
+            job.markShutdown();
+        }
         return job;
     }
 
@@ -580,7 +630,8 @@ public final class JobManager implements AutoCloseable {
         }
         long timeoutMillis = (long) (seconds * 1000.0);
         Thread watchdog = new Thread(() -> {
-            long deadline = System.nanoTime() + Math.max(timeoutMillis, 0L) * 1_000_000L;
+            // 溢出安全：timeout 写得极大时（打字错误）等价于"没有时限"，绝不能回绕成"已到点"
+            long deadline = System.nanoTime() + RendezvousBackend.nanosForMillis(timeoutMillis);
             while (System.nanoTime() < deadline) {
                 if (!job.isRunning()) {
                     return;
@@ -596,9 +647,9 @@ public final class JobManager implements AutoCloseable {
                 return;
             }
             // 顺序要紧：先记下"这是超时收尾"，再请求强制停止（回调会杀进程树），最后中断线程。
-            // 终态不在这里落地 —— 作业收尾时才会落 TIMEOUT，这样"先落盘再置终态"对超时也成立。
+            // 终态由作业收尾（或请求方确认线程结束后）落地为 TIMEOUT。
             job.requestTimeout();
-            job.requestStop(true);
+            job.requestStop(true, JobState.TIMEOUT);
             Thread worker = job.thread();
             if (worker != null) {
                 worker.interrupt();
@@ -613,9 +664,10 @@ public final class JobManager implements AutoCloseable {
     /**
      * 停掉所有仍在运行的作业（引擎退出时调用）。
      *
-     * <p>顺序：先对所有作业**请求停止**（协作式中止立刻生效），再按总预算
-     * {@value #CLOSE_TIMEOUT_MILLIS} 毫秒限时 join；超时才对还没停的线程中断并再等一小会儿，
-     * 仍然不停就**放弃**。作业线程是 daemon，放弃不会阻塞 JVM 退出，也不会拖住测试。</p>
+     * <p>顺序：先**并行**对所有作业请求停止（进程模式下单个请求可能等子进程约 2 秒，串行会把预算吃光），
+     * 再按总预算 {@value #CLOSE_TIMEOUT_MILLIS} 毫秒（扣除已用时间）限时 join；超时才对还没停的线程中断
+     * 并再等一会儿。仍然不停就**放弃**：作业线程是 daemon，不会拖住 JVM；它的状态保持
+     * {@code RUNNING}（说真话），真正退出时按已记下的停止意图落 {@code SHUTDOWN}。</p>
      */
     @Override
     public void close() {
@@ -623,13 +675,26 @@ public final class JobManager implements AutoCloseable {
         List<Job> running = new ArrayList<>();
         for (Job job : new ArrayList<>(jobs.values())) {
             if (job.isRunning()) {
-                job.requestStop(false);
                 running.add(job);
             }
         }
+        // 1) 并行发出停止请求（每个请求可能阻塞：进程模式要等子进程退出）
+        List<Thread> stoppers = new ArrayList<>(running.size());
+        for (Job job : running) {
+            Thread stopper = new Thread(() -> job.requestStop(false, JobState.SHUTDOWN),
+                    "dbcli-job-stop-" + job.name());
+            stopper.setDaemon(true);
+            stopper.start();
+            stoppers.add(stopper);
+        }
+        for (Thread stopper : stoppers) {
+            joinQuietly(stopper, remainingMillis(deadline));
+        }
+        // 2) 限时 join 作业线程
         for (Job job : running) {
             joinQuietly(job.thread(), remainingMillis(deadline));
         }
+        // 3) 还没停的：中断再等一会儿
         for (Job job : running) {
             if (!job.isRunning()) {
                 continue;
@@ -640,12 +705,8 @@ public final class JobManager implements AutoCloseable {
                 joinQuietly(thread, remainingMillis(deadline));
             }
         }
-        for (Job job : running) {
-            // 已经自己跑完的作业保持它的终态（DONE/FAILED），只有还在跑的才按"管理器关闭"落地
-            if (job.isRunning()) {
-                job.markShutdown();
-            }
-        }
+        // 4) 已经自己跑完的作业保持它的终态（DONE/FAILED）；被停掉的作业由收尾落了 SHUTDOWN。
+        //    仍然活着的保持 RUNNING：它的 daemon 线程会在退出时按停止意图落终态，不谎报"已关闭"。
         started = false;
         // 同步库由**建它的那个进程**尽力清理；作业进程只是关自己的连接（删了会把父进程正在用的库抽走）
         rendezvous.close();
@@ -657,6 +718,27 @@ public final class JobManager implements AutoCloseable {
         if (!started) {
             throw new JobException("Job manager is not started (use _JOB JOBMANAGER ON).");
         }
+    }
+
+    /**
+     * 作业名的**唯一约束**：它同时被当作日志文件名（{@code <名字>.out}），因此不能带路径语义。
+     *
+     * <p>为什么必须挡：{@code _JOB CREATE ../../evil} 会把输出写到日志目录之外，
+     * 名字里带 {@code ..} 还能覆盖同目录的任意 {@code .out}。这里只做最小限制
+     * （分隔符与 {@code ..}），不替使用者规定命名风格。</p>
+     *
+     * @throws JobException 名字为空或带路径语义
+     */
+    private static String requireUsableName(String name) {
+        String trimmed = name == null ? "" : name.strip();
+        if (trimmed.isEmpty()) {
+            throw new JobException("Job name is missing.");
+        }
+        if (trimmed.contains("/") || trimmed.contains("\\") || trimmed.contains("..")) {
+            throw new JobException("Job name [" + name + "] cannot contain a path separator or '..': "
+                    + "the name is also the log file name (<name>.out).");
+        }
+        return trimmed;
     }
 
     private Job require(String name) {

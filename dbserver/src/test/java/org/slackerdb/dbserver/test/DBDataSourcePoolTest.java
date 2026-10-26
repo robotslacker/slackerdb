@@ -795,7 +795,7 @@ public class DBDataSourcePoolTest {
         conn.close();
 
         assertEquals(0, pool.getUsedConnectionPoolSize(),
-                "close() 之后槽位必须回到池里，否则每次调用都会泄漏一个槽位");
+                "the slot must return to the pool after close(), otherwise every call leaks one");
         assertEquals(1, pool.getIdleConnectionPoolSize());
 
         // close() 可重复调用（JDBC 规定），且不得重复归还
@@ -821,13 +821,13 @@ public class DBDataSourcePoolTest {
         Connection conn = pool.getConnection();
         Statement plainStatement = conn.createStatement();
         PreparedStatement preparedStatement = conn.prepareStatement("SELECT 1");
-        assertFalse(plainStatement.isClosed(), "新建语句不应处于关闭态");
-        assertFalse(preparedStatement.isClosed(), "新建语句不应处于关闭态");
+        assertFalse(plainStatement.isClosed(), "a freshly created statement must not be closed");
+        assertFalse(preparedStatement.isClosed(), "a freshly created statement must not be closed");
 
         conn.close();
 
-        assertTrue(plainStatement.isClosed(), "close() 必须连带关闭普通语句（JDBC 规定）");
-        assertTrue(preparedStatement.isClosed(), "close() 必须连带关闭 PreparedStatement（JDBC 规定）");
+        assertTrue(plainStatement.isClosed(), "close() must also close plain statements (JDBC contract)");
+        assertTrue(preparedStatement.isClosed(), "close() must also close PreparedStatements (JDBC contract)");
 
         // 语句自己先关掉，同样不能影响连接归还
         Connection conn2 = pool.getConnection();
@@ -860,7 +860,7 @@ public class DBDataSourcePoolTest {
             stmt.execute("INSERT INTO txn_probe VALUES (1), (2), (3)");
         }
         assertTrue(first.getAutoCommit(),
-                "前置条件：DuckDB 的显式 BEGIN 不改变 getAutoCommit()，本用例覆盖的正是这种情况");
+                "precondition: an explicit BEGIN in DuckDB does not change getAutoCommit(), which is exactly what this case covers");
 
         // 不提交就归还
         pool.releaseConnection(first);
@@ -870,7 +870,7 @@ public class DBDataSourcePoolTest {
              ResultSet rs = stmt.executeQuery("SELECT count(*) FROM txn_probe")) {
             assertTrue(rs.next());
             assertEquals(0, rs.getInt(1),
-                    "上一个借用者未提交的 3 行必须被回滚掉，否则下一个借用者会读到别人的脏数据");
+                    "the 3 uncommitted rows of the previous borrower must be rolled back, otherwise the next borrower sees dirty data");
         }
 
         pool.releaseConnection(second);
@@ -892,17 +892,17 @@ public class DBDataSourcePoolTest {
         try (Statement stmt = first.createStatement()) {
             stmt.execute("INSERT INTO ac_probe VALUES (1)");
         }
-        assertFalse(first.getAutoCommit(), "前置条件：autoCommit 已被借用者关闭");
+        assertFalse(first.getAutoCommit(), "precondition: the borrower turned autoCommit off");
 
         pool.releaseConnection(first);
 
         Connection second = pool.getConnection();
         assertTrue(second.getAutoCommit(),
-                "归还时必须把 autoCommit 复位到池配置值（true），否则下一个借用者会莫名其妙地处在事务里");
+                "release must restore autoCommit to the configured value (true), otherwise the next borrower silently starts inside a transaction");
         try (Statement stmt = second.createStatement();
              ResultSet rs = stmt.executeQuery("SELECT count(*) FROM ac_probe")) {
             assertTrue(rs.next());
-            assertEquals(0, rs.getInt(1), "autoCommit=false 下未提交的数据必须被回滚");
+            assertEquals(0, rs.getInt(1), "uncommitted data must be rolled back when autoCommit=false");
         }
 
         pool.releaseConnection(second);
@@ -917,38 +917,43 @@ public class DBDataSourcePoolTest {
     // ============================================================
 
     /**
-     * 归还连接时仍有未关闭的语句 → 必须退役（物理关闭），不得放回空闲池。
+     * 归还连接时仍有未关闭的语句 → 语句由池关掉，**探活通过则复用**，探活失败才退役。
      *
      * <p>历史行为是把这类连接直接放回空闲池：调用方少写一个 {@code stmt.close()}
      * （或依赖"关连接时顺带关语句"）就会把一条还挂着语句的连接交给下一个借用者。</p>
+     *
+     * <p>2026-10-22 调整：只在"语句没关"时一律退役的代价太大 —— 长跑实例上每次失败批处理
+     * 都会销毁一条 DuckDB 连接（实测 40 次失败批处理 = 40 次退役），连接反复创建/销毁，
+     * 池也长期处于抖动状态。现在改为"先关语句，再跑一条 SELECT 1 探活"：
+     * 探活证明没有残留的未消费结果，就可以安全复用；探活失败仍然退役。</p>
      */
     @Test
-    void testHandleCloseWithOutstandingStatementRetiresConnection() throws Exception {
+    void testHandleCloseWithOutstandingStatementRecoversConnection() throws Exception {
         DBDataSourcePoolConfig config = createPoolConfig(1, 0, 1);
-        DBDataSourcePool pool = new DBDataSourcePool("testRetireOutstanding", config, logger);
+        DBDataSourcePool pool = new DBDataSourcePool("testRecoverOutstanding", config, logger);
 
         Connection first = pool.getConnection();
         Statement leaked = first.createStatement();
         leaked.execute("CREATE TABLE leak_probe(a INTEGER)");
-        assertFalse(leaked.isClosed(), "前置条件：语句还开着");
+        assertFalse(leaked.isClosed(), "precondition: the statement is still open");
         // 刻意不关 leaked：调用方没有把语句收拾干净
 
         first.close();
 
-        assertEquals(0, pool.getIdleConnectionPoolSize(),
-                "归还时仍有未关闭语句的连接不得放回空闲池（否则下一个借用者会拿到仍在使用的语句）");
+        assertEquals(1, pool.getIdleConnectionPoolSize(),
+                "the pool closed the leftover statement and the probe passed, so the connection must be reused instead of retired");
         assertEquals(0, pool.getUsedConnectionPoolSize());
 
         // 退役不能吃掉池的容量：下一次借到的必须是一条可用连接
         Connection second = pool.getConnection();
         try (Statement stmt = second.createStatement();
              ResultSet rs = stmt.executeQuery("SELECT 1")) {
-            assertTrue(rs.next(), "退役后池必须还能发放可用的连接");
+            assertTrue(rs.next(), "the pool must still hand out a usable connection after retiring one");
             assertEquals(1, rs.getInt(1));
         }
         second.close();
         assertEquals(1, pool.getIdleConnectionPoolSize(),
-                "这次没有残留语句，连接应当正常回到空闲池");
+                "there is no leftover statement this time, so the connection must go back to the idle pool");
 
         pool.shutdown();
     }
@@ -983,21 +988,70 @@ public class DBDataSourcePoolTest {
                 return null;
             });
             assertTrue(driver.awaitStatementEntered(10, TimeUnit.SECONDS),
-                    "假语句没有进入执行状态，用例前提不成立");
+                    "the fake statement never entered execution, the test precondition does not hold");
 
             // 另一个线程还卡在这条语句里，连接绝不能被放回池里给下一个借用者
             handle.close();
 
             assertEquals(0, pool.getIdleConnectionPoolSize(),
-                    "仍有语句正在执行时归还连接，必须走退役路径而不是放回空闲池");
+                    "returning a connection while a statement is still executing must retire it, not put it back in the idle pool");
             assertEquals(0, pool.getUsedConnectionPoolSize());
             assertEquals(1, driver.closedConnections(),
-                    "退役意味着物理关闭：底层连接必须收到 close()");
+                    "retiring means a physical close: the underlying connection must receive close()");
 
             driver.releaseStatement();
             executing.get(10, TimeUnit.SECONDS);
         } finally {
             driver.releaseStatement();
+            executor.shutdownNow();
+            pool.shutdown();
+        }
+    }
+
+    /**
+     * 归还连接的同时、另一个线程正在同一条连接上建语句 → 那条语句必须被当场拒掉，
+     * 绝不能留在物理连接上（否则它会跟着连接一起被下一个借用者拿到）。
+     *
+     * <p>覆盖的是 {@code requireOpen()} 与 {@code physical.createStatement()} 之间的窗口：
+     * 归还时这条连接还没有任何语句（走的是正常归还路径），但"正在创建"的那条语句会在
+     * {@code released} 置位之后才登记。改造前这种连接一律被退役，窗口被顺手兜住；现在要复用，
+     * 就得由 {@code track()} 自己拒绝。</p>
+     */
+    @Test
+    void testStatementCreatedWhileClosingIsRefused() throws Exception {
+        SlowCreateStatementDriver driver = new SlowCreateStatementDriver();
+        DBDataSourcePoolConfig config = createPoolConfig(1, 0, 1);
+        config.setDriver(driver);
+        DBDataSourcePool pool = new DBDataSourcePool("testCreateRace", config, logger);
+
+        Connection handle = pool.getConnection();
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<SQLException> racing = executor.submit(() -> {
+                try {
+                    handle.createStatement();
+                    return null;
+                } catch (SQLException expected) {
+                    return expected;
+                }
+            });
+            assertTrue(driver.awaitCreateEntered(10, TimeUnit.SECONDS),
+                    "the fake connection never entered statement creation, the test precondition does not hold");
+
+            // 另一个线程正卡在 createStatement 里时归还连接：此时连接上没有残留语句，
+            // 走的是正常归还路径，连接会回到空闲池
+            handle.close();
+            assertEquals(1, pool.getIdleConnectionPoolSize(),
+                    "with only one statement being created, the connection itself should be returned normally");
+
+            driver.releaseCreate();
+            SQLException failure = racing.get(10, TimeUnit.SECONDS);
+            assertNotNull(failure, "a statement created after the connection was returned must be refused, otherwise it stays on the physical connection");
+            assertEquals(1, driver.closedStatements(),
+                    "the refused statement must be closed on the spot and never left on the physical connection");
+        } finally {
+            driver.releaseCreate();
             executor.shutdownNow();
             pool.shutdown();
         }
@@ -1011,7 +1065,7 @@ public class DBDataSourcePoolTest {
      * 否则 {@code usedConnectionPool.remove(connection)} 会找不到自己。
      * （生产代码里的语句代理出于同样的原因自己实现了这两个方法。）</p>
      */
-    private static final class BlockingStatementDriver implements Driver {
+    private static class BlockingStatementDriver implements Driver {
 
         private final CountDownLatch statementEntered = new CountDownLatch(1);
         private final CountDownLatch statementMayReturn = new CountDownLatch(1);
@@ -1094,12 +1148,12 @@ public class DBDataSourcePoolTest {
             });
         }
 
-        private static <T> T proxy(Class<T> iface, InvocationHandler handler) {
+        static <T> T proxy(Class<T> iface, InvocationHandler handler) {
             return iface.cast(Proxy.newProxyInstance(BlockingStatementDriver.class.getClassLoader(),
                     new Class<?>[]{iface}, handler));
         }
 
-        private static Object defaultValue(Class<?> returnType) {
+        static Object defaultValue(Class<?> returnType) {
             if (!returnType.isPrimitive() || returnType == void.class) {
                 return null;
             }
@@ -1158,6 +1212,87 @@ public class DBDataSourcePoolTest {
         @Override
         public java.util.logging.Logger getParentLogger() {
             return java.util.logging.Logger.getGlobal();
+        }
+    }
+
+    /**
+     * 假驱动：{@code createStatement()} 会"卡住"直到测试放行。
+     *
+     * <p>用来复现一个真实的竞态窗口：线程 A 已通过 {@code requireOpen()} 检查、正卡在
+     * {@code physical.createStatement()} 里；此时线程 B 把连接归还了。A 拿到的那条语句
+     * 是"归还之后才登记"的——改造前一概退役（物理关闭）能顺手兜住它，现在连接要复用，
+     * 就必须由 {@code PooledConnection.track()} 当场拒掉，否则它会跟着连接一起被下一个
+     * 借用者拿到（DuckDB 单连接非线程安全）。</p>
+     */
+    private static final class SlowCreateStatementDriver extends BlockingStatementDriver {
+
+        private final CountDownLatch createEntered = new CountDownLatch(1);
+        private final CountDownLatch createMayReturn = new CountDownLatch(1);
+        private final AtomicInteger closedStatements = new AtomicInteger();
+
+        boolean awaitCreateEntered(long timeout, TimeUnit unit) throws InterruptedException {
+            return createEntered.await(timeout, unit);
+        }
+
+        void releaseCreate() {
+            createMayReturn.countDown();
+        }
+
+        int closedStatements() {
+            return closedStatements.get();
+        }
+
+        @Override
+        public Connection connect(String url, Properties info) {
+            return proxy(Connection.class, (self, method, args) -> {
+                switch (method.getName()) {
+                    case "createStatement":
+                        createEntered.countDown();
+                        createMayReturn.await();
+                        return fakeStatement();
+                    case "isClosed":
+                        return false;
+                    case "close":
+                        return null;
+                    case "rollback":
+                        // 与 DuckDB 一致：没有活动事务时的固定报错，池按"正常情况"忽略
+                        throw new SQLException("cannot rollback - no transaction is active");
+                    case "getAutoCommit":
+                        return true;
+                    case "setAutoCommit":
+                        return null;
+                    case "isValid":
+                        return true;
+                    case "equals":
+                        return self == args[0];
+                    case "hashCode":
+                        return System.identityHashCode(self);
+                    case "toString":
+                        return "SlowCreateFakeConnection";
+                    default:
+                        return defaultValue(method.getReturnType());
+                }
+            });
+        }
+
+        private Object fakeStatement() {
+            return proxy(Statement.class, (self, method, args) -> {
+                switch (method.getName()) {
+                    case "close":
+                        closedStatements.incrementAndGet();
+                        return null;
+                    case "isClosed":
+                        return false;
+                    case "equals":
+                        return self == args[0];
+                    case "hashCode":
+                        return System.identityHashCode(self);
+                    case "toString":
+                        return "SlowCreateFakeStatement";
+                    default:
+                        return defaultValue(method.getReturnType());
+                }
+            });
         }
     }
 }

@@ -11,7 +11,7 @@ import java.util.Set;
  * 文本解析能覆盖的类型很多，但有一小组类型<b>连 {@code createAppender()} 都建不起来</b>
  * （DuckDB 的 JDBC Appender 没有对应的 C API 类型），这类列必须明确报错。</p>
  *
- * <p>实测（duckdb_jdbc 1.5.6.0 / duckdb v1.5.6，{@code select version()} 实测）：对下列类型的列，
+ * <p>实测（duckdb_jdbc 2.0.0.0 / duckdb v2.0.0，{@code select version()} 实测）：对下列类型的列，
  * {@code conn.createAppender(...)} 直接抛 {@code Appender error ... unsupported C API type: N}：</p>
  *
  * <ul>
@@ -31,7 +31,7 @@ import java.util.Set;
  */
 public final class CopyColumnTypes {
 
-    /** 块 Appender 连 createAppender 都建不起来的类型（duckdb_jdbc 1.5.6.0 实测）。 */
+    /** 块 Appender 连 createAppender 都建不起来的类型（duckdb_jdbc 2.0.0.0 实测）。 */
     private static final Set<String> APPENDER_UNSUPPORTED = Set.of(
             "BIT", "INTERVAL", "TIME_NS", "BIGNUM", "VARIANT");
 

@@ -11,6 +11,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -345,16 +346,32 @@ public final class CompareReporter {
         return workLines.get(lineNumber - 1);
     }
 
-    /** 行号格子：右对齐，**最小**宽度 6（{@code String.format("%6d", lineno)}；更大的行号原样变宽，不截断）。 */
+    /**
+     * 行号格子：右对齐，**最小**宽度 6（{@code String.format(Locale.ROOT, "%6d", lineno)}；
+     * 更大的行号原样变宽，不截断）。
+     *
+     * <p>{@code Locale.ROOT} 是必须的：{@code %d} 会按默认 locale 本地化数字位，在
+     * {@code ar-EG} 之类的区域会写出阿拉伯-印度数字，破坏 {@code .dif} 的逐字节契约
+     * （而自家解析仍然成功，所以这个 bug 不会自我暴露）。</p>
+     */
     private static String formatLineNumber(int lineNumber) {
-        return String.format("%6d", lineNumber);
+        return String.format(Locale.ROOT, "%6d", lineNumber);
     }
 
     // ------------------------------------------------------------------ 输出文件
 
     /** {@code os.path.splitext} 的等价物：只认最后一个点，且前导点不算扩展名（{@code .hidden} → {@code .hidden.dif}）。 */
     private Path reportPath(String extension) {
-        Path target = Path.of(result.targetPath());
+        return artifactPath(Path.of(result.targetPath()), extension);
+    }
+
+    /**
+     * 产物路径（{@code .suc}/{@code .dif}/{@code .html}）的**唯一**派生规则：与目标文件同目录、同基名。
+     *
+     * <p>公开是因为调用方要在写之前判断"这个产物路径是不是撞上了某个输入文件"（见
+     * {@code CompareCommandDispatcher.ensureArtifactsDoNotClobberInputs}）。</p>
+     */
+    public static Path artifactPath(Path target, String extension) {
         String name = target.getFileName().toString();
         int dot = name.lastIndexOf('.');
         String base = dot > 0 ? name.substring(0, dot) : name;

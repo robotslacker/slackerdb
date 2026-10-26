@@ -182,4 +182,39 @@ public class PlSqlSimpleQueryTest {
             assertFalse(stmt.execute("-- 只有注释\n/* 什么都没有 */"));
         }
     }
+
+    /**
+     * A PL/SQL EXCEPTION handler must be able to continue after catching a catalog
+     * error. DuckDB 2.0's default invalidation policy aborts the transaction on
+     * binder/catalog errors (DuckDB 1.5.x did not), and DuckDB has no SAVEPOINT, so
+     * the server restores the legacy policy at instance startup.
+     */
+    @Test
+    void handlerContinuesAfterCaughtCatalogError() throws SQLException {
+        try (Connection conn = connectSimple(); Statement stmt = conn.createStatement()) {
+            stmt.execute("create or replace table sq_handler(i int)");
+            conn.commit();
+
+            stmt.execute("""
+                    begin
+                      begin
+                        insert into no_such_table_for_handler values(1);
+                      exception
+                        when others then
+                          insert into sq_handler values(1);
+                      end;
+                      insert into sq_handler values(2);
+                    end;
+                    """);
+            conn.commit();
+
+            try (ResultSet rs = stmt.executeQuery("select i from sq_handler order by i")) {
+                assertTrue(rs.next());
+                assertEquals(1, rs.getInt(1), "handler 内的写入应生效");
+                assertTrue(rs.next());
+                assertEquals(2, rs.getInt(1), "handler 之后的事务应仍然可用");
+                assertFalse(rs.next());
+            }
+        }
+    }
 }

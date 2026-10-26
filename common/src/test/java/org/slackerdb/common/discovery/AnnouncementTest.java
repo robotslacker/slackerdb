@@ -37,7 +37,7 @@ class AnnouncementTest {
     @DisplayName("HELLO 往返：所有字段一个不丢")
     void helloRoundTrip() {
         Announcement sent = Announcement.hello("mydb", "mydb-alias", "192.168.1.10", 5432, 8000,
-                "0.2.1", 137);
+                "0.2.2", 137);
         Announcement received = Announcement.decode(sent.encode());
 
         assertTrue(received.isHello());
@@ -48,7 +48,7 @@ class AnnouncementTest {
         assertEquals("192.168.1.10", received.getHost());
         assertEquals(5432, received.getPort());
         assertEquals(8000, received.getPortX());
-        assertEquals("0.2.1", received.getVersion());
+        assertEquals("0.2.2", received.getVersion());
         assertEquals(137, received.getSeq());
         assertTrue(received.getTimestamp() > 0, "timestamp must be stamped on construction");
     }
@@ -87,7 +87,7 @@ class AnnouncementTest {
     @DisplayName("报文足够小：一个 UDP 报文装得下，不需要分片")
     void staysWithinOneDatagram() {
         int size = Announcement.hello("a-very-long-database-name-for-testing", "alias", "192.168.100.100",
-                5432, 8000, "0.2.1", Long.MAX_VALUE).encode().length;
+                5432, 8000, "0.2.2", Long.MAX_VALUE).encode().length;
         assertTrue(size < 400, "announcement should stay well below the datagram limit, was " + size);
     }
 

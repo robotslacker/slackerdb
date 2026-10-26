@@ -1,0 +1,10 @@
+# text	semicolonCount	blankOrComment（已知：块注释里的 ; 也会被计入，两侧行为一致）
+   	0	true
+-- only comment	0	true
+/* c */	0	false
+select 1	0	false
+select ';'	0	false
+select 1;	1	false
+select 1; select 2;	2	false
+select 1 -- ;	0	false
+select 1 /* ; */;	2	false

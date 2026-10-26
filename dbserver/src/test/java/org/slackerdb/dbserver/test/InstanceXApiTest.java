@@ -173,6 +173,7 @@ public class InstanceXApiTest {
         registerTestObj.put("serviceType", "GET");
         registerTestObj.put("category", "test");
         registerTestObj.put("sql", "SELECT 1 as col1, 2 as col2, '中国' as col3");
+        registerTestObj.put("snapshotLimit", "300 seconds");
 
         HttpClient client = HttpClient.newHttpClient();
 
@@ -412,7 +413,7 @@ public class InstanceXApiTest {
         assertTrue(body.contains("[1,2,3]"), "LIST 应为 JSON 数组：" + body);
         assertTrue(body.contains("\"3q0=\""), "BLOB 应为 Base64：" + body);
         assertTrue(body.contains("{\"a\":1}"), "JSON 列应为真实 JSON 值：" + body);
-        assertFalse(body.contains("\"array\":false"), "不得泄漏 JsonNode 内部字段：" + body);
+        assertFalse(body.contains("\"array\":false"), "不得泄漏驱动 JsonNode 的内部字段：" + body);
     }
 
 }

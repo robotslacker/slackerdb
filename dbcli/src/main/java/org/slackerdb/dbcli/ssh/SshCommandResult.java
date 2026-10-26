@@ -6,12 +6,23 @@ package org.slackerdb.dbcli.ssh;
  * @param command    实际执行的命令
  * @param stdout     标准输出（原样，含换行）
  * @param stderr     标准错误（原样，含换行）
- * @param exitStatus 远端退出码；{@code -1} 表示通道未给出退出码（例如连接中断）
+ * @param exitStatus 远端退出码；{@code -1} 表示通道未给出退出码（例如连接中断），
+ *                   {@code -2} 表示命令超时被中断
+ * @param timedOut   是否因为超过 SSH 超时而被中断（此时 {@code stdout} 是已经读到的部分输出）
  */
-public record SshCommandResult(String command, String stdout, String stderr, int exitStatus) {
+public record SshCommandResult(String command, String stdout, String stderr, int exitStatus,
+                               boolean timedOut) {
+
+    /** 超时的退出码（与远端真实退出码、{@code -1} 都不冲突）。 */
+    public static final int TIMEOUT_EXIT_STATUS = -2;
+
+    /** 不带超时标记的结果（既有的假实现与测试用）。 */
+    public SshCommandResult(String command, String stdout, String stderr, int exitStatus) {
+        this(command, stdout, stderr, exitStatus, false);
+    }
 
     public boolean success() {
-        return exitStatus == 0;
+        return exitStatus == 0 && !timedOut;
     }
 
     /** 输出到 dbcli 控制台时用的文本：只有 stdout 算"结果"，stderr 单独走错误路径。 */
@@ -32,6 +43,9 @@ public record SshCommandResult(String command, String stdout, String stderr, int
 
     /** 出错提示（stderr 优先，空则给退出码），供引擎拼错误消息。 */
     public String errorText() {
+        if (timedOut) {
+            return stderr == null || stderr.isEmpty() ? "command timed out" : stderr;
+        }
         if (stderr != null && !stderr.isEmpty()) {
             return stderr;
         }

@@ -24,6 +24,7 @@ import java.util.Map;
  *   save         → "SSH session saved."
  *   restore      → "SSH session restored."
  *   set encoding → 无输出                          （未知选项 → "Unkonwn ssh option [x]."）
+ *   set timeout  → "SSH command timeout set to N seconds." / "… disabled."（0 = 不限，默认）
  *   sftp_cwd     → 当前目录字符串
  *   sftp_listdir → 结果集，表头 ["fileName"]
  *   其余 sftp_*  → 无输出（失败 → "&lt;动作&gt; failed. OSError(...)"）
@@ -54,6 +55,14 @@ public final class SshCommandDispatcher {
 
     private final SshSessionRegistry registry;
     private final SshOperationsFactory factory;
+
+    /**
+     * 单条远端命令的时限（毫秒；{@link SshOperations#NO_COMMAND_TIMEOUT} = 不限，默认）。
+     *
+     * <p>保存在分派器而不是连接里：{@code _SSH CONNECT} 每次都会新建一个客户端，
+     * 设置必须能被后续连接继承（{@code _SSH SET TIMEOUT = <秒>} 在连接前也能生效）。</p>
+     */
+    private volatile long commandTimeoutMillis = SshOperations.NO_COMMAND_TIMEOUT;
 
     public SshCommandDispatcher(SshSessionRegistry registry, SshOperationsFactory factory) {
         this.registry = registry;
@@ -166,6 +175,8 @@ public final class SshCommandDispatcher {
             return;
         }
         SshOperations operations = factory.create();
+        // 新连接继承当前设置（默认不限）：设置先于连接写也能生效
+        operations.setCommandTimeout(commandTimeoutMillis);
         SshConnectOptions options = new SshConnectOptions(
                 text(ir, "host"),
                 port,
@@ -214,21 +225,32 @@ public final class SshCommandDispatcher {
             outcomes.add(new CommandOutcome.Error("SSH Exception :" + errorRepr(executeError)));
             return;
         }
-        // stderr 已并进 stdout，**逐行**作为结果输出
+        // stdout/stderr 已合并，**逐行**作为结果输出（先输出已读到的部分，超时也不丢）
         for (String line : result.combinedOutput().split("\n", -1)) {
             if (!line.isEmpty()) {
                 outcomes.add(new CommandOutcome.Status(stripTrailingCr(line)));
             }
         }
+        if (result.timedOut()) {
+            // 超时不是"命令跑完了"：不发 exit status 行，改为一条可读错误（计入错误数、_WHENEVER 生效）
+            outcomes.add(new CommandOutcome.Error("SSH command timed out; it was interrupted and may have "
+                    + "produced only partial output."));
+            return;
+        }
         outcomes.add(new CommandOutcome.Status("< Command finished with [" + result.exitStatus() + "]"));
     }
 
     private void setOption(Map<String, Object> ir, List<CommandOutcome> outcomes) {
+        String option = text(ir, "option");
+        // timeout 是**分派器级**设置（对新连接也生效），因此不要求先连上
+        if ("timeout".equalsIgnoreCase(option)) {
+            setTimeout(text(ir, "value"), outcomes);
+            return;
+        }
         if (!registry.hasCurrent()) {
             outcomes.add(new CommandOutcome.Error("SSH not connected."));
             return;
         }
-        String option = text(ir, "option");
         if ("encoding".equalsIgnoreCase(option)) {
             String value = text(ir, "value");
             // 项目只支持 UTF-8。接受 UTF-8（含 utf8 简写）并当作无操作；
@@ -244,6 +266,47 @@ public final class SshCommandDispatcher {
         }
         // "Unkonwn" 是冻结文案里的拼写，不能"顺手改对"（否则既有夹具比对失败）
         outcomes.add(new CommandOutcome.Error("Unkonwn ssh option [" + option + "]."));
+    }
+
+    /**
+     * {@code _SSH SET TIMEOUT = <秒>}：设置单条远端命令的时限；{@code 0} 表示不限（默认）。
+     *
+     * <p>设置作用于当前连接，并被后续连接继承。命令到点会被中断，已产生的输出照常返回，
+     * 结果标记为超时（见 {@code SshCommandResult#timedOut()}）。</p>
+     */
+    private void setTimeout(String value, List<CommandOutcome> outcomes) {
+        double seconds;
+        try {
+            seconds = UserNumber.nonNegativeSeconds("SSH timeout", value);
+        } catch (UserNumber.InvalidNumberException invalidNumber) {
+            outcomes.add(new CommandOutcome.Error(invalidNumber.getMessage()));
+            return;
+        }
+        long millis = toMillis(seconds);
+        this.commandTimeoutMillis = millis;
+        if (registry.hasCurrent()) {
+            registry.current().setCommandTimeout(millis);
+        }
+        outcomes.add(new CommandOutcome.Status(millis == SshOperations.NO_COMMAND_TIMEOUT
+                ? "SSH command timeout disabled."
+                : "SSH command timeout set to " + displaySeconds(seconds) + " seconds."));
+    }
+
+    /** 秒 → 毫秒（向上取整；0 表示不限；极大值夹紧，避免溢出成负数）。 */
+    private static long toMillis(double seconds) {
+        if (seconds <= 0) {
+            return SshOperations.NO_COMMAND_TIMEOUT;
+        }
+        double millis = Math.ceil(seconds * 1000.0);
+        if (millis >= Long.MAX_VALUE / 2d) {
+            return Long.MAX_VALUE / 2;
+        }
+        return (long) millis;
+    }
+
+    /** 文案里的秒数：整数就不带小数点（30 → "30"，0.5 → "0.5"）。 */
+    private static String displaySeconds(double seconds) {
+        return seconds == Math.rint(seconds) ? String.valueOf((long) seconds) : String.valueOf(seconds);
     }
 
     // ------------------------------------------------------------------ 工具

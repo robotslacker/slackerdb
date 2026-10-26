@@ -52,9 +52,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 另外本类会跟踪自己发放出去的 {@link Statement}，归还连接时一并关闭
  * （JDBC 规定关闭连接要连带关闭它产生的语句，见 {@link #track}）。</p>
  *
- * <p><b>什么时候不归还而退役</b>：归还时若仍有未关闭的语句、或仍有语句正在执行，
- * 这条连接会被<b>物理关闭</b>而不是放回空闲池——见 {@link #recycle}。
- * "关闭即归还"只在调用方确实放开了这条连接时才成立；语句还挂在上面就说明前提不成立。</p>
+ * <p><b>什么时候不归还而退役</b>：归还时若仍有语句<b>正在执行</b>（别的线程还卡在语句方法里），
+ * 这条连接会被<b>物理关闭</b>而不是放回空闲池；若只是"语句没关"这类残留，则由池关掉残留语句、
+ * 用 {@code SELECT 1} 探活，通过才复用、失败才退役——见 {@link #recycle}。
+ * "关闭即归还"只在调用方确实放开了这条连接时才成立；还有线程在用它就说明前提不成立。</p>
  *
  * <p><b>需要向下转型时</b>：句柄不是 {@code DuckDBConnection}，用
  * {@link #unwrap(Connection)} / {@link #unwrapOrSame(Connection)} 取回物理连接，
@@ -157,9 +158,16 @@ public final class PooledConnection implements Connection {
      * 归还物理连接。幂等；失败只记日志，不向调用方抛出——
      * JDBC 的 {@code close()} 不期望因为池内部问题而失败。
      *
-     * <p><b>什么情况下不复用</b>：归还时若仍有未关闭的语句、或仍有语句正在执行，
-     * 这条连接<b>不走"放回空闲池"而走退役</b>（物理关闭），理由见方法内注释。
-     * 池的复用以"调用方不再碰这条连接"为前提，而这个前提在语句残留时无法成立。</p>
+     * <p><b>什么情况下复用、什么情况下退役</b>（2026-10-22 起）：</p>
+     * <ul>
+     *   <li>语句都关干净了 → 正常归还（复位事务状态后放回空闲池）；</li>
+     *   <li>只剩"语句没关"这类残留、且没有语句正在执行 → 由池关掉残留语句，再用
+     *       {@code SELECT 1} 探活：通过就复用，失败才退役（见
+     *       {@link DBDataSourcePool#recoverConnectionAfterResidue}）。改造前这里一律退役，
+     *       代价是每个失败批处理都要新建/销毁一条 DuckDB 连接（实测 10 次失败批处理 → 9 次退役）；</li>
+     *   <li>仍有语句正在执行（{@link #inFlightStatements} &gt; 0）→ <b>必须退役</b>：
+     *       连接上还有别的线程在用，DuckDB 单连接非线程安全。</li>
+     * </ul>
      */
     private void recycle(String how) {
         if (!released.compareAndSet(false, true)) {
@@ -184,23 +192,34 @@ public final class PooledConnection implements Connection {
             handler.closeDelegate();
         }
 
-        // 关闭本身可能耗时（底层语句可能正忙），期间若又有线程在这条连接上建了语句，
-        // 那也是"调用方没有把连接放下"，一并按残留处理（多出来的语句交给退役时的物理关闭）。
+        // 关闭本身可能耗时（底层语句可能正忙）。期间若又有线程在这条连接上建语句，
+        // track() 会看到 released 已置位并立刻拒掉它，所以这里不会漏掉"新冒出来的语句"；
+        // 仍然把两侧相加，是为了让日志里的计数如实反映"这次归还欠了几条语句"。
         int residue = outstanding.size() + trackedStatements.size();
         if (residue > 0 || inFlight) {
-            // 调用方归还连接时没有把语句收拾干净：语句可能仍在别的线程上执行，而这条连接
-            // 一旦放回空闲池就会被下一个借用者<b>立刻</b>拿到。DuckDB 的单条连接不是线程安全的，
-            // 两个会话于是会在同一条连接、同一批语句上互相踩——静默的数据错乱远比一次连接创建贵。
-            // 因此走退役路径：物理关闭，绝不复用。
+            // 调用方归还连接时没有把语句收拾干净。
+            //
+            // 改造前这里**一律退役**（物理关闭）。问题在于"有语句没关"其实非常常见
+            // （批处理失败、客户端不辞而别、Parse 出来但从未执行），每次退役都要新建一条
+            // DuckDB 连接；长跑实例上这会持续消耗资源，最终把池拖进"连接建了又销毁"的抖动里。
+            //
+            // 这里改成：**先尝试修复再复用** —— 语句刚刚已经全部关掉，只要这条连接还能
+            // 正常执行一条探活语句，就说明它没有残留的未消费结果，可以安全复用；
+            // 探活失败才退役。安全性没有降低：不可用的连接依然进不了空闲池。
             trackedStatements.clear();
-            this.logger.warn("[SERVER][CONN POOL  ]: Pool [{}] {} returned the connection with {} "
-                            + "statement(s) not closed{}; retiring it instead of reusing it.",
+            this.logger.debug("[SERVER][CONN POOL  ]: Pool [{}] {} returned the connection with {} "
+                            + "statement(s) not closed{}; trying to recover reuse.",
                     this.pool.poolName(), how, residue,
                     inFlight ? " and at least one still executing" : "");
+
+            // 还有语句正在别的线程上执行时不允许复用（DuckDB 单连接非线程安全）。
+            if (!inFlight && this.pool.recoverConnectionAfterResidue(target)) {
+                return;
+            }
             try {
                 this.pool.retireConnectionFromHandle(target,
                         inFlight ? "closed while statements were still executing"
-                                : "closed with statements not closed");
+                                : "recovery after statement residue failed");
             } catch (RuntimeException runtimeException) {
                 this.logger.warn("[SERVER][CONN POOL  ]: Pool [{}] {} failed to retire connection: {}",
                         this.pool.poolName(), how, runtimeException.getMessage());
@@ -224,8 +243,15 @@ public final class PooledConnection implements Connection {
      * 归还连接时还欠哪些语句没关。用 {@link Proxy} 而不是手写包装类，是为了不必把
      * {@code Statement/PreparedStatement/CallableStatement} 的几十个方法再抄一遍
      * ——抄一遍就会有漏项，而漏项恰好会表现成"某些语句关不掉"。</p>
+     *
+     * <p><b>为什么登记后还要检查 {@link #released}</b>：{@code createStatement()} 先过
+     * {@link #requireOpen()} 再建语句，中间有一段窗口；另一线程恰好在这段窗口里
+     * {@code close()} 了连接时，这条语句会"归还之后才登记"，于是既不在
+     * {@code recycle} 的待关闭快照里，也不会再被谁关掉。改造前一概退役（物理关闭）能兜住它，
+     * 现在连接要复用，留着它就等于把一条活语句交给下一个借用者（DuckDB 单连接非线程安全）。
+     * 因此这里立刻关掉并让调用方拿到明确的错误。</p>
      */
-    private <T extends Statement> T track(Statement statement, Class<T> statementInterface) {
+    private <T extends Statement> T track(Statement statement, Class<T> statementInterface) throws SQLException {
         if (statement == null) {
             return null;
         }
@@ -236,6 +262,11 @@ public final class PooledConnection implements Connection {
                         new Class<?>[]{statementInterface},
                         handler));
         trackedStatements.add(handler);
+        if (released.get()) {
+            trackedStatements.remove(handler);
+            handler.closeDelegate();
+            throw new SQLException("Connection has already been returned to the pool.");
+        }
         return proxy;
     }
 

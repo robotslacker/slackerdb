@@ -196,7 +196,33 @@ public class PostgresServerHandler extends ChannelInboundHandlerAdapter {
         }
 
         // 获取远端的地址信息
-        logger.trace("[SERVER][PG PROTOCOL]: Connection {} error.", getRemoteAddressString(ctx), cause);
+        // 这里从 trace 提到 warn：连接级异常意味着客户端即将看到"连接没了"，
+        // 而 INFO 级日志里什么都看不到，线上排查时无法区分"服务端关了"和"网络断了"。
+        logger.warn("[SERVER][PG PROTOCOL]: Connection {} error: {}",
+                getRemoteAddressString(ctx), cause.toString());
+
+        // **关闭之前先尽力回一个错误**。
+        //
+        // 改造前这里只 close()，客户端拿到的是 EOF/连接重置 —— pgjdbc 会包装成
+        // "An I/O error occurred while sending to the backend"，既没有 SQLSTATE 也没有行号，
+        // 用户与运维都无从下手（这正是线上"批处理突然变 I/O 错误"的观感来源）。
+        // 现在补一条 XX000，客户端至少能拿到明确错误；发不出去（通道已断）就算了。
+        if (ctx.channel().isActive()) {
+            try {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                ErrorResponse errorResponse = new ErrorResponse(dbInstance);
+                errorResponse.setErrorFile("PostgresServerHandler");
+                errorResponse.setErrorResponse("XX000",
+                        cause.getMessage() == null ? cause.toString() : cause.getMessage());
+                errorResponse.setErrorSeverity("ERROR");
+                errorResponse.process(ctx, null, out);
+                PostgresMessage.writeAndFlush(ctx, ErrorResponse.class.getSimpleName(), out,
+                        dbInstance.logger);
+                out.close();
+            } catch (Exception ignored) {
+                // 连错误都发不出去（通道已断等）：下面直接关闭连接即可
+            }
+        }
 
         // 释放资源
         super.exceptionCaught(ctx, cause);

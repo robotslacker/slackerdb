@@ -1392,7 +1392,7 @@ public class CopySanityTest {
      * 块 Appender 建不起来的列类型（BIT / INTERVAL / TIME_NS / BIGNUM / VARIANT）快速失败：
      * 在任何数据写入之前就报错，消息里带列名与类型名。
      *
-     * <p>这几类列在 duckdb_jdbc 1.5.6.0 里 {@code createAppender()} 直接抛
+     * <p>这几类列在 duckdb_jdbc 2.0.0.0 里 {@code createAppender()} 直接抛
      * {@code unsupported C API type: N}，必须给出可读的原因。</p>
      */
     @Test

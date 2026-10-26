@@ -9,29 +9,23 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 
 /**
  * MCP 工具面的<b>实际执行体</b>。
  *
- * <p>旧实现里每个注册的工具都套同一个 echo handler（把入参原样回显），
- * 也就是说工具面是空的。本类提供真正干活的工具，并统一施加
- * 2026 年生态的最低门槛：<b>只读默认、行数上限、语句超时</b>。</p>
+ * <p>MCP 作为内部工具，不再施加只读、行数上限或语句超时；{@code run_sql}
+ * 可以执行读写语句，返回行数由调用方的 {@code max_rows} 控制（默认不限）。</p>
  *
  * <h2>工具清单</h2>
  * <ul>
  *   <li>{@code open_session} —— 铸造一个会话 handle（跨调用状态的载体，见 {@link McpSessionStore}）</li>
  *   <li>{@code close_session} —— 释放 handle</li>
- *   <li>{@code run_sql} —— 执行只读 SQL，带行数上限与超时</li>
+ *   <li>{@code run_sql} —— 执行 SQL（默认返回全部行）</li>
  *   <li>{@code list_tables} —— 列出表/视图</li>
  *   <li>{@code describe_table} —— 列出列定义</li>
  *   <li>{@code sample_rows} —— 取样若干行</li>
@@ -46,12 +40,7 @@ final class McpToolkit {
 
     /** 工具执行所需的运行时依赖。 */
     record Config(
-            boolean readOnlyDefault,
-            boolean serverReadOnly,
             int maxRowsCeiling,
-            int defaultMaxRows,
-            int statementTimeoutMillis,
-            int maxStatementTimeoutMillis,
             String defaultSchema
     ) {
     }
@@ -59,12 +48,6 @@ final class McpToolkit {
     private final McpSessionStore sessions;
     private final Config config;
     private final Logger logger;
-    private final ScheduledExecutorService watchdog =
-            Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "mcp-statement-watchdog");
-                t.setDaemon(true);
-                return t;
-            });
 
     McpToolkit(McpSessionStore sessions, Config config, Logger logger) {
         this.sessions = sessions;
@@ -73,7 +56,6 @@ final class McpToolkit {
     }
 
     void shutdown() {
-        watchdog.shutdownNow();
         sessions.closeAll();
     }
 
@@ -104,14 +86,13 @@ final class McpToolkit {
 
     private ToolSpec openSessionSpec() {
         JSONObject input = schema(Map.of(
-                "read_only", prop("boolean", "Open the session in read-only mode. "
-                        + "Defaults to the server's setting (" + config.readOnlyDefault() + ").")
+                "read_only", prop("boolean", "Deprecated and ignored. MCP runs with the server's own "
+                        + "permissions; this flag no longer restricts writes.")
         ), List.of());
         JSONObject output = schema(Map.of(
                 "handle", prop("string", "Opaque server-minted session handle."),
-                "read_only", prop("boolean", "Whether the session rejects write statements."),
-                "idle_expiry_ms", prop("integer", "Idle time after which the session is reclaimed."),
-                "note", prop("string", "Present when the server's access_mode made the request read-only.")
+                "read_only", prop("boolean", "Always false; MCP does not enforce read-only."),
+                "idle_expiry_ms", prop("integer", "Idle time after which the session is reclaimed.")
         ), List.of("handle", "read_only", "idle_expiry_ms"));
         return new ToolSpec("open_session",
                 "Open a stateful SQL session and return a handle. Pass that handle to run_sql to keep "
@@ -134,13 +115,12 @@ final class McpToolkit {
 
     private ToolSpec runSqlSpec() {
         JSONObject input = schema(Map.of(
-                "sql", prop("string", "A single read-only SQL statement, or several separated by ';'."),
+                "sql", prop("string", "A single SQL statement, or several separated by ';'. "
+                        + "Read and write statements are both allowed."),
                 "handle", prop("string", "Optional session handle from open_session. "
                         + "Without it the statement runs on a short-lived pooled connection."),
-                "max_rows", prop("integer", "Maximum rows to return. Default " + config.defaultMaxRows()
-                        + ", hard ceiling " + config.maxRowsCeiling() + "."),
-                "timeout_ms", prop("integer", "Statement timeout in milliseconds. Default "
-                        + config.statementTimeoutMillis() + ", hard ceiling " + config.maxStatementTimeoutMillis() + ".")
+                "max_rows", prop("integer", "Maximum rows to return. Default -1 = unlimited; "
+                        + "0 or any negative value also means unlimited.")
         ), List.of("sql"));
         // 声明的字段必须与 execute() 实际返回的完全一致：客户端会在 tools/list 之后
         // 用 outputSchema 校验 structuredContent，多一个未声明字段就会被判为
@@ -150,16 +130,16 @@ final class McpToolkit {
                 "rows", Map.of("type", "array", "description", "Result rows, each an array of column values."),
                 "row_count", prop("integer", "Rows returned."),
                 "truncated", prop("boolean", "True if more rows existed than max_rows allowed."),
-                "read_only", prop("boolean", "Whether the enforcement mode was read-only."),
+                "read_only", prop("boolean", "Always false; MCP does not enforce read-only."),
                 "statement_type", enumProp(List.of("query", "update"),
                         "'query' for a statement that produced a result set, 'update' otherwise."),
                 "elapsed_ms", prop("integer", "Server-side execution time in milliseconds.")
         ), List.of("columns", "rows", "row_count", "truncated", "read_only", "statement_type", "elapsed_ms"));
         return new ToolSpec("run_sql",
-                "Run read-only SQL against this DuckDB instance and return at most max_rows rows. "
-                        + "This server enforces read-only by parsing the statement, so write statements are "
-                        + "rejected rather than silently committed. Prefer the registered data services "
-                        + "(see the slackerdb://services resource) over ad-hoc SQL when one matches.",
+                "Run SQL against this DuckDB instance and return the result. By default all rows are "
+                        + "returned; pass max_rows to cap the result. Read and write statements are both "
+                        + "allowed. Prefer the registered data services (see the slackerdb://services "
+                        + "resource) over ad-hoc SQL when one matches.",
                 input, output);
     }
 
@@ -263,20 +243,13 @@ final class McpToolkit {
     }
 
     private JSONObject openSession(JSONObject args) throws SQLException {
-        Boolean requested = args.getBoolean("read_only");
-        boolean readOnly = requested == null ? config.readOnlyDefault() : requested;
-        // 服务端整体只读时不可通过工具面 opt-out——否则 MCP 会成为绕过 access_mode 的旁路
-        if (config.serverReadOnly()) {
-            readOnly = true;
-        }
-        McpSessionStore.Session session = sessions.create(readOnly);
+        // read_only 是历史参数，保留以兼容旧客户端，但不再生效：MCP 是内部工具，
+        // 权限完全由服务器本身（access_mode）决定。
+        McpSessionStore.Session session = sessions.create();
         JSONObject result = new JSONObject();
         result.put("handle", session.handle);
-        result.put("read_only", session.readOnly);
+        result.put("read_only", false);
         result.put("idle_expiry_ms", sessions.idleTimeoutMillis());
-        if (config.serverReadOnly()) {
-            result.put("note", "This server runs with access_mode=READ_ONLY, so every session is read-only.");
-        }
         return result;
     }
 
@@ -289,106 +262,80 @@ final class McpToolkit {
 
     private JSONObject runSql(JSONObject args) throws Exception {
         String sql = McpProtocol.requireString(args, "sql");
-        int maxRows = McpProtocol.optionalInt(args, "max_rows", config.defaultMaxRows(), 1, config.maxRowsCeiling());
-        int timeout = McpProtocol.optionalInt(args, "timeout_ms", config.statementTimeoutMillis(),
-                1000, config.maxStatementTimeoutMillis());
+        // max_rows <= 0 表示不限制；默认 -1 即返回全部行。
+        int maxRows = McpProtocol.optionalInt(args, "max_rows", -1,
+                Integer.MIN_VALUE, Integer.MAX_VALUE);
         String handle = McpProtocol.optionalString(args, "handle");
 
         // 有 handle 就一次取出会话（require 会刷新空闲计时），避免重复查表
         McpSessionStore.Session session = handle == null ? null : sessions.require(handle);
-        boolean readOnly = session != null ? session.readOnly : config.readOnlyDefault();
-        if (readOnly) {
-            SqlStatementGuard.Verdict verdict = SqlStatementGuard.classify(sql);
-            if (!verdict.readOnly()) {
-                throw new McpProtocol.McpParamException(verdict.reason());
-            }
-        }
+        boolean readOnly = false; // MCP 不再做只读判定，写语句按服务器权限执行
 
         if (session != null) {
-            return execute(session.connection, sql, maxRows, timeout, readOnly, session);
+            return execute(session.connection, sql, maxRows, readOnly, session);
         }
         try (Connection connection = sessions.borrow()) {
-            return execute(connection, sql, maxRows, timeout, readOnly, null);
+            return execute(connection, sql, maxRows, readOnly, null);
         }
     }
 
     /**
      * 执行并物化结果。
      *
-     * <p>超时用看门狗线程调用 {@link Statement#cancel()} 实现：DuckDB 没有 per-query 超时，
-     * 官方的建议就是"在应用层做"，这一层正好是应用层。</p>
+     * <p>MCP 是内部工具，不施加语句超时；由服务器自身的 DuckDB 执行。</p>
      */
     private JSONObject execute(Connection connection,
                                String sql,
                                int maxRows,
-                               int timeoutMillis,
                                boolean readOnly,
                                McpSessionStore.Session session) throws Exception {
         long started = System.currentTimeMillis();
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            McpSessionStore.applyQueryTimeout(statement, timeoutMillis);
-            ScheduledFuture<?> killer = null;
-            if (timeoutMillis > 0) {
-                killer = watchdog.schedule(() -> {
-                    try {
-                        statement.cancel();
-                        logger.warn("[SERVER][MCP] statement cancelled after {} ms", timeoutMillis);
-                    } catch (SQLException ignored) {
-                        // 已经结束
-                    }
-                }, timeoutMillis, TimeUnit.MILLISECONDS);
+            boolean hasResultSet = statement.execute();
+            JSONObject result = new JSONObject();
+            result.put("read_only", readOnly);
+            if (!hasResultSet) {
+                int affected = statement.getUpdateCount();
+                result.put("columns", new JSONArray());
+                result.put("rows", new JSONArray());
+                result.put("row_count", affected < 0 ? 0 : affected);
+                result.put("truncated", false);
+                result.put("statement_type", "update");
+                result.put("elapsed_ms", System.currentTimeMillis() - started);
+                return result;
             }
-            try {
-                boolean hasResultSet = statement.execute();
-                JSONObject result = new JSONObject();
-                result.put("read_only", readOnly);
-                if (!hasResultSet) {
-                    int affected = statement.getUpdateCount();
-                    result.put("columns", new JSONArray());
-                    result.put("rows", new JSONArray());
-                    result.put("row_count", affected < 0 ? 0 : affected);
-                    result.put("truncated", false);
-                    result.put("statement_type", "update");
-                    result.put("elapsed_ms", System.currentTimeMillis() - started);
-                    return result;
+            try (ResultSet rs = statement.getResultSet()) {
+                ResultSetMetaData meta = rs.getMetaData();
+                int columnCount = meta.getColumnCount();
+                List<String> columns = new ArrayList<>();
+                for (int i = 1; i <= columnCount; i++) {
+                    columns.add(meta.getColumnName(i));
                 }
-                try (ResultSet rs = statement.getResultSet()) {
-                    ResultSetMetaData meta = rs.getMetaData();
-                    int columnCount = meta.getColumnCount();
-                    List<String> columns = new ArrayList<>();
+                JSONArray rows = new JSONArray();
+                boolean truncated = false;
+                int count = 0;
+                while (rs.next()) {
+                    if (maxRows > 0 && count >= maxRows) {
+                        truncated = true;
+                        break;
+                    }
+                    JSONArray row = new JSONArray();
                     for (int i = 1; i <= columnCount; i++) {
-                        columns.add(meta.getColumnName(i));
+                        row.add(normalize(rs.getObject(i)));
                     }
-                    JSONArray rows = new JSONArray();
-                    boolean truncated = false;
-                    int count = 0;
-                    while (rs.next()) {
-                        if (count >= maxRows) {
-                            truncated = true;
-                            break;
-                        }
-                        JSONArray row = new JSONArray();
-                        for (int i = 1; i <= columnCount; i++) {
-                            row.add(normalize(rs.getObject(i)));
-                        }
-                        rows.add(row);
-                        count++;
-                    }
-                    result.put("columns", columns);
-                    result.put("rows", rows);
-                    result.put("row_count", count);
-                    result.put("truncated", truncated);
-                    result.put("statement_type", "query");
-                    result.put("elapsed_ms", System.currentTimeMillis() - started);
-                    if (session != null) {
-                        session.statements.incrementAndGet();
-                    }
-                    return result;
+                    rows.add(row);
+                    count++;
                 }
-            } finally {
-                if (killer != null) {
-                    killer.cancel(false);
+                result.put("columns", columns);
+                result.put("rows", rows);
+                result.put("row_count", count);
+                result.put("truncated", truncated);
+                result.put("statement_type", "query");
+                result.put("elapsed_ms", System.currentTimeMillis() - started);
+                if (session != null) {
+                    session.statements.incrementAndGet();
                 }
+                return result;
             }
         }
     }
@@ -405,7 +352,7 @@ final class McpToolkit {
         sql.append("order by table_schema, table_name");
         JSONObject executed;
         try (Connection connection = sessions.borrow()) {
-            // 用一次性只读会话执行，确保与其它工具同一条执行路径
+            // 从连接池借一条连接执行，确保与其它工具同一条执行路径
             executed = (JSONObject) runWithParams(connection, sql.toString(),
                     schemaFilter == null ? List.of() : List.of(schemaFilter), maxRows);
         }
@@ -469,7 +416,7 @@ final class McpToolkit {
         }
     }
 
-    /** 带绑定参数执行并物化（不施加写保护：调用方只传本类内部构造的只读语句）。 */
+    /** 带绑定参数执行并物化（供内省工具使用；调用方只传本类内部构造的查询）。 */
     private Object runWithParams(Connection connection, String sql, List<Object> params, int maxRows) throws Exception {
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             for (int i = 0; i < params.size(); i++) {

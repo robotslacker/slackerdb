@@ -171,6 +171,11 @@ public class PostgresSQLUtil {
             0, 0, 0, 0  // Header extension area
     };
 
+    /** {@link #COPY_BINARY_HEADER} 的副本（COPY OUT 使用；避免调用方改到内部常量）。 */
+    public static byte[] copyBinaryHeader() {
+        return COPY_BINARY_HEADER.clone();
+    }
+
     /** 单行 BINARY COPY 的固定开销估算值：列数(2B) + 每列长度(4B) 按 4 字节计。 */
     private static final int COPY_ROW_FIXED_BYTES = 4;
 

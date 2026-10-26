@@ -165,6 +165,33 @@ class CompareReporterTest {
     }
 
     @Test
+    @DisplayName(".html：正文里的反斜杠被转义成 &#92;，生成的 JS 字符串不会被路径吃掉")
+    void htmlEscapesBackslashes() throws IOException {
+        // 行尾是反斜杠（Windows 路径、正则）：不转义时 `\"` 会吞掉 JS 字符串的收尾引号，
+        // 整段 <script> 语法错误、页面空白——这是真实踩过的形态。
+        java.nio.file.Path dir = Files.createTempDirectory("dbcli-html-backslash");
+        try {
+            CompareReporter reporter = reporter(dir, List.of("C:\\temp\\", "two"), List.of("one", "two"), null);
+            String document = Files.readString(reporter.writeHtmlFile(FIXED_TIME), StandardCharsets.UTF_8);
+
+            assertTrue(document.contains("source:\"C:&#92;temp&#92;\""),
+                    "反斜杠必须转成数字实体: " + document);
+            assertFalse(document.contains("C:\\temp\\\""),
+                    "生成的文件里不得留下会吃掉引号的裸反斜杠");
+        } finally {
+            try (var files = Files.walk(dir)) {
+                files.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                    try {
+                        Files.deleteIfExists(path);
+                    } catch (IOException ignored) {
+                        // 临时目录清理失败不影响断言
+                    }
+                });
+            }
+        }
+    }
+
+    @Test
     @DisplayName("输出文件名 = targetFile 去扩展名 + .dif/.html（multi.dot.name.txt → multi.dot.name.dif）")
     void reportPaths(@TempDir Path dir) throws IOException {
         Path reference = write(dir, "reference.txt", REF);
@@ -189,8 +216,12 @@ class CompareReporterTest {
 
         String document = Files.readString(html, StandardCharsets.UTF_8);
         assertTrue(document.startsWith("<!DOCTYPE html>\r\n"), "header.html 必须最先出现");
-        assertTrue(document.contains("Main content area:  " + reporter.result().targetPath() + " vs "
-                + reporter.result().referencePath() + " </h4>"), "body.content.html 的标题行（area: 后两个空格）");
+        // 反斜杠在 HTML 里写成 &#92;（模板会把正文里的反斜杠转义，避免 JS 字符串被路径吃掉），
+        // 浏览器/ innerHTML 都会把它解码回反斜杠，因此显示不变。
+        String expectedTarget = reporter.result().targetPath().replace("\\", "&#92;");
+        String expectedReference = reporter.result().referencePath().replace("\\", "&#92;");
+        assertTrue(document.contains("Main content area:  " + expectedTarget + " vs "
+                + expectedReference + " </h4>"), "body.content.html 的标题行（area: 后两个空格）");
         assertTrue(document.contains("<h4>Comment area</h4>"), "body.header.html 的注释区");
         // parseBodyLine: flag=line[0]、number=第二个字段、source=其余（strip）
         assertTrue(document.contains("        {flag: ' ', number:\"1\", source:\"Hello\"},\r\n"));

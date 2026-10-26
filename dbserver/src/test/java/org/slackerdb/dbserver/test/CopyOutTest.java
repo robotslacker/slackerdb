@@ -7,6 +7,7 @@ import org.slackerdb.dbserver.configuration.ServerConfiguration;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.dbserver.test.support.PgWireClient;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -213,6 +214,96 @@ public class CopyOutTest {
     }
 
     // ================================================================
+    // chunk 路径：支持的类型逐值比对；不支持的字段整条回退
+    // ================================================================
+
+    /**
+     * 全部列都在 chunk 读取器白名单内时，导出结果必须与 ResultSet 路径逐字节一致。
+     *
+     * <p>覆盖各种"文本形态容易被写错"的类型：无符号整数、HUGEINT、DECIMAL、
+     * TIMESTAMP 的秒/毫秒/纳秒精度、JSON。只要这里有一处格式漂移，往返就会被破坏。</p>
+     */
+    @Test
+    void chunkedPathExportsSupportedScalarTypes() throws Exception {
+        try (PgWireClient client = connect()) {
+            query(client, "drop table if exists co_chunk;");
+            query(client, "create table co_chunk("
+                    + "i integer, v varchar, d double, dec decimal(18,3), "
+                    + "ts timestamp, tss timestamp_s, tsm timestamp_ms, tsn timestamp_ns, "
+                    + "hi hugeint, ub ubigint, j json);");
+            query(client, "insert into co_chunk values ("
+                    + "1,'x',1.5,123.450,"
+                    + "TIMESTAMP '2020-01-02 03:04:05.123456',"
+                    + "TIMESTAMP_S '2020-01-02 03:04:05',"
+                    + "TIMESTAMP_MS '2020-01-02 03:04:05.123',"
+                    + "TIMESTAMP_NS '2020-01-02 03:04:05.123456789',"
+                    + "170141183460469231731687303715884105727,"
+                    + "18446744073709551615,"
+                    + "'{\"a\": 1}');");
+
+            List<String> lines = copyLines(query(client, "copy co_chunk to stdout;"));
+            assertEquals(1, lines.size());
+            assertEquals("1\tx\t1.5\t123.450\t"
+                            + "2020-01-02 03:04:05.123456\t"
+                            + "2020-01-02 03:04:05.0\t"
+                            + "2020-01-02 03:04:05.123\t"
+                            + "2020-01-02 03:04:05.123456789\t"
+                            + "170141183460469231731687303715884105727\t"
+                            + "18446744073709551615\t"
+                            + "{\"a\": 1}",
+                    lines.get(0));
+        }
+    }
+
+    /** TIME 不在 chunk 读取器支持范围内：整条 COPY 必须回退到原 ResultSet 路径，输出不变。 */
+    @Test
+    void timeColumnFallsBackToResultSetPath() throws Exception {
+        try (PgWireClient client = connect()) {
+            query(client, "drop table if exists co_time;");
+            query(client, "create table co_time(i integer, t time);");
+            query(client, "insert into co_time values (7, TIME '12:34:56'), (8, NULL);");
+
+            List<String> lines = copyLines(query(client, "copy co_time to stdout with (format csv);"));
+            assertEquals(List.of("7,12:34:56", "8,"), lines);
+        }
+    }
+
+    /** 空结果也必须走完整的 COPY 协议：CopyOutResponse → CopyDone → COPY 0 → ReadyForQuery。 */
+    @Test
+    void emptyResultStillCompletesCopyProtocol() throws Exception {
+        try (PgWireClient client = connect()) {
+            List<PgWireClient.Frame> frames =
+                    query(client, "copy (select 1 as x where false) to stdout;");
+            assertTrue(PgWireClient.types(frames).startsWith("H"),
+                    "应以 CopyOutResponse('H') 开头，实际=" + PgWireClient.types(frames));
+            assertTrue(PgWireClient.ofType(frames, 'd').isEmpty(), "空结果不应有 CopyData");
+            assertEquals("COPY 0", commandTag(frames));
+            assertEquals('I', PgWireClient.readyStatus(frames));
+        }
+    }
+
+    /**
+     * chunk 路径必须把多行合并进少量 CopyData 帧。
+     *
+     * <p>这是导出吞吐的关键：一行一帧时 100 万行就是 100 万次报文/系统调用，
+     * chunk 读取再快也会被帧开销吃掉。这里用 500 行（远小于 64KB）钉住"合帧"行为。</p>
+     */
+    @Test
+    void chunkedPathBatchesRowsIntoFewCopyDataFrames() throws Exception {
+        try (PgWireClient client = connect()) {
+            query(client, "drop table if exists co_batch;");
+            query(client, "create table co_batch as "
+                    + "select range as i, 'v' || range as s from range(500) t(range);");
+
+            List<PgWireClient.Frame> frames = query(client, "copy co_batch to stdout with (format csv);");
+            List<PgWireClient.Frame> dataFrames = PgWireClient.ofType(frames, 'd');
+            assertTrue(dataFrames.size() < 100,
+                    "500 行应合并成少量 CopyData 帧，实际帧数=" + dataFrames.size());
+            assertEquals(500, copyLines(frames).size());
+        }
+    }
+
+    // ================================================================
     // 往返：导出 → 灌回 → 逐值相等（编码与解码必须互为逆运算）
     // ================================================================
 
@@ -344,14 +435,26 @@ public class CopyOutTest {
         }
     }
 
-    /** FORMAT binary 暂不支持：必须明确报 0A000，而不是发客户端解不开的字节。 */
+    /** FORMAT binary：CopyOutResponse 必须声明二进制，且数据以 PGCOPY 头开始。 */
     @Test
-    void binaryFormatIsExplicitlyRejected() throws Exception {
+    void binaryFormatIsSupported() throws Exception {
         try (PgWireClient client = connect()) {
             seed(client);
             List<PgWireClient.Frame> frames = query(client, "copy co to stdout with (format binary);");
-            assertEquals("0A000", PgWireClient.errorField(frames, 'C'));
-            assertTrue(PgWireClient.types(frames).indexOf('d') < 0, "拒绝时不应发任何 CopyData");
+            assertEquals("COPY 5", commandTag(frames));
+
+            PgWireClient.Frame response = PgWireClient.ofType(frames, 'H').get(0);
+            assertEquals(1, response.body[0], "整体格式应为二进制(1)");
+            assertEquals(4, response.int16(1), "co 表有 4 列");
+
+            ByteArrayOutputStream joined = new ByteArrayOutputStream();
+            for (PgWireClient.Frame frame : PgWireClient.ofType(frames, 'd')) {
+                joined.writeBytes(frame.body);
+            }
+            byte[] payload = joined.toByteArray();
+            assertTrue(payload.length >= 21, "二进制流至少应有 19 字节头 + 2 字节结束标志");
+            assertEquals('P', (char) payload[0], "应以 PGCOPY 签名开头");
+            assertEquals('G', (char) payload[1]);
         }
     }
 

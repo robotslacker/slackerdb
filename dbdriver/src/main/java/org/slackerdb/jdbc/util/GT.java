@@ -32,7 +32,10 @@ public class GT {
 
   private GT() {
     try {
-      bundle = ResourceBundle.getBundle("org.postgresql.translation.messages", Locale.getDefault(Locale.Category.DISPLAY));
+      // 包名已整体改成 org.slackerdb.jdbc，资源包基名必须跟着改；
+      // 曾经漏改成 "org.postgresql.translation.messages"，导致 getBundle 必然抛
+      // MissingResourceException 被下面的 catch 吞掉 —— 17 个翻译类全部失效，永远英文。
+      bundle = ResourceBundle.getBundle("org.slackerdb.jdbc.translation.messages", Locale.getDefault(Locale.Category.DISPLAY));
     } catch (MissingResourceException mre) {
       // translation files have not been installed
       bundle = null;

@@ -7,7 +7,8 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 
 /**
- * {@code COPY ... TO STDOUT} 的行编码器：把 {@link ResultSet} 的一行编码成 COPY 文本行。
+ * {@code COPY ... TO STDOUT} 的行编码器：把 {@link ResultSet}（或 {@link CopyOutChunkReader}）
+ * 的一行编码成 COPY 文本行。
  *
  * <p>本类是 {@link CopyCsvReader} 的<b>逆运算</b>：凡是这里写出去的字节，都要能被
  * {@code COPY ... FROM STDIN} 原样读回来（测试里用真实往返钉死这一点）。因此转义规则
@@ -26,14 +27,16 @@ import java.sql.SQLException;
  *       空串与 NULL 就区分不开了。</li>
  * </ul>
  *
- * <p>列值的文本形态用 {@link ResultSet#getString(int)}，唯一例外是二进制列
+ * <p>列值的文本形态用 {@link ResultSet#getString(int)}；chunk 路径由
+ * {@link CopyOutChunkReader#getString(int, long)} 返回逐字符一致的字符串，
+ * 两条路径只在"怎么取值"上不同。唯一例外是二进制列
  * （BLOB/BYTEA）：PG 的 bytea 文本表示是 {@code \x} + 十六进制，而 {@code getString()}
  * 对 BLOB 会走驱动自己的编码，因此这里按字节手工生成 —— 与
  * {@code RowEncoder} 输出 bytea 的方式保持一致。</p>
  *
- * <p><b>暂不支持 BINARY 格式</b>：{@link CopyDialect} 能解析出 {@code FORMAT binary}，
- * 但二进制 COPY OUT 需要按 DuckDB 实际类型逐列编码（尤其 LIST/MAP/STRUCT 没有 PG 表示），
- * 属于独立一批工作。这里显式报错而不是发一段客户端解不开的字节。</p>
+ * <p><b>BINARY 格式不在本类</b>：{@link CopyDialect} 能解析出 {@code FORMAT binary}，
+ * 但二进制 COPY OUT 没有分隔符/转义，每个值要按 PostgreSQL 各类型的 {@code *send}
+ * 函数编码 —— 见 {@link CopyOutBinaryEncoder}。本类只负责 TEXT / CSV。</p>
  */
 public final class CopyOutEncoder {
 
@@ -101,16 +104,36 @@ public final class CopyOutEncoder {
                 }
                 continue;
             }
-            String value = rs.getString(i);
-            if (value == null) {
-                writeNull(out);
-            } else if (dialect.csv) {
-                writeCsvField(out, value);
-            } else {
-                writeTextField(out, value);
-            }
+            writeValue(rs.getString(i), out);
         }
         out.write('\n');
+    }
+
+    /**
+     * 把 chunk 读取器当前块的第 {@code row} 行编码进 {@code out}（含行尾换行）。
+     *
+     * <p>与 {@link #encodeRow} 共用同一套 NULL/CSV/text 转义，保证两条路径的字节形态
+     * 完全一致（chunk 路径只改变"怎么取值"，不改变"怎么写值"）。</p>
+     */
+    public void encodeChunkRow(CopyOutChunkReader reader, long row, ByteArrayOutputStream out) {
+        for (int i = 1; i <= columnCount; i++) {
+            if (i > 1) {
+                out.write(dialect.delimiter);
+            }
+            // chunk API 的列下标是 0 基，这里的列号是 1 基
+            writeValue(reader.getString(i - 1, row), out);
+        }
+        out.write('\n');
+    }
+
+    private void writeValue(String value, ByteArrayOutputStream out) {
+        if (value == null) {
+            writeNull(out);
+        } else if (dialect.csv) {
+            writeCsvField(out, value);
+        } else {
+            writeTextField(out, value);
+        }
     }
 
     private void writeNull(ByteArrayOutputStream out) {

@@ -209,10 +209,20 @@ final class HtmlTemplateRenderer {
         return "";
     }
 
-    /** HTML 转义：{@code &} 必须先转。 */
+    /**
+     * HTML 转义：{@code &} 必须先转。
+     *
+     * <p><b>反斜杠也要转</b>（{@code \} → {@code &#92;}）：模板里有一部分变量落在
+     * {@code <script>} 的 JS 字符串字面量里（差异数据 {@code source:"{{source}}"}）。
+     * HTML 实体在 {@code <script>} 内不会被解码，所以 {@code &quot;} 恰好能保护引号；
+     * 但反斜杠没有任何转义，正文末尾一个 {@code \}（Windows 路径、正则）会把字符串的收尾引号吃掉，
+     * 整段脚本语法错误、页面空白。数字实体在 HTML 文本与 {@code innerHTML} 里都会解码回反斜杠，
+     * 因此用它既安全又不改变显示。</p>
+     */
     private static String escape(Object value) {
         String text = value == null ? "" : String.valueOf(value);
         return text.replace("&", "&amp;")
+                .replace("\\", "&#92;")
                 .replace("\"", "&quot;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;")

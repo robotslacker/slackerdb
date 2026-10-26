@@ -47,6 +47,14 @@ public final class SqlStateMapper {
             return INTERNAL_ERROR;
         }
         String state = exception.getSQLState();
+        // duckdb_jdbc 2.0 starts filling getSQLState() for JDBC-layer errors. 07009
+        // ("invalid descriptor index") is what it uses for an out-of-range parameter
+        // index; on the wire this is the client sending more Bind values than the
+        // statement declares, i.e. a protocol violation. Keep the server's PG contract
+        // (08P01) instead of leaking the JDBC/XA code to clients.
+        if ("07009".equals(state)) {
+            return "08P01";
+        }
         if (isStandard(state)) {
             return state;
         }

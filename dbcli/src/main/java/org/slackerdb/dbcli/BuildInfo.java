@@ -10,7 +10,7 @@ package org.slackerdb.dbcli;
  * 源码树里<b>没有</b>可手工编辑的版本文件，因此“jar 里的版本”与 POM 不可能不一致；
  * 构建时刻由构建器写入（{@code build.time}，UTC 瞬时），运行期再转成本地时间展示。</p>
  *
- * <p><b>两个事实分开放</b>：{@link #version()} 只是项目版本号（例如 {@code 0.2.1}），
+ * <p><b>两个事实分开放</b>：{@link #version()} 只是项目版本号（例如 {@code 0.2.2}），
  * {@link #buildTime()} 才是“哪一次构建”。版本号里不掺构建时刻、也不掺 git 信息，
  * 这样 {@code --version} 的第一行在任何一次构建里都是同一个字符串。</p>
  *
@@ -38,7 +38,7 @@ public final class BuildInfo {
         return INFO.name();
     }
 
-    /** 项目版本号，例如 {@code 0.2.1}（不含构建时刻、不含 git 信息）；读不到时是 {@code unknown}。 */
+    /** 项目版本号，例如 {@code 0.2.2}（不含构建时刻、不含 git 信息）；读不到时是 {@code unknown}。 */
     public static String version() {
         return INFO.version();
     }
