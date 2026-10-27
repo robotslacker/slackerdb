@@ -2,6 +2,7 @@ package org.slackerdb.dbdesk.ui;
 
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
+import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.confirmdialog.ConfirmDialog;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.H2;
@@ -9,12 +10,14 @@ import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouteAlias;
 import org.slackerdb.dbdesk.access.http.Capabilities;
 import org.slackerdb.dbdesk.access.http.Health;
 import org.slackerdb.dbdesk.access.http.ManagementClient;
 import org.slackerdb.dbdesk.access.http.ManagementException;
+import org.slackerdb.dbdesk.access.http.PluginActionResult;
 import org.slackerdb.dbdesk.access.http.ServerStatus;
 import org.slackerdb.dbdesk.access.http.SessionInfo;
 
@@ -42,6 +45,10 @@ public class InstancesView extends VerticalLayout {
     private final Span serverSummary = new Span("—");
     private final Span databaseSummary = new Span("—");
     private final Span errorText = new Span();
+    private final TextField pluginFile = new TextField();
+    private final Button pluginLoad = new Button("加载");
+    private final Checkbox pluginStartAfterLoad = new Checkbox("加载后启动", true);
+    private final Span pluginStatus = new Span();
     private final Grid<SessionInfo> sessionGrid = new Grid<>(SessionInfo.class, false);
     private final Grid<MapRow> parametersGrid = new Grid<>(MapRow.class, false);
     private final Grid<MapRow> usageGrid = new Grid<>(MapRow.class, false);
@@ -50,9 +57,16 @@ public class InstancesView extends VerticalLayout {
 
     private transient ManagementClient client;
     private List<SessionInfo> sessions = List.of();
+    private boolean pluginBusy;
 
     /** 一行键值。 */
     public record MapRow(String key, String value) {
+    }
+
+    /** 插件操作可能抛受检异常，Supplier 不够用。 */
+    @FunctionalInterface
+    private interface PluginCall {
+        PluginActionResult run() throws ManagementException;
     }
 
     public InstancesView() {
@@ -60,8 +74,8 @@ public class InstancesView extends VerticalLayout {
         setSpacing(true);
 
         H2 title = new H2("实例与状态");
-        if (!ConnectionManager.current().hasManagement()) {
-            Span guard = new Span("当前连接没有管理口，实例状态不可用。");
+        if (!ConnectionManager.current().hasInstanceManagement()) {
+            Span guard = new Span("当前连接没有实例级管理口，实例状态不可用。");
             guard.setId("instances-guard");
             add(title, guard);
             return;
@@ -82,6 +96,17 @@ public class InstancesView extends VerticalLayout {
         errorText.setId("error-text");
         errorText.getStyle().set("color", "var(--lumo-error-text-color)");
 
+        pluginFile.setId("plugin-file");
+        pluginFile.setWidth("420px");
+        pluginFile.setPlaceholder("myplugin.jar 或服务器上的完整路径");
+        pluginFile.setHelperText("简单文件名从 plugins_dir 解析；完整路径可直接加载");
+        pluginLoad.setId("plugin-load");
+        pluginLoad.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+        pluginLoad.addClickListener(event -> loadPlugin());
+        pluginStartAfterLoad.setId("plugin-start-after-load");
+        pluginStatus.setId("plugin-status");
+        pluginStatus.getStyle().set("color", "var(--lumo-secondary-text-color)");
+
         configureGrids();
 
         add(title,
@@ -96,7 +121,10 @@ public class InstancesView extends VerticalLayout {
                 new H3("参数"), parametersGrid,
                 new H3("Usage"), usageGrid,
                 new H3("扩展"), extensionsGrid,
-                new H3("插件"), pluginGrid);
+                new H3("插件"),
+                new HorizontalLayout(pluginFile, pluginLoad, pluginStartAfterLoad),
+                pluginStatus,
+                pluginGrid);
         setFlexGrow(1, sessionGrid);
         refresh();
     }
@@ -135,11 +163,12 @@ public class InstancesView extends VerticalLayout {
 
         pluginGrid.setId("plugins-grid");
         pluginGrid.setWidthFull();
-        pluginGrid.setHeight("160px");
+        pluginGrid.setHeight("220px");
         pluginGrid.addColumn(ServerStatus.PluginInfo::id).setHeader("id").setAutoWidth(true);
         pluginGrid.addColumn(ServerStatus.PluginInfo::version).setHeader("版本").setAutoWidth(true);
         pluginGrid.addColumn(ServerStatus.PluginInfo::state).setHeader("状态").setAutoWidth(true);
         pluginGrid.addColumn(ServerStatus.PluginInfo::mountTime).setHeader("挂载").setAutoWidth(true);
+        pluginGrid.addComponentColumn(this::pluginActions).setHeader("操作").setAutoWidth(true);
     }
 
     private Button killButton(SessionInfo session) {
@@ -147,6 +176,129 @@ public class InstancesView extends VerticalLayout {
         kill.addThemeVariants(ButtonVariant.LUMO_ERROR, ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
         kill.addClickListener(event -> confirmKill(session));
         return kill;
+    }
+
+    // ------------------------------------------------------------- 插件管理
+
+    private void loadPlugin() {
+        String filename = pluginFile.getValue() == null ? "" : pluginFile.getValue().strip();
+        if (filename.isEmpty()) {
+            setPluginStatus("请填写插件 JAR 文件名或完整路径", true);
+            return;
+        }
+        if (pluginBusy) {
+            return;
+        }
+
+        pluginBusy = true;
+        updatePluginControls();
+        try {
+            PluginActionResult loaded = client().loadPlugin(filename);
+            if (!loaded.success()) {
+                setPluginStatus("加载失败：" + loaded.message(), true);
+                return;
+            }
+
+            String pluginId = loaded.pluginId();
+            String message = pluginId == null ? "插件已加载" : "已加载 " + pluginId;
+            if (pluginStartAfterLoad.getValue() && pluginId != null) {
+                PluginActionResult started = client().startPlugin(pluginId);
+                message = started.success()
+                        ? message + "，已启动"
+                        : message + "，但启动失败：" + started.message();
+            }
+            refresh();
+            setPluginStatus(message, false);
+        } catch (ManagementException e) {
+            setPluginStatus("加载失败：" + e.getMessage(), true);
+        } finally {
+            pluginBusy = false;
+            updatePluginControls();
+        }
+    }
+
+    private HorizontalLayout pluginActions(ServerStatus.PluginInfo plugin) {
+        HorizontalLayout actions = new HorizontalLayout();
+        actions.setSpacing(false);
+
+        boolean started = "STARTED".equalsIgnoreCase(plugin.state());
+        if (!started) {
+            Button start = new Button("启动");
+            start.setId("plugin-start-" + plugin.id());
+            start.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
+            start.addClickListener(event -> runPluginAction("启动",
+                    () -> client().startPlugin(plugin.id()), "已启动 " + plugin.id()));
+            actions.add(start);
+        } else {
+            Button stop = new Button("停止");
+            stop.setId("plugin-stop-" + plugin.id());
+            stop.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
+            stop.addClickListener(event -> runPluginAction("停止",
+                    () -> client().stopPlugin(plugin.id()), "已停止 " + plugin.id()));
+            actions.add(stop);
+        }
+
+        Button unload = new Button("卸载");
+        unload.setId("plugin-unload-" + plugin.id());
+        unload.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL,
+                ButtonVariant.LUMO_ERROR);
+        unload.addClickListener(event -> confirmUnload(plugin));
+        actions.add(unload);
+        return actions;
+    }
+
+    private void confirmUnload(ServerStatus.PluginInfo plugin) {
+        ConfirmDialog dialog = new ConfirmDialog();
+        dialog.setId("plugin-unload-dialog");
+        dialog.setHeader("卸载插件 " + plugin.id() + "？");
+        dialog.setText("卸载会停止插件并释放类加载器，但不会删除 JAR，也不会撤销插件已经注册的 HTTP 路由。"
+                + "\n卸载后访问旧路径可能返回 500 Internal Server Error，或继续返回旧插件结果。"
+                + "\n需要彻底清理时请重启 dbserver。");
+        dialog.setCancelable(true);
+        dialog.setConfirmText("卸载");
+        dialog.setConfirmButtonTheme("error primary");
+        dialog.addConfirmListener(event -> {
+            dialog.close();
+            runPluginAction("卸载", () -> client().unloadPlugin(plugin.id()),
+                    "已卸载 " + plugin.id());
+        });
+        dialog.open();
+    }
+
+    private void runPluginAction(String action, PluginCall call, String success) {
+        if (pluginBusy) {
+            return;
+        }
+        pluginBusy = true;
+        updatePluginControls();
+        try {
+            PluginActionResult result = call.run();
+            if (!result.success()) {
+                setPluginStatus(action + "失败：" + result.message(), true);
+                return;
+            }
+            refresh();
+            setPluginStatus(success, false);
+        } catch (ManagementException e) {
+            setPluginStatus(action + "失败：" + e.getMessage(), true);
+        } finally {
+            pluginBusy = false;
+            updatePluginControls();
+        }
+    }
+
+    private void updatePluginControls() {
+        pluginFile.setEnabled(!pluginBusy);
+        pluginLoad.setEnabled(!pluginBusy);
+        pluginStartAfterLoad.setEnabled(!pluginBusy);
+        pluginGrid.setEnabled(!pluginBusy);
+    }
+
+    private void setPluginStatus(String text, boolean error) {
+        pluginStatus.setText(text);
+        pluginStatus.getStyle().set("color", error
+                ? "var(--lumo-error-text-color)"
+                : "var(--lumo-success-text-color)");
     }
 
     private void confirmKill(SessionInfo session) {

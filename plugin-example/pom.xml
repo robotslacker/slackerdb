@@ -76,6 +76,20 @@
             <version>0.2.2</version>
             <scope>provided</scope>
         </dependency>
+
+        <!-- 集成测试：启动真实 dbserver，验证 plugin-example 构建出的 JAR 的加载/卸载 -->
+        <dependency>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-dbserver</artifactId>
+            <version>0.2.2</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>6.0.3</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -113,6 +127,11 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.5.5</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-failsafe-plugin</artifactId>
                     <version>3.5.5</version>
                 </plugin>
                 <plugin>
@@ -160,6 +179,29 @@
                 <configuration>
                     <encoding>UTF-8</encoding>
                 </configuration>
+            </plugin>
+
+            <!--
+              集成测试要验证“真正发布出去的插件 JAR”，因此放在 verify 阶段：
+              package 先产出 target/slackerdb-plugin-example-0.2.2.jar，
+              failsafe 再把这个路径通过 plugin.jar 传给 PluginManagerIT。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <plugin.jar>${project.build.directory}/${project.build.finalName}.jar</plugin.jar>
+                    </systemPropertyVariables>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
 
             <!-- PF4J official recommended approach: jar + MANIFEST.MF -->

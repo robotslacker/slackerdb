@@ -47,6 +47,14 @@ public class SqlWorkbenchView extends VerticalLayout {
             add(title, guard);
             return;
         }
+        if (!connection.hasDatabase()) {
+            jdbcUrl = null;
+            metadata = null;
+            Span guard = new Span("当前连接只有 dbproxy 管理端口，没有数据库端口，SQL 控制台不可用。");
+            guard.setId("sql-console-guard");
+            add(title, guard);
+            return;
+        }
         jdbcUrl = connection.jdbcUrl();
 
         newTab.setId("new-tab-button");

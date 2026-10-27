@@ -238,6 +238,15 @@ public class PostgresProxyServer {
                         // 取消连接只有这一个报文，处理完即结束
                         return;
                     }
+                    else if (Arrays.equals(data, AdminClientRequest.AdminClientRequestHeader))
+                    {
+                        // 管理握手头：8 字节，没有消息类型字节，后面紧跟 '!' 命令帧。
+                        // 绝不能回退去按 StartupMessage 解析 —— 它的长度域是 8，会被当成
+                        // "缺少 database 的连接请求"直接拒绝（CLI 的 list/status/create 全部失效）。
+                        lastRequestCommand = "ADMIN_HANDSHAKE";
+                        ctx.channel().attr(AttributeKey.valueOf("SessionLastRequestCommand")).set(lastRequestCommand);
+                        continue;
+                    }
                     else
                     {
                         // 都不是，则重置指针读取位置

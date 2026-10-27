@@ -13,7 +13,12 @@ import org.slackerdb.dbdesk.access.ConnectionProbe;
 import org.slackerdb.dbdesk.access.profile.DbDeskProfile;
 import org.slackerdb.dbdesk.access.profile.DbDeskProfileStore;
 
-/** 连接对话框：默认空表单，不自动连接；连接成功后由 ConnectionManager 记住历史。 */
+/**
+ * 连接对话框：默认空表单，不自动连接；连接成功后由 ConnectionManager 记住历史。
+ *
+ * <p>没有“管理口路径”字段：管理口指向实例还是 dbproxy 由探测阶段判断；
+ * 经代理时自动用数据库名作为别名。</p>
+ */
 final class ConnectDialog {
 
     private ConnectDialog() {
@@ -39,22 +44,26 @@ final class ConnectDialog {
         host.setId("connect-host");
         host.setValue("127.0.0.1");
         host.setRequiredIndicatorVisible(true);
-        IntegerField databasePort = new IntegerField("数据库端口");
+        IntegerField databasePort = new IntegerField("数据库端口（可选）");
         databasePort.setId("connect-db-port");
         databasePort.setMin(1);
         databasePort.setMax(65535);
-        databasePort.setRequiredIndicatorVisible(true);
+        databasePort.setHelperText("与管理端口至少填一个；只填管理端口时进入 dbproxy 集群管理");
         IntegerField managementPort = new IntegerField("管理端口（可选）");
         managementPort.setId("connect-mgmt-port");
         managementPort.setMin(1);
         managementPort.setMax(65535);
+        managementPort.setHelperText("实例或 dbproxy 的管理端口；程序会校验它与数据库端口是否匹配");
         TextField database = new TextField("数据库名");
         database.setId("connect-database");
-        database.setRequiredIndicatorVisible(true);
+        database.setHelperText("填写数据库端口时必填；只连代理管理端口时可留空");
 
         Span status = new Span();
         status.setId("connect-status");
         status.getStyle().set("color", "var(--lumo-error-text-color)");
+
+        databasePort.addValueChangeListener(event ->
+                database.setRequiredIndicatorVisible(event.getValue() != null));
 
         history.addValueChangeListener(event -> {
             DbDeskProfile selected = event.getValue();
@@ -64,6 +73,7 @@ final class ConnectDialog {
                 databasePort.setValue(selected.databasePort());
                 managementPort.setValue(selected.managementPort());
                 database.setValue(selected.database());
+                database.setRequiredIndicatorVisible(selected.databasePort() != null);
                 status.setText("");
             }
         });
@@ -81,20 +91,21 @@ final class ConnectDialog {
                 status.setText("请填写主机");
                 return;
             }
-            if (databasePort.getValue() == null) {
-                status.setText("请填写数据库端口");
+            Integer dbPort = databasePort.getValue();
+            Integer mgmtPort = managementPort.getValue();
+            if (dbPort == null && mgmtPort == null) {
+                status.setText("数据库端口和管理端口至少填写一个");
                 return;
             }
-            if (database.getValue() == null || database.getValue().isBlank()) {
-                status.setText("请填写数据库名");
+            if (dbPort != null && (database.getValue() == null || database.getValue().isBlank())) {
+                status.setText("填写数据库端口时必须填写数据库名");
                 return;
             }
 
             DbDeskProfile candidate;
             try {
                 candidate = new DbDeskProfile(
-                        alias.getValue(), host.getValue(), databasePort.getValue(),
-                        managementPort.getValue(), database.getValue());
+                        alias.getValue(), host.getValue(), dbPort, mgmtPort, database.getValue());
             } catch (IllegalArgumentException e) {
                 status.setText(e.getMessage());
                 return;

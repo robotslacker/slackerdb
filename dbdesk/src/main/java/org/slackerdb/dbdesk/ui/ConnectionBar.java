@@ -60,7 +60,15 @@ final class ConnectionBar extends HorizontalLayout {
                 add(status, connect);
             }
             case SQL_ONLY -> {
-                setStatus(manager.profile().alias() + " · " + I18n.t("connection.sqlOnly"),
+                String label = manager.profile().alias() + " · " + I18n.t("connection.sqlOnly");
+                if (manager.warning() != null && manager.profile().hasManagement()) {
+                    label += " · " + I18n.t("connection.managementUnavailable");
+                }
+                setStatus(label, "var(--lumo-success-text-color)");
+                add(status, switchButton(), disconnectButton());
+            }
+            case CLUSTER_ONLY -> {
+                setStatus(manager.profile().alias() + " · " + I18n.t("connection.clusterOnly"),
                         "var(--lumo-success-text-color)");
                 add(status, switchButton(), disconnectButton());
             }
@@ -74,6 +82,7 @@ final class ConnectionBar extends HorizontalLayout {
     private void setStatus(String text, String color) {
         status.setText("● " + text);
         status.getStyle().set("color", color).set("white-space", "nowrap");
+        status.getElement().setAttribute("title", manager.warning() == null ? "" : manager.warning());
     }
 
     private Button switchButton() {
@@ -133,7 +142,7 @@ final class ConnectionBar extends HorizontalLayout {
     }
 
     private void goMain() {
-        getUI().ifPresent(ui -> ui.navigate("main"));
+        getUI().ifPresent(ui -> ui.navigate(manager.hasClusterManagement() ? "cluster" : "main"));
     }
 
     @Override

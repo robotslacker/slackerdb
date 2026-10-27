@@ -50,8 +50,8 @@ public class DataServicesView extends VerticalLayout {
         setSpacing(true);
 
         H2 title = new H2("数据服务");
-        if (!ConnectionManager.current().hasManagement()) {
-            Span guard = new Span("当前连接没有管理口，数据服务不可用。");
+        if (!ConnectionManager.current().hasInstanceManagement()) {
+            Span guard = new Span("当前连接没有实例级管理口，数据服务不可用。");
             guard.setId("data-service-guard");
             add(title, guard);
             return;

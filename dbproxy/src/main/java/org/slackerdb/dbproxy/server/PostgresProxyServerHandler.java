@@ -19,20 +19,21 @@ import org.slackerdb.dbproxy.message.request.StartupRequest;
 import org.slackerdb.dbproxy.message.response.ErrorResponse;
 import org.slackerdb.dbproxy.message.response.NoticeMessage;
 import org.slackerdb.dbproxy.message.response.ProxyResponse;
+import org.slackerdb.dbproxy.instance.ObservedInstance;
 import org.slackerdb.common.utils.Utils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
 
 public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
     // 取消转发用的短连接建立超时：上游不可达时不能让事件循环一直等
     private static final int CANCEL_CONNECT_TIMEOUT_MS = 5_000;
+    // 数据面建连超时：后端进程已死但端口还在（或防火墙丢包）时，必须给客户端一个明确的失败
+    private static final int UPSTREAM_CONNECT_TIMEOUT_MS = 5_000;
 
     private final Logger logger;
-    private final AtomicLong maxSessionId = new AtomicLong(1000);
     private Channel outboundChannel;
     private final ProxyInstance proxyInstance;
 
@@ -56,8 +57,9 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
         // 获取远端的 IP 地址和端口号
         InetSocketAddress remoteAddress = (InetSocketAddress) ctx.channel().remoteAddress();
 
-        // 为每个会话创建一个sessionId，记录之前的路由选项
-        long sessionId = maxSessionId.incrementAndGet();
+        // 为每个会话创建一个sessionId，记录之前的路由选项。
+        // 会话号由代理实例分配（进程内唯一）；旧实现放在 handler 字段里，每条连接都从 1000 开始。
+        long sessionId = proxyInstance.nextSessionId();
         ctx.channel().attr(AttributeKey.valueOf("SessionId")).set(sessionId);
 
         // 设置线程名称，并打印调试信息
@@ -248,37 +250,52 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
             }
 
             // 根据连接字符串里头的数据库名称决定转发地址
-            String aliasName = connectParameters.get("database");
-            try {
-                // 查找合适的目的地
-                if (!this.proxyInstance.proxyTarget.containsKey(aliasName))
-                {
-                    // 没有指定的服务，直接返回Error
-                    // 通过统一的 sendErrorAndClose 保证"先写出响应、再关闭连接"
-                    sendErrorAndClose(ctx, "SLACKER-0099",
-                            "Connect refused. Database [" + aliasName + "] does not exist!");
-                    return;
-                }
-                PostgresProxyTarget postgresProxyTarget = this.proxyInstance.proxyTarget.get(aliasName);
+            String aliasName = requestedDatabase.trim();
 
+            // 托管实例存在但没在运行：回明确原因，而不是退化成"库不存在"或静默关连接。
+            ObservedInstance managedInstance = this.proxyInstance.instanceStatus(aliasName);
+            if (managedInstance != null && !managedInstance.routable())
+            {
+                sendErrorAndClose(ctx, "SLACKERDB-00022",
+                        Utils.getMessage("SLACKERDB-00022", aliasName, managedInstance.state().name()));
+                return;
+            }
+
+            // 托管实例优先于组播发现的别名（两者同名时以磁盘上的实例目录为准）
+            ProxyInstance.RouteTarget routeTarget = this.proxyInstance.resolveTarget(aliasName);
+            if (routeTarget == null)
+            {
+                // 没有指定的服务，直接返回Error
+                // 通过统一的 sendErrorAndClose 保证"先写出响应、再关闭连接"
+                sendErrorAndClose(ctx, "SLACKERDB-00018",
+                        Utils.getMessage("SLACKERDB-00018", aliasName));
+                return;
+            }
+
+            final String upstreamHost = routeTarget.host();
+            final int upstreamPort = routeTarget.port();
+            final String upstreamDatabase = routeTarget.database();
+            try {
                 // 构建一个目的转发器
                 Bootstrap bootstrap = new Bootstrap();
                 bootstrap.group(inboundChannel.eventLoop())
                         .channel(NioSocketChannel.class)
+                        // 后端不可达时不能把客户端挂死
+                        .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, UPSTREAM_CONNECT_TIMEOUT_MS)
                         .handler(new ChannelInitializer<>() {
                             @Override
                             protected void initChannel(Channel ch) {
                                 ch.pipeline().addLast(new OutboundHandler(inboundChannel, logger, PostgresProxyServerHandler.this));
                             }
                         });
-                ChannelFuture future = bootstrap.connect(postgresProxyTarget.host, postgresProxyTarget.port);
+                ChannelFuture future = bootstrap.connect(upstreamHost, upstreamPort);
 
                 // 记录握手上下文：后端回 BackendKeyData 时据此登记取消路由。
                 // 必须在 writeAndFlush(StartupMessage) 之前设置好（同一个 EventLoop 上顺序执行）。
                 CancelRoute routeContext = new CancelRoute();
-                routeContext.upstreamHost = postgresProxyTarget.host;
-                routeContext.upstreamPort = postgresProxyTarget.port;
-                routeContext.database = postgresProxyTarget.database;
+                routeContext.upstreamHost = upstreamHost;
+                routeContext.upstreamPort = upstreamPort;
+                routeContext.database = upstreamDatabase;
                 routeContext.alias = aliasName;
                 routeContext.clientSessionId = this.currentSessionId(ctx);
                 this.pendingRouteContext = routeContext;
@@ -294,9 +311,9 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
 
                         // Startup消息要重新拼接内容, database用新的来覆盖
                         Map<String, String> oldStartupOptions = startupRequest.getStartupOptions();
-                        oldStartupOptions.put("database", postgresProxyTarget.database);
+                        oldStartupOptions.put("database", upstreamDatabase);
                         byte[] newStartupOption = startupRequest.rebuildData();
-                        this.forwardedDatabase = postgresProxyTarget.database;
+                        this.forwardedDatabase = upstreamDatabase;
 
                         // 转发Startup消息
                         ByteBuf byteBuf = Unpooled.buffer();
@@ -305,7 +322,13 @@ public class PostgresProxyServerHandler  extends ChannelInboundHandlerAdapter {
                         outboundChannel.writeAndFlush(byteBuf);
                     } else {
                         this.pendingRouteContext = null;
-                        ctx.channel().close();
+                        logger.warn("[PROXY][STARTUP    ] Cannot connect upstream {}:{} for [{}]: {}",
+                                upstreamHost, upstreamPort, aliasName,
+                                f.cause() == null ? "unknown" : f.cause().getMessage());
+                        sendErrorAndClose(ctx, "SLACKERDB-00023",
+                                Utils.getMessage("SLACKERDB-00023", aliasName, upstreamHost,
+                                        String.valueOf(upstreamPort),
+                                        f.cause() == null ? "" : f.cause().getMessage()));
                     }
                 });
             }

@@ -32,8 +32,14 @@ public class Main {
         System.out.println("Usage: java -jar " + codeLocation + " [COMMAND] [--parameter <parameter value>]");
         System.out.println("Commands:");
         System.out.println("  start     Start slackerdb cdb server.");
-        System.out.println("  stop      Stop slackerdb cdb server.");
-        System.out.println("  status    print server status.");
+        System.out.println("  stop      Stop slackerdb cdb server (instances keep running).");
+        System.out.println("  status    print server status, including every database instance.");
+        System.out.println("  list      list database instances and their observed state.");
+        System.out.println("  create    create a database instance (and start it unless --start false).");
+        System.out.println("  resume    start an existing but stopped database instance.");
+        System.out.println("  shutdown  gracefully stop a database instance (data is kept).");
+        System.out.println("  restart   shutdown + resume a database instance.");
+        System.out.println("  destroy   stop and delete a database instance directory.");
         System.out.println("  help      print this message.");
         System.out.println("  version   print server version.");
         System.out.println("Parameters:");
@@ -50,6 +56,10 @@ public class Main {
         System.out.println("  --listener_address  Multicast group to discover backend databases from, as <group>:<port>"
                 + " (for example 239.255.66.66:46666)."
                 + " Must match the dbserver advertise_address. Default: none (discovery disabled).");
+        System.out.println("  --data_dir          Root directory of managed database instances. Each sub-directory"
+                + " is one instance and its name is the alias. Default: empty (instance management disabled).");
+        System.out.println("  --alias             Alias (directory name) for create/resume/shutdown/restart/destroy.");
+        System.out.println("  --name              Database name for create. Default: same as --alias.");
     }
 
     // 主程序
@@ -186,6 +196,10 @@ public class Main {
             if (appOptions.containsKey("pid"))
             {
                 serverConfiguration.setPid(appOptions.get("pid"));
+            }
+            if (appOptions.containsKey("data_dir"))
+            {
+                serverConfiguration.setData_Dir(appOptions.get("data_dir"));
             }
 
             // 初始化日志服务

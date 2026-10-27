@@ -42,8 +42,8 @@ public class McpView extends VerticalLayout {
         setSpacing(true);
 
         H2 title = new H2("MCP");
-        if (!ConnectionManager.current().hasManagement()) {
-            Span guard = new Span("当前连接没有管理口，MCP 不可用。");
+        if (!ConnectionManager.current().hasInstanceManagement()) {
+            Span guard = new Span("当前连接没有实例级管理口，MCP 不可用。");
             guard.setId("mcp-guard");
             add(title, guard);
             return;

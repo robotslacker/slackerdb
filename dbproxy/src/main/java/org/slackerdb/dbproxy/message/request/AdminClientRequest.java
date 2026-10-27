@@ -5,6 +5,11 @@ import io.netty.channel.ChannelHandlerContext;
 import org.slackerdb.common.exceptions.ServerException;
 import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbproxy.BuildInfo;
+import org.slackerdb.dbproxy.instance.InstanceController;
+import org.slackerdb.dbproxy.instance.InstanceException;
+import org.slackerdb.dbproxy.instance.InstanceSpec;
+import org.slackerdb.dbproxy.instance.InstanceText;
+import org.slackerdb.dbproxy.instance.ObservedInstance;
 import org.slackerdb.dbproxy.message.PostgresMessage;
 import org.slackerdb.dbproxy.message.response.AdminClientResp;
 import org.slackerdb.dbproxy.server.PostgresProxyTarget;
@@ -19,6 +24,10 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
 
 public class AdminClientRequest extends PostgresRequest {
@@ -30,16 +39,52 @@ public class AdminClientRequest extends PostgresRequest {
 
     public String clientRequestCommand;
 
+    /** 命令行的第一个词（大写），例如 {@code LIST} / {@code CREATE}。 */
+    private String command = "";
+
+    /** {@code --key value} 形式的参数（key 小写）。 */
+    private Map<String, String> options = Map.of();
+
     @Override
     public void decode(byte[] data) {
         clientRequestCommand = new String(data, StandardCharsets.UTF_8);
+        String trimmed = clientRequestCommand.trim();
+        if (!trimmed.isEmpty()) {
+            String[] tokens = trimmed.split("\\s+", 2);
+            command = tokens[0].toUpperCase(Locale.ROOT);
+        }
+        options = parseOptions(trimmed);
         super.decode(data);
+    }
+
+    /**
+     * 极简 {@code --key value} 解析。
+     *
+     * <p>绑定参数（如 {@code --conf}）由客户端原样带上，这里解析出来但不使用；
+     * 含空格的取值在这个通道上本来就不受支持（历史协议限制），实例相关参数都是单 token。</p>
+     */
+    private static Map<String, String> parseOptions(String text) {
+        Map<String, String> parsed = new LinkedHashMap<>();
+        String[] tokens = text.split("\\s+");
+        for (int index = 0; index < tokens.length; index++) {
+            String token = tokens[index];
+            if (!token.startsWith("--") || token.length() <= 2) {
+                continue;
+            }
+            String key = token.substring(2).toLowerCase(Locale.ROOT);
+            String value = "";
+            if (index + 1 < tokens.length && !tokens[index + 1].startsWith("--")) {
+                value = tokens[++index];
+            }
+            parsed.put(key, value);
+        }
+        return parsed;
     }
 
     @Override
     public void process(ChannelHandlerContext ctx, Object request) throws IOException {
         StringBuilder feedBackMsg = new StringBuilder();
-        if (clientRequestCommand.trim().toUpperCase().startsWith("STOP"))
+        if (command.equals("STOP"))
         {
             // 关闭数据库
             try {
@@ -49,7 +94,7 @@ public class AdminClientRequest extends PostgresRequest {
             }
             feedBackMsg.append("Server stop successful.");
         }
-        else if (clientRequestCommand.trim().toUpperCase().startsWith("STATUS"))
+        else if (command.equals("STATUS"))
         {
             LocalDateTime currentTime = LocalDateTime.now();
 
@@ -131,6 +176,31 @@ public class AdminClientRequest extends PostgresRequest {
                         .append("\n");
             }
             feedBackMsg.append("\n");
+            appendDatabases(feedBackMsg);
+        }
+        else if (command.equals("LIST"))
+        {
+            feedBackMsg.append(instanceTable());
+        }
+        else if (command.equals("CREATE"))
+        {
+            createInstance(feedBackMsg);
+        }
+        else if (command.equals("RESUME") || command.equals("START"))
+        {
+            lifecycle(feedBackMsg, "resume");
+        }
+        else if (command.equals("SHUTDOWN"))
+        {
+            lifecycle(feedBackMsg, "shutdown");
+        }
+        else if (command.equals("RESTART"))
+        {
+            lifecycle(feedBackMsg, "restart");
+        }
+        else if (command.equals("DESTROY"))
+        {
+            destroyInstance(feedBackMsg);
         }
         else
         {
@@ -156,9 +226,124 @@ public class AdminClientRequest extends PostgresRequest {
         out.close();
 
         // 如果是独占模式, 则停止命令将同时停止程序运行
-        if (clientRequestCommand.trim().toUpperCase().startsWith("STOP") && this.proxyInstance.isExclusiveMode())
+        if (command.equals("STOP") && this.proxyInstance.isExclusiveMode())
         {
             System.exit(0);
+        }
+    }
+
+    // ------------------------------------------------------------------ 实例管理命令
+
+    private InstanceController controllerOrNull(StringBuilder feedBackMsg) {
+        InstanceController controller = this.proxyInstance.getInstanceController();
+        if (controller == null) {
+            feedBackMsg.append("Instance management is not enabled. Set data_dir in the proxy configuration.\n");
+        }
+        return controller;
+    }
+
+    private String instanceTable() {
+        try {
+            // CLI 是"人看真相"的入口，不能拿 5 秒缓存糊弄：强制重新扫描。
+            // 列表同时包含内部实例（management）与组播注册（external）。
+            return InstanceText.table(this.proxyInstance.listBackends(true));
+        } catch (RuntimeException runtimeException) {
+            return "Failed to scan instances: " + runtimeException.getMessage() + "\n";
+        }
+    }
+
+    /** 外部后端只转发、不可治理；命中时写一条原因并返回 true。 */
+    private boolean rejectExternal(StringBuilder feedBackMsg, String alias) {
+        if (this.proxyInstance.isExternal(alias)) {
+            feedBackMsg.append("Backend [").append(alias).append("] is external (registered via multicast) and ")
+                    .append("has no local instance directory. Only data forwarding is available; ")
+                    .append("lifecycle operations are not supported.\n");
+            return true;
+        }
+        return false;
+    }
+
+    private void appendDatabases(StringBuilder feedBackMsg) {
+        feedBackMsg.append("DATABASES: \n");
+        feedBackMsg.append(instanceTable());
+    }
+
+    private void createInstance(StringBuilder feedBackMsg) {
+        InstanceController controller = controllerOrNull(feedBackMsg);
+        if (controller == null) {
+            return;
+        }
+        String alias = options.get("alias");
+        if (alias == null || alias.isBlank()) {
+            feedBackMsg.append("Missing --alias.\n");
+            return;
+        }
+        boolean start = !"false".equalsIgnoreCase(options.getOrDefault("start", "true"));
+        String name = options.get("name");
+        try {
+            ObservedInstance created = controller.create(new InstanceSpec(alias, name, start, Map.of()));
+            // 内部实例优先：同名外部注册立刻让位
+            this.proxyInstance.pruneShadowedExternal(created.alias());
+            feedBackMsg.append("Instance [").append(created.alias()).append("] created: state=")
+                    .append(created.state()).append(", pg=").append(created.pgPort())
+                    .append(", mgmt=").append(created.mgmtPort()).append("\n");
+            if (!start) {
+                feedBackMsg.append("  (created without starting; use 'resume --alias ")
+                        .append(created.alias()).append("' to start it)\n");
+            }
+        } catch (InstanceException instanceException) {
+            feedBackMsg.append("Create failed: ").append(instanceException.getMessage()).append("\n");
+        }
+    }
+
+    private void lifecycle(StringBuilder feedBackMsg, String action) {
+        String alias = options.get("alias");
+        if (alias == null || alias.isBlank()) {
+            feedBackMsg.append("Missing --alias.\n");
+            return;
+        }
+        if (rejectExternal(feedBackMsg, alias)) {
+            return;
+        }
+        InstanceController controller = controllerOrNull(feedBackMsg);
+        if (controller == null) {
+            return;
+        }
+        try {
+            ObservedInstance observed = switch (action) {
+                case "resume" -> controller.start(alias);
+                case "shutdown" -> controller.shutdown(alias);
+                case "restart" -> controller.restart(alias);
+                default -> throw new InstanceException(InstanceException.BAD_REQUEST,
+                        "Unknown lifecycle action [" + action + "].");
+            };
+            feedBackMsg.append("Instance [").append(observed.alias()).append("] ").append(action)
+                    .append(" OK: state=").append(observed.state())
+                    .append(", pid=").append(observed.pidText()).append("\n");
+        } catch (InstanceException instanceException) {
+            feedBackMsg.append("Instance [").append(alias).append("] ").append(action).append(" failed: ")
+                    .append(instanceException.getMessage()).append("\n");
+        }
+    }
+
+    private void destroyInstance(StringBuilder feedBackMsg) {
+        String alias = options.get("alias");
+        if (alias == null || alias.isBlank()) {
+            feedBackMsg.append("Missing --alias.\n");
+            return;
+        }
+        if (rejectExternal(feedBackMsg, alias)) {
+            return;
+        }
+        InstanceController controller = controllerOrNull(feedBackMsg);
+        if (controller == null) {
+            return;
+        }
+        try {
+            controller.destroy(alias);
+            feedBackMsg.append("Instance [").append(alias).append("] destroyed (directory removed).\n");
+        } catch (InstanceException instanceException) {
+            feedBackMsg.append("Destroy failed: ").append(instanceException.getMessage()).append("\n");
         }
     }
 }

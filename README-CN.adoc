@@ -5,36 +5,35 @@ image::robotslacker.jpg[RobotSlacker]
 
 === 什么是 SlackerDB？
 
-SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。它能遵循 PostgreSQL 通讯协议，
-因此标准的 PostgreSQL JDBC驱动无需任何专用驱动即可连接；同时它让多个客户端能够共用同一份
-DuckDB 库 —— 这是单进程的 DuckDB 做不到的。在此之上，它还提供了一条用于装载数据的批量 COPY 通道，
-以及一层注册式 SQL， 把查询变成可缓存的 HTTP 端点，。
+SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。
+它能遵循 PostgreSQL 通讯协议，因此标准的 PostgreSQL JDBC驱动无需任何专用驱动即可连接；同时它让多个客户端能够共用同一份DuckDB 库 —— **这是单进程的 DuckDB 做不到的**。在此之上，它还提供了一条用于导入和导出数据的批量 COPY 通道，以及一层注册式 SQL， 把查询变成可缓存的 HTTP 端点，。
 
-它既可以作为独立服务器（`dbserver`）运行，也可以直接嵌入你的 Java 应用。
+它既可以作为独立服务器（`dbserver`,`dbproxy`）运行，**也可以直接嵌入你的 Java 应用**。
 
 ==== 能力
 
 * *PostgreSQL 通讯协议* —— 标准 PostgreSQL 客户端开箱即连：JDBC、ODBC、libpq、psql、Python，
-* *PostgreSQL 数据字典兼容* - 对一些数据库连接工具需要访问的数据问题进行仿真处理。如 DBeaver，Postgres fdw。
+* *PostgreSQL 数据字典兼容* —— 对一些数据库连接工具需要访问的数据字典进行仿真处理。如 DBeaver，Postgres fdw，psql, 在这些工具下，你看到的SlackerDB和一个PG数据库没有两样。
 * *多会话访问* —— 一份 DuckDB 库同时服务多个并发客户端会话，具备连接池、会话级状态，SQL 在网络 I/O 线程之外执行。
 * *查询取消* —— 客户端取消与 `KILL SESSION` 能命中真正正在执行的那条语句。
-* *高性能数据搬运* —— 支持 PostgreSQL `COPY … FROM STDIN` 与 `COPY … TO STDOUT` 的 CSV 与 BINARY 两种形式。
+* *高性能数据搬运* —— 支持 PostgreSQL `COPY … FROM STDIN` 与 `COPY … TO STDOUT` 的 CSV 与 BINARY 两种形式，甚至支持部分字段的导出导出（这是PG目前也不支持的）。
 * *注册式 SQL 服务* —— 在运行时把参数化 SQL 注册为具名 HTTP 端点，自带结果缓存、服务版本与按服务设定的搜索路径。
 * *服务器管理接口* —— 管理端口提供状态与指标、数据库备份、日志查看与文件上传下载。
 * *WebSocket 异步 SQL* —— 异步执行 SQL 并分页取回结果，适用于单次请求装不下或太慢的查询。
 * *可嵌入设计* —— 既可独立进程运行，也可嵌入 Java 代码；多个实例可在不同端口上并行运行。
 * *插件系统* —— 基于 PF4J 的可扩展插件框架，用于自定义功能、HTTP 端点与后台任务，支持运行时加载/启动/停止/卸载。
 * *数据加密* —— 利用 DuckDB 原生加密实现静态数据保护。
+* *命令行访问* —— 支持一个类似psql的自定义命令行客户端，不仅可以执行批处理SQL脚本，各种SQL语句，还能进行复杂的并发作业协同，SQL运行结果比对等。
+* *作业编排*  —— 利用插件能力，提供基于HOP运行的作业编排，用来定时执行基于工作流的作业调度。
+* *控制台访问*  —— 当前工作进展中。 将提供完整的，基于浏览器的图形访问工作台。
+* *数据库代理*   —— 支持通过代理管理多个数据库实例，并通过统一端口来连接到不同的实例上。
 
 ==== 使用场景
 
 * *分析型应用后端* —— 作为支持 PostgreSQL 连接的 BI 工具、仪表盘和报表应用的数据引擎。
-* *共享内部数据集* —— 把已有的 `.duckdb` 文件装载一次，让多个团队与工具并发查询，无需搬迁或更换平台。
-* *本地化数据处理* —— 在单机上完成批量导入、变换与查询，不必再起一套独立的数据库系统。
-* *Java 内嵌服务* —— 在 Java 应用内部提供一个可联网的分析型存储，并可用插件框架提供应用专属端点。
+* *共享内部数据集* —— 想要 DuckDB 的分析性能和强大SQL能力，但需要它能通过网络访问、不想让分析的过程成为黑箱。把已有的 `.duckdb` 文件装载一次，让多个团队与工具并发查询，无需搬迁或更换平台。
+* *Java 内嵌服务* —— 在 Java 应用内部提供一个可联网的分析型存储，并对外提供数据访问点。
 
-SlackerDB 面向的是这样一类团队：想要 DuckDB 的分析性能，但需要它能通过网络访问、不想让分析的过程成为黑箱，
-用 PostgreSQL 工具链就能直接使用、并且能在多个并发客户端之间共享。
 
 === 使用方式
 
@@ -44,7 +43,7 @@ SlackerDB 面向的是这样一类团队：想要 DuckDB 的分析性能，但�
     构建前请确认当前机器上已经存在如下必要的文件：
     # 1：符合版本要求的JDK （JDK21）
     # 2：符合版本要求的Maven （Maven 3.9.16）
-    # 3：符合版本要求Node （Node v24）
+    # 3：符合版本要求Node （Node v24） （只针对web控制台，如果确定不需要这个功能，可以不考虑）
     # 上述文件都应该存在于PATH内，可以直接被访问。
 
     # 下载源代码
@@ -85,8 +84,8 @@ SlackerDB 面向的是这样一类团队：想要 DuckDB 的分析性能，但�
 
 执行如下命令完成构建：
 ....
-    mvn -o -Dmaven.repo.local.tail=<offline>/javarepo clean package
-
+    mvn -o -Dmaven.repo.local.tail=<offline>/javarepo clean package -pl !dbdesk -am
+    或者
     NPM_CONFIG_CACHE=<offline>/npmrepo NPM_CONFIG_OFFLINE=true mvn -o -Dmaven.repo.local=/tmp/m2 -Dmaven.repo.local.tail=<offline>/javarepo package
 ....
 
@@ -358,6 +357,11 @@ bind=0.0.0.0
 # 必须与 dbserver 的 advertise_address **逐字一致**
 listener_address=
 
+# 实例根目录。每个子目录是一个数据库实例，子目录名即别名。
+# 留空 = 不启用实例管理
+# 目录结构见"实例管理"一节。
+data_dir=
+
 # 客户端连接空闲超时（秒）
 client_timeout=600
 
@@ -380,23 +384,79 @@ UDP组播发现：dbserver 周期性向一个组播组报告"我在这儿"，代
 
 [cols="1,2",options="header"]
 |===
-| 新 | 说明
+| 模块 | 说明
 | dbserver `advertise_address=<组IP>:<端口>` | 一个网段内的组播组
 | dbserver `advertise_nic=<网卡名或本机IP>` | 留空自动选第一块可用网卡
 | dbproxy `listener_address=<组IP>:<端口>` | 必须与 dbserver 的 `advertise_address` 逐字一致
 |===
 
+==== 多实例管理
+
+配置 `data_dir` 后，代理可以在本机托管多个数据库实例：**每个实例是一个独立的 dbserver 进程**。
+
+....
+instances/
+  sales/                     # 目录名 = 别名（连接串里的 database）
+    instance.conf            # 唯一事实源：库名、两个端口、pid、日志路径
+    bin/start.sh|bat         # 前台启动
+    bin/start-daemon.sh|bat  # 后台启动
+    bin/stop.sh|bat          # 优雅停止（PG 口管理帧）
+    bin/status.sh|bat
+    data/sales.db
+    logs/server.log          # dbserver 日志
+    logs/console.log         # 子进程 stdout/stderr
+    instance.pid
+....
+
+别名与库名可以不同（`--name` 指定库名，缺省等于别名）；别名唯一，重复创建返回 409。
+
+[cols="1,2",options="header"]
+|===
+| 命令 | 说明
+| `dbproxy create --alias sales [--name sales] [--start false]` | 创建实例并默认启动
+| `dbproxy resume --alias sales` | 启动一个已停止的实例
+| `dbproxy shutdown --alias sales` | 优雅停止（保留数据与目录）
+| `dbproxy restart --alias sales` | 停止后重新启动
+| `dbproxy destroy --alias sales` | 停止并删除整个实例目录
+| `dbproxy list [--json]` | 列出所有实例的**实时**状态
+| `dbproxy status` | 代理状态 + 实例表
+|===
+
+管理口对应端点（代理自身）：
+
+* `GET /status`
+* `GET /capabilities`
+* `GET /admin/databases`
+* `GET /admin/databases/别名`
+* `POST /admin/databases/别名/start`
+* `POST /admin/databases/别名/shutdown`
+* `POST /admin/databases/别名/restart`
+* `DELETE /admin/databases/别名`
+* `GET /admin/databases/别名/logs?lines=200`
+
+行为约定：
+
+* **两类后端**：`management` = `data_dir` 下扫描到的实例（代理可治理）；`external` = 通过组播注册进来的后端。
+  状态与 `list` 里的 `SOURCE` 列会区分两者。**外部后端只转发数据**：`start`/`shutdown`/`restart`/`destroy`
+  一律返回 409，也不会出现在实例目录里。
+* **别名冲突内部优先**：`data_dir` 下存在同名实例时，外部通告会被丢弃。
+  已存在的同名外部条目会被立即摘除。
+* **不级联**：`dbproxy stop` 只停代理，实例会继续运行。
+* **不自动恢复**：代理重启后不会自动拉起任何实例。
+* **可绕过代理**：直接执行实例目录下的 `bin/start-daemon`、`bin/stop` 即可；
+  代理每次状态查询都会重新探测（`/health` + pid + 命令行校验），所以手工启停也能被正确识别。
+
 ==== JDBC 支持
 
-SlackerDB 提供完整的 PostgreSQL 线路协议兼容性，允许你使用标准 JDBC 驱动进行连接。这使你能够使用任何兼容 PostgreSQL 的 JDBC 客户端，包括原生 SlackerDB JDBC 驱动，以获得最佳集成体验。
+SlackerDB 提供完整的 PostgreSQL 线路协议兼容性，允许你使用标准 JDBC 驱动进行连接。这使你能够使用任何兼容 PostgreSQL 的 JDBC 客户端，以获得最佳集成体验。
 
 *PostgreSQL JDBC 驱动*
 你可以使用标准的 PostgreSQL JDBC 驱动（`org.postgresql.Driver`），连接 URL 格式为 `jdbc:postgresql://host:port/database`。当你希望复用现有的 PostgreSQL 工具链时，这很有用。
 
 *SlackerDB JDBC 驱动*
-为了更好的集成和更多特性，请使用原生 SlackerDB JDBC 驱动（`org.slackerdb.jdbc.Driver`）。连接 URL 格式为 `jdbc:slackerdb://host:port/database`。该驱动包含在发行包中，推荐用于新应用。
+为了更好的集成和更多特性，请使用原生 SlackerDB JDBC 驱动（`org.slackerdb.jdbc.Driver`）。连接 URL 格式为 `jdbc:slackerdb://host:port/database`。该驱动包含在发行包中。
 
-原生驱动 `slackerdb-dbdriver` 保持 **Java 17 字节码**，JDK 17 应用可以直接加载；服务端、代理和 dbcli 等其余产物要求 Java 21。
+驱动 `slackerdb-dbdriver` 保持 **Java 17 字节码**，JDK 17 应用可以直接加载；服务端、代理和 dbcli 等其余产物要求 Java 21。
 
 *连接示例*
 
@@ -412,9 +472,11 @@ Connection conn = DriverManager.getConnection(url, "main", "");
 conn.setAutoCommit(false);
 ....
 
-*IDE 集成*
+*工具集成*
 
-你可以从数据库工具 DBeaver 连接到 SlackerDB。（其他工具我们尚未验证。） +
+你可以从IDE数据库工具 DBeaver 连接到 SlackerDB。 +
+你可以从Postgres的psql命令行连接到 SlackerDB。 +
+其他工具我们不能穷举验证。
 
 *使用 PostgreSQL 驱动* +
 下载 PostgreSQL 服务器，然后像连接 pg 一样连接数据库。
@@ -550,10 +612,10 @@ public class CopyDemo {
 ----
 
 ==== 性能调整
-* 在能满足要求的情况下，尽可能的使用COPY来导出，导入数据，其处理速度远超过标准SELECT和INSERT
+* 在能满足客观条件的情况下，尽可能的使用COPY来导出，导入数据，其处理速度远超过标准SELECT和INSERT
 
 ==== HTTP管理服务
-以下 HTTP 端点提供基础的管理功能，例如备份、文件上传/下载、日志查看和状态监控。当管理端口（port_x）启用时，这些端点可用。
+* 以下 HTTP 端点提供基础的管理功能，例如备份、文件上传/下载、日志查看和状态监控。当管理端口（port_x）启用时，这些端点可用。
 
 ===== /backup (POST)
 
@@ -1547,8 +1609,7 @@ mcp_config=conf/mcp_config_example.service
 
 可识别的 `builtin:` handler 有 `run_sql`、`list_tables`、`describe_table`、`sample_rows`、
 `open_session`、`close_session` 与 `list_services`；旧别名 `query`、`sql`、`runquery`、`tables`、
-`show_tables`、`describe` 与 `sample` 会映射到对应实现。未指定 `handler` 的工具保留回显入参的旧行为，
-并在注册时的描述里写明这一点。
+`show_tables`、`describe` 与 `sample` 会映射到对应实现。
 
 发行包里的 `conf/mcp_config_example.service` 就是这样一份可用样例：一个回显桩、两个把内置工具挂到自定义
 名字下的绑定（`top_tables` -> `list_tables`、`peek_rows` -> `sample_rows`），以及一个静态资源。内置工具
@@ -2169,7 +2230,6 @@ SQL REPL 服务器提供了一个异步 WebSocket 接口，用于执行 SQL 查�
 `Invalid taskId`、`Another SQL is already running`。
 
 `maxRows` 是 API 单次返回的行数（分页大小），不是数据库查询上限，必须为正数。
-旧实现接受 `0` 并返回"空页 + `hasMore = true`"，客户端会永远停在一个不会前进的分页上。
 
 ===== 会话管理
 
@@ -2505,7 +2565,10 @@ ws.send(JSON.stringify({
 | SQL 客户端 | 交互式控制台 + 批处理脚本；语句以顶层 `;` 或行首 `/` 收尾，执行中可用 Ctrl-C 取消
 | 结果校验 | `--ref` 把本次输出与参考文件比对；脚本里用 `_assert` 断言、`_compare` 比对
 | 连接 | `_connect` 支持简写、`jdbc:slackerdb://` 与其它 `jdbc:<scheme>:` URL；`_load jdbcdriver` 可动态加载驱动
-| 会话与编排 | `_session` 保存/切换多个连接；`_job` 并发作业；`_ssh`/SFTP、`_host`
+| 会话保持 | `_session` 保存/切换多个连接；
+| 任务编排 | `_job` 并发作业；`_ssh`/SFTP、`_host`
+| 远程访问 | `_ssh`/SFTP、`_host`
+| 系统命令 | `_host`
 | 输出 | `_set` 控制回显/摘要/结果集；`table`/`vertical`/`csv` 三种格式；`_spool` 落盘
 |===
 
@@ -2515,29 +2578,25 @@ dbcli --execute script.sql                      # 跑脚本
 dbcli --execute script.sql --logfile run.log --ref golden.ref   # 跑脚本并与参考文件比对
 ....
 
-完整用法见 `dbcli/README-CN.adoc`（English: `dbcli/README.adoc`）。
+完整用法见 xref:dbcli/README-CN.adoc[dbcli/README-CN.adoc]
 
 image::img/dbcli-select42.png[dbcli 连接成功后执行 select 42]
 === 已知问题
 
 ==== 1. 用户与密码授权
 
-我们不支持用户密码认证，保留这两个选项只是为了兼容性。 +
+**我们不支持用户密码认证，保留这两个选项只是为了兼容性。** +
 你可以随意填写任何内容，它没有任何实际作用。
 
 ==== 2. 对 DuckDB 数据类型支持有限
 
-仅支持部分 DuckDB 数据类型，主要是简单类型，例如
-int、number、double、varchar…… 复杂类型要么仍在
-开发中，要么无法在 PG 协议中表示（blob、list、map……），
-它们会以显式错误被拒绝，而不是被静默转换。
+仅支持部分 DuckDB 数据类型，主要是简单类型，例如 int、number、double、varchar…… 复杂类型要么仍在 开发中，要么无法在 PG 协议中表示（blob、list、map……），它们会以显式错误被拒绝，而不是被静默转换。
 
-上游限制（基于 `duckdb_jdbc` 2.0.0.0；DuckDB 升级后回看）：
+上游限制（基于 `duckdb_jdbc` 2.0.0.0；DuckDB 预计近期会升级，我们也会跟随调整）：
 
 * `COPY ... FROM STDIN` 写入 `BIGNUM`：DuckDB JDBC appender 没有 BIGNUM 的 C API 类型（`unsupported C API type: 35`），SlackerDB 当前无法支持。
 * `COPY ... FROM STDIN` 写入 `BIT`、`INTERVAL`、`TIME_NS`、`VARIANT`：同样缺少 appender 类型，只能拒绝。
 * `COPY ... TO STDOUT (FORMAT binary)` 导出 `INTERVAL`、`BIT`、`TIME_NS`、`BIGNUM`、`VARIANT`，以及嵌套的 `LIST`/`ARRAY`/`STRUCT`/`MAP`/`UNION`：这些类型在编码器里没有 PostgreSQL 的二进制表示，会在发出任何数据之前以 `0A000` 拒绝；这类查询请改用 CSV 或 text 格式。
-* 引擎错误的 SQLSTATE：`duckdb_jdbc` 返回 `null`，服务端继续按错误消息自行映射。
 
 ==== 3. postgresql-fdw
 
@@ -2558,8 +2617,7 @@ PostgreSQL 17 的 `postgres_fdw` 实际会发的语句，以及当前状态：
 * 游标：`DECLARE ... CURSOR [WITH HOLD] FOR`、`FETCH`（`NEXT` / `FORWARD n` / `ALL` / 裸计数）、
   `MOVE`、`CLOSE [ALL]` —— 简单查询与扩展协议两条路径都可用。非 `WITH HOLD` 的游标与 PostgreSQL
   一样随事务结束销毁；`WITH HOLD` 要跨 `COMMIT` 存活，因此声明时就物化到内存。
-  只支持向前方向：`BACKWARD` / `ABSOLUTE` / `RELATIVE` 明确回 `0A000`，
-  而不是悄悄给出错误结果（DuckDB 的 JDBC 结果集不能后退）。
+  只支持向前方向：`BACKWARD` / `ABSOLUTE` / `RELATIVE` 明确回 `0A000`（DuckDB 的 JDBC 结果集不能后退）。
 * 事务：`BEGIN` / `START TRANSACTION [ISOLATION LEVEL ...]` 会**真的**开启 DuckDB 事务，
   `COMMIT` / `COMMIT TRANSACTION` / `END` / `ROLLBACK` / `ABORT` 结束它（失败事务里的 `COMMIT`
   与 PostgreSQL 一样等价于回滚；没有事务时的 `COMMIT` 只回一条 NOTICE）。隔离级别：
@@ -2573,9 +2631,7 @@ PostgreSQL 17 的 `postgres_fdw` 实际会发的语句，以及当前状态：
   `SELECT reltuples, relkind FROM pg_catalog.pg_class WHERE oid = …`）都能回答 ——
   `regclass` 转换被翻译成**真正的 oid 查询**；行采样走游标。
   `relpages` 取自 DuckDB 自己的 `estimated_size`，因此小表会是 0；
-  远端那个除法在 DuckDB 里是浮点除法，`postgres_fdw` 用 `atoi` 截断，不影响页数。
-* 错误语义符合协议：扩展协议出错后会丢弃报文直到 `Sync`；`Describe`/`Close` 不存在的
-  语句/门户回 `26000`/`34000`；畸形 Bind 报文回 `08P01`，而不是让客户端挂到空闲超时。
+  * 错误语义符合协议：扩展协议出错后会丢弃报文直到 `Sync`；`Describe`/`Close` 不存在的
 
 *尚未实现*
 
@@ -2612,13 +2668,12 @@ IMPORT FOREIGN SCHEMA "main" FROM SERVER sdb INTO public
   OPTIONS (import_collate 'false');
 ----
 
-两个容易踩的坑：
+其他限制：
 
 * `dbname` 是服务端启动时的**实例名**（`--data fdwdb`），不是 PostgreSQL 意义上的库名。
-  `memory` 等保留字不能当实例名，所以 `--data memory` 会在启动时就失败。
 * `import_collate` 是 `IMPORT FOREIGN SCHEMA` 的选项，**不能**写在 `CREATE SERVER` 里
   （PostgreSQL 会直接拒绝：`invalid option "import_collate"`）。
-  `use_remote_estimate` 保持关闭：打开后 `postgres_fdw` 会去解析 PostgreSQL 的
+* `use_remote_estimate` 保持关闭：打开后 `postgres_fdw` 会去解析 PostgreSQL 的
   `EXPLAIN (cost=... rows=... width=...)` 文本，而 DuckDB 不产出这种格式。
 
 === 插件系统
@@ -2635,12 +2690,15 @@ SlackerDB 提供基于 PF4J 的插件框架，允许开发者扩展数据库服�
 * *DBPluginFactory* —— 自定义插件工厂，在创建插件实例后检查插件是否实现了 `IDBPluginContext`，如果是则注入 `DBPluginContext`。
 
 插件生命周期：
-1. *加载* —— 服务器启动时，扫描配置的插件目录（`plugins_dir`）并加载所有符合 PF4J 规范的 JAR 包。
-2. *创建* —— 通过 `DBPluginFactory` 创建插件实例，并注入 `DBPluginContext`。
-3. *启动* —— 调用插件的 `start()` 方法，该方法会依次执行 `beforeStart()`、`onStart()` 和 `afterStart()`。
-4. *运行* —— 插件在 `onStart()` 中执行自定义逻辑，例如注册 Javalin 路由、初始化数据库表等。
-5. *停止* —— 服务器关闭时，调用插件的 `stop()` 方法，依次执行 `beforeStop()`、`onStop()` 和 `afterStop()`。
-6. *删除* —— 插件被卸载时，调用其 `delete()` 方法，依次执行 `beforeDelete()`、`onDelete()` 和 `afterDelete()`。
+1. *启动扫描* —— 服务器启动时扫描配置的插件目录（`plugins_dir`），加载所有符合 PF4J 规范的 JAR，并自动启动。
+2. *运行期加载* —— 管理口的 `POST /plugin/load` 可以在不重启服务器的情况下加载新插件；该操作**只加载，不自动启动**，加载后需要再调用 `/plugin/start`。
+3. *创建* —— 通过 `DBPluginFactory` 创建插件实例，并注入 `DBPluginContext`。
+4. *启动* —— 调用插件的 `start()` 方法，该方法会依次执行 `beforeStart()`、`onStart()` 和 `afterStart()`。
+5. *运行* —— 插件在 `onStart()` 中执行自定义逻辑，例如注册 Javalin 路由、初始化数据库表等。
+6. *停止* —— 通过 `/plugin/stop` 停止；`/plugin/unload` 会先停止；服务器关闭时也会停止已启动的插件。停止会调用 `beforeStop()`、`onStop()` 和 `afterStop()`。
+7. *卸载* —— 通过 `/plugin/unload` 卸载。卸载会停止插件、释放 PF4J 类加载器，但**不会删除 JAR，也不会调用 `delete()`**；
+
+运行期加载的插件不会持久化：重启后只有 `plugins_dir` 中存在的 JAR 会被重新扫描和启动。
 
 插件可以访问以下资源：
 * *数据库连接* —— 通过 `getDbConnection()` 获取后端数据库的新连接（通过 `DuckDBConnection.duplicate()` 创建）。
@@ -2762,7 +2820,7 @@ mvn clean package
 
 ===== 5. 部署插件
 
-将插件 JAR 文件放入 SlackerDB 服务器的插件目录（由配置文件中的 `plugins_dir` 参数指定）。该参数默认为**空**，此时不会扫描任何插件目录；请显式配置它，并确保目录存在且服务器具有读权限。
+将插件 JAR 文件放入 SlackerDB 服务器的插件目录（由服务器中的 `plugins_dir` 参数指定）。该参数默认为**空**，此时不会扫描任何插件目录；请显式配置它，并确保目录存在且服务器具有读权限。
 
 ===== 6. 启动服务器
 
@@ -2776,16 +2834,13 @@ mvn clean package
 
 如果插件注册了 HTTP 端点，你可以在 `http://localhost:<port_x>/myplugin/hello` 访问它（假设管理端口 `port_x` 已启用）。
 
-===== 7. 调试插件
+===== 插件说明
 
 * *日志* —— 插件可以通过 `getLogger()` 输出日志；日志级别由服务器的 `log_level` 配置控制。
-* *错误处理* —— 插件生命周期方法中的异常会被捕获并包装为 `RuntimeException`，导致插件启动失败。错误消息会记录在服务器日志中。
-* *热重载* —— 目前不支持热重载；修改插件后必须重启服务器。
-
-==== 插件示例
-
-本节展示一个完整可用的插件：它的基本结构、资源访问方式和
-生命周期。这里完整复现，以便你复制其中描述的文件。
+* *错误处理* —— 插件启动生命周期方法中的异常会被捕获并包装为 `RuntimeException`，导致插件启动失败。错误消息会记录在服务器日志中。
+* *运行期管理* —— 支持通过管理口 `/plugin/load`、`/plugin/unload`、`/plugin/start`、`/plugin/stop` 动态管理插件；`/plugin/load` 只加载，不自动启动。
+* *插件更新* —— 程序不会监听 JAR 变化，也不自动热替换已加载的插件。更新插件时应自行先 `/plugin/stop`、`/plugin/unload`，替换 JAR 后再 `/plugin/load`、`/plugin/start`；
+* *路由限制* —— `/plugin/unload` 由于是完全的信任机制，不会替插件撤销插件已经注册到 Javalin 的路由，如果插件自身不再unload逻辑中添加路由撤销，则卸载后访问旧路径通常返回 `500 Internal Server Error`。
 
 ===== 模块结构
 
@@ -2793,8 +2848,7 @@ plugin‑example 模块包含以下关键组件：
 
 * *插件主类* —— 继承 `DBPlugin` 并实现所有生命周期方法。其完整源码
   在本节中复现。
-* *独立运行器* —— 演示如何在不使用完整 PF4J 框架的情况下执行插件
-  （同样在下面复现）。
+* *调试模式* —— 演示如何在不使用完整 PF4J 框架的情况下执行插件
 * *插件描述文件* —— 定义插件元数据的 `plugin.properties` 文件。
 * *Maven 构建* —— 依赖 `slackerdb‑plugin` 的配置。
 
@@ -2836,7 +2890,7 @@ public class PluginExample extends DBPlugin {
     // 生命周期钩子方法：beforeStart、afterStart、beforeStop、afterStop、
     // beforeDelete、afterDelete
 
-    // 独立模式支持
+    // 调试模式支持
     public static PluginExample standAloneInstance() throws Exception {
         return DBPlugin.Standalone.createInstance(PluginExample.class);
     }
@@ -2847,8 +2901,7 @@ public class PluginExample extends DBPlugin {
 
 1. *资源访问* —— 展示如何通过 `getDbConnection()`、`getLogger()` 和 `getJavalinApp()` 获取数据库连接、日志记录器和 Javalin 应用实例。
 2. *生命周期管理* —— 实现所有生命周期方法（`onStart`、`onStop`、`onDelete`）及其对应的钩子方法（`beforeStart`、`afterStart` 等）。
-3. *独立模式* —— 包含一个 `standAloneInstance()` 方法，使插件可以在没有 PF4J 框架的情况下执行（参见下面的“插件独立模式”一节）。
-4. *线程安全* —— 插件实例是单例；开发者应确保对共享资源的线程安全访问。
+3. *调试模式* —— 包含一个 `standAloneInstance()` 方法，使插件可以在没有 PF4J 框架的情况下执
 
 ===== 构建并运行示例
 
@@ -2867,7 +2920,7 @@ mvn clean package
    - 启动服务器；插件会被自动加载。
    - 检查服务器日志中的插件加载消息。
 
-3. *以独立模式运行*（用于测试）：
+3. *以调试模式运行*：
 +
 [source,bash]
 ----
@@ -2885,7 +2938,7 @@ mvn compile exec:java -Dexec.mainClass="org.slackerdb.pluginExample.SimplePlugin
 2. *更新 plugin.properties* —— 相应修改 `plugin.id`、`plugin.class` 和 `plugin.version`。
 3. *实现业务逻辑* —— 取消 `onStart()` 中获取资源代码的注释，并添加你的自定义功能。
 4. *添加依赖* —— 在 `pom.xml` 中补充插件所需的任何额外库。
-5. *充分测试* —— 在部署到生产服务器之前，使用独立模式进行快速测试。
+5. *充分测试* —— 在部署到生产服务器之前，使用调试模式进行测试。
 
 ===== 插件描述文件
 
@@ -2904,19 +2957,17 @@ plugin.requires=*
 * `plugin.version` 遵循语义化版本规范。
 * `plugin.requires` 指定插件依赖（`*` 表示没有特定依赖）。
 
-===== 插件独立模式
+===== 插件调试
 
-除了标准的基于 PF4J 的插件加载机制之外，SlackerDB 还提供*独立模式*，允许插件在不需要完整 PF4J 框架的情况下直接执行。这对于测试、调试或将插件逻辑嵌入自定义应用非常有用。
+除了标准的基于 PF4J 的插件加载机制之外，SlackerDB 还提供*调试模式*，允许插件在不需要完整 PF4J 框架的情况下直接执行。这对于测试、调试或将插件逻辑嵌入自定义应用非常有用。
 
-独立模式的工作方式：
+调试模式的工作方式：
 1. 通过 `standAloneInstance()` 方法创建插件实例（该方法在继承 `DBPlugin` 的插件中可用）
 2. 使用所需资源（数据库连接、日志记录器、Javalin 应用）手动构建 `DBPluginContext`
 3. 通过 `setDBPluginContext()` 将上下文注入插件
 4. 直接调用插件的生命周期方法（`start()`、`stop()`）
 
-===== 使用独立模式
-
-`plugin-example` 模块包含一个 `SimplePluginRunner` 类，演示如何以独立模式运行插件。以下是一个简化版本：
+`plugin-example` 模块包含一个 `SimplePluginRunner` 类，演示如何以调试模式运行插件。以下是一个简化版本：
 
 [source,java]
 ----
@@ -2947,7 +2998,7 @@ public class SimplePluginRunner {
         ctx.setLogger(pluginLogger);
         ctx.setJavalin(javalin);
 
-        // 5. 通过独立模式创建插件实例
+        // 5. 通过调试模式创建插件实例
         PluginExample plugin = PluginExample.standAloneInstance();
 
         // 6. 注入上下文
@@ -2965,26 +3016,6 @@ public class SimplePluginRunner {
     }
 }
 ----
-
-===== 要点
-
-* *资源管理* —— 在独立模式下，由你负责创建和管理所有资源（数据库连接、Javalin 实例、日志记录器）。
-* *生命周期控制* —— 你通过直接调用 `start()` 和 `stop()` 来控制插件何时启动和停止。
-* *无 PF4J 开销* —— 独立模式绕过 PF4J 插件管理器，因而轻量，适合集成到现有应用中。
-* *测试与调试* —— 该模式非常适合对插件逻辑进行单元测试，或在未部署到完整 SlackerDB 服务器的情况下调试插件行为。
-
-===== 何时使用独立模式
-
-* *开发与测试* —— 在开发过程中快速测试插件逻辑。
-* *嵌入式场景* —— 将插件功能嵌入到不需要完整 PF4J 框架的自定义应用中。
-* *原型验证* —— 在构建完整 JAR 包之前试验插件想法。
-* *CI/CD 流水线* —— 在自动化构建环境中运行插件测试。
-
-===== 限制
-
-* *不支持热重载* —— 插件无法动态重新加载；必须重启应用。
-* *手动资源管理* —— 你必须自行处理资源的创建、注入和清理。
-* *无插件管理器特性* —— 依赖解析、版本管理和插件发现等特性不可用。
 
 ==== 作业调度器插件（plugin-scheduler）
 
@@ -3184,9 +3215,11 @@ DB_PASSWORD=******
 
 SlackerDB 提供一组用于在运行时管理插件的 HTTP 端点。这些端点允许你在不重启服务器的情况下加载、卸载、启动、停止和列出插件。所有端点都返回标准格式的 JSON 响应：`{"retCode": 0/-1, "retMsg": "message"}`。
 
+注意：这些端点的业务失败通常仍然返回 HTTP 200，只是 `retCode=-1`；调用方必须检查 `retCode`，不能只看 HTTP 状态码。
+
 ===== /plugin/load (POST)
 
-从服务器插件目录中的 JAR 文件加载插件。
+从插件目录或指定路径加载 JAR。加载后插件处于 `RESOLVED` 状态，**不会自动启动**；需要再调用 `/plugin/start`。
 
 .请求体（JSON）：
 [source,json]
@@ -3196,7 +3229,8 @@ SlackerDB 提供一组用于在运行时管理插件的 HTTP 端点。这些端�
 }
 ----
 
-* `filename` —— 插件 JAR 文件名（例如 "myplugin.jar"）或 JAR 文件的完整路径。如果提供的是简单文件名，将从服务器的插件目录（通过 `plugins_dir` 参数配置）加载。如果提供的是完整路径，则直接从该位置加载。
+* `filename` —— 插件 JAR 文件名（例如 "myplugin.jar"）或 JAR 文件的完整路径。如果提供的是简单文件名，将从服务器的插件目录（通过 `plugins_dir` 参数配置）加载；如果 `plugins_dir` 为空，简单文件名会报错。完整路径直接从该位置加载，不要求 `plugins_dir`。
+* 运行期加载的插件不写入配置，也不会自动复制到 `plugins_dir`；重启服务器后是否还能加载，取决于 JAR 是否仍在 `plugins_dir` 中。
 
 .响应示例（成功）：
 [source,json]
@@ -3219,7 +3253,10 @@ SlackerDB 提供一组用于在运行时管理插件的 HTTP 端点。这些端�
 
 ===== /plugin/unload (POST)
 
-卸载之前加载的插件。如果插件正在运行，会先被停止。
+停止并卸载之前加载的插件。如果插件正在运行，会先被停止。
+
+* 卸载会释放 PF4J 的类加载器，但**不会删除 JAR**，也**不会调用 `delete()`/`onDelete()`**。
+* 卸载**不会撤销**插件已经注册到 Javalin 的路由。卸载后访问旧路径通常返回 `500 Internal Server Error`，也可能继续返回旧插件结果；更新路由型插件或需要彻底清理时建议重启服务器。
 
 .请求体（JSON）：
 [source,json]
@@ -3293,21 +3330,28 @@ SlackerDB 提供一组用于在运行时管理插件的 HTTP 端点。这些端�
   "plugins": [
     {
       "pluginId": "myplugin",
-      "pluginState": "STARTED",
       "version": "1.0.0",
-      "description": "My example plugin"
+      "state": "STARTED",
+      "file": "/path/to/plugins/myplugin.jar",
+      "description": "My example plugin",
+      "mountTime": 1761520800000,
+      "mountTimeFormatted": "2026-10-27 10:00:00"
     },
     {
       "pluginId": "anotherplugin",
-      "pluginState": "STOPPED",
       "version": "2.0.0",
-      "description": "Another plugin"
+      "state": "STOPPED",
+      "file": "/path/to/plugins/anotherplugin.jar",
+      "description": "Another plugin",
+      "mountTime": 0,
+      "mountTimeFormatted": ""
     }
   ]
 }
 ----
 
-`pluginState` 字段可以是以下之一：`CREATED`、`DISABLED`、`LOADED`、`STARTED`、`STOPPED`、`UNLOADED`。
+`state` 字段使用 PF4J 的状态值：`CREATED`、`DISABLED`、`RESOLVED`、`STARTED`、`STOPPED`、`FAILED`、`UNLOADED`。
+`/plugin/list` 只列出当前已加载的插件，因此通常不会看到 `UNLOADED`；`pluginState` 不是实际字段名。
 
 ==== 注意事项
 

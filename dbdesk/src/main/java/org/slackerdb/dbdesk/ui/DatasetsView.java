@@ -80,8 +80,8 @@ public class DatasetsView extends HorizontalLayout {
         left.setPadding(false);
         H2 title = new H2("数据集");
         title.getStyle().set("margin", "0");
-        if (!ConnectionManager.current().hasManagement()) {
-            Span guard = new Span("当前连接不可用，请先连接带管理口的服务端。");
+        if (!ConnectionManager.current().hasInstanceManagement()) {
+            Span guard = new Span("当前连接不可用，请先连接带实例管理口的服务端。");
             guard.setId("dataset-guard");
             add(title, guard);
             return;

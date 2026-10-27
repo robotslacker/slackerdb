@@ -6,32 +6,40 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
+import io.javalin.http.HandlerType;
 import org.slackerdb.dbproxy.BuildInfo;
 import org.slackerdb.dbproxy.configuration.ServerConfiguration;
+import org.slackerdb.dbproxy.instance.BackendView;
+import org.slackerdb.dbproxy.instance.InstanceController;
+import org.slackerdb.dbproxy.instance.InstanceException;
+import org.slackerdb.dbproxy.instance.InstanceSpec;
+import org.slackerdb.dbproxy.instance.ObservedInstance;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.net.http.HttpClient.Version;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
-import java.util.Properties;
-import java.util.Set;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Stream;
+import java.util.function.Supplier;
 
+/**
+ * 代理的管理口（{@code port_x}）。
+ *
+ * <p>路由分三层，注册顺序即优先级：</p>
+ * <ol>
+ *   <li>代理自身：{@code /status}、{@code /capabilities}；</li>
+ *   <li>实例管理：{@code /admin/databases...}（list/create/start/shutdown/restart/destroy/logs）；</li>
+ *   <li>透传：{@code /<alias>/**} → 该实例的管理口（{@link ManagementForwarder}）。</li>
+ * </ol>
+ */
 public class ProxyInstanceX {
     private final Logger logger;
     private final ProxyInstance proxyInstance;
     private Javalin managementApp = null;
-    private static final HttpClient CLIENT = HttpClient.newBuilder()
-            .version(Version.HTTP_2)
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
 
     /** 进程启动时间，供 {@code /status} 计算运行时长。 */
     private final long startedAt = System.currentTimeMillis();
@@ -39,92 +47,18 @@ public class ProxyInstanceX {
     private int managementPort = -1;
     private int pgPort = -1;
 
-    public ProxyInstanceX(
-            Logger logger,
-            ProxyInstance proxyInstance
-    )
-    {
+    public ProxyInstanceX(Logger logger, ProxyInstance proxyInstance) {
         this.logger = logger;
         this.proxyInstance = proxyInstance;
     }
 
+    /**
+     * 前缀转发映射：{@code "/alias" → "http://host:port"}。
+     *
+     * <p>托管实例的映射由扫描结果实时推导，不写这里；这张表只保留"外部登记"的旧通道
+     * （测试与将来的手工登记），保持既有行为不变。</p>
+     */
     public ConcurrentHashMap<String, String> forwarderPathMappings = new ConcurrentHashMap<>();
-
-    private static final Set<String> RESTRICTED_HEADERS = Set.of(
-            "connection", "content-length", "expect", "host", "upgrade"
-    );
-
-    private static String[] createHeadersString(Context ctx) {
-        return ctx.headerMap().entrySet().stream()
-                .filter(e -> !RESTRICTED_HEADERS.contains(e.getKey().toLowerCase()))
-                .flatMap(e -> Stream.of(e.getKey(), e.getValue()))
-                .toArray(String[]::new);
-    }
-
-    static URI resolveRedirectUrl(URI originalUri, String location) {
-        URI locationUri = URI.create(location);
-        if (locationUri.isAbsolute()) {
-            return locationUri;
-        }
-        // 保留原始查询参数
-        return originalUri.resolve(location).normalize();
-    }
-
-    public static void forwardRequest(Context ctx, String targetBaseUrl, String prefixToRemove) {
-        try {
-            // 构建目标URL，去掉匹配的前缀
-            String path = ctx.path();
-            if (prefixToRemove != null && path.startsWith(prefixToRemove)) {
-                path = path.substring(prefixToRemove.length());
-                // 确保路径以/开头
-                if (!path.startsWith("/")) {
-                    path = "/" + path;
-                }
-            }
-            String targetUrl = targetBaseUrl + path;
-            URI originalUri = URI.create(targetUrl);
-
-            HttpRequest.BodyPublisher bodyPublisher = ctx.body().isEmpty() ?
-                    HttpRequest.BodyPublishers.noBody() :
-                    HttpRequest.BodyPublishers.ofByteArray(ctx.bodyAsBytes());
-
-            // 构建转发请求
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(targetUrl))
-                    .method(ctx.method().toString(), bodyPublisher)
-                    .headers(createHeadersString(ctx))
-                    .timeout(Duration.ofSeconds(15))
-                    .build();
-
-            // 发送请求并获取响应
-            HttpResponse<byte[]> response = CLIENT.send(
-                    request,
-                    HttpResponse.BodyHandlers.ofByteArray()
-            );
-            if (response.statusCode() == 302) {
-                String location = response.headers()
-                        .firstValue("Location")
-                        .orElseThrow();
-                URI newUri = resolveRedirectUrl(originalUri, location);
-                HttpRequest newRequest = HttpRequest.newBuilder()
-                        .uri(newUri)
-                        .method(ctx.method().toString(), bodyPublisher)
-                        .headers(createHeadersString(ctx))
-                        .timeout(Duration.ofSeconds(15))
-                        .build();
-                response = CLIENT.send(newRequest, HttpResponse.BodyHandlers.ofByteArray());
-            }
-
-            // 回传响应
-            ctx.status(response.statusCode());
-
-            response.headers().map().forEach((k, v) ->
-                    ctx.header(k, String.join(",", v)));
-            ctx.result(response.body());
-        } catch (Exception e) {
-            ctx.status(500).result("Forwarding error: " + e.getMessage());
-        }
-    }
 
     private String getClientIp(Context ctx) {
         String xff = ctx.header("X-Forwarded-For");
@@ -133,13 +67,40 @@ public class ProxyInstanceX {
                 : ctx.ip();
     }
 
-    /**
-     * 代理自身的状态。
-     *
-     * <p>过去代理只有一个 {@code /*} 前缀转发器，平台看不到"代理活着吗、它在转发给谁"。
-     * 这里如实报告已有信息；**后端健康状态目前没有采集**（{@code state} 恒为 {@code UNKNOWN}），
-     * 需要时再加探测（已在契约里标为后续项）。</p>
-     */
+    // ------------------------------------------------------------------ 状态 / 能力
+
+    private List<BackendView> safeBackends(boolean fresh) {
+        try {
+            return proxyInstance.listBackends(fresh);
+        } catch (RuntimeException runtimeException) {
+            logger.warn("[PROXY][INSTANCE   ] Failed to list backends: {}",
+                    runtimeException.getMessage());
+            return List.of();
+        }
+    }
+
+    private JSONObject instanceJson(BackendView backend) {
+        JSONObject json = new JSONObject();
+        json.put("alias", backend.alias());
+        json.put("source", backend.source().wireName());
+        json.put("manageable", backend.manageable());
+        json.put("name", backend.dataName());
+        json.put("state", backend.state().name());
+        json.put("pid", backend.pid());
+        json.put("pgPort", backend.pgPort());
+        json.put("mgmtPort", backend.mgmtPort());
+        json.put("health", backend.healthText());
+        json.put("uptimeSeconds", backend.uptimeSeconds());
+        json.put("error", backend.error());
+        json.put("dir", backend.dir());
+        json.put("target", backend.target());
+        return json;
+    }
+
+    private JSONObject instanceJson(ObservedInstance instance) {
+        return instanceJson(BackendView.management(instance));
+    }
+
     private JSONObject buildStatusJson() {
         JSONObject status = new JSONObject();
         status.put("role", "proxy");
@@ -148,9 +109,10 @@ public class ProxyInstanceX {
         status.put("uptimeSeconds", (System.currentTimeMillis() - startedAt) / 1000L);
         status.put("managementPort", managementPort);
         status.put("pgPort", pgPort);
+        status.put("instanceManagementEnabled", proxyInstance.isInstanceManagementEnabled());
 
         JSONArray backends = new JSONArray();
-        for (java.util.Map.Entry<String, String> entry : forwarderPathMappings.entrySet()) {
+        for (Map.Entry<String, String> entry : forwarderPathMappings.entrySet()) {
             JSONObject backend = new JSONObject();
             backend.put("alias", entry.getKey());
             backend.put("target", entry.getValue());
@@ -159,12 +121,15 @@ public class ProxyInstanceX {
         }
         status.put("backends", backends);
         status.put("backendCount", backends.size());
+
+        JSONArray databases = new JSONArray();
+        for (BackendView backend : safeBackends(false)) {
+            databases.add(instanceJson(backend));
+        }
+        status.put("databases", databases);
         return status;
     }
 
-    /**
-     * 代理的能力声明（与 {@code dbserver} 用同一信封，客户端只需实现一次解析）。
-     */
     private JSONObject buildCapabilitiesJson() {
         JSONObject capabilities = new JSONObject();
         capabilities.put("apiVersion", org.slackerdb.common.api.ApiVersion.MANAGEMENT);
@@ -180,11 +145,20 @@ public class ProxyInstanceX {
         ports.put("managementEnabled", true);
         capabilities.put("ports", ports);
 
-        // 前缀转发是代理的独有能力：客户端要"通过代理管多后端"时必须知道别名规则
         JSONObject forwarding = new JSONObject();
         forwarding.put("enabled", true);
         forwarding.put("prefixMode", "alias");
         capabilities.put("managementForwarding", forwarding);
+
+        JSONObject provisioning = new JSONObject();
+        provisioning.put("enabled", proxyInstance.isInstanceManagementEnabled());
+        provisioning.put("mode", "process");
+        provisioning.put("adminBase", "/admin");
+        provisioning.put("features", List.of("list", "detail", "create", "start", "shutdown",
+                "restart", "destroy", "logs"));
+        // 客户端据此知道状态里会出现哪些来源；external 不可治理
+        provisioning.put("backendSources", List.of("management", "external"));
+        capabilities.put("provisioning", provisioning);
 
         JSONObject contracts = new JSONObject();
         contracts.put("managementApi", org.slackerdb.common.api.ApiVersion.MANAGEMENT);
@@ -192,14 +166,197 @@ public class ProxyInstanceX {
         return capabilities;
     }
 
-    /** 代理版本号（构建期生成的 {@code META-INF/build-info.properties}）；读不到时是 {@code unknown}。 */
     private String readVersion() {
         return BuildInfo.version();
     }
 
-    public void start(ServerConfiguration serverConfiguration)
-    {
-        // 关闭Javalin, 如果不是在trace下
+    // ------------------------------------------------------------------ 管理 API
+
+    private InstanceController controller() {
+        InstanceController controller = proxyInstance.getInstanceController();
+        if (controller == null) {
+            throw new InstanceException(InstanceException.UNAVAILABLE,
+                    "Instance management is not enabled. Set data_dir in the proxy configuration.");
+        }
+        return controller;
+    }
+
+    private void admin(Context ctx, Supplier<Object> action) {
+        try {
+            ctx.json(action.get());
+        } catch (InstanceException instanceException) {
+            JSONObject body = new JSONObject();
+            body.put("retCode", instanceException.status());
+            body.put("retMsg", instanceException.getMessage());
+            ctx.status(instanceException.status()).json(body);
+        } catch (RuntimeException runtimeException) {
+            logger.error("[PROXY][INSTANCE   ] Admin request failed: {} {}",
+                    ctx.method(), ctx.path(), runtimeException);
+            JSONObject body = new JSONObject();
+            body.put("retCode", 500);
+            body.put("retMsg", "Internal error: " + runtimeException.getMessage());
+            ctx.status(500).json(body);
+        }
+    }
+
+    private void registerAdminRoutes() {
+        var routes = this.managementApp.unsafe.routes;
+
+        routes.get("/admin/databases", ctx -> {
+            try {
+                boolean probe = !"false".equalsIgnoreCase(ctx.queryParam("probe"));
+
+                JSONObject body = new JSONObject();
+                body.put("instanceManagementEnabled", proxyInstance.isInstanceManagementEnabled());
+                JSONObject storage = new JSONObject();
+                storage.put("dataDir", proxyInstance.getInstanceDataDir() == null
+                        ? null : proxyInstance.getInstanceDataDir().toString());
+                body.put("storage", storage);
+                JSONArray databases = new JSONArray();
+                for (BackendView backend : safeBackends(probe)) {
+                    databases.add(instanceJson(backend));
+                }
+                body.put("databases", databases);
+                ctx.json(body);
+            } catch (RuntimeException runtimeException) {
+                logger.error("[PROXY][INSTANCE   ] Failed to list instances.", runtimeException);
+                JSONObject body = new JSONObject();
+                body.put("retCode", 500);
+                body.put("retMsg", "Failed to scan instances: " + runtimeException.getMessage());
+                ctx.status(500).json(body);
+            }
+        });
+
+        // 详情：内部实例（带解析后的 conf）与外部后端（只有地址）都能查到
+        routes.get("/admin/databases/{alias}", ctx -> admin(ctx, () -> {
+            String alias = ctx.pathParam("alias");
+            ObservedInstance managed = proxyInstance.findManaged(alias);
+            if (managed != null) {
+                JSONObject json = instanceJson(managed);
+                json.put("conf", managed.conf() == null ? null : managed.conf().asLowercaseMap());
+                return json;
+            }
+            PostgresProxyTarget external = proxyInstance.findExternal(alias);
+            if (external != null) {
+                return instanceJson(BackendView.external(alias, external.host, external.port,
+                        external.portX, external.database));
+            }
+            throw new InstanceException(InstanceException.NOT_FOUND,
+                    "Database [" + alias + "] does not exist.");
+        }));
+
+        routes.get("/admin/databases/{alias}/logs", ctx -> {
+            try {
+                String alias = ctx.pathParam("alias");
+                if (proxyInstance.isExternal(alias)) {
+                    throw new InstanceException(InstanceException.CONFLICT,
+                            externalOnlyMessage(alias, "logs"));
+                }
+                int lines = 200;
+                String rawLines = ctx.queryParam("lines");
+                if (rawLines != null && !rawLines.isBlank()) {
+                    try {
+                        lines = Integer.parseInt(rawLines.trim());
+                    } catch (NumberFormatException nfe) {
+                        throw new InstanceException(InstanceException.BAD_REQUEST,
+                                "lines must be an integer.");
+                    }
+                }
+                String text = controller().logs(alias, lines);
+                ctx.contentType("text/plain; charset=utf-8").result(text);
+            } catch (InstanceException instanceException) {
+                JSONObject body = new JSONObject();
+                body.put("retCode", instanceException.status());
+                body.put("retMsg", instanceException.getMessage());
+                ctx.status(instanceException.status()).json(body);
+            }
+        });
+
+        routes.post("/admin/databases", ctx -> admin(ctx, () -> {
+            JSONObject request;
+            try {
+                request = JSONObject.parseObject(ctx.body());
+            } catch (RuntimeException parseError) {
+                throw new InstanceException(InstanceException.BAD_REQUEST,
+                        "Invalid JSON body: " + parseError.getMessage());
+            }
+            if (request == null || request.getString("alias") == null) {
+                throw new InstanceException(InstanceException.BAD_REQUEST, "alias is required.");
+            }
+
+            Map<String, String> overrides = new LinkedHashMap<>();
+            JSONObject conf = request.getJSONObject("conf");
+            if (conf != null) {
+                conf.forEach((key, value) -> overrides.put(key, value == null ? "" : String.valueOf(value)));
+            }
+            boolean start = !request.containsKey("start") || Boolean.TRUE.equals(request.getBoolean("start"));
+
+            ObservedInstance created = controller().create(new InstanceSpec(
+                    request.getString("alias"),
+                    request.getString("name"),
+                    start,
+                    overrides));
+
+            // 内部实例优先：同名外部注册必须立刻让位
+            proxyInstance.pruneShadowedExternal(created.alias());
+
+            JSONObject json = instanceJson(created);
+            json.put("conf", created.conf() == null ? null : created.conf().asLowercaseMap());
+            ctx.status(201);
+            return json;
+        }));
+
+        routes.post("/admin/databases/{alias}/start",
+                ctx -> handleLifecycle(ctx, "start"));
+        routes.post("/admin/databases/{alias}/shutdown",
+                ctx -> handleLifecycle(ctx, "shutdown"));
+        routes.post("/admin/databases/{alias}/restart",
+                ctx -> handleLifecycle(ctx, "restart"));
+
+        routes.delete("/admin/databases/{alias}", ctx -> admin(ctx, () -> {
+            String alias = ctx.pathParam("alias");
+            if (proxyInstance.isExternal(alias)) {
+                throw new InstanceException(InstanceException.CONFLICT,
+                        externalOnlyMessage(alias, "destroy"));
+            }
+            controller().destroy(alias);
+            JSONObject body = new JSONObject();
+            body.put("alias", alias);
+            body.put("destroyed", true);
+            return body;
+        }));
+    }
+
+    /** 外部后端只转发、不可治理；所有生命周期入口都用这句话拒绝。 */
+    private static String externalOnlyMessage(String alias, String action) {
+        return "Backend [" + alias + "] is external (registered via multicast) and has no local instance "
+                + "directory. Only data forwarding is available; [" + action + "] is not supported.";
+    }
+
+    private void handleLifecycle(Context ctx, String action) {
+        admin(ctx, () -> {
+            String alias = ctx.pathParam("alias");
+            if (proxyInstance.isExternal(alias)) {
+                throw new InstanceException(InstanceException.CONFLICT,
+                        externalOnlyMessage(alias, action));
+            }
+            InstanceController controller = controller();
+            ObservedInstance observed = switch (action) {
+                case "start" -> controller.start(alias);
+                case "shutdown" -> controller.shutdown(alias);
+                case "restart" -> controller.restart(alias);
+                default -> throw new InstanceException(InstanceException.BAD_REQUEST,
+                        "Unknown lifecycle action [" + action + "].");
+            };
+            JSONObject json = instanceJson(observed);
+            json.put("conf", observed.conf() == null ? null : observed.conf().asLowercaseMap());
+            return json;
+        });
+    }
+
+    // ------------------------------------------------------------------ 启动
+
+    public void start(ServerConfiguration serverConfiguration) {
         Logger javalinLogger = (Logger) LoggerFactory.getLogger("io.javalin.Javalin");
         Logger jettyLogger = (Logger) LoggerFactory.getLogger("org.eclipse.jetty");
 
@@ -210,122 +367,37 @@ public class ProxyInstanceX {
             jettyLogger.setLevel(Level.OFF);
         }
         this.managementApp = Javalin
-                .create(config->
-                        {
-                            // 添加静态文件
-                            config.staticFiles.add(staticFiles -> {
-                                staticFiles.hostedPath = "/web";
-                                staticFiles.directory = "/web";
-                                staticFiles.location = io.javalin.http.staticfiles.Location.CLASSPATH;
-                            });
-                            // 支持跨域
-                            config.bundledPlugins.enableCors(
-                                    cors -> cors.addRule(corsConfig -> {
-                                        corsConfig.anyHost();
-                                    }));
-                        }
-                )
-                .start(
-                        serverConfiguration.getBindHost(),
-                        serverConfiguration.getPortX()
-                );
+                .create(config -> {
+                    config.staticFiles.add(staticFiles -> {
+                        staticFiles.hostedPath = "/web";
+                        staticFiles.directory = "/web";
+                        staticFiles.location = io.javalin.http.staticfiles.Location.CLASSPATH;
+                    });
+                    config.bundledPlugins.enableCors(cors -> cors.addRule(corsConfig -> corsConfig.anyHost()));
+                })
+                .start(serverConfiguration.getBindHost(), serverConfiguration.getPortX());
 
-        // 需要在记录器之前添加的过滤器
-        this.managementApp.unsafe.routes.before(ctx -> {
-            // 设置请求开始时间作为属性
-            ctx.attribute("startTime", System.currentTimeMillis());
-        });
+        this.managementApp.unsafe.routes.before(ctx ->
+                ctx.attribute("startTime", System.currentTimeMillis()));
 
-        // 平台契约：代理自身的状态与能力。
-        // 必须在下面的 /* 通配转发之前注册，否则会被前缀转发吞掉（见 ProxyApiTest 的断言）。
+        // 自身状态与能力：必须在通配转发之前注册，否则会被 /{alias}/** 吞掉
         this.managementPort = serverConfiguration.getPortX();
         this.pgPort = serverConfiguration.getPort();
         this.managementApp.unsafe.routes.get("/status", ctx -> ctx.json(buildStatusJson()));
         this.managementApp.unsafe.routes.get("/capabilities", ctx -> ctx.json(buildCapabilitiesJson()));
 
-        // 处理转发请求
-        this.managementApp.unsafe.routes.get(
-                "/*",
-                ctx ->
-                {
-                    int secondSlash = ctx.path().indexOf('/', 1);
-                    String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
-                    for (String alias : forwarderPathMappings.keySet()) {
-                        if (ctxPathPrefix.equalsIgnoreCase(alias)) {
-                            forwardRequest(ctx, forwarderPathMappings.get(alias), alias);
-                            return;
-                        }
-                    }
-                    // 找不到按照404处理
-                    ctx.html(Files.readString(Path.of(page404Resource.getURI())));
-                }
-        );
-        this.managementApp.unsafe.routes.post(
-                "/*",
-                ctx ->
-                {
-                    int secondSlash = ctx.path().indexOf('/', 1);
-                    String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
-                    for (String alias : forwarderPathMappings.keySet()) {
-                        if (ctxPathPrefix.equalsIgnoreCase(alias)) {
-                            forwardRequest(ctx, forwarderPathMappings.get(alias), alias);
-                            return;
-                        }
-                    }
-                    // 找不到按照404处理
-                    ctx.html(Files.readString(Path.of(page404Resource.getURI())));
-                }
-        );
-        this.managementApp.unsafe.routes.put(
-                "/*",
-                ctx ->
-                {
-                    int secondSlash = ctx.path().indexOf('/', 1);
-                    String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
-                    for (String alias : forwarderPathMappings.keySet()) {
-                        if (ctxPathPrefix.equalsIgnoreCase(alias)) {
-                            forwardRequest(ctx, forwarderPathMappings.get(alias), alias);
-                            return;
-                        }
-                    }
-                    // 找不到按照404处理
-                    ctx.html(Files.readString(Path.of(page404Resource.getURI())));
-                }
-        );
-        this.managementApp.unsafe.routes.delete(
-                "/*",
-                ctx ->
-                {
-                    int secondSlash = ctx.path().indexOf('/', 1);
-                    String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
-                    for (String alias : forwarderPathMappings.keySet()) {
-                        if (ctxPathPrefix.equalsIgnoreCase(alias)) {
-                            forwardRequest(ctx, forwarderPathMappings.get(alias), alias);
-                            return;
-                        }
-                    }
-                    // 找不到按照404处理
-                    ctx.html(Files.readString(Path.of(page404Resource.getURI())));
-                }
-        );
-        this.managementApp.unsafe.routes.patch(
-                "/*",
-                ctx ->
-                {
-                    int secondSlash = ctx.path().indexOf('/', 1);
-                    String ctxPathPrefix = secondSlash == -1 ? ctx.path() : ctx.path().substring(0, secondSlash);
-                    for (String alias : forwarderPathMappings.keySet()) {
-                        if (ctxPathPrefix.equalsIgnoreCase(alias)) {
-                            forwardRequest(ctx, forwarderPathMappings.get(alias), alias);
-                            return;
-                        }
-                    }
-                    // 找不到按照404处理
-                    ctx.html(Files.readString(Path.of(page404Resource.getURI())));
-                }
-        );
+        registerAdminRoutes();
 
-        // 在请求结束后记录响应信息
+        // WebSocket 升级请求走不了 HTTP 通配路由，单独挂一条双向管道（当前只有 /aichat）
+        WebSocketForwarder.register(proxyInstance, this.managementApp);
+
+        // 透传：所有方法走同一个实现，避免 5 段复制粘贴带来的行为漂移
+        for (HandlerType type : List.of(HandlerType.GET, HandlerType.POST, HandlerType.PUT,
+                HandlerType.PATCH, HandlerType.DELETE, HandlerType.HEAD, HandlerType.OPTIONS)) {
+            this.managementApp.unsafe.routes.addHttpHandler(type, "/*",
+                    ctx -> ManagementForwarder.handle(proxyInstance, ctx));
+        }
+
         this.managementApp.unsafe.routes.after(ctx -> {
             Long startTime = ctx.attribute("startTime");
             long duration = -1;
@@ -336,21 +408,40 @@ public class ProxyInstanceX {
                     ctx.method(), ctx.path(), this.getClientIp(ctx), ctx.status(), duration);
         });
 
-        // 自定义404假面
-        this.managementApp.unsafe.routes.error(404, ctx -> ctx.html(Files.readString(Path.of(page404Resource.getURI()))));
+        // 404 兜底页面。注意：转发层会主动写 JSON 404，这里不能覆盖已有的响应体
+        // （Javalin 的 error handler 对 handler 主动设置的 404 也会触发）。
+        this.managementApp.unsafe.routes.error(404, ctx -> {
+            String existing = ctx.result();
+            if (existing != null && !existing.isEmpty()) {
+                return;
+            }
+            ctx.html(readResource(page404Resource));
+        });
 
-        // 异常处理
         this.managementApp.unsafe.routes.exception(Exception.class, (e, ctx) -> {
-            logger.error("Error occurred while processing request: {} {} - {}", ctx.method(), ctx.path(), e.getMessage());
+            logger.error("Error occurred while processing request: {} {} - {}",
+                    ctx.method(), ctx.path(), e.getMessage());
             ctx.status(500).result("Internal Server Error");
         });
 
         logger.info("[PROXY][STARTUP    ] Management server listening on {}:{}.",
                 serverConfiguration.getBindHost(), serverConfiguration.getPortX());
+        logger.info("[PROXY][STARTUP    ] Instance management is {}.",
+                proxyInstance.isInstanceManagementEnabled() ? "enabled" : "disabled (data_dir is not set)");
     }
 
-    public void stop()
-    {
-        this.managementApp.stop();
+    private static String readResource(ClassPathResource resource) {
+        try {
+            return Files.readString(Path.of(resource.getURI()), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return "<html><body><h1>404 Not Found</h1></body></html>";
+        }
+    }
+
+    public void stop() {
+        if (this.managementApp != null) {
+            this.managementApp.stop();
+            this.managementApp = null;
+        }
     }
 }

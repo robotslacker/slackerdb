@@ -17,12 +17,12 @@ import java.util.Map;
 /**
  * DbDesk 连接历史存储。
  *
- * <p>路径保持 {@code ~/.slackerdb/profiles.json}，但内容使用 DbDesk 自己的新 schema；
- * 不读取、不转换旧的 {@code ConnectionProfile} 结构。文件损坏或旧结构时按空历史处理。</p>
+ * <p>路径保持 {@code ~/.slackerdb/profiles.json}。v1 里的 {@code managementPath} 字段
+ * 已废弃：读取时直接忽略，由连接探测按“实例 / dbproxy”自动推导管理 URL。</p>
  */
 public final class DbDeskProfileStore {
 
-    private static final int VERSION = 1;
+    private static final int VERSION = 2;
 
     private final Path file;
     private final ObjectMapper json = new ObjectMapper();
@@ -56,12 +56,14 @@ public final class DbDeskProfileStore {
             if (array.isArray()) {
                 for (JsonNode item : array) {
                     try {
+                        Integer databasePort = item.path("databasePort").isNumber()
+                                ? item.path("databasePort").asInt() : null;
                         Integer managementPort = item.path("managementPort").isNumber()
                                 ? item.path("managementPort").asInt() : null;
                         profiles.add(new DbDeskProfile(
                                 text(item, "alias"),
                                 text(item, "host"),
-                                item.path("databasePort").asInt(),
+                                databasePort,
                                 managementPort,
                                 text(item, "database")));
                     } catch (RuntimeException ignored) {
@@ -107,11 +109,15 @@ public final class DbDeskProfileStore {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("alias", profile.alias());
             item.put("host", profile.host());
-            item.put("databasePort", profile.databasePort());
+            if (profile.databasePort() != null) {
+                item.put("databasePort", profile.databasePort());
+            }
             if (profile.managementPort() != null) {
                 item.put("managementPort", profile.managementPort());
             }
-            item.put("database", profile.database());
+            if (profile.database() != null) {
+                item.put("database", profile.database());
+            }
             profiles.add(item);
         }
         root.put("profiles", profiles);

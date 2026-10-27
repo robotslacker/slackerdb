@@ -4,6 +4,8 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import org.duckdb.DuckDBConnection;
 import org.pf4j.PluginManager;
+import org.pf4j.PluginState;
+import org.pf4j.PluginWrapper;
 import org.slackerdb.common.discovery.MulticastAddress;
 import org.slackerdb.common.discovery.MulticastAdvertiser;
 import org.slackerdb.common.discovery.NetworkAddressUtil;
@@ -935,13 +937,15 @@ public class DBInstance {
         // 检查PID文件
         if (!this.serverConfiguration.getPid().isEmpty())
         {
-            File pidParentFile = new File(this.serverConfiguration.getPid()).getParentFile();
-            // 如果PID文件目录不存在，则建立这个目录
-            if (!pidParentFile.exists())
+            File pidFile = new File(this.serverConfiguration.getPid());
+            File pidParentFile = pidFile.getParentFile();
+            // 如果PID文件目录不存在，则建立这个目录。
+            // 注意：pid 也可以只是一个文件名（没有父目录），此时 getParentFile() 为 null，
+            // 文件落在进程工作目录下——托管实例用的就是这种写法。
+            if (pidParentFile != null && !pidParentFile.exists())
             {
                 var ignored = pidParentFile.mkdirs();
             }
-            File pidFile = new File(this.serverConfiguration.getPid());
             // 尝试锁定文件
             try {
                 pidRandomAccessFile = new RandomAccessFile(pidFile, "rw");
@@ -1246,6 +1250,40 @@ public class DBInstance {
      *
      * @throws ServerException 如果停止过程中发生错误
      */
+    /**
+     * 停止并卸载所有插件。
+     *
+     * <p>插件失败不能阻塞服务器关闭；这里只记日志并继续。卸载不删除 JAR，也不调用
+     * {@code delete()}（PF4J 的 {@code unloadPlugin} 语义）。</p>
+     */
+    private void stopPlugins() {
+        if (this.dbPluginManager == null) {
+            return;
+        }
+        List<PluginWrapper> plugins = new ArrayList<>(this.dbPluginManager.getPlugins());
+        for (PluginWrapper plugin : plugins) {
+            try {
+                if (plugin.getPluginState() == PluginState.STARTED) {
+                    this.dbPluginManager.stopPlugin(plugin.getPluginId());
+                }
+            } catch (Exception e) {
+                if (logger != null) {
+                    logger.warn("[SERVER][PLUGIN     ] stop plugin [{}] failed: {}",
+                            plugin.getPluginId(), e.getMessage(), e);
+                }
+            }
+        }
+        try {
+            this.dbPluginManager.unloadPlugins();
+        } catch (Exception e) {
+            if (logger != null) {
+                logger.warn("[SERVER][PLUGIN     ] unload plugins failed: {}", e.getMessage(), e);
+            }
+        } finally {
+            this.dbPluginManager = null;
+        }
+    }
+
     public synchronized void stop() throws ServerException
     {
         if (this.instanceState.equalsIgnoreCase("IDLE"))
@@ -1255,6 +1293,10 @@ public class DBInstance {
         }
 
         this.instanceState = "SHUTTING DOWN";
+
+        // 先停插件：插件的 onStop 可能还要用数据库连接/管理口。
+        // 卸载只释放 PF4J 的类加载器，不删除 JAR。
+        stopPlugins();
 
         // 停止管理服务
         if (this.dbInstanceX != null)

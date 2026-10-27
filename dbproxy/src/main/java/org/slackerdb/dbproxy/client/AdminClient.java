@@ -114,12 +114,9 @@ public class AdminClient {
 
             // 发送 8 字节管理握手头 + '!' 命令帧。
             //
-            // 关键：这两段**必须一次性写出**（同一个 ByteBuf / 同一次 flush）。
-            // 代理侧的解码器只在"首 8 字节恰好是管理头且后面还没有数据"时才把它当作握手头；
-            // 如果分两次 write，操作系统可能把它们合并到同一个 TCP 段，解码器面对
-            // "8 字节头 + 5 字节命令头" 就会按 StartupMessage 解析（长度域 0x01010101 > 1024），
-            // 直接关连接——表现为 REGISTER 注册**间歇性丢失**，进而代理报
-            // "Database [alias] does not exist!"。
+            // 两段必须一次性写出（同一个 ByteBuf / 同一次 flush）：代理侧的解码器按
+            // "8 字节握手头 + 紧随其后的 '!' 帧"识别管理通道；分两次 write 虽然也能工作，
+            // 但一旦中间被拆包，排查时很难看出是"两个半截报文"还是"一个错误报文"。
             byte[] msg = (command + " " + message).getBytes(StandardCharsets.UTF_8);
             ByteBuf frame = Unpooled.buffer(AdminClientRequest.AdminClientRequestHeader.length + 5 + msg.length);
             frame.writeBytes(AdminClientRequest.AdminClientRequestHeader);

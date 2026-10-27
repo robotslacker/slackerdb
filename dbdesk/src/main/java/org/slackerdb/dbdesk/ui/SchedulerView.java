@@ -90,8 +90,8 @@ public class SchedulerView extends VerticalLayout {
         setSpacing(true);
 
         H2 title = new H2("调度中心（ETL）");
-        if (!ConnectionManager.current().hasManagement()) {
-            Span guard = new Span("当前连接不可用，请先连接带管理口的服务端。");
+        if (!ConnectionManager.current().hasInstanceManagement()) {
+            Span guard = new Span("当前连接不可用，请先连接带实例管理口的服务端。");
             guard.setId("scheduler-guard");
             add(title, guard);
             return;

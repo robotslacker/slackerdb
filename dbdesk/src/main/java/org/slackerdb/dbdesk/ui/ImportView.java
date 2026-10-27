@@ -90,8 +90,8 @@ public class ImportView extends VerticalLayout {
         setHeightFull();
 
         H2 title = new H2("数据导入（CSV → 表）");
-        if (!ConnectionManager.current().hasManagement()) {
-            Span guard = new Span("当前连接不可用，请先连接带管理口的服务端。");
+        if (!ConnectionManager.current().hasInstanceManagement()) {
+            Span guard = new Span("当前连接不可用，请先连接带实例管理口的服务端。");
             guard.setId("import-guard");
             add(title, guard);
             return;

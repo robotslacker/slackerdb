@@ -2,12 +2,15 @@ package org.slackerdb.dbdesk.ui;
 
 import com.vaadin.flow.server.VaadinSession;
 import org.slackerdb.dbdesk.access.ConnectionProbe;
+import org.slackerdb.dbdesk.access.ManagementScope;
 import org.slackerdb.dbdesk.access.http.Capabilities;
 import org.slackerdb.dbdesk.access.http.ManagementClient;
+import org.slackerdb.dbdesk.access.http.ProxyAdminClient;
 import org.slackerdb.dbdesk.access.profile.DbDeskProfile;
 import org.slackerdb.dbdesk.access.profile.DbDeskProfileStore;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -17,6 +20,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <p>启动时固定为 {@link State#DISCONNECTED}；只有用户在顶栏点 Connect 并通过
  * {@link ConnectionProbe} 才会进入连接态。连接后不轮询健康、不自动降级：
  * 管理口/数据库后续失联时，页面操作按原样报错，状态仍保持，直到用户主动断开。</p>
+ *
+ * <p>管理范围是独立的维度：{@link ManagementScope#INSTANCE} 才有实例级管理页面，
+ * {@link ManagementScope#CLUSTER} 只有“实例管理”，{@link ManagementScope#NONE} 只有 SQL。</p>
  */
 public final class ConnectionManager {
 
@@ -24,17 +30,21 @@ public final class ConnectionManager {
         DISCONNECTED,
         CONNECTING,
         CONNECTED,
-        SQL_ONLY
+        SQL_ONLY,
+        CLUSTER_ONLY
     }
 
     private final DbDeskProfileStore store = DbDeskProfileStore.defaultStore();
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 
     private State state = State.DISCONNECTED;
+    private ManagementScope scope = ManagementScope.NONE;
     private DbDeskProfile profile;
     private String jdbcUrl;
     private String managementUrl = "";
+    private String clusterUrl = "";
     private Capabilities capabilities;
+    private Capabilities proxyCapabilities;
     private String warning;
 
     private ConnectionManager() {
@@ -62,17 +72,39 @@ public final class ConnectionManager {
         return state;
     }
 
+    public ManagementScope scope() {
+        return scope;
+    }
+
     public boolean isConnected() {
-        return state == State.CONNECTED || state == State.SQL_ONLY;
+        return state == State.CONNECTED || state == State.SQL_ONLY || state == State.CLUSTER_ONLY;
     }
 
     public boolean isSqlOnly() {
         return state == State.SQL_ONLY;
     }
 
-    public boolean hasManagement() {
-        return isConnected() && managementUrl != null && !managementUrl.isBlank()
+    public boolean isClusterOnly() {
+        return state == State.CLUSTER_ONLY;
+    }
+
+    /** 当前连接是否有可用的 SQL 通道。 */
+    public boolean hasDatabase() {
+        return jdbcUrl != null && !jdbcUrl.isBlank();
+    }
+
+    /** 是否有实例级管理口（dbserver，或 dbproxy 的 {@code /<database>}）。 */
+    public boolean hasInstanceManagement() {
+        return scope == ManagementScope.INSTANCE
+                && managementUrl != null && !managementUrl.isBlank()
                 && capabilities != null;
+    }
+
+    /** 是否有集群级管理口（只有 dbproxy 根）。 */
+    public boolean hasClusterManagement() {
+        return scope == ManagementScope.CLUSTER
+                && clusterUrl != null && !clusterUrl.isBlank()
+                && proxyCapabilities != null;
     }
 
     public DbDeskProfile profile() {
@@ -83,12 +115,22 @@ public final class ConnectionManager {
         return jdbcUrl;
     }
 
+    /** 实例级管理 URL；集群连接时为空。 */
     public String managementUrl() {
         return managementUrl == null ? "" : managementUrl;
     }
 
+    /** 代理集群管理 URL；只有集群连接时非空。 */
+    public String clusterUrl() {
+        return clusterUrl == null ? "" : clusterUrl;
+    }
+
     public Capabilities capabilities() {
         return capabilities;
+    }
+
+    public Capabilities proxyCapabilities() {
+        return proxyCapabilities;
     }
 
     public String warning() {
@@ -121,14 +163,23 @@ public final class ConnectionManager {
         this.profile = result.profile();
         this.jdbcUrl = result.jdbcUrl();
         this.managementUrl = result.managementUrl();
+        this.clusterUrl = result.clusterUrl();
         this.capabilities = result.capabilities();
-        this.state = result.hasManagement() ? State.CONNECTED : State.SQL_ONLY;
+        this.proxyCapabilities = result.proxyCapabilities();
+        this.scope = result.scope();
+        this.warning = result.warning();
+        this.state = switch (scope) {
+            case CLUSTER -> State.CLUSTER_ONLY;
+            case INSTANCE -> State.CONNECTED;
+            case NONE -> result.hasDatabase() ? State.SQL_ONLY : State.DISCONNECTED;
+        };
 
         if (saveHistory) {
             try {
                 store.recordSuccessful(result.profile());
             } catch (IOException e) {
-                warning = "连接成功，但历史保存失败：" + e.getMessage();
+                String historyError = "连接成功，但历史保存失败：" + e.getMessage();
+                warning = warning == null ? historyError : warning + "；" + historyError;
             }
         }
         notifyListeners();
@@ -136,20 +187,31 @@ public final class ConnectionManager {
 
     public void disconnect() {
         state = State.DISCONNECTED;
+        scope = ManagementScope.NONE;
         profile = null;
         jdbcUrl = null;
         managementUrl = "";
+        clusterUrl = "";
         capabilities = null;
+        proxyCapabilities = null;
         warning = null;
         notifyListeners();
     }
 
     /** 每次新建一个客户端；页面自己负责关闭。 */
     public ManagementClient managementClient() {
-        if (!hasManagement()) {
-            throw new IllegalStateException("当前连接没有可用的管理口");
+        if (!hasInstanceManagement()) {
+            throw new IllegalStateException("当前连接没有实例级管理口");
         }
-        return new ManagementClient(managementUrl, java.time.Duration.ofSeconds(5));
+        return new ManagementClient(managementUrl, Duration.ofSeconds(5));
+    }
+
+    /** 每次新建一个代理管理客户端；页面自己负责关闭。 */
+    public ProxyAdminClient clusterClient() {
+        if (!hasClusterManagement()) {
+            throw new IllegalStateException("当前连接没有 dbproxy 集群管理口");
+        }
+        return new ProxyAdminClient(clusterUrl, Duration.ofSeconds(30));
     }
 
     public void addListener(Runnable listener) {

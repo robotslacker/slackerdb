@@ -25,7 +25,23 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slackerdb.common.logger.AppLogger;
 import org.slackerdb.common.utils.Sleeper;
 import org.slackerdb.common.utils.Utils;
+import org.slackerdb.dbproxy.instance.BackendView;
+import org.slackerdb.dbproxy.instance.InstanceController;
+import org.slackerdb.dbproxy.instance.InstanceLauncher;
+import org.slackerdb.dbproxy.instance.InstanceProbe;
+import org.slackerdb.dbproxy.instance.InstanceRegistry;
+import org.slackerdb.dbproxy.instance.InstanceScanner;
+import org.slackerdb.dbproxy.instance.InstanceState;
+import org.slackerdb.dbproxy.instance.ObservedInstance;
 import org.slf4j.LoggerFactory;
+
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class ProxyInstance {
     // 服务器启动模式
@@ -52,6 +68,25 @@ public class ProxyInstance {
     // 管理端口服务
     public ProxyInstanceX proxyInstanceX = null;
 
+    // ------------------------------------------------------------------ 实例管理
+    //
+    // data_dir 非空时启用。没有 catalog、没有 instance.json：实例目录本身就是事实源，
+    // 这里只缓存"探测结果"，代理重启后重新扫描即可恢复，且能反映用户手工启停的结果。
+    private InstanceRegistry instanceRegistry = null;
+    private InstanceController instanceController = null;
+
+    // 会话号在实例级别唯一。旧实现把它放在 per-connection 的 handler 里，
+    // 结果每条连接都从 1000 开始（CancelRoute.clientSessionId 因此会串）。
+    private final AtomicLong sessionIds = new AtomicLong(1000);
+
+    /** 数据面选路结果。 */
+    public record RouteTarget(String host, int port, String database) {
+    }
+
+    /** 管理口选路结果：{@code baseUrl} 为空表示"实例存在但不可用"，{@code state} 为原因。 */
+    public record ManagementTarget(String baseUrl, InstanceState state, String alias) {
+    }
+
     // 实例对应的日志句柄
     public Logger logger;
 
@@ -63,6 +98,10 @@ public class ProxyInstance {
     private FileLock pidFileLockHandler;
 
     public final ConcurrentHashMap<String,PostgresProxyTarget> proxyTarget = new ConcurrentHashMap<>();
+
+    // 外部通告被内部别名挡掉时的日志节流（同一别名 60 秒最多一条）
+    private static final long SHADOW_LOG_INTERVAL_MS = 60_000L;
+    private final ConcurrentHashMap<String, Long> shadowedAnnouncementLoggedAt = new ConcurrentHashMap<>();
 
     // 组播服务发现接收器。listener_address 为空时始终为 null——不配置就是不启用。
     private MulticastListener discoveryListener = null;
@@ -142,13 +181,58 @@ public class ProxyInstance {
      */
     public void applyAnnouncement(Announcement announcement, InetAddress sourceAddress)
     {
+        String alias = announcement.getAlias();
+        if (isManagedAlias(alias)) {
+            // 别名冲突：内部（目录）优先，外部通告直接丢弃，不写进路由表/状态表
+            logShadowedAnnouncement(alias, sourceAddress);
+            return;
+        }
         String host = (sourceAddress != null && !sourceAddress.isAnyLocalAddress())
                 ? sourceAddress.getHostAddress()
                 : announcement.getHost();
-        registerTarget(announcement.getAlias(), announcement.getName(), host,
+        registerTarget(alias, announcement.getName(), host,
                 announcement.getPort(), announcement.getPortX(),
                 System.currentTimeMillis() + Announcement.LEASE_MILLIS,
                 "announced by " + sourceAddress);
+    }
+
+    /** 别名是否由本地实例目录占用（只看扫描快照，不在注册热路径上触发探测）。 */
+    public boolean isManagedAlias(String alias)
+    {
+        return instanceRegistry != null && instanceRegistry.contains(alias);
+    }
+
+    private void logShadowedAnnouncement(String alias, InetAddress sourceAddress)
+    {
+        long now = System.currentTimeMillis();
+        Long previous = shadowedAnnouncementLoggedAt.get(alias);
+        if (previous != null && now - previous < SHADOW_LOG_INTERVAL_MS) {
+            return;
+        }
+        shadowedAnnouncementLoggedAt.put(alias, now);
+        logger.info("[PROXY][DISCOVERY  ] Alias [{}] is managed locally under data_dir; "
+                + "ignoring external announcement from {}.", alias, sourceAddress);
+    }
+
+    /**
+     * 摘除外部的同名目标（内部实例出现时调用）。
+     *
+     * <p>组播每 5 秒就会重发一次，所以这里不"抢"也不会长期不一致；但状态表必须立刻
+     * 只显示内部实例，不能两个都列出来。</p>
+     */
+    public void pruneShadowedExternal(String alias)
+    {
+        if (alias == null) {
+            return;
+        }
+        PostgresProxyTarget removed = proxyTarget.remove(alias);
+        if (removed != null) {
+            if (proxyInstanceX != null) {
+                proxyInstanceX.forwarderPathMappings.remove("/" + alias);
+            }
+            logger.info("[PROXY][DISCOVERY  ] External alias [{}] ({}:{}) removed: the alias is now managed locally.",
+                    alias, removed.host, removed.port);
+        }
     }
 
     /**
@@ -161,6 +245,10 @@ public class ProxyInstance {
                                 long leaseExpireAtMs, String origin)
     {
         if (alias == null || alias.isEmpty()) {
+            return;
+        }
+        if (isManagedAlias(alias)) {
+            logShadowedAnnouncement(alias, null);
             return;
         }
 
@@ -309,6 +397,165 @@ public class ProxyInstance {
         }
     }
 
+    // ------------------------------------------------------------------ 实例管理入口
+
+    /** 是否启用了实例管理（{@code data_dir} 非空）。 */
+    public boolean isInstanceManagementEnabled()
+    {
+        return instanceRegistry != null;
+    }
+
+    /** 实例根目录；未启用时为 {@code null}。 */
+    public Path getInstanceDataDir()
+    {
+        return instanceRegistry == null ? null : instanceRegistry.root();
+    }
+
+    public InstanceRegistry getInstanceRegistry()
+    {
+        return instanceRegistry;
+    }
+
+    public InstanceController getInstanceController()
+    {
+        return instanceController;
+    }
+
+    /** 会话号（进程内唯一、单调递增）。 */
+    public long nextSessionId()
+    {
+        return sessionIds.incrementAndGet();
+    }
+
+    /**
+     * 数据面选路：托管实例优先于组播发现的别名。
+     *
+     * @return 找不到、或实例存在但未运行时返回 {@code null}
+     */
+    public RouteTarget resolveTarget(String alias)
+    {
+        if (alias == null || alias.isEmpty()) {
+            return null;
+        }
+        if (instanceRegistry != null) {
+            ObservedInstance managed = instanceRegistry.get(alias);
+            if (managed != null) {
+                if (!managed.routable()) {
+                    return null;
+                }
+                return new RouteTarget("127.0.0.1", managed.pgPort(), managed.dataName());
+            }
+        }
+        PostgresProxyTarget discovered = proxyTarget.get(alias);
+        if (discovered == null) {
+            return null;
+        }
+        return new RouteTarget(discovered.host, discovered.port, discovered.database);
+    }
+
+    /**
+     * 查托管实例的观察态；不是托管实例时返回 {@code null}。
+     *
+     * <p>数据面用它区分"别名不存在"和"实例存在但没启动"，以便回不同的错误码。</p>
+     */
+    public ObservedInstance instanceStatus(String alias)
+    {
+        return instanceRegistry == null ? null : instanceRegistry.get(alias);
+    }
+
+    /**
+     * 管理口选路。
+     *
+     * <p>返回 {@code state != null && baseUrl == null} 表示实例存在但当前不可转发
+     * （例如 STOPPED），调用方应回 503 而不是 404。</p>
+     */
+    public ManagementTarget resolveManagementTarget(String alias)
+    {
+        if (alias == null || alias.isEmpty()) {
+            return new ManagementTarget(null, null, alias);
+        }
+        if (instanceRegistry != null) {
+            ObservedInstance managed = instanceRegistry.get(alias);
+            if (managed != null) {
+                if (managed.routable() && managed.mgmtPort() > 0) {
+                    return new ManagementTarget("http://127.0.0.1:" + managed.mgmtPort(), managed.state(), alias);
+                }
+                return new ManagementTarget(null, managed.state(), alias);
+            }
+        }
+        String baseUrl = proxyInstanceX == null ? null : proxyInstanceX.forwarderPathMappings.get("/" + alias);
+        return new ManagementTarget(baseUrl, null, alias);
+    }
+
+    /** 内部实例（目录扫描结果）；不存在时返回 {@code null}。 */
+    public ObservedInstance findManaged(String alias)
+    {
+        return instanceRegistry == null ? null : instanceRegistry.get(alias);
+    }
+
+    /** 外部后端（组播注册结果）；不存在时返回 {@code null}。 */
+    public PostgresProxyTarget findExternal(String alias)
+    {
+        return alias == null ? null : proxyTarget.get(alias);
+    }
+
+    /**
+     * 是否是"只能转发、不能治理"的外部后端。
+     *
+     * <p>同名时内部优先：只要本地目录里有这个别名，就永远按内部实例对待。
+     * 这里用 {@link #findManaged}（必要时补探一次），因为生命周期入口是低频路径，
+     * 不能因为扫描快照落后 5 秒就把刚手工放进来的实例判成 external。</p>
+     */
+    public boolean isExternal(String alias)
+    {
+        if (alias == null || alias.isEmpty()) {
+            return false;
+        }
+        if (findManaged(alias) != null) {
+            return false;
+        }
+        return proxyTarget.containsKey(alias);
+    }
+
+    /**
+     * 状态列表：内部实例 + 外部注册，统一视图。
+     *
+     * @param fresh 是否强制重新探测内部实例（CLI/管理口默认 true；{@code /status} 用 false 保持轻量）
+     */
+    public List<BackendView> listBackends(boolean fresh)
+    {
+        Map<String, BackendView> merged = new LinkedHashMap<>();
+
+        if (instanceController != null) {
+            List<ObservedInstance> managed = fresh
+                    ? instanceController.listFresh()
+                    : instanceController.list();
+            for (ObservedInstance instance : managed) {
+                merged.put(instance.alias(), BackendView.management(instance));
+            }
+        } else if (instanceRegistry != null) {
+            for (ObservedInstance instance : instanceRegistry.list()) {
+                merged.put(instance.alias(), BackendView.management(instance));
+            }
+        }
+
+        List<String> shadowed = new ArrayList<>();
+        for (Map.Entry<String, PostgresProxyTarget> entry : proxyTarget.entrySet()) {
+            if (merged.containsKey(entry.getKey()) || isManagedAlias(entry.getKey())) {
+                shadowed.add(entry.getKey());
+                continue;
+            }
+            PostgresProxyTarget target = entry.getValue();
+            merged.put(entry.getKey(), BackendView.external(entry.getKey(),
+                    target.host, target.port, target.portX, target.database));
+        }
+        shadowed.forEach(this::pruneShadowedExternal);
+
+        List<BackendView> result = new ArrayList<>(merged.values());
+        result.sort(Comparator.comparing(BackendView::alias));
+        return result;
+    }
+
     // 根据参数配置文件启动代理实例
     public synchronized void start(org.slf4j.Logger appLogger) throws ServerException {
         // 设置线程名称好保持日志格式
@@ -335,14 +582,14 @@ public class ProxyInstance {
         // 检查PID文件
         if (!this.serverConfiguration.getPid().isEmpty())
         {
-            File pidParentFile = new File(this.serverConfiguration.getPid()).getParentFile();
-            // 如果PID文件目录不存在，则建立这个目录
-            if (!pidParentFile.exists())
+            File pidFile = new File(this.serverConfiguration.getPid());
+            File pidParentFile = pidFile.getParentFile();
+            // 如果PID文件目录不存在，则建立这个目录（pid 也可以只是文件名，此时没有父目录）
+            if (pidParentFile != null && !pidParentFile.exists())
             {
                 var ignored = pidParentFile.mkdirs();
             }
 
-            File pidFile = new File(this.serverConfiguration.getPid());
             // 尝试锁定文件
             try {
                 pidRandomAccessFile = new RandomAccessFile(pidFile, "rw");
@@ -362,6 +609,20 @@ public class ProxyInstance {
                         "SLACKERDB-00013",
                         Utils.getMessage("SLACKERDB-00013", this.serverConfiguration.getPid()));
             }
+        }
+
+        // 实例管理：data_dir 非空即启用。必须在数据面/管理面启动之前就绪，
+        // 否则第一波连接会落在"实例管理未初始化"上。
+        if (serverConfiguration.isInstanceManagementEnabled()) {
+            Path instanceRoot = serverConfiguration.getInstanceDataDir();
+            InstanceProbe probe = new InstanceProbe();
+            this.instanceRegistry = new InstanceRegistry(instanceRoot, new InstanceScanner(probe));
+            this.instanceController = new InstanceController(instanceRoot, this.instanceRegistry, probe,
+                    new InstanceLauncher(), this.logger);
+            this.instanceRegistry.start();
+            logger.info("[PROXY][STARTUP    ] Instance management enabled. data_dir={}", instanceRoot);
+        } else {
+            logger.info("[PROXY][STARTUP    ] Instance management disabled (data_dir is not set).");
         }
 
         // 启动PG的协议处理程序
@@ -446,6 +707,13 @@ public class ProxyInstance {
 
         // 停止组播服务发现
         stopDiscovery();
+
+        // 停止实例扫描（不级联停止任何实例：代理退出与实例生命周期无关）
+        if (this.instanceRegistry != null) {
+            this.instanceRegistry.close();
+            this.instanceRegistry = null;
+            this.instanceController = null;
+        }
 
         // 停止管理服务
         if (this.proxyInstanceX != null)

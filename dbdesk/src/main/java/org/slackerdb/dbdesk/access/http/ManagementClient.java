@@ -87,6 +87,17 @@ public final class ManagementClient implements AutoCloseable {
                     contracts.put(entry.getKey(), entry.getValue().asText()));
         }
 
+        JsonNode provisioningNode = root.path("provisioning");
+        Capabilities.Provisioning provisioning = null;
+        if (provisioningNode.isObject()) {
+            provisioning = new Capabilities.Provisioning(
+                    bool(provisioningNode, "enabled"),
+                    text(provisioningNode, "mode"),
+                    text(provisioningNode, "adminBase"),
+                    stringList(provisioningNode.path("features")),
+                    stringList(provisioningNode.path("backendSources")));
+        }
+
         return new Capabilities(
                 integer(root, "apiVersion", 0),
                 text(server, "name"),
@@ -98,7 +109,20 @@ public final class ManagementClient implements AutoCloseable {
                 text(root, "accessMode"),
                 featureSet,
                 List.copyOf(plugins),
-                Map.copyOf(contracts));
+                Map.copyOf(contracts),
+                text(root, "role"),
+                provisioning,
+                root.path("managementForwarding").isObject());
+    }
+
+    /**
+     * 该地址是不是 dbProxy（而不是 dbserver）。
+     *
+     * <p>优先看 {@code role=proxy}；老代理没有该字段时，用 {@code provisioning} /
+     * {@code managementForwarding} 是否存在兜底。</p>
+     */
+    public boolean isProxy() throws ManagementException {
+        return capabilities().isProxy();
     }
 
     /** S-3：轻量存活（状态栏 5 s 轮询用）。 */
@@ -243,18 +267,70 @@ public final class ManagementClient implements AutoCloseable {
         return sendBytes(request);
     }
 
+    // ------------------------------------------------------------- 插件管理
+
+    /**
+     * {@code POST /plugin/load}：加载插件，但不自动启动。
+     *
+     * @param filename 插件 JAR 文件名（相对 {@code plugins_dir}）或完整路径
+     */
+    public PluginActionResult loadPlugin(String filename) throws ManagementException {
+        return pluginAction("/plugin/load", Map.of("filename", filename));
+    }
+
+    /** {@code POST /plugin/unload}：停止并卸载插件；不删除 JAR。 */
+    public PluginActionResult unloadPlugin(String pluginId) throws ManagementException {
+        return pluginAction("/plugin/unload", Map.of("plugid", pluginId));
+    }
+
+    /** {@code POST /plugin/start}：启动已加载的插件。 */
+    public PluginActionResult startPlugin(String pluginId) throws ManagementException {
+        return pluginAction("/plugin/start", Map.of("plugid", pluginId));
+    }
+
+    /** {@code POST /plugin/stop}：停止运行中的插件。 */
+    public PluginActionResult stopPlugin(String pluginId) throws ManagementException {
+        return pluginAction("/plugin/stop", Map.of("plugid", pluginId));
+    }
+
+    private PluginActionResult pluginAction(String path, Map<String, ?> body) throws ManagementException {
+        JsonNode root = postJson(path, body, Duration.ofSeconds(15));
+        boolean success = integer(root, "retCode", -1) == 0;
+        String message = text(root, "retMsg");
+        if (message == null || message.isBlank()) {
+            message = success ? "OK" : "插件操作失败";
+        }
+        return new PluginActionResult(success, message, text(root, "pluginId"));
+    }
+
     // ---------------------------------------------------------------- 传输
 
-    private JsonNode getJson(String path) throws ManagementException {
-        HttpRequest request = HttpRequest.newBuilder(uri(path)).timeout(timeout).GET().build();
+    /**
+     * 包内通用 JSON GET：代理管理客户端复用这里的传输、错误信封与超时处理，
+     * 不再复制一套 HttpClient。
+     */
+    JsonNode getJson(String path) throws ManagementException {
+        return getJson(path, timeout);
+    }
+
+    JsonNode getJson(String path, Duration requestTimeout) throws ManagementException {
+        HttpRequest request = HttpRequest.newBuilder(uri(path)).timeout(requestTimeout).GET().build();
         return send(request);
     }
 
-    private JsonNode postJson(String path, Object body, Duration requestTimeout) throws ManagementException {
+    JsonNode postJson(String path, Object body, Duration requestTimeout) throws ManagementException {
         HttpRequest request = HttpRequest.newBuilder(uri(path))
                 .timeout(requestTimeout)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(writeJson(body), StandardCharsets.UTF_8))
+                .build();
+        return send(request);
+    }
+
+    JsonNode deleteJson(String path, Duration requestTimeout) throws ManagementException {
+        HttpRequest request = HttpRequest.newBuilder(uri(path))
+                .timeout(requestTimeout)
+                .DELETE()
                 .build();
         return send(request);
     }

@@ -41,8 +41,8 @@ public class BackupsView extends VerticalLayout {
         setSpacing(true);
 
         H2 title = new H2("备份");
-        if (!ConnectionManager.current().hasManagement()) {
-            Span guard = new Span("当前连接没有管理口，备份不可用。");
+        if (!ConnectionManager.current().hasInstanceManagement()) {
+            Span guard = new Span("当前连接没有实例级管理口，备份不可用。");
             guard.setId("backup-guard");
             add(title, guard);
             return;

@@ -5,32 +5,33 @@ image::robotslacker.jpg[RobotSlacker]
 
 === What is SlackerDB?
 
-SlackerDB is a Java‑based service layer that puts DuckDB on the network. It speaks the PostgreSQL wire protocol, so standard PostgreSQL JDBC clients connect without any special driver, and it lets several clients use the same DuckDB database at once — something a plain DuckDB process cannot do. On top of that it adds a bulk COPY path for loading data and a registered‑SQL layer that turns queries into cacheable HTTP endpoints.
+SlackerDB is a Java‑based service layer that puts DuckDB on the network. It speaks the PostgreSQL wire protocol, so standard PostgreSQL JDBC clients connect without any special driver; it also lets multiple clients share the same DuckDB database — **something a single‑process DuckDB cannot do**. On top of that, it provides a bulk COPY channel for importing and exporting data, and a registered‑SQL layer that turns queries into cacheable HTTP endpoints.
 
-It runs either as a standalone server (`dbserver`) or embedded directly in a Java application.
+It runs either as a standalone server (`dbserver`, `dbproxy`) or **embedded directly in a Java application**.
 
 ==== Capabilities
 
 * *PostgreSQL Wire Protocol* – Standard PostgreSQL clients connect as‑is: JDBC, ODBC, libpq, psql, Python.
-* *PostgreSQL Data Dictionary Compatibility* – Emulates the catalog data that database tools need to access, such as DBeaver and postgres_fdw.
+* *PostgreSQL Data Dictionary Compatibility* – Emulates the data dictionary that database tools need to access, such as DBeaver, postgres_fdw, and psql; under these tools SlackerDB looks just like a PostgreSQL database.
 * *Multi‑Session Access* – One DuckDB database served to many concurrent client sessions, with a connection pool, per‑session state, and SQL executed off the network I/O threads.
 * *Query Cancellation* – Client‑side cancellation and `KILL SESSION` reach the statement that is actually running.
-* *High‑Performance Bulk Transfer* – PostgreSQL `COPY … FROM STDIN` and `COPY … TO STDOUT` in CSV and BINARY form, with a streaming decode path benchmarked at roughly 0.6–2.3 million rows/second depending on shape.
+* *High‑Performance Bulk Transfer* – PostgreSQL `COPY … FROM STDIN` and `COPY … TO STDOUT` in CSV and BINARY form, including exporting a subset of columns (something PostgreSQL does not support today).
 * *Registered SQL Services* – Register parameterized SQL as named HTTP endpoints at runtime, with result caching, service versioning, and per‑service search paths.
 * *Server Management APIs* – Status and metrics, database backup, log viewing, and file upload/download on the management port.
 * *Asynchronous SQL over WebSocket* – Execute SQL asynchronously and page through results, for queries too large or too slow for a single request.
 * *Embeddable Design* – Run as a standalone process, or embed in Java code; multiple instances can run side by side on different ports.
 * *Plugin System* – Extensible PF4J‑based plugin framework for custom functionality, HTTP endpoints, and background tasks, with runtime load/start/stop/unload.
 * *Data Encryption* – Leverages DuckDB's native encryption for data‑at‑rest protection.
+* *Command‑Line Access* – A custom psql‑like client that supports batch SQL scripts and interactive SQL, plus complex concurrent job coordination and SQL result comparison.
+* *Job Orchestration* – Uses plugin capabilities to provide HOP‑based job orchestration for scheduled workflow execution.
+* *Console Access* – In progress. Will provide a complete browser‑based graphical workbench.
+* *Database Proxy* – Manages multiple database instances through a proxy and connects to different instances through a unified port.
 
 ==== Use Cases
 
 * *Analytical Application Backends* – Serve as the data engine for BI tools, dashboards, and reporting applications that support PostgreSQL connections.
-* *Shared Internal Datasets* – Load an existing `.duckdb` file once and let several teams and tools query it concurrently without moving or re‑platforming the data.
-* *Local Data Processing* – Run bulk import, transformation, and querying on a single machine without standing up a separate database system.
-* *Embedded Service in Java* – Ship a networked analytical store inside a Java application, with the plugin framework available for application‑specific endpoints.
-
-SlackerDB is aimed at teams that want DuckDB's analytical performance but need it reachable over the network, do not want the analysis process to be a black box, want it usable directly with the PostgreSQL toolchain, and need it shareable between concurrent clients.
+* *Shared Internal Datasets* – Want DuckDB's analytical performance and strong SQL capabilities, but need network access and do not want the analysis process to be a black box. Load an existing `.duckdb` file once and let several teams and tools query it concurrently without moving or re‑platforming the data.
+* *Embedded Service in Java* – Provide a networked analytical store inside a Java application and expose a data access point.
 
 === Usage
 
@@ -40,7 +41,7 @@ SlackerDB is aimed at teams that want DuckDB's analytical performance but need i
     # Before building, make sure the following are installed and directly available on `PATH`:
     # 1: JDK 21
     # 2: Maven 3.9.16
-    # 3: Node v24
+    # 3: Node v24 (web console only; ignore it if you do not need the console)
     # All of them must be directly accessible from `PATH`.
 
     # Download source code
@@ -86,8 +87,9 @@ On the offline machine, use the packaged Maven repository (first unzip `javarepo
 Run the following commands to complete the build:
 
 ....
-    mvn -o -Dmaven.repo.local.tail=<offline>/javarepo clean package
+    mvn -o -Dmaven.repo.local.tail=<offline>/javarepo clean package -pl !dbdesk -am
 
+    # or
     NPM_CONFIG_CACHE=<offline>/npmrepo NPM_CONFIG_OFFLINE=true mvn -o -Dmaven.repo.local=/tmp/m2 -Dmaven.repo.local.tail=<offline>/javarepo package
 ....
 
@@ -364,6 +366,11 @@ bind=0.0.0.0
 # Must match the dbserver's advertise_address exactly
 listener_address=
 
+# Root directory for managed database instances. Each subdirectory is one instance; its name is the alias.
+# Empty = instance management disabled
+# See the "Multi-instance management" section below.
+data_dir=
+
 # Client connection idle timeout (seconds)
 client_timeout=600
 
@@ -400,80 +407,81 @@ Note: All parameters are optional. +
 You can keep only the parameters you need to modify. +
 For parameters that are not configured, default values will be used.
 
-==== Service discovery: migrating from the registration mechanism
+==== Service Discovery
 
-In previous versions a dbserver registered itself by periodically sending a `REGISTER` command to a
-fixed proxy address (`IP:PORT`) configured through `remote_listener`, and sent `UNREGISTER` on
-shutdown. **That parameter has been removed** and replaced by UDP multicast discovery: the dbserver
-periodically announces "I am here" to a multicast group, and the proxy joins the same group and
-keeps its alias-to-backend map from those announcements.
+UDP multicast discovery: dbserver periodically announces "I am here" to a multicast group; the proxy joins the same group and maintains the alias-to-backend map from those announcements.
 
-.Parameter mapping
-[cols="1,1,2",options="header"]
+[cols="1,2",options="header"]
 |===
-| Old | New | Notes
-| dbserver `remote_listener=IP:PORT` | dbserver `advertise_address=<group>:<port>` | A multicast group within a subnet
-| — | dbserver `advertise_nic=<name or local IP>` | New. Empty means "pick the first usable interface"
-| — | dbproxy `listener_address=<group>:<port>` | New. Must match the dbserver `advertise_address` exactly
+| Module | Description
+| dbserver `advertise_address=<group>:<port>` | A multicast group within a subnet
+| dbserver `advertise_nic=<name or local IP>` | Empty selects the first usable network interface
+| dbproxy `listener_address=<group>:<port>` | Must match the dbserver `advertise_address` exactly
 |===
 
-.Upgrade style
-[cols="1,3",options="header"]
-|===
-| Style | Notes
-| Stop both, upgrade, restart (recommended) | No discovery gap at all
-| Rolling upgrade | There will be a gap, and it happens **whichever side goes first**: upgrade the dbserver first and the old proxy cannot receive multicast, so the new dbserver is invisible meanwhile; upgrade the proxy first and the old dbserver's registration is no longer accepted, so that dbserver is invisible meanwhile. Schedule a maintenance window in production
-|===
+==== Multi-instance Management
 
-.Upgrade steps
-[cols="1,3",options="header"]
-|===
-| Step | Action
-| 1 | Stop both the dbserver and the dbproxy
-| 2 | Upgrade the **dbproxy** and add `listener_address=<group>:<port>` to its conf
-| 3 | Upgrade the dbserver: **delete** `remote_listener=` from its conf and add `advertise_address=` (plus `advertise_nic=` if needed)
-| 4 | Start both
-| 5 | Run `status` on the proxy and confirm the aliases appear (the `Lease` column should show remaining time)
-|===
+With `data_dir` configured, the proxy can manage multiple database instances on the local machine: **each instance is a separate dbserver process**.
 
-WARNING: `remote_listener` was removed outright. Configuration parsing rejects unknown parameters
-(`SLACKERDB-00004`), so a conf file that still contains `remote_listener=` makes a new dbserver
-**fail to start** -- not "fail to register", but exit. The conf must be updated together with the
-binary.
+....
+instances/
+  sales/                     # directory name = alias (database in the connection string)
+    instance.conf            # single source of truth: database name, both ports, pid, log paths
+    bin/start.sh|bat         # foreground start
+    bin/start-daemon.sh|bat  # background start
+    bin/stop.sh|bat          # graceful stop (PG port management frame)
+    bin/status.sh|bat
+    data/sales.db
+    logs/server.log          # dbserver log
+    logs/console.log         # child process stdout/stderr
+    instance.pid
+....
 
-WARNING: Roll both sides back together, configuration included.
+An alias and a database name may differ (`--name` sets the database name; it defaults to the alias). Aliases are unique; creating a duplicate returns 409.
 
-.Checklist when discovery does not work
-[cols="1,3",options="header"]
+[cols="1,2",options="header"]
 |===
-| Symptom | What to check
-| Nothing shows up on the proxy | Whether both sides use exactly the same group; whether the dbserver startup log contains a `[DISCOVERY] Advertising ...` line; whether the proxy startup log contains a `[DISCOVERY] Listening on ...` line
-| The dbserver fails at startup | Whether the interface name is misspelled; whether the host has any usable interface (try leaving `advertise_nic=` empty)
-| The proxy log shows `Unknown admin command [REGISTER ...]` | A dbserver is still on the old version with the old registration parameter. It is now ignored by the discovery mechanism and must be upgraded
-| Log says `No announcement received ... for 60 seconds` | Whether the firewall allows inbound UDP (default port 46666); whether the switches have IGMP snooping enabled; whether the two hosts are on different subnets (the multicast TTL is fixed at 1 and does not leave the subnet)
-| An alias appears and then disappears | Whether the target host went silent for 15 seconds (process killed, machine suspended, network hiccup)
-| Containers / Kubernetes | Most CNIs do not forward multicast, so this mechanism does not work there. Plan something else (host networking, or a unicast discovery mechanism)
+| Command | Description
+| `dbproxy create --alias sales [--name sales] [--start false]` | Create an instance and start it by default
+| `dbproxy resume --alias sales` | Start a stopped instance
+| `dbproxy shutdown --alias sales` | Graceful stop (data and directory are kept)
+| `dbproxy restart --alias sales` | Stop, then start again
+| `dbproxy destroy --alias sales` | Stop and delete the entire instance directory
+| `dbproxy list [--json]` | List the **live** state of all instances
+| `dbproxy status` | Proxy status plus the instance table
 |===
 
-NOTE: The alias defaults to the database name, exactly as the old `AS <database>` did, so **client
-connection strings do not change**.
+Management endpoints on the proxy itself:
 
-NOTE: The advertised host defaults to the **source address of the UDP datagram**, not the address
-the sender reports about itself -- the source address is by definition reachable from the proxy.
-On multi-homed hosts either set `advertise_nic` explicitly or check the interface that the startup
-log reports.
+* `GET /status`
+* `GET /capabilities`
+* `GET /admin/databases`
+* `GET /admin/databases/<alias>`
+* `POST /admin/databases/<alias>/start`
+* `POST /admin/databases/<alias>/shutdown`
+* `POST /admin/databases/<alias>/restart`
+* `DELETE /admin/databases/<alias>`
+* `GET /admin/databases/<alias>/logs?lines=200`
+
+Behavior:
+
+* **Two kinds of backends**: `management` = instances discovered under `data_dir` (managed by the proxy); `external` = backends registered through multicast. The state and the `SOURCE` column in `list` distinguish them. **External backends only forward data**: `start`/`shutdown`/`restart`/`destroy` return 409 and never appear in the instance directory.
+* **Internal aliases win conflicts**: when an instance with the same name exists under `data_dir`, external announcements are discarded and an existing external entry with the same name is removed immediately.
+* **No cascade**: `dbproxy stop` stops only the proxy; instances keep running.
+* **No automatic recovery**: restarting the proxy does not start any instance.
+* **Proxy bypass is allowed**: run `bin/start-daemon` / `bin/stop` in the instance directory directly; every status query re-probes the instance (`/health` + pid + command-line validation), so manual starts and stops are recognized correctly.
 
 ==== JDBC Support
 
-SlackerDB provides full PostgreSQL wire protocol compatibility, allowing you to connect using standard JDBC drivers. This enables you to use any PostgreSQL‑compatible JDBC client, including the native SlackerDB JDBC driver for optimal integration.
+SlackerDB provides full PostgreSQL wire protocol compatibility, allowing you to connect using standard JDBC drivers. This enables you to use any PostgreSQL‑compatible JDBC client.
 
 *PostgreSQL JDBC Driver*
 You can use the standard PostgreSQL JDBC driver (`org.postgresql.Driver`) with the connection URL format `jdbc:postgresql://host:port/database`. This is useful when you want to reuse existing PostgreSQL tooling.
 
 *SlackerDB JDBC Driver*
-For better integration and additional features, use the native SlackerDB JDBC driver (`org.slackerdb.jdbc.Driver`). The connection URL format is `jdbc:slackerdb://host:port/database`. This driver is included in the distribution and is recommended for new applications.
+For better integration and additional features, use the native SlackerDB JDBC driver (`org.slackerdb.jdbc.Driver`). The connection URL format is `jdbc:slackerdb://host:port/database`. This driver is included in the distribution.
 
-The native `slackerdb-dbdriver` artifact stays on **Java 17 bytecode**, so JDK 17 applications can load it directly; the server, proxy and dbcli artifacts require Java 21.
+The `slackerdb-dbdriver` driver stays on **Java 17 bytecode**, so JDK 17 applications can load it directly; the server, proxy and dbcli artifacts require Java 21.
 
 *Connection Examples*
 
@@ -489,9 +497,12 @@ Connection conn = DriverManager.getConnection(url, "main", "");
 conn.setAutoCommit(false);
 ....
 
-*IDE Integration*
+*Tool Integration*
 
-You can connect to SlackerDB from database tools DBeaver. (For other tools, we have not verified it.) +
+You can connect to SlackerDB from the DBeaver IDE database tool. +
+You can connect to SlackerDB from the PostgreSQL `psql` command line. +
+We cannot exhaustively verify other tools.
+
 *Use PostgreSQL driver* +
 Download postgresql server and connect database like a pg.
 
@@ -632,9 +643,11 @@ public class CopyDemo {
 
 ==== Performance Tuning
 
-* Where it fits the requirement, use COPY for import and export whenever possible; it is much faster than plain SELECT and INSERT.
+* Where objective conditions allow, use COPY for import and export whenever possible; it is much faster than plain SELECT and INSERT.
 
 ==== HTTP Management Services
+
+* The following HTTP endpoints provide basic management functions such as backup, file upload/download, log viewing, and status monitoring. They are available when the management port (`port_x`) is enabled.
 
 ===== /backup (POST)
 
@@ -1677,8 +1690,7 @@ A tool entry may bind to a built-in implementation instead of being an echo stub
 
 Recognised `builtin:` handlers are `run_sql`, `list_tables`, `describe_table`, `sample_rows`,
 `list_services`, `open_session` and `close_session`; the legacy aliases `query`, `sql`, `runquery`,
-`tables`, `show_tables`, `describe` and `sample` are mapped onto them. A tool without `handler` keeps the
-legacy behaviour of echoing its arguments, and is registered with a description that says so.
+`tables`, `show_tables`, `describe` and `sample` are mapped onto them.
 
 `conf/mcp_config_example.service` in the distribution is a working sample of that shape: an echo stub, two
 bindings to built-in tools under custom names (`top_tables` -> `list_tables`, `peek_rows` -> `sample_rows`)
@@ -2309,8 +2321,7 @@ Validation errors you may see: `Field 'id' must be a string`, `Field 'type' must
 `Invalid session`, `Invalid taskId`, `Another SQL is already running`.
 
 `maxRows` is the number of rows the API returns per call (page size), not a database query limit, and must be
-positive. A previous version accepted `0` and answered an empty page with `hasMore = true`, which left
-clients looping forever on a page that never advances.
+positive.
 
 ===== Session Management
 
@@ -2657,8 +2668,11 @@ started with `bin/dbcli.bat` / `bin/dbcli.sh`.
 
 | SQL client | interactive console plus batch scripts; statements end with `;` or with `/` alone on a line; Ctrl-C cancels a running statement
 | Result checks | `--ref` compares this run with a reference file; `_assert` and `_compare` inside a script
-| Connecting | `_connect` takes the short form, `jdbc:slackerdb://` and any other `jdbc:<scheme>:` URL; `_load jdbcdriver` loads a driver at runtime
-| Sessions and orchestration | `_session` keeps/switches connections; `_job` concurrent jobs; `_ssh`/SFTP, `_host`
+| Connection | `_connect` takes the short form, `jdbc:slackerdb://` and any other `jdbc:<scheme>:` URL; `_load jdbcdriver` loads a driver at runtime
+| Session persistence | `_session` keeps/switches connections
+| Task orchestration | `_job` concurrent jobs; `_ssh`/SFTP, `_host`
+| Remote access | `_ssh`/SFTP, `_host`
+| System commands | `_host`
 | Output | `_set` controls echo/summaries/result sets; `table`/`vertical`/`csv`; `_spool` to a file
 |===
 
@@ -2668,7 +2682,7 @@ dbcli --execute script.sql                      # run a script
 dbcli --execute script.sql --logfile run.log --ref golden.ref   # run and compare with a reference
 ....
 
-Full usage: `dbcli/README.adoc` (Chinese: `dbcli/README-CN.adoc`).
+Full usage: xref:dbcli/README.adoc[dbcli/README.adoc].
 
 image::img/dbcli-select42.png[dbcli connected and running select 42]
 
@@ -2676,23 +2690,18 @@ image::img/dbcli-select42.png[dbcli connected and running select 42]
 
 ==== 1. User and password authorization
 
-We do not support user password authentication, just for compatibility,
-keep these two options. +
-you can fill anything as you like, it doesn’t make sense.
+**We do not support user password authentication; these two options are kept only for compatibility.** +
+You can fill in anything; they have no effect.
 
 ==== 2. Limited support for duckdb datatype
 
-Only some duckdb data types are supported, mainly simple types, such as
-int, number, double, varchar, … Complex types are either still under
-development or cannot be represented in the PG protocol (blob, list, map…),
-and they are rejected with an explicit error rather than silently converted.
+Only some DuckDB data types are supported, mainly simple types such as int, number, double, varchar, … Complex types are either still under development or cannot be represented in the PG protocol (blob, list, map…); they are rejected with an explicit error rather than silently converted.
 
-Upstream blockers as of `duckdb_jdbc` 2.0.0.0 (revisit after DuckDB upgrades):
+Upstream blockers as of `duckdb_jdbc` 2.0.0.0 (DuckDB is expected to be upgraded soon; we will follow):
 
 * `COPY ... FROM STDIN` into `BIGNUM`: DuckDB's JDBC appender has no BIGNUM C API type (`unsupported C API type: 35`), so SlackerDB cannot support it yet.
 * `COPY ... FROM STDIN` into `BIT`, `INTERVAL`, `TIME_NS`, or `VARIANT`: same missing appender type, so they are rejected too.
 * `COPY ... TO STDOUT (FORMAT binary)` for `INTERVAL`, `BIT`, `TIME_NS`, `BIGNUM`, `VARIANT`, and nested `LIST`/`ARRAY`/`STRUCT`/`MAP`/`UNION`: these have no PostgreSQL binary representation in the encoder, so the statement is rejected with `0A000` before any data is sent. Use CSV or text format for such queries.
-* Engine-error SQLSTATE: `duckdb_jdbc` returns `null` for engine errors, so SlackerDB maps them by message.
 
 ==== 3. postgresql-fdw
 
@@ -2717,8 +2726,8 @@ Statements PostgreSQL 17's `postgres_fdw` actually sends, and where we stand:
   protocol path. Cursors without `WITH HOLD` are dropped when the transaction ends,
   as in PostgreSQL; `WITH HOLD` cursors survive `COMMIT` and are materialised in
   memory to do so. Only forward directions are supported: `BACKWARD` / `ABSOLUTE` /
-  `RELATIVE` are rejected with `0A000` rather than silently misbehaving, because a
-  DuckDB JDBC result set cannot scroll backwards.
+  `RELATIVE` explicitly return `0A000`, because a DuckDB JDBC result set cannot
+  scroll backwards.
 * Transactions: `BEGIN` / `START TRANSACTION [ISOLATION LEVEL ...]` really open a DuckDB
   transaction, and `COMMIT` / `COMMIT TRANSACTION` / `END` / `ROLLBACK` / `ABORT` end it
   (a `COMMIT` inside a failed transaction rolls back, as in PostgreSQL; `COMMIT` with no
@@ -2734,12 +2743,10 @@ Statements PostgreSQL 17's `postgres_fdw` actually sends, and where we stand:
   (`SELECT pg_catalog.pg_relation_size('schema.table'::pg_catalog.regclass) / 8192` and
   `SELECT reltuples, relkind FROM pg_catalog.pg_class WHERE oid = …`) by translating the
   `regclass` cast into a real OID lookup, and serves the row sample through a cursor.
-  `relpages` comes from DuckDB's own `estimated_size`, so it stays 0 for small tables;
-  the remote division is a floating-point division, which `postgres_fdw` truncates with `atoi`.
+  `relpages` comes from DuckDB's own `estimated_size`, so it stays 0 for small tables.
 * Errors follow the protocol: after an extended-protocol error the backend discards
   messages until `Sync`; `Describe`/`Close` of an unknown statement or portal return
-  `26000`/`34000`; a malformed Bind message returns `08P01` instead of stalling the
-  client until the idle timeout.
+  `26000`/`34000`; a malformed Bind message returns `08P01`.
 
 *Not implemented yet*
 
@@ -2777,14 +2784,13 @@ IMPORT FOREIGN SCHEMA "main" FROM SERVER sdb INTO public
   OPTIONS (import_collate 'false');
 ----
 
-Two points that are easy to get wrong:
+Other limitations:
 
 * `dbname` is the **instance name** the server was started with (`--data fdwdb`), not a
-  PostgreSQL-style database name. `memory` (and other reserved words) cannot be used as
-  an instance name, so `--data memory` fails at startup.
+  PostgreSQL-style database name.
 * `import_collate` is an option of `IMPORT FOREIGN SCHEMA`, **not** of `CREATE SERVER`;
   PostgreSQL rejects it in the server options (`invalid option "import_collate"`).
-  Keep `use_remote_estimate` off: it makes `postgres_fdw` parse PostgreSQL's
+* Keep `use_remote_estimate` off: it makes `postgres_fdw` parse PostgreSQL's
   `EXPLAIN (cost=... rows=... width=...)` text, which DuckDB does not produce.
 
 === Plugin System
@@ -2801,12 +2807,15 @@ The plugin system is built on top of PF4J (Plugin Framework for Java) and is cus
 * *DBPluginFactory* – Custom plugin factory that, after creating a plugin instance, checks whether the plugin implements `IDBPluginContext` and, if so, injects the `DBPluginContext`.
 
 Plugin lifecycle:
-1. *Load* – When the server starts, it scans the configured plugin directory (`plugins_dir`) and loads all JAR packages that conform to the PF4J specification.
-2. *Create* – The plugin instance is created via `DBPluginFactory`, and the `DBPluginContext` is injected.
-3. *Start* – The plugin's `start()` method is called, which executes `beforeStart()`, `onStart()`, and `afterStart()` in order.
-4. *Run* – The plugin executes its custom logic in `onStart()`, e.g., registering Javalin routes, initializing database tables, etc.
-5. *Stop* – When the server shuts down, the plugin's `stop()` method is called, executing `beforeStop()`, `onStop()`, and `afterStop()`.
-6. *Delete* – When a plugin is unloaded, its `delete()` method is called, executing `beforeDelete()`, `onDelete()`, and `afterDelete()`.
+1. *Startup scan* – When the server starts, it scans the configured plugin directory (`plugins_dir`), loads all JARs that conform to the PF4J specification, and starts them automatically.
+2. *Runtime load* – The management endpoint `POST /plugin/load` can load a new plugin without restarting the server. It **only loads the plugin and does not start it**; call `/plugin/start` afterwards.
+3. *Create* – The plugin instance is created via `DBPluginFactory`, and the `DBPluginContext` is injected.
+4. *Start* – The plugin's `start()` method is called, which executes `beforeStart()`, `onStart()`, and `afterStart()` in order.
+5. *Run* – The plugin executes its custom logic in `onStart()`, e.g., registering Javalin routes, initializing database tables, etc.
+6. *Stop* – Stop the plugin via `/plugin/stop`; `/plugin/unload` stops it first; shutting down the server also stops plugins that are running. Stopping executes `beforeStop()`, `onStop()`, and `afterStop()`.
+7. *Unload* – Unload the plugin via `/plugin/unload`. Unloading stops the plugin and releases the PF4J class loader, but **does not delete the JAR and does not call `delete()`**.
+
+Plugins loaded at runtime are not persisted: after a restart, only JARs present in `plugins_dir` are scanned and started again.
 
 Plugins can access the following resources:
 * *Database connection* – Obtain a new connection to the backend database via `getDbConnection()` (created via `DuckDBConnection.duplicate()`).
@@ -2928,7 +2937,7 @@ The resulting JAR file (e.g., `myplugin‑1.0.0.jar`) should contain the plugin 
 
 ===== 5. Deploy the Plugin
 
-Place the plugin JAR file into the SlackerDB server's plugin directory (specified by the `plugins_dir` parameter in the configuration file, default is `$HOME/.slackerdb/plugins`). Ensure the directory exists and the server has read permission.
+Place the plugin JAR file into the SlackerDB server's plugin directory (specified by the server's `plugins_dir` parameter). The default is **empty**, so no plugin directory is scanned; configure it explicitly and make sure the directory exists and the server can read it.
 
 ===== 6. Start the Server
 
@@ -2942,16 +2951,13 @@ Start the SlackerDB server; the plugin will be loaded and started automatically.
 
 If the plugin registered an HTTP endpoint, you can access it at `http://localhost:<port_x>/myplugin/hello` (assuming the management port `port_x` is enabled).
 
-===== 7. Debugging Plugins
+===== Plugin Notes
 
 * *Logging* – Plugins can output logs via `getLogger()`; the log level is controlled by the server's `log_level` configuration.
-* *Error handling* – Exceptions in plugin lifecycle methods are caught and wrapped as `RuntimeException`, causing the plugin to fail to start. Error messages are recorded in the server log.
-* *Hot reload* – Hot reloading is not currently supported; you must restart the server after modifying a plugin.
-
-==== Plugin Example
-
-This section shows a complete, working plugin: its basic structure, resource access methods and
-lifecycle. It is reproduced in full here so you can copy the files it describes.
+* *Error handling* – Exceptions in a plugin's startup lifecycle methods are caught and wrapped as `RuntimeException`, causing the plugin to fail to start. Error messages are recorded in the server log.
+* *Runtime management* – Plugins can be managed through the management endpoints `/plugin/load`, `/plugin/unload`, `/plugin/start`, and `/plugin/stop`; `/plugin/load` only loads a plugin and does not start it automatically.
+* *Plugin updates* – The server does not watch JAR files or automatically hot‑replace loaded plugins. To update a plugin, call `/plugin/stop` and `/plugin/unload` yourself, replace the JAR, then call `/plugin/load` and `/plugin/start`.
+* *Route limitation* – Because `/plugin/unload` is a fully trusted mechanism, it does not unregister routes that the plugin has already registered with Javalin. Unless the plugin removes them in its own unload logic, accessing the old paths after unload usually returns `500 Internal Server Error`.
 
 ===== Module Structure
 
@@ -2959,8 +2965,7 @@ The plugin‑example module contains the following key components:
 
 * *The main plugin class* – extends `DBPlugin` and implements all lifecycle methods. Its full source
   is reproduced in this section.
-* *A standalone runner* – demonstrates how to execute a plugin without the full PF4J framework
-  (also reproduced below).
+* *A debug mode* – demonstrates how to execute a plugin without the full PF4J framework.
 * *The plugin descriptor* – a `plugin.properties` file that defines the plugin's metadata.
 * *The Maven build* – configuration with a dependency on `slackerdb‑plugin`.
 
@@ -3002,7 +3007,7 @@ public class PluginExample extends DBPlugin {
     // Lifecycle hook methods: beforeStart, afterStart, beforeStop, afterStop,
     // beforeDelete, afterDelete
 
-    // Standalone mode support
+    // Debug mode support
     public static PluginExample standAloneInstance() throws Exception {
         return DBPlugin.Standalone.createInstance(PluginExample.class);
     }
@@ -3013,8 +3018,7 @@ public class PluginExample extends DBPlugin {
 
 1. *Resource Access* – Shows how to obtain database connections, loggers, and Javalin application instances via `getDbConnection()`, `getLogger()`, and `getJavalinApp()`.
 2. *Lifecycle Management* – Implements all lifecycle methods (`onStart`, `onStop`, `onDelete`) and their corresponding hook methods (`beforeStart`, `afterStart`, etc).
-3. *Standalone Mode* – Includes a `standAloneInstance()` method that enables the plugin to be executed without the PF4J framework (see the "Plugin Standalone Mode" section below).
-4. *Thread Safety* – The plugin instance is a singleton; developers should ensure thread‑safe access to shared resources.
+3. *Debug Mode* – Includes a `standAloneInstance()` method that lets the plugin run without the PF4J framework.
 
 ===== Building and Running the Example
 
@@ -3033,7 +3037,7 @@ The resulting JAR file (`plugin‑example‑0.2.2.jar`) will be placed in the `t
    - Start the server; the plugin will be loaded automatically.
    - Check server logs for plugin loading messages.
 
-3. *Run in standalone mode* (for testing):
+3. *Run in debug mode*:
 +
 [source,bash]
 ----
@@ -3051,7 +3055,7 @@ To create your own plugin based on this example:
 2. *Update plugin.properties* – Modify `plugin.id`, `plugin.class`, and `plugin.version` accordingly.
 3. *Implement business logic* – Uncomment the resource acquisition code in `onStart()` and add your custom functionality.
 4. *Add dependencies* – Update `pom.xml` with any additional libraries your plugin requires.
-5. *Test thoroughly* – Use the standalone mode for quick testing before deploying to a production server.
+5. *Test thoroughly* – Use debug mode for testing before deploying to a production server.
 
 ===== Plugin Descriptor File
 
@@ -3070,19 +3074,17 @@ plugin.requires=*
 * `plugin.version` follows semantic versioning.
 * `plugin.requires` specifies plugin dependencies (`*` means no specific dependency).
 
-===== Plugin Standalone Mode
+===== Plugin Debugging
 
-In addition to the standard PF4J-based plugin loading mechanism, SlackerDB provides a *standalone mode* that allows plugins to be executed directly without the full PF4J framework. This is useful for testing, debugging, or embedding plugin logic in custom applications.
+In addition to the standard PF4J‑based plugin loading mechanism, SlackerDB provides a *debug mode* that allows plugins to be executed directly without the full PF4J framework. This is useful for testing, debugging, or embedding plugin logic in custom applications.
 
-The standalone mode works by:
+Debug mode works by:
 1. Creating a plugin instance via the `standAloneInstance()` method (available in plugins that extend `DBPlugin`)
 2. Manually constructing a `DBPluginContext` with the required resources (database connection, logger, Javalin app)
 3. Injecting the context into the plugin via `setDBPluginContext()`
 4. Calling the plugin's lifecycle methods (`start()`, `stop()`) directly
 
-===== Using the Standalone Mode
-
-The `plugin-example` module includes a `SimplePluginRunner` class that demonstrates how to run a plugin in standalone mode. Here's a simplified version:
+The `plugin-example` module includes a `SimplePluginRunner` class that demonstrates how to run a plugin in debug mode. Here's a simplified version:
 
 [source,java]
 ----
@@ -3113,7 +3115,7 @@ public class SimplePluginRunner {
         ctx.setLogger(pluginLogger);
         ctx.setJavalin(javalin);
         
-        // 5. Create plugin instance via standalone mode
+        // 5. Create plugin instance via debug mode
         PluginExample plugin = PluginExample.standAloneInstance();
         
         // 6. Inject context
@@ -3131,26 +3133,6 @@ public class SimplePluginRunner {
     }
 }
 ----
-
-===== Key Points
-
-* *Resource Management* – In standalone mode, you are responsible for creating and managing all resources (database connection, Javalin instance, logger).
-* *Lifecycle Control* – You control when the plugin starts and stops by calling `start()` and `stop()` directly.
-* *No PF4J Overhead* – The standalone mode bypasses the PF4J plugin manager, making it lightweight and suitable for integration into existing applications.
-* *Testing and Debugging* – This mode is ideal for unit testing plugin logic or debugging plugin behavior without deploying it to a full SlackerDB server.
-
-===== When to Use Standalone Mode
-
-* *Development and Testing* – Quickly test plugin logic during development.
-* *Embedded Scenarios* – Embed plugin functionality in custom applications that don't need the full PF4J framework.
-* *Prototyping* – Experiment with plugin ideas without building complete JAR packages.
-* *CI/CD Pipelines* – Run plugin tests in automated build environments.
-
-===== Limitations
-
-* *No Hot Reload* – Plugins cannot be reloaded dynamically; you must restart the application.
-* *Manual Resource Management* – You must handle resource creation, injection, and cleanup.
-* *No Plugin Manager Features* – Features like dependency resolution, version management, and plugin discovery are not available.
 
 ==== Job Scheduler Plugin (plugin-scheduler)
 
@@ -3358,9 +3340,11 @@ queried through the API; expired history rows and log files are cleaned up autom
 
 SlackerDB provides a set of HTTP endpoints for managing plugins at runtime. These endpoints allow you to load, unload, start, stop, and list plugins without restarting the server. All endpoints return JSON responses with a standard format: `{"retCode": 0/-1, "retMsg": "message"}`.
 
+NOTE: Business failures on these endpoints usually still return HTTP 200 with `retCode=-1`; callers must check `retCode`, not only the HTTP status code.
+
 ===== /plugin/load (POST)
 
-Loads a plugin from a JAR file in the server's plugin directory.
+Loads a JAR from the plugin directory or a specified path. After loading, the plugin is in the `RESOLVED` state and is **not started automatically**; call `/plugin/start` afterwards.
 
 .Request body (JSON):
 [source,json]
@@ -3370,7 +3354,8 @@ Loads a plugin from a JAR file in the server's plugin directory.
 }
 ----
 
-* `filename` – Plugin JAR filename (e.g., "myplugin.jar") or full path to the JAR file. If a simple filename is provided, it will be loaded from the server's plugin directory (configured via `plugins_dir` parameter). If a full path is provided, it will be loaded directly from that location.
+* `filename` – Plugin JAR filename (e.g., "myplugin.jar") or full path to the JAR file. If a simple filename is provided, it is loaded from the server's plugin directory (configured via `plugins_dir`); if `plugins_dir` is empty, a simple filename fails. A full path is loaded directly from that location and does not require `plugins_dir`.
+* Plugins loaded at runtime are not written to configuration and are not copied into `plugins_dir`; whether they can be loaded after a restart depends on whether the JAR is still in `plugins_dir`.
 
 .Response example (success):
 [source,json]
@@ -3393,7 +3378,10 @@ Loads a plugin from a JAR file in the server's plugin directory.
 
 ===== /plugin/unload (POST)
 
-Unloads a previously loaded plugin. The plugin will be stopped first if it is running.
+Stops and unloads a previously loaded plugin. If the plugin is running, it is stopped first.
+
+* Unloading releases the PF4J class loader, but **does not delete the JAR and does not call `delete()`/`onDelete()`**.
+* Unloading **does not unregister** routes that the plugin has already registered with Javalin. After unload, accessing the old paths usually returns `500 Internal Server Error`, and may continue to return old plugin results; when updating a route-based plugin or when a complete cleanup is required, restart the server.
 
 .Request body (JSON):
 [source,json]
@@ -3467,21 +3455,28 @@ Lists all currently loaded plugins with their details.
   "plugins": [
     {
       "pluginId": "myplugin",
-      "pluginState": "STARTED",
       "version": "1.0.0",
-      "description": "My example plugin"
+      "state": "STARTED",
+      "file": "/path/to/plugins/myplugin.jar",
+      "description": "My example plugin",
+      "mountTime": 1761520800000,
+      "mountTimeFormatted": "2026-10-27 10:00:00"
     },
     {
       "pluginId": "anotherplugin",
-      "pluginState": "STOPPED",
       "version": "2.0.0",
-      "description": "Another plugin"
+      "state": "STOPPED",
+      "file": "/path/to/plugins/anotherplugin.jar",
+      "description": "Another plugin",
+      "mountTime": 0,
+      "mountTimeFormatted": ""
     }
   ]
 }
 ----
 
-The `pluginState` field can be one of: `CREATED`, `DISABLED`, `LOADED`, `STARTED`, `STOPPED`, `UNLOADED`.
+The `state` field uses PF4J state values: `CREATED`, `DISABLED`, `RESOLVED`, `STARTED`, `STOPPED`, `FAILED`, `UNLOADED`.
+`/plugin/list` lists only currently loaded plugins, so `UNLOADED` is normally not visible; `pluginState` is not the real field name.
 
 ==== Notes
 

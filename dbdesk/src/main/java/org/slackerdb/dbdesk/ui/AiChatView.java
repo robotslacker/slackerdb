@@ -80,7 +80,7 @@ public class AiChatView extends VerticalLayout {
 
     private void checkAvailability() {
         ConnectionManager connection = ConnectionManager.current();
-        available = connection.hasManagement()
+        available = connection.hasInstanceManagement()
                 && connection.capabilities() != null
                 && connection.capabilities().features().aiChat();
         if (!available) {

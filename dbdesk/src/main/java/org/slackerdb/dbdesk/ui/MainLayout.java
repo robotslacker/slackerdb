@@ -18,8 +18,8 @@ import java.util.Map;
  * 应用壳：左侧导航 + 顶栏连接状态。
  *
  * <p>启动永远处于未连接状态：不读 profile、不探测能力、不发健康请求。左侧菜单
- * 始终创建但全部禁用；连接成功后按状态与 capability 启用。连接后管理口失联不做
- * 自动降级，页面操作按原样报错。</p>
+ * 始终创建但未连接时全部禁用；"实例管理"只在“只连 dbproxy 管理端口”的集群连接下显示。
+ * 连接后管理口失联不做自动降级，页面操作按原样报错。</p>
  */
 public class MainLayout extends AppLayout {
 
@@ -61,6 +61,7 @@ public class MainLayout extends AppLayout {
         nav.removeAll();
         navItems.clear();
         addItem("sql", "nav.sql", SqlWorkbenchView.class, VaadinIcon.CODE);
+        addItem("cluster", "nav.cluster", ClusterView.class, VaadinIcon.CLUSTER);
         addItem("instances", "nav.instances", InstancesView.class, VaadinIcon.DASHBOARD);
         addItem("backups", "nav.backups", BackupsView.class, VaadinIcon.DOWNLOAD);
         addItem("logs", "nav.logs", LogsView.class, VaadinIcon.FILE_TEXT);
@@ -87,31 +88,30 @@ public class MainLayout extends AppLayout {
                 || connection.state() == ConnectionManager.State.CONNECTING;
         if (disconnected) {
             navItems.values().forEach(item -> item.setEnabled(false));
+            navItems.get("cluster").setVisible(false);
             return;
         }
 
-        boolean sqlOnly = connection.isSqlOnly();
+        boolean instance = connection.hasInstanceManagement();
+        boolean cluster = connection.hasClusterManagement();
+        boolean database = connection.hasDatabase();
         Capabilities capabilities = connection.capabilities();
-        boolean connected = connection.state() == ConnectionManager.State.CONNECTED;
 
-        navItems.get("sql").setEnabled(true);
-        navItems.get("instances").setEnabled(connected);
-        navItems.get("backups").setEnabled(connected);
-        navItems.get("logs").setEnabled(connected);
-        navItems.get("data-services").setEnabled(connected && capability(capabilities, "dataService"));
-        navItems.get("mcp").setEnabled(connected && capability(capabilities, "mcp"));
-        navItems.get("ai-chat").setEnabled(connected && capability(capabilities, "aiChat"));
-        navItems.get("import").setEnabled(connected);
-        navItems.get("datasets").setEnabled(connected);
-        navItems.get("charts").setEnabled(connected);
-        navItems.get("dashboards").setEnabled(connected);
-        navItems.get("portals").setEnabled(connected);
-        navItems.get("scheduler").setEnabled(connected && capabilities != null && capabilities.hasEtl());
-
-        if (sqlOnly) {
-            // SQL_ONLY 时上述 connected 均为 false，只留下 SQL 控制台。
-            navItems.get("sql").setEnabled(true);
-        }
+        navItems.get("sql").setEnabled(database);
+        navItems.get("cluster").setVisible(cluster);
+        navItems.get("cluster").setEnabled(cluster);
+        navItems.get("instances").setEnabled(instance);
+        navItems.get("backups").setEnabled(instance);
+        navItems.get("logs").setEnabled(instance);
+        navItems.get("data-services").setEnabled(instance && capability(capabilities, "dataService"));
+        navItems.get("mcp").setEnabled(instance && capability(capabilities, "mcp"));
+        navItems.get("ai-chat").setEnabled(instance && capability(capabilities, "aiChat"));
+        navItems.get("import").setEnabled(instance);
+        navItems.get("datasets").setEnabled(instance);
+        navItems.get("charts").setEnabled(instance);
+        navItems.get("dashboards").setEnabled(instance);
+        navItems.get("portals").setEnabled(instance);
+        navItems.get("scheduler").setEnabled(instance && capabilities != null && capabilities.hasEtl());
     }
 
     private static boolean capability(Capabilities capabilities, String name) {

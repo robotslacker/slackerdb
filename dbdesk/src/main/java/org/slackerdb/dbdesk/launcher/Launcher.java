@@ -8,10 +8,10 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * DbDesk 启动器：只启动 DbDesk 自己的本机 Web UI，不启动、不探测、不管理 dbserver。
+ * DbDesk 启动器：只启动 DbDesk 自己的本机 Web UI，不直接启动/停止/探测 dbserver。
  *
- * <p>DbDesk 是管理工具，连哪个 dbserver 由顶栏 Connect 对话框决定；
- * 服务端的启停由用户自己负责。启动完成后只打印访问地址，不自动打开浏览器。</p>
+ * <p>DbDesk 是管理工具，连哪个服务端由顶栏 Connect 对话框决定；集群实例的启停/销毁
+ * 通过 dbproxy 管理口完成，DbDesk 自己不托管进程。启动完成后只打印访问地址，不自动打开浏览器。</p>
  *
  * <p><b>参数</b>：</p>
  * <pre>

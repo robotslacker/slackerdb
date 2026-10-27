@@ -42,6 +42,8 @@ public class ServerConfiguration extends Throwable {
     private final String default_pid = "";
     // 是否用后台方式启动
     private final boolean defaultDaemonMode = false;
+    // 实例根目录。留空 = 不启用实例管理（行为与旧版本一致）。
+    private final String default_data_dir = "";
 
     private String   log;
     private Level    log_level;
@@ -54,6 +56,7 @@ public class ServerConfiguration extends Throwable {
     private Locale   locale;
     private String   pid;
     private boolean  daemonMode;
+    private String   data_dir;
 
     public ServerConfiguration() throws ServerException
     {
@@ -68,6 +71,7 @@ public class ServerConfiguration extends Throwable {
         locale = default_locale;
         pid = default_pid;
         daemonMode = defaultDaemonMode;
+        data_dir = default_data_dir;
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
             port = socket.getLocalPort();
@@ -178,6 +182,13 @@ public class ServerConfiguration extends Throwable {
                         setPid(entry.getValue().toString().trim());
                     }
                 }
+                case "DATA_DIR" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        data_dir = this.default_data_dir;
+                    } else {
+                        setData_Dir(entry.getValue().toString().trim());
+                    }
+                }
                 default ->
                         throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));
             }
@@ -219,6 +230,41 @@ public class ServerConfiguration extends Throwable {
     public boolean getDaemonMode()
     {
         return this.daemonMode;
+    }
+
+    /**
+     * 实例根目录（配置原文）。空字符串表示不启用实例管理。
+     */
+    public String getData_Dir()
+    {
+        return this.data_dir;
+    }
+
+    /** 是否启用实例管理（只看配置，不检查目录是否存在）。 */
+    public boolean isInstanceManagementEnabled()
+    {
+        return this.data_dir != null && !this.data_dir.trim().isEmpty();
+    }
+
+    /** 实例根目录的绝对路径；未配置时返回 {@code null}。 */
+    public java.nio.file.Path getInstanceDataDir()
+    {
+        if (!isInstanceManagementEnabled()) {
+            return null;
+        }
+        return java.nio.file.Path.of(this.data_dir.trim()).toAbsolutePath().normalize();
+    }
+
+    /**
+     * 设置实例根目录。相对路径按进程工作目录解析（与日志、pid 文件的口径一致）。
+     */
+    public void setData_Dir(String pDataDir)
+    {
+        if (pDataDir == null || pDataDir.trim().isEmpty()) {
+            data_dir = this.default_data_dir;
+            return;
+        }
+        data_dir = pDataDir.trim();
     }
 
     /**
