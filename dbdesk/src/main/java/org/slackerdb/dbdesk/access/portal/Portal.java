@@ -56,9 +56,10 @@ public record Portal(String id, String name, String dashboardId, String token,
         return !revoked;
     }
 
-    /** 状态文案（管理页展示）。 */
-    public String statusAt(Instant now) {
-        return revoked ? "已撤销" : "有效（长期）";
+    /** 状态文案（管理页展示）：只带 key，由界面层按当前语言渲染。 */
+    public org.slackerdb.dbdesk.i18n.LocalizedMessage statusAt(Instant now) {
+        return org.slackerdb.dbdesk.i18n.LocalizedMessage.of(
+                revoked ? "portal.status.revoked" : "portal.status.valid");
     }
 
     public Portal withAutoRefresh(int seconds) {

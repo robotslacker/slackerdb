@@ -60,9 +60,16 @@ SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。
     #        源码包 —— 完整的多模块 Maven 工程，内容等同于一次浅克隆
     #        （不含 git 历史，也不含任何编译产物）。解开后在该目录里
     #        执行同样的 maven 命令，即可从源码重新构建全部产物。
+    #    slackerdb-docs_0.2.2.zip   （仅 -Ppdf 构建时生成）
+    #        文档包 —— 根目录是 README.pdf 与 README-CN.pdf，
+    #        dbcli 手册（README.pdf / README-CN.pdf）在 dbcli/ 子目录下。
 
-    # 默认不构建 PDF；需要生成 PDF 并放入 dist/ 和发布包时加 -Ppdf：
+    # 默认不构建 PDF，PDF 也不放进发布包，而是单独放在 slackerdb-docs_0.2.2.zip。
+    # 需要生成时加 -Ppdf：
     #    mvn -Ppdf clean compile package -Dmaven.test.skip=true
+    # 只想重新生成文档时，单独构建 docs 模块
+    # （只产出 dist/slackerdb-docs_0.2.2.zip，不动发行包）：
+    #    mvn -Ppdf -pl docs package
 ....
 
 ==== 如何在离线环境上进行开发
@@ -76,6 +83,22 @@ SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。
 
 命令同时生成 `offline/javarepo.zip` 和 `offline/npmrepo.zip`，并删除未压缩的
 `javarepo/`、`npmrepo/` 目录。把这两个 zip 拷到离线机器，解压到同一目录即可。
+
+`javarepo` 里不只有最终会进 classpath 的 jar，还带完整的 POM 描述符闭包：父 POM、
+import 的 BOM，以及 Maven 收集依赖时会读取的每一个候选版本（含被"就近原则"淘汰的
+版本）。因此离线构建不会再出现
+`[WARNING] The POM for ... is missing, no dependency information available`；
+若某个必需的 POM 无法打包，生成过程会直接失败，而不是产出一个不完整的离线包。
+在生成机器上解压 `javarepo.zip` 后，可重新校验这份闭包：
+`mvn -o -N org.robotslacker.tools:offline-package-maven-plugin:1.0.0:verify`。
+
+落选候选版本的 jar 也一并打包（`-Doffline.candidate.jars`，默认开启，约 25 MB）。
+Maven 构建本工程时永远不会解析它们，但离线改了模块 POM、或解析顺序换了版本时，
+仓库仍然可用；不想带这些 jar 时用 `-Doffline.candidate.jars=false`。
+
+`mvn clean` 不会再删除 `offline/`：离线包同时是离线构建的 `-Dmaven.repo.local.tail`
+仓库，clean 掉它等于删掉构建自己要用的仓库。重新生成由 `offline-package:collect`
+自己完成（先写 staging 再整体替换），不需要 clean 参与。
 
 构建前请确认当前机器上已经安装了必要的JDK，Maven，Node，并且文件都能够被通过PATH的方式正常访问。
 
@@ -128,7 +151,8 @@ SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。
 ==== 服务器配置文件模板
 
 ....
-# 数据库名称，默认为空。
+# 数据库名称。留空表示使用内置的内存库（名字固定为 memory，不落盘）：
+# 管理接口、sysaux 等内部表都会建在 memory 库里，不需要额外指定。
 data=
 
 # 数据文件保存路径

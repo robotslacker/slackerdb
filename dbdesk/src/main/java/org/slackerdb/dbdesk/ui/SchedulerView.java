@@ -31,67 +31,68 @@ import java.util.Map;
 @Route(value = "scheduler", layout = MainLayout.class)
 public class SchedulerView extends VerticalLayout {
 
-    private final Button refresh = new Button("刷新");
-    private final Span capabilityInfo = new Span("未连接");
+    private final Button refresh = new Button(I18n.t("common.refresh"));
+    private final Span capabilityInfo = new Span(I18n.t("scheduler.status.notConnected"));
     private final Span errorText = new Span();
 
     private final Grid<SchedulerClient.RunInfo> runGrid = new Grid<>(SchedulerClient.RunInfo.class, false);
-    private final ComboBox<String> projectType = new ComboBox<>("项目类型");
-    private final TextField runIdField = new TextField("runId（可空）");
-    private final Button createRun = new Button("新建 run");
-    private final Button templateButton = new Button("模板…");
-    private final ComboBox<String> historyRange = new ComboBox<>("时间范围");
-    private final Button historyRefresh = new Button("刷新历史");
-    private final Button historyButton = new Button("历史流水");
+    private final ComboBox<String> projectType = new ComboBox<>(I18n.t("scheduler.projectType"));
+    private final TextField runIdField = new TextField(I18n.t("scheduler.runId"));
+    private final Button createRun = new Button(I18n.t("scheduler.run.create"));
+    private final Button templateButton = new Button(I18n.t("scheduler.template.open"));
+    private final ComboBox<HistoryRange> historyRange = new ComboBox<>(I18n.t("scheduler.history.range"));
+    private final Button historyRefresh = new Button(I18n.t("scheduler.history.refresh"));
+    private final Button historyButton = new Button(I18n.t("scheduler.history.open"));
 
     private final Span historySummary = new Span();
     private final Grid<SchedulerClient.HistoryRow> historyGrid =
             new Grid<>(SchedulerClient.HistoryRow.class, false);
     private final VerticalLayout templatePanel = new VerticalLayout();
-    private final TextField templatePath = new TextField("相对路径");
-    private final TextArea templateContent = new TextArea("内容（JSON）");
+    private final TextField templatePath = new TextField(I18n.t("scheduler.template.path"));
+    private final TextArea templateContent = new TextArea(I18n.t("scheduler.template.content"));
     private final Span templateResult = new Span();
     private String templateProject;
-    private final Button startRun = new Button("启动");
-    private final Button stopRun = new Button("停止");
-    private final Button dropRun = new Button("丢弃");
+    private final Button startRun = new Button(I18n.t("scheduler.run.start"));
+    private final Button stopRun = new Button(I18n.t("scheduler.run.stop"));
+    private final Button dropRun = new Button(I18n.t("scheduler.run.drop"));
 
     private final Grid<SchedulerClient.TaskInfo> taskGrid = new Grid<>(SchedulerClient.TaskInfo.class, false);
-    private final TextField taskName = new TextField("任务名");
-    private final TextField taskScript = new TextField("脚本");
-    private final ComboBox<String> taskType = new ComboBox<>("类型");
-    private final ComboBox<String> taskPolicy = new ComboBox<>("运行策略");
-    private final TextField cron = new TextField("cron（6 段）");
-    private final IntegerField taskTimeout = new IntegerField("超时(秒)");
+    private final TextField taskName = new TextField(I18n.t("scheduler.task.name"));
+    private final TextField taskScript = new TextField(I18n.t("scheduler.task.script"));
+    private final ComboBox<String> taskType = new ComboBox<>(I18n.t("scheduler.task.type"));
+    private final ComboBox<String> taskPolicy = new ComboBox<>(I18n.t("scheduler.task.policy"));
+    private final TextField cron = new TextField(I18n.t("scheduler.task.cron"));
+    private final IntegerField taskTimeout = new IntegerField(I18n.t("scheduler.task.timeout"));
     private final com.vaadin.flow.component.checkbox.Checkbox taskEnabled =
-            new com.vaadin.flow.component.checkbox.Checkbox("启用");
-    private final TextField taskGroup = new TextField("分组");
-    private final IntegerField taskOrder = new IntegerField("顺序");
-    private final TextField taskDesc = new TextField("描述");
+            new com.vaadin.flow.component.checkbox.Checkbox(I18n.t("scheduler.task.enable"));
+    private final TextField taskGroup = new TextField(I18n.t("scheduler.task.group"));
+    private final IntegerField taskOrder = new IntegerField(I18n.t("scheduler.task.order"));
+    private final TextField taskDesc = new TextField(I18n.t("scheduler.task.description"));
     private final Span runDetail = new Span();
-    private final ComboBox<String> logTask = new ComboBox<>("日志任务");
-    private final IntegerField logTail = new IntegerField("行数");
-    private final Button logRefresh = new Button("刷新日志");
-    private final Button createTask = new Button("建任务");
-    private final Button updateTask = new Button("更新");
-    private final Button deleteTask = new Button("删除");
-    private final Button scheduleTask = new Button("登记调度");
+    private final ComboBox<String> logTask = new ComboBox<>(I18n.t("scheduler.log.task"));
+    private final IntegerField logTail = new IntegerField(I18n.t("scheduler.log.tail"));
+    private final Button logRefresh = new Button(I18n.t("scheduler.log.refresh"));
+    private final Button createTask = new Button(I18n.t("scheduler.task.create"));
+    private final Button updateTask = new Button(I18n.t("scheduler.task.update"));
+    private final Button deleteTask = new Button(I18n.t("common.delete"));
+    private final Button scheduleTask = new Button(I18n.t("scheduler.task.schedule"));
 
-    private final Button loadLog = new Button("看日志");
-    private final TextArea logArea = new TextArea("日志（最后 200 行）");
+    private final Button loadLog = new Button(I18n.t("scheduler.log.open"));
+    private final TextArea logArea = new TextArea(I18n.t("scheduler.log.title"));
 
     private transient SchedulerClient client;
     private SchedulerClient.RunInfo selectedRun;
     private SchedulerClient.TaskInfo selectedTask;
 
     public SchedulerView() {
+        I18n.setTitle("nav.scheduler");
         setHeightFull();
         setPadding(true);
         setSpacing(true);
 
-        H2 title = new H2("调度中心（ETL）");
+        H2 title = new H2(I18n.t("scheduler.title"));
         if (!ConnectionManager.current().hasInstanceManagement()) {
-            Span guard = new Span("当前连接不可用，请先连接带实例管理口的服务端。");
+            Span guard = new Span(I18n.t("scheduler.guard"));
             guard.setId("scheduler-guard");
             add(title, guard);
             return;
@@ -188,22 +189,28 @@ public class SchedulerView extends VerticalLayout {
         tasksPane.setFlexGrow(1, taskGrid);
 
         historyRange.setId("history-range");
-        historyRange.setItems("最近 1 小时", "最近 24 小时", "最近 7 天", "全部");
-        historyRange.setValue("最近 24 小时");
+        historyRange.setItems(HistoryRange.values());
+        historyRange.setItemLabelGenerator(range -> I18n.t(range.labelKey()));
+        historyRange.setValue(HistoryRange.LAST_24H);
         historyRefresh.setId("history-refresh");
         historyRefresh.addClickListener(event -> reloadHistory());
         historySummary.setId("history-summary");
         historyGrid.setId("history-grid");
         historyGrid.setWidthFull();
         historyGrid.addColumn(SchedulerClient.HistoryRow::runId).setHeader("runId").setAutoWidth(true);
-        historyGrid.addColumn(SchedulerClient.HistoryRow::taskName).setHeader("任务").setAutoWidth(true);
-        historyGrid.addColumn(SchedulerClient.HistoryRow::startTime).setHeader("开始").setAutoWidth(true);
-        historyGrid.addColumn(SchedulerClient.HistoryRow::duration).setHeader("耗时").setAutoWidth(true);
-        historyGrid.addColumn(SchedulerClient.HistoryRow::result).setHeader("结果").setAutoWidth(true);
-        historyGrid.addColumn(SchedulerClient.HistoryRow::retMsg).setHeader("信息").setAutoWidth(true);
+        historyGrid.addColumn(SchedulerClient.HistoryRow::taskName)
+                .setHeader(I18n.t("scheduler.column.task")).setAutoWidth(true);
+        historyGrid.addColumn(SchedulerClient.HistoryRow::startTime)
+                .setHeader(I18n.t("scheduler.column.started")).setAutoWidth(true);
+        historyGrid.addColumn(SchedulerClient.HistoryRow::duration)
+                .setHeader(I18n.t("scheduler.column.duration")).setAutoWidth(true);
+        historyGrid.addColumn(row -> I18n.text(row.result()))
+                .setHeader(I18n.t("scheduler.column.result")).setAutoWidth(true);
+        historyGrid.addColumn(SchedulerClient.HistoryRow::retMsg)
+                .setHeader(I18n.t("scheduler.column.message")).setAutoWidth(true);
 
         VerticalLayout historyPane = new VerticalLayout(
-                new H3("历史流水"),
+                new H3(I18n.t("scheduler.history.title")),
                 new HorizontalLayout(historyRange, historyRefresh, historySummary),
                 historyGrid);
         historyPane.setPadding(false);
@@ -241,12 +248,15 @@ public class SchedulerView extends VerticalLayout {
         runGrid.setId("run-grid");
         runGrid.setWidthFull();
         runGrid.addColumn(SchedulerClient.RunInfo::runId).setHeader("runId").setAutoWidth(true);
-        runGrid.addColumn(SchedulerClient.RunInfo::projectType).setHeader("项目").setAutoWidth(true);
-        runGrid.addColumn(SchedulerClient.RunInfo::status).setHeader("状态").setAutoWidth(true);
-        runGrid.addColumn(SchedulerClient.RunInfo::createTime).setHeader("创建时间").setAutoWidth(true);
+        runGrid.addColumn(SchedulerClient.RunInfo::projectType)
+                .setHeader(I18n.t("scheduler.column.project")).setAutoWidth(true);
+        runGrid.addColumn(SchedulerClient.RunInfo::status)
+                .setHeader(I18n.t("scheduler.column.status")).setAutoWidth(true);
+        runGrid.addColumn(SchedulerClient.RunInfo::createTime)
+                .setHeader(I18n.t("scheduler.column.created")).setAutoWidth(true);
         runGrid.addSelectionListener(event -> event.getFirstSelectedItem().ifPresent(run -> {
             selectedRun = run;
-            runDetail.setText(String.format("%s · %s · %s · %s",
+            runDetail.setText(I18n.t("scheduler.run.detail",
                     run.runId(), run.projectType(), run.status(), run.workDir()));
             reloadTasks();
         }));
@@ -255,13 +265,22 @@ public class SchedulerView extends VerticalLayout {
     private void buildTaskGrid() {
         taskGrid.setId("task-grid");
         taskGrid.setWidthFull();
-        taskGrid.addColumn(SchedulerClient.TaskInfo::name).setHeader("任务").setAutoWidth(true);
-        taskGrid.addColumn(SchedulerClient.TaskInfo::scriptType).setHeader("类型").setAutoWidth(true);
-        taskGrid.addColumn(SchedulerClient.TaskInfo::runPolicy).setHeader("策略").setAutoWidth(true);
+        taskGrid.addColumn(SchedulerClient.TaskInfo::name)
+                .setHeader(I18n.t("scheduler.column.task")).setAutoWidth(true);
+        taskGrid.addColumn(SchedulerClient.TaskInfo::scriptType)
+                .setHeader(I18n.t("scheduler.column.type")).setAutoWidth(true);
+        taskGrid.addColumn(SchedulerClient.TaskInfo::runPolicy)
+                .setHeader(I18n.t("scheduler.column.policy")).setAutoWidth(true);
         taskGrid.addColumn(SchedulerClient.TaskInfo::crontabExpr).setHeader("cron").setAutoWidth(true);
-        taskGrid.addColumn(task -> task.enabled() ? "启用" : "停用").setHeader("开关").setAutoWidth(true);
-        taskGrid.addColumn(task -> task.scheduled() ? "已登记" : "未登记").setHeader("调度").setAutoWidth(true);
-        taskGrid.addColumn(task -> task.running() ? "运行中" : task.runtimeState()).setHeader("运行态").setAutoWidth(true);
+        taskGrid.addColumn(task -> task.enabled()
+                        ? I18n.t("scheduler.state.enabled") : I18n.t("scheduler.state.disabled"))
+                .setHeader(I18n.t("scheduler.column.enabled")).setAutoWidth(true);
+        taskGrid.addColumn(task -> task.scheduled()
+                        ? I18n.t("scheduler.state.scheduled") : I18n.t("scheduler.state.unscheduled"))
+                .setHeader(I18n.t("scheduler.column.scheduled")).setAutoWidth(true);
+        taskGrid.addColumn(task -> task.running()
+                        ? I18n.t("scheduler.state.running") : task.runtimeState())
+                .setHeader(I18n.t("scheduler.column.runtime")).setAutoWidth(true);
         taskGrid.addSelectionListener(event -> event.getFirstSelectedItem().ifPresent(task -> {
             selectedTask = task;
             taskName.setValue(task.name());
@@ -294,17 +313,21 @@ public class SchedulerView extends VerticalLayout {
         errorText.setText("");
         try {
             SchedulerClient.Capabilities capabilities = client().capabilities();
-            capabilityInfo.setText(String.format("contract %d · quartz %s(%d) · run:%s 任务:%s · HOP:%s",
+            capabilityInfo.setText(I18n.t("scheduler.capabilities",
                     capabilities.contractVersion(),
-                    capabilities.quartzStarted() ? "启动" : "停止",
+                    capabilities.quartzStarted()
+                            ? I18n.t("scheduler.capability.started") : I18n.t("scheduler.capability.stopped"),
                     capabilities.quartzThreads(),
-                    capabilities.runCrud() ? "可写" : "只读",
-                    capabilities.taskCrud() ? "可写" : "只读",
-                    capabilities.hopReady() ? "就绪" : "未就绪"));
+                    capabilities.runCrud()
+                            ? I18n.t("scheduler.capability.writable") : I18n.t("scheduler.capability.readOnly"),
+                    capabilities.taskCrud()
+                            ? I18n.t("scheduler.capability.writable") : I18n.t("scheduler.capability.readOnly"),
+                    capabilities.hopReady()
+                            ? I18n.t("scheduler.capability.ready") : I18n.t("scheduler.capability.notReady")));
             runGrid.setItems(client().runs());
         } catch (SchedulerClient.SchedulerException e) {
-            capabilityInfo.setText("不可用");
-            errorText.setText("调度器不可用：" + e.getMessage());
+            capabilityInfo.setText(I18n.t("scheduler.capability.unavailable"));
+            errorText.setText(I18n.t("scheduler.error.unavailable", I18n.message(e)));
             runGrid.setItems(List.of());
             taskGrid.setItems(List.of());
             return;
@@ -333,7 +356,7 @@ public class SchedulerView extends VerticalLayout {
             taskGrid.setItems(tasks);
             logTask.setItems(tasks.stream().map(SchedulerClient.TaskInfo::name).toList());
         } catch (SchedulerClient.SchedulerException e) {
-            errorText.setText("读任务失败：" + e.getMessage());
+            errorText.setText(I18n.t("scheduler.error.readTasks", I18n.message(e)));
         }
     }
 
@@ -343,7 +366,7 @@ public class SchedulerView extends VerticalLayout {
             errorText.setText("");
             runGrid.setItems(client().runs());
         } catch (SchedulerClient.SchedulerException e) {
-            errorText.setText("新建 run 失败：" + e.getMessage());
+            errorText.setText(I18n.t("scheduler.error.createRun", I18n.message(e)));
         }
     }
 
@@ -381,34 +404,37 @@ public class SchedulerView extends VerticalLayout {
 
         templateResult.setId("tpl-result");
 
-        Button load = new Button("读取", event -> {
+        Button load = new Button(I18n.t("scheduler.template.read"), event -> {
             try {
                 templateContent.setValue(client().templateFile(templateProject, templatePath.getValue()));
-                templateResult.setText("已读取");
+                templateResult.setText(I18n.t("scheduler.template.read.done"));
             } catch (SchedulerClient.SchedulerException e) {
-                templateResult.setText("读取失败：" + e.getMessage());
+                templateResult.setText(I18n.t("scheduler.error.readTemplate", I18n.message(e)));
             }
         });
         load.setId("tpl-load");
 
-        Button upload = new Button("上传", event -> {
+        Button upload = new Button(I18n.t("scheduler.template.upload"), event -> {
             try {
                 List<String> warnings = client().uploadTemplate(templateProject,
                         templatePath.getValue(), templateContent.getValue());
-                templateResult.setText(warnings.isEmpty() ? "已上传（无告警）" : "已上传，告警：" + String.join("；", warnings));
+                templateResult.setText(warnings.isEmpty()
+                        ? I18n.t("scheduler.template.uploaded")
+                        : I18n.t("scheduler.template.uploadedWithWarnings",
+                                String.join(I18n.t("scheduler.warning.join"), warnings)));
             } catch (SchedulerClient.SchedulerException e) {
-                templateResult.setText("上传失败：" + e.getMessage());
+                templateResult.setText(I18n.t("scheduler.error.uploadTemplate", I18n.message(e)));
             }
         });
         upload.setId("tpl-upload");
         upload.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
 
-        Button delete = new Button("删除", event -> {
+        Button delete = new Button(I18n.t("common.delete"), event -> {
             try {
                 client().deleteTemplate(templateProject, templatePath.getValue());
-                templateResult.setText("已删除");
+                templateResult.setText(I18n.t("scheduler.template.deleted"));
             } catch (SchedulerClient.SchedulerException e) {
-                templateResult.setText("删除失败：" + e.getMessage());
+                templateResult.setText(I18n.t("scheduler.error.deleteTemplate", I18n.message(e)));
             }
         });
         delete.setId("tpl-delete");
@@ -420,7 +446,8 @@ public class SchedulerView extends VerticalLayout {
             try (var in = event.getInputStream()) {
                 bytes = in.readAllBytes();
             } catch (Exception e) {
-                getUI().ifPresent(ui -> ui.access(() -> templateResult.setText("读取上传失败：" + e.getMessage())));
+                getUI().ifPresent(ui -> ui.access(() -> templateResult.setText(
+                        I18n.t("scheduler.error.readUpload", I18n.message(e)))));
                 return;
             }
             String project = templateProject;
@@ -428,25 +455,27 @@ public class SchedulerView extends VerticalLayout {
                 try {
                     SchedulerClient.ImportResult result = client().importZip(project,
                             java.util.Base64.getEncoder().encodeToString(bytes));
-                    templateResult.setText(String.format("已导入 %d 个文件，模板任务 %d 个%s",
-                            result.count(), result.taskCount(),
-                            result.warnings().isEmpty() ? "" : "，告警：" + String.join("；", result.warnings())));
+                    templateResult.setText(result.warnings().isEmpty()
+                            ? I18n.t("scheduler.template.imported", result.count(), result.taskCount())
+                            : I18n.t("scheduler.template.importedWithWarnings", result.count(), result.taskCount(),
+                                    String.join(I18n.t("scheduler.warning.join"), result.warnings())));
                 } catch (SchedulerClient.SchedulerException e) {
-                    templateResult.setText("导入失败：" + e.getMessage());
+                    templateResult.setText(I18n.t("scheduler.error.importTemplate", I18n.message(e)));
                 }
             }));
         });
         zipUpload.setId("tpl-import-zip");
+        UploadTexts.apply(zipUpload);
         zipUpload.setMaxFiles(1);
         zipUpload.setAcceptedFileTypes(".zip");
         zipUpload.setMaxFileSize(50 * 1024 * 1024);
-        Button close = new Button("收起", event -> templatePanel.setVisible(false));
+        Button close = new Button(I18n.t("scheduler.template.hide"), event -> templatePanel.setVisible(false));
         close.setId("tpl-close");
 
         templatePanel.setId("tpl-panel");
         templatePanel.setWidthFull();
         templatePanel.setPadding(false);
-        templatePanel.add(new H3("项目模板"), templatePath, templateContent,
+        templatePanel.add(new H3(I18n.t("scheduler.template.title")), templatePath, templateContent,
                 new HorizontalLayout(load, upload, delete, zipUpload, close), templateResult);
         templatePanel.setVisible(false);
     }
@@ -455,13 +484,13 @@ public class SchedulerView extends VerticalLayout {
     private void toggleTemplatePanel() {
         String project = projectType.getValue();
         if (project == null || project.isBlank()) {
-            errorText.setText("先在左边选/填一个项目类型");
+            errorText.setText(I18n.t("scheduler.error.projectRequired"));
             return;
         }
         templateProject = project;
         templatePanel.setVisible(!templatePanel.isVisible());
         if (templatePanel.isVisible()) {
-            templateResult.setText("项目：" + project);
+            templateResult.setText(I18n.t("scheduler.template.project", project));
             // 面板在页面下方（body 占满首屏高度），展开后滚过去，否则用户以为没反应
             templatePanel.getElement().executeJs("this.scrollIntoView({block: 'start'})");
         }
@@ -469,20 +498,17 @@ public class SchedulerView extends VerticalLayout {
 
     /** 历史：按时间范围拉跨 run 的流水。 */
     private void reloadHistory() {
-        int hours = switch (historyRange.getValue() == null ? "" : historyRange.getValue()) {
-            case "最近 1 小时" -> 1;
-            case "最近 7 天" -> 24 * 7;
-            case "全部" -> 0;
-            default -> 24;
-        };
+        // 标签文案与「拉多少小时」分开：下拉框的 value 是枚举，不是显示文本
+        int hours = historyRange.getValue() == null
+                ? HistoryRange.LAST_24H.hours() : historyRange.getValue().hours();
         try {
             SchedulerClient.HistoryPage page = client().history(hours, 500);
             historyGrid.setItems(page.rows());
-            historySummary.setText(String.format("成功 %d · 失败 %d · 进行中 %d",
+            historySummary.setText(I18n.t("scheduler.summary",
                     page.success(), page.failed(), page.running()));
         } catch (SchedulerClient.SchedulerException e) {
             historyGrid.setItems(List.of());
-            historySummary.setText("读历史失败：" + e.getMessage());
+            historySummary.setText(I18n.t("scheduler.error.readHistory", I18n.message(e)));
         }
     }
 
@@ -492,7 +518,7 @@ public class SchedulerView extends VerticalLayout {
     }
     private void runAction(String action) {
         if (selectedRun == null) {
-            errorText.setText("先选一个 run");
+            errorText.setText(I18n.t("scheduler.error.selectRun"));
             return;
         }
         try {
@@ -506,7 +532,7 @@ public class SchedulerView extends VerticalLayout {
             runGrid.setItems(client().runs());
             reloadTasks();
         } catch (SchedulerClient.SchedulerException e) {
-            errorText.setText("操作失败：" + e.getMessage());
+            errorText.setText(I18n.t("scheduler.error.runAction", I18n.message(e)));
         }
     }
 
@@ -532,7 +558,7 @@ public class SchedulerView extends VerticalLayout {
 
     private void createTask() {
         if (selectedRun == null) {
-            errorText.setText("先选一个 run");
+            errorText.setText(I18n.t("scheduler.error.selectRun"));
             return;
         }
         try {
@@ -540,13 +566,13 @@ public class SchedulerView extends VerticalLayout {
             errorText.setText("");
             reloadTasks();
         } catch (SchedulerClient.SchedulerException e) {
-            errorText.setText("建任务失败：" + e.getMessage());
+            errorText.setText(I18n.t("scheduler.error.createTask", I18n.message(e)));
         }
     }
 
     private void updateTask() {
         if (selectedRun == null || selectedTask == null) {
-            errorText.setText("先选一个任务");
+            errorText.setText(I18n.t("scheduler.error.selectTask"));
             return;
         }
         try {
@@ -566,13 +592,13 @@ public class SchedulerView extends VerticalLayout {
             errorText.setText("");
             reloadTasks();
         } catch (SchedulerClient.SchedulerException e) {
-            errorText.setText("更新失败：" + e.getMessage());
+            errorText.setText(I18n.t("scheduler.error.updateTask", I18n.message(e)));
         }
     }
 
     private void deleteTask() {
         if (selectedRun == null || selectedTask == null) {
-            errorText.setText("先选一个任务");
+            errorText.setText(I18n.t("scheduler.error.selectTask"));
             return;
         }
         try {
@@ -580,13 +606,13 @@ public class SchedulerView extends VerticalLayout {
             errorText.setText("");
             reloadTasks();
         } catch (SchedulerClient.SchedulerException e) {
-            errorText.setText("删除失败：" + e.getMessage());
+            errorText.setText(I18n.t("scheduler.error.deleteTask", I18n.message(e)));
         }
     }
 
     private void scheduleTask() {
         if (selectedRun == null || selectedTask == null) {
-            errorText.setText("先选一个任务");
+            errorText.setText(I18n.t("scheduler.error.selectTask"));
             return;
         }
         try {
@@ -594,19 +620,19 @@ public class SchedulerView extends VerticalLayout {
             errorText.setText("");
             reloadTasks();
         } catch (SchedulerClient.SchedulerException e) {
-            errorText.setText("登记调度失败：" + e.getMessage());
+            errorText.setText(I18n.t("scheduler.error.scheduleTask", I18n.message(e)));
         }
     }
 
     private void showLog() {
         if (selectedRun == null) {
-            errorText.setText("先选一个 run");
+            errorText.setText(I18n.t("scheduler.error.selectRun"));
             return;
         }
         String task = logTask.getValue() != null ? logTask.getValue()
                 : (selectedTask == null ? "" : selectedTask.name());
         if (task.isBlank()) {
-            errorText.setText("先选一个任务");
+            errorText.setText(I18n.t("scheduler.error.selectTask"));
             return;
         }
         try {
@@ -614,12 +640,41 @@ public class SchedulerView extends VerticalLayout {
             logArea.setValue(client().taskLog(selectedRun.runId(), task, tail));
         } catch (SchedulerClient.SchedulerException e) {
             logArea.setValue("");
-            errorText.setText("读日志失败（可能还没跑过）：" + e.getMessage());
+            errorText.setText(I18n.t("scheduler.error.readLog", I18n.message(e)));
         }
     }
 
     /** 测试用。 */
     public String errorText() {
         return errorText.getText();
+    }
+
+    /**
+     * 「时间范围」下拉的选项：显示文案走 {@link #labelKey()}，行为走 {@link #hours()}。
+     *
+     * <p>原来直接把「最近 24 小时」这类中文标签当 value 用，翻译后就再也匹配不上了；
+     * 拆成枚举后两者互不影响，行为与原来完全一致（默认 24 小时，{@code 0} 表示不限）。</p>
+     */
+    private enum HistoryRange {
+        LAST_HOUR("scheduler.range.lastHour", 1),
+        LAST_24H("scheduler.range.last24h", 24),
+        LAST_7D("scheduler.range.last7d", 24 * 7),
+        ALL("scheduler.range.all", 0);
+
+        private final String labelKey;
+        private final int hours;
+
+        HistoryRange(String labelKey, int hours) {
+            this.labelKey = labelKey;
+            this.hours = hours;
+        }
+
+        String labelKey() {
+            return labelKey;
+        }
+
+        int hours() {
+            return hours;
+        }
     }
 }

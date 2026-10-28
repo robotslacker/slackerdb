@@ -234,6 +234,56 @@ public class CatalogNameTest {
     }
 
     /**
+     * 管理接口 + 没有 {@code --data}（发行版最常见的手工启动方式，例如
+     * {@code java -jar slackerdb-dbserver-*.jar --portx 43090 start}）。
+     *
+     * <p>这是用户报的启动崩溃：{@code DefinitionService} / {@code PortalAccessService} 早期直接拿
+     * {@code ServerConfiguration.getData()} 拼 SQL，空值拼出 {@code create schema if not exists .sysaux}，
+     * DuckDB 报 {@code Parser Error: syntax error at or near "."}，<b>整个实例起不来</b>
+     * （异常从 {@code DBInstanceX} 构造一路冒到 {@code Main}）。</p>
+     *
+     * <p>断言三件事：实例能起来、实例名回落到 {@code memory}、两张内部表真的建在
+     * {@code memory.sysaux} 下。</p>
+     */
+    @Test
+    void managementServicesDefaultToMemoryWhenDataIsEmpty(@TempDir Path dataDir) throws Exception {
+        TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+
+        ServerConfiguration cfg = new ServerConfiguration();
+        cfg.setPort(0);
+        cfg.setPortX(0);                    // 打开管理接口，才会创建定义/门户访问两个服务
+        cfg.setData("");                    // 模拟没传 --data
+        cfg.setData_dir(dataDir.toString()); // 磁盘 data_dir + 空 data：不会 ATTACH 任何实例库
+        cfg.setSqlHistory("OFF");
+        cfg.setLog_level("WARN");
+
+        // 修复前：这里直接抛 IllegalStateException("Failed to prepare sysaux.definitions ...")
+        DBInstance instance = new DBInstance(cfg);
+        instance.start();
+        try {
+            assert instance.instanceState.equalsIgnoreCase("RUNNING")
+                    : "实例未启动成功: " + instance.instanceState;
+            assert "memory".equals(instance.instanceName)
+                    : "没有 --data 时实例库名必须是 memory，实际为 [" + instance.instanceName + "]";
+
+            String url = "jdbc:postgresql://127.0.0.1:" + cfg.getPort() + "/";
+            try (Connection conn = connect(url, "");
+                 Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(
+                         "SELECT count(*) FROM information_schema.tables "
+                                 + "WHERE table_catalog = 'memory' AND table_schema = 'sysaux' "
+                                 + "AND table_name IN ('definitions', 'portal_access')")) {
+                assert rs.next() : "information_schema.tables 没有返回行";
+                assert rs.getLong(1) == 2
+                        : "memory.sysaux 下应同时存在 definitions 与 portal_access，实际命中 "
+                                + rs.getLong(1) + " 张（内部服务建表失败）";
+            }
+        } finally {
+            instance.stop();
+        }
+    }
+
+    /**
      * 经 {@link DriverManager} 建连。
      *
      * <p>刻意走 {@code DriverManager} 而不是数据源：dbserver 的 test classpath 上同时有

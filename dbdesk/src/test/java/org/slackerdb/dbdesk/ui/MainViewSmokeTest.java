@@ -109,6 +109,7 @@ class MainViewSmokeTest {
     @Test
     void splashScreenThenBlankMainWithNavigation() throws Exception {
         long start = System.nanoTime();
+        UiTestSupport.useChinese(page);
         page.navigate(URL);
 
         // 启动画面：不挂 MainLayout，因此没有导航；2 秒后由服务端导航到 /main

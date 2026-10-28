@@ -4,6 +4,7 @@ import org.postgresql.PGConnection;
 import org.postgresql.copy.CopyIn;
 import org.postgresql.copy.CopyManager;
 import org.slackerdb.dbdesk.access.JdbcDrivers;
+import org.slackerdb.dbdesk.i18n.LocalizedException;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -91,7 +92,7 @@ public final class CsvImporter {
             }
         }
         if (mapped.isEmpty()) {
-            throw new IllegalArgumentException("至少要映射一列");
+            throw new LocalizedException("error.csv.noColumnsMapped");
         }
 
         Stats stats = new Stats();
@@ -323,7 +324,8 @@ public final class CsvImporter {
             }
             if (options.stopOnError()) {
                 safeRollback(connection);
-                throw new SQLException("第 " + line + " 行导入失败：" + messageOf(e), e);
+                throw new LocalizedException(e, "error.csv.rowInsertFailed",
+                        Long.toString(line), messageOf(e));
             }
             safeRollback(connection);
         }

@@ -36,18 +36,18 @@ import java.util.Map;
 @RouteAlias("m1-ops")
 public class InstancesView extends VerticalLayout {
 
-    private final Button connect = new Button("刷新");
+    private final Button connect = new Button(I18n.t("common.refresh"));
     private final com.vaadin.flow.component.checkbox.Checkbox autoRefresh =
-            new com.vaadin.flow.component.checkbox.Checkbox("自动刷新（5 s）");
-    private final Span capabilitySummary = new Span("未连接");
+            new com.vaadin.flow.component.checkbox.Checkbox(I18n.t("instance.autoRefresh"));
+    private final Span capabilitySummary = new Span(I18n.t("instance.status.disconnected"));
     private final Span healthStatus = new Span("—");
     private final Span menuHint = new Span("—");
     private final Span serverSummary = new Span("—");
     private final Span databaseSummary = new Span("—");
     private final Span errorText = new Span();
     private final TextField pluginFile = new TextField();
-    private final Button pluginLoad = new Button("加载");
-    private final Checkbox pluginStartAfterLoad = new Checkbox("加载后启动", true);
+    private final Button pluginLoad = new Button(I18n.t("instance.plugin.load"));
+    private final Checkbox pluginStartAfterLoad = new Checkbox(I18n.t("instance.plugin.startAfterLoad"), true);
     private final Span pluginStatus = new Span();
     private final Grid<SessionInfo> sessionGrid = new Grid<>(SessionInfo.class, false);
     private final Grid<MapRow> parametersGrid = new Grid<>(MapRow.class, false);
@@ -72,10 +72,11 @@ public class InstancesView extends VerticalLayout {
     public InstancesView() {
         setPadding(true);
         setSpacing(true);
+        I18n.setTitle("nav.instances");
 
-        H2 title = new H2("实例与状态");
+        H2 title = new H2(I18n.t("instance.title"));
         if (!ConnectionManager.current().hasInstanceManagement()) {
-            Span guard = new Span("当前连接没有实例级管理口，实例状态不可用。");
+            Span guard = new Span(I18n.t("instance.guard"));
             guard.setId("instances-guard");
             add(title, guard);
             return;
@@ -98,8 +99,8 @@ public class InstancesView extends VerticalLayout {
 
         pluginFile.setId("plugin-file");
         pluginFile.setWidth("420px");
-        pluginFile.setPlaceholder("myplugin.jar 或服务器上的完整路径");
-        pluginFile.setHelperText("简单文件名从 plugins_dir 解析；完整路径可直接加载");
+        pluginFile.setPlaceholder(I18n.t("instance.plugin.file.placeholder"));
+        pluginFile.setHelperText(I18n.t("instance.plugin.file.helper"));
         pluginLoad.setId("plugin-load");
         pluginLoad.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
         pluginLoad.addClickListener(event -> loadPlugin());
@@ -111,17 +112,17 @@ public class InstancesView extends VerticalLayout {
 
         add(title,
                 new HorizontalLayout(connect, autoRefresh),
-                new HorizontalLayout(new Span("能力："), capabilitySummary),
-                new HorizontalLayout(new Span("健康："), healthStatus),
-                new HorizontalLayout(new Span("菜单："), menuHint),
-                new HorizontalLayout(new Span("服务器："), serverSummary),
-                new HorizontalLayout(new Span("数据库："), databaseSummary),
+                new HorizontalLayout(new Span(I18n.t("instance.label.capabilities")), capabilitySummary),
+                new HorizontalLayout(new Span(I18n.t("instance.label.health")), healthStatus),
+                new HorizontalLayout(new Span(I18n.t("instance.label.menu")), menuHint),
+                new HorizontalLayout(new Span(I18n.t("instance.label.server")), serverSummary),
+                new HorizontalLayout(new Span(I18n.t("instance.label.database")), databaseSummary),
                 errorText,
-                new H3("会话"), sessionGrid,
-                new H3("参数"), parametersGrid,
+                new H3(I18n.t("instance.sessions")), sessionGrid,
+                new H3(I18n.t("instance.parameters")), parametersGrid,
                 new H3("Usage"), usageGrid,
-                new H3("扩展"), extensionsGrid,
-                new H3("插件"),
+                new H3(I18n.t("instance.extensions")), extensionsGrid,
+                new H3(I18n.t("instance.plugins")),
                 new HorizontalLayout(pluginFile, pluginLoad, pluginStartAfterLoad),
                 pluginStatus,
                 pluginGrid);
@@ -135,44 +136,47 @@ public class InstancesView extends VerticalLayout {
         sessionGrid.setHeight("260px");
         sessionGrid.addColumn(SessionInfo::id).setHeader("id").setAutoWidth(true);
         sessionGrid.addColumn(session -> session.fromConsole()
-                        ? nullToDash(session.applicationName()) + "（本机控制台）"
+                        ? I18n.t("instance.source.console", nullToDash(session.applicationName()))
                         : nullToDash(session.applicationName()))
-                .setHeader("来源").setAutoWidth(true);
-        sessionGrid.addColumn(SessionInfo::database).setHeader("库").setAutoWidth(true);
-        sessionGrid.addColumn(SessionInfo::clientIp).setHeader("客户端").setAutoWidth(true);
-        sessionGrid.addColumn(SessionInfo::connectedTime).setHeader("连接时间").setAutoWidth(true);
-        sessionGrid.addColumn(session -> session.busy() ? "执行中" : "空闲").setHeader("状态").setAutoWidth(true);
+                .setHeader(I18n.t("instance.column.source")).setAutoWidth(true);
+        sessionGrid.addColumn(SessionInfo::database).setHeader(I18n.t("instance.column.database")).setAutoWidth(true);
+        sessionGrid.addColumn(SessionInfo::clientIp).setHeader(I18n.t("instance.column.client")).setAutoWidth(true);
+        sessionGrid.addColumn(SessionInfo::connectedTime).setHeader(I18n.t("instance.column.connectedTime")).setAutoWidth(true);
+        sessionGrid.addColumn(session -> session.busy()
+                        ? I18n.t("instance.session.executing")
+                        : I18n.t("instance.session.idle"))
+                .setHeader(I18n.t("instance.column.status")).setAutoWidth(true);
         sessionGrid.addComponentColumn(this::killButton).setHeader("").setAutoWidth(true);
 
         parametersGrid.setId("parameters-grid");
         parametersGrid.setWidthFull();
         parametersGrid.setHeight("220px");
-        parametersGrid.addColumn(MapRow::key).setHeader("参数").setAutoWidth(true);
-        parametersGrid.addColumn(MapRow::value).setHeader("值").setAutoWidth(true);
+        parametersGrid.addColumn(MapRow::key).setHeader(I18n.t("instance.parameters")).setAutoWidth(true);
+        parametersGrid.addColumn(MapRow::value).setHeader(I18n.t("instance.column.value")).setAutoWidth(true);
 
         usageGrid.setId("usage-grid");
         usageGrid.setWidthFull();
         usageGrid.setHeight("220px");
-        usageGrid.addColumn(MapRow::key).setHeader("指标").setAutoWidth(true);
-        usageGrid.addColumn(MapRow::value).setHeader("值").setAutoWidth(true);
+        usageGrid.addColumn(MapRow::key).setHeader(I18n.t("instance.column.metric")).setAutoWidth(true);
+        usageGrid.addColumn(MapRow::value).setHeader(I18n.t("instance.column.value")).setAutoWidth(true);
 
         extensionsGrid.setId("extensions-grid");
         extensionsGrid.setWidthFull();
         extensionsGrid.setHeight("160px");
-        extensionsGrid.addColumn(value -> value).setHeader("扩展").setAutoWidth(true);
+        extensionsGrid.addColumn(value -> value).setHeader(I18n.t("instance.extensions")).setAutoWidth(true);
 
         pluginGrid.setId("plugins-grid");
         pluginGrid.setWidthFull();
         pluginGrid.setHeight("220px");
         pluginGrid.addColumn(ServerStatus.PluginInfo::id).setHeader("id").setAutoWidth(true);
-        pluginGrid.addColumn(ServerStatus.PluginInfo::version).setHeader("版本").setAutoWidth(true);
-        pluginGrid.addColumn(ServerStatus.PluginInfo::state).setHeader("状态").setAutoWidth(true);
-        pluginGrid.addColumn(ServerStatus.PluginInfo::mountTime).setHeader("挂载").setAutoWidth(true);
-        pluginGrid.addComponentColumn(this::pluginActions).setHeader("操作").setAutoWidth(true);
+        pluginGrid.addColumn(ServerStatus.PluginInfo::version).setHeader(I18n.t("instance.column.version")).setAutoWidth(true);
+        pluginGrid.addColumn(ServerStatus.PluginInfo::state).setHeader(I18n.t("instance.column.status")).setAutoWidth(true);
+        pluginGrid.addColumn(ServerStatus.PluginInfo::mountTime).setHeader(I18n.t("instance.column.mountTime")).setAutoWidth(true);
+        pluginGrid.addComponentColumn(this::pluginActions).setHeader(I18n.t("instance.column.actions")).setAutoWidth(true);
     }
 
     private Button killButton(SessionInfo session) {
-        Button kill = new Button("终止");
+        Button kill = new Button(I18n.t("instance.session.kill"));
         kill.addThemeVariants(ButtonVariant.LUMO_ERROR, ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
         kill.addClickListener(event -> confirmKill(session));
         return kill;
@@ -183,7 +187,7 @@ public class InstancesView extends VerticalLayout {
     private void loadPlugin() {
         String filename = pluginFile.getValue() == null ? "" : pluginFile.getValue().strip();
         if (filename.isEmpty()) {
-            setPluginStatus("请填写插件 JAR 文件名或完整路径", true);
+            setPluginStatus(I18n.t("instance.plugin.file.required"), true);
             return;
         }
         if (pluginBusy) {
@@ -195,22 +199,24 @@ public class InstancesView extends VerticalLayout {
         try {
             PluginActionResult loaded = client().loadPlugin(filename);
             if (!loaded.success()) {
-                setPluginStatus("加载失败：" + loaded.message(), true);
+                setPluginStatus(I18n.t("instance.plugin.loadFailed", loaded.message()), true);
                 return;
             }
 
             String pluginId = loaded.pluginId();
-            String message = pluginId == null ? "插件已加载" : "已加载 " + pluginId;
+            String message = pluginId == null
+                    ? I18n.t("instance.plugin.loaded")
+                    : I18n.t("instance.plugin.loaded.id", pluginId);
             if (pluginStartAfterLoad.getValue() && pluginId != null) {
                 PluginActionResult started = client().startPlugin(pluginId);
                 message = started.success()
-                        ? message + "，已启动"
-                        : message + "，但启动失败：" + started.message();
+                        ? I18n.t("instance.plugin.loaded.started", pluginId)
+                        : I18n.t("instance.plugin.loaded.startFailed", pluginId, started.message());
             }
             refresh();
             setPluginStatus(message, false);
         } catch (ManagementException e) {
-            setPluginStatus("加载失败：" + e.getMessage(), true);
+            setPluginStatus(I18n.t("instance.plugin.loadFailed", I18n.message(e)), true);
         } finally {
             pluginBusy = false;
             updatePluginControls();
@@ -223,22 +229,24 @@ public class InstancesView extends VerticalLayout {
 
         boolean started = "STARTED".equalsIgnoreCase(plugin.state());
         if (!started) {
-            Button start = new Button("启动");
+            Button start = new Button(I18n.t("instance.plugin.start"));
             start.setId("plugin-start-" + plugin.id());
             start.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
-            start.addClickListener(event -> runPluginAction("启动",
-                    () -> client().startPlugin(plugin.id()), "已启动 " + plugin.id()));
+            start.addClickListener(event -> runPluginAction(I18n.t("instance.plugin.start"),
+                    () -> client().startPlugin(plugin.id()),
+                    I18n.t("instance.plugin.started", plugin.id())));
             actions.add(start);
         } else {
-            Button stop = new Button("停止");
+            Button stop = new Button(I18n.t("instance.plugin.stop"));
             stop.setId("plugin-stop-" + plugin.id());
             stop.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
-            stop.addClickListener(event -> runPluginAction("停止",
-                    () -> client().stopPlugin(plugin.id()), "已停止 " + plugin.id()));
+            stop.addClickListener(event -> runPluginAction(I18n.t("instance.plugin.stop"),
+                    () -> client().stopPlugin(plugin.id()),
+                    I18n.t("instance.plugin.stopped", plugin.id())));
             actions.add(stop);
         }
 
-        Button unload = new Button("卸载");
+        Button unload = new Button(I18n.t("instance.plugin.unload"));
         unload.setId("plugin-unload-" + plugin.id());
         unload.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL,
                 ButtonVariant.LUMO_ERROR);
@@ -250,17 +258,16 @@ public class InstancesView extends VerticalLayout {
     private void confirmUnload(ServerStatus.PluginInfo plugin) {
         ConfirmDialog dialog = new ConfirmDialog();
         dialog.setId("plugin-unload-dialog");
-        dialog.setHeader("卸载插件 " + plugin.id() + "？");
-        dialog.setText("卸载会停止插件并释放类加载器，但不会删除 JAR，也不会撤销插件已经注册的 HTTP 路由。"
-                + "\n卸载后访问旧路径可能返回 500 Internal Server Error，或继续返回旧插件结果。"
-                + "\n需要彻底清理时请重启 dbserver。");
+        dialog.setHeader(I18n.t("instance.plugin.unload.title", plugin.id()));
+        dialog.setText(I18n.t("instance.plugin.unload.body"));
         dialog.setCancelable(true);
-        dialog.setConfirmText("卸载");
+        dialog.setCancelText(I18n.t("common.cancel"));
+        dialog.setConfirmText(I18n.t("instance.plugin.unload"));
         dialog.setConfirmButtonTheme("error primary");
         dialog.addConfirmListener(event -> {
             dialog.close();
-            runPluginAction("卸载", () -> client().unloadPlugin(plugin.id()),
-                    "已卸载 " + plugin.id());
+            runPluginAction(I18n.t("instance.plugin.unload"), () -> client().unloadPlugin(plugin.id()),
+                    I18n.t("instance.plugin.unloaded", plugin.id()));
         });
         dialog.open();
     }
@@ -274,13 +281,13 @@ public class InstancesView extends VerticalLayout {
         try {
             PluginActionResult result = call.run();
             if (!result.success()) {
-                setPluginStatus(action + "失败：" + result.message(), true);
+                setPluginStatus(I18n.t("instance.plugin.actionFailed", action, result.message()), true);
                 return;
             }
             refresh();
             setPluginStatus(success, false);
         } catch (ManagementException e) {
-            setPluginStatus(action + "失败：" + e.getMessage(), true);
+            setPluginStatus(I18n.t("instance.plugin.actionFailed", action, I18n.message(e)), true);
         } finally {
             pluginBusy = false;
             updatePluginControls();
@@ -303,13 +310,23 @@ public class InstancesView extends VerticalLayout {
 
     private void confirmKill(SessionInfo session) {
         ConfirmDialog dialog = new ConfirmDialog();
-        dialog.setHeader("终止会话 " + session.id() + "？");
-        dialog.setText((session.fromConsole() ? "**这是本控制台自己的会话**，" : "")
-                + "来源：" + nullToDash(session.applicationName())
-                + "，客户端：" + nullToDash(session.clientIp())
-                + (session.busy() ? "；它正在执行：" + session.executingSql() : ""));
+        dialog.setHeader(I18n.t("instance.kill.title", session.id()));
+        String source = nullToDash(session.applicationName());
+        String clientIp = nullToDash(session.clientIp());
+        String body;
+        if (session.fromConsole()) {
+            body = session.busy()
+                    ? I18n.t("instance.kill.console.body.busy", source, clientIp, session.executingSql())
+                    : I18n.t("instance.kill.console.body", source, clientIp);
+        } else {
+            body = session.busy()
+                    ? I18n.t("instance.kill.body.busy", source, clientIp, session.executingSql())
+                    : I18n.t("instance.kill.body", source, clientIp);
+        }
+        dialog.setText(body);
         dialog.setCancelable(true);
-        dialog.setConfirmText("终止");
+        dialog.setCancelText(I18n.t("common.cancel"));
+        dialog.setConfirmText(I18n.t("instance.session.kill"));
         dialog.setConfirmButtonTheme("error primary");
         dialog.addConfirmListener(event -> kill(session, dialog));
         dialog.open();
@@ -321,14 +338,16 @@ public class InstancesView extends VerticalLayout {
             dialog.close();
             // 先刷新再写提示：refresh() 开头会清空 errorText，顺序反了提示会被自己抹掉（实测踩到）
             refresh();
-            String message = killed ? "已终止会话 " + session.id() : "服务端说没杀成：" + session.id();
+            String message = killed
+                    ? I18n.t("instance.kill.done", session.id())
+                    : I18n.t("instance.kill.notKilled", session.id());
             errorText.setText(message);
 
             // 服务端把会话从 /status 摘掉有延迟（实测 0.5~2 s 不等），轮询到它真的消失再刷新一次
             refreshAfterKill(session.id(), message);
         } catch (ManagementException e) {
             dialog.close();
-            errorText.setText("终止失败：" + e.getMessage());
+            errorText.setText(I18n.t("instance.kill.failed", I18n.message(e)));
         }
     }
 
@@ -382,22 +401,25 @@ public class InstancesView extends VerticalLayout {
                     capabilities.managementPort()));
 
             healthStatus.setText(health.up()
-                    ? "UP（数据库 " + health.database() + "，管理口 " + health.management() + "）"
-                    : health.status() + "（数据库 " + health.database() + "）");
+                    ? I18n.t("instance.health.up", health.database(), health.management())
+                    : I18n.t("instance.health.down", health.status(), health.database()));
             healthStatus.getStyle().set("color", health.up() ? "var(--lumo-success-text-color)"
                     : "var(--lumo-error-text-color)");
 
-            menuHint.setText(String.format("ETL：%s · AI：%s · 备份任务：%s · 日志尾行：%s",
-                    capabilities.hasEtl() ? "显示" : "隐藏",
-                    capabilities.features().aiChat() ? "显示" : "隐藏",
-                    capabilities.features().backupTasks() ? "可用" : "不可用",
-                    capabilities.features().logTail() ? "可用" : "不可用"));
+            menuHint.setText(I18n.t("instance.menu.summary",
+                    capabilities.hasEtl() ? I18n.t("instance.menu.shown") : I18n.t("instance.menu.hidden"),
+                    capabilities.features().aiChat()
+                            ? I18n.t("instance.menu.shown") : I18n.t("instance.menu.hidden"),
+                    capabilities.features().backupTasks()
+                            ? I18n.t("instance.menu.available") : I18n.t("instance.menu.unavailable"),
+                    capabilities.features().logTail()
+                            ? I18n.t("instance.menu.available") : I18n.t("instance.menu.unavailable")));
 
             serverSummary.setText(status.server() == null ? "—"
-                    : String.format("%s · %s · pid=%d · 运行 %s",
+                    : I18n.t("instance.server.summary",
                     nullToDash(status.server().status()),
                     nullToDash(status.server().version()),
-                    status.server().pid(),
+                    String.valueOf(status.server().pid()),
                     nullToDash(status.server().runTime())));
             databaseSummary.setText(status.database() == null ? "—"
                     : String.format("%s · size=%s · memory=%s · wal=%s",
@@ -412,8 +434,9 @@ public class InstancesView extends VerticalLayout {
             pluginGrid.setItems(status.plugins());
             sessionGrid.setItems(sessions);
         } catch (ManagementException e) {
-            capabilitySummary.setText("不可用");
-            healthStatus.setText(e.transportFailure() ? "连不上" : "错误");
+            capabilitySummary.setText(I18n.t("instance.capabilities.unavailable"));
+            healthStatus.setText(e.transportFailure()
+                    ? I18n.t("instance.health.unreachable") : I18n.t("instance.health.error"));
             menuHint.setText("—");
             serverSummary.setText("—");
             databaseSummary.setText("—");
@@ -422,7 +445,7 @@ public class InstancesView extends VerticalLayout {
             usageGrid.setItems(List.of());
             extensionsGrid.setItems(List.of());
             pluginGrid.setItems(List.of());
-            errorText.setText(e.getMessage());
+            errorText.setText(I18n.message(e));
         }
     }
 

@@ -48,9 +48,9 @@ class DatasetCompileTest {
         DatasetRunner.ensureSingleQuery("with t as (select 1) select * from t");
         DatasetRunner.ensureSingleQuery("-- 注释\nselect 1;");
 
-        assertThrows(IllegalArgumentException.class, () -> DatasetRunner.ensureSingleQuery("delete from t"));
-        assertThrows(IllegalArgumentException.class, () -> DatasetRunner.ensureSingleQuery("select 1; drop table t"));
-        assertThrows(IllegalArgumentException.class, () -> DatasetRunner.ensureSingleQuery("insert into t values (1)"));
+        assertThrows(org.slackerdb.dbdesk.i18n.LocalizedException.class, () -> DatasetRunner.ensureSingleQuery("delete from t"));
+        assertThrows(org.slackerdb.dbdesk.i18n.LocalizedException.class, () -> DatasetRunner.ensureSingleQuery("select 1; drop table t"));
+        assertThrows(org.slackerdb.dbdesk.i18n.LocalizedException.class, () -> DatasetRunner.ensureSingleQuery("insert into t values (1)"));
     }
 
     @Test

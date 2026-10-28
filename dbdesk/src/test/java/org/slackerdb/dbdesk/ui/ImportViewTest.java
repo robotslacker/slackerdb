@@ -86,6 +86,7 @@ class ImportViewTest {
             }
         });
         connect();
+        UiTestSupport.useChinese(page);
         page.navigate(BASE + "/import");
     }
 

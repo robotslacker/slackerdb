@@ -24,6 +24,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -101,6 +102,17 @@ public class VerifyMojo extends AbstractMojo {
                         .append(" (").append(result.getResolvedDependencies().size())
                         .append(" resolved dependencies)").append('\n');
             }
+            List<String> missing = auditPomClosure(javarepo, report, lines);
+            if (!missing.isEmpty()) {
+                lines.append("MISSING POMs (an offline build would print \"The POM ... is missing\""
+                        + " and could fail to resolve dependencies):").append('\n');
+                for (String entry : missing) {
+                    lines.append("  - ").append(entry).append('\n');
+                }
+                throw new IllegalStateException("Offline repository is missing " + missing.size()
+                        + " POM(s) referenced by its own POMs; see "
+                        + report.getFileName());
+            }
             lines.append("RESULT: OK").append('\n');
             Files.writeString(report, lines.toString(), StandardCharsets.UTF_8);
             getLog().info("Offline verify passed: " + report);
@@ -113,6 +125,82 @@ public class VerifyMojo extends AbstractMojo {
             }
             throw new MojoExecutionException("Offline verify failed: " + report, e);
         }
+    }
+
+    /**
+     * Verifies the POM descriptor closure of the offline repository with no resolver involved:
+     * every parent, imported BOM and compile/runtime dependency POM referenced by a packaged POM
+     * must be packaged too. Maven reads those descriptors during collection (including versions
+     * that lose mediation), so a gap here is exactly the "The POM for ... is missing, no
+     * dependency information available" warning an offline build would print.
+     *
+     * <p>Dependencies declared inside POM profiles are only reported as warnings: Maven activates
+     * those profiles itself (OS, JDK, user properties), so a POM that is absent for an inactive
+     * profile such as {@code m2e} cannot break an offline build.</p>
+     */
+    private List<String> auditPomClosure(Path javarepo, Path report, StringBuilder lines) throws Exception {
+        PomGraph graph = new PomGraph((groupId, artifactId, version) -> {
+            Path pom = PomGraph.pomPath(javarepo, groupId, artifactId, version);
+            if (!Files.isRegularFile(pom)) {
+                throw new PomGraph.MissingPomException(groupId + ":" + artifactId + ":" + version, null);
+            }
+            return pom;
+        });
+        List<Path> poms;
+        try (var stream = Files.walk(javarepo)) {
+            poms = stream.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".pom"))
+                    .toList();
+        }
+        Set<String> missing = new LinkedHashSet<>();
+        Set<String> profileOnlyGaps = new LinkedHashSet<>();
+        Set<String> checked = new HashSet<>();
+        for (Path pom : poms) {
+            String[] gav = PomGraph.gavFromPath(javarepo, pom);
+            if (gav == null) {
+                lines.append("SKIP non-standard POM path: ")
+                        .append(javarepo.relativize(pom).toString().replace('\\', '/')).append('\n');
+                continue;
+            }
+            checked.add(gav[0] + ":" + gav[1] + ":" + gav[2]);
+            try {
+                for (PomGraph.Reference reference : graph.references(gav[0], gav[1], gav[2])) {
+                    Path target = PomGraph.pomPath(javarepo, reference.groupId(),
+                            reference.artifactId(), reference.version());
+                    if (Files.isRegularFile(target)) {
+                        continue;
+                    }
+                    String entry = reference.gav() + " (" + reference.kind().name().toLowerCase()
+                            + " of " + reference.origin() + ")";
+                    if (reference.kind() == PomGraph.Kind.PROFILE_DEPENDENCY) {
+                        profileOnlyGaps.add(entry);
+                    } else {
+                        missing.add(entry);
+                    }
+                }
+            } catch (PomGraph.MissingPomException e) {
+                missing.add(e.gav() + " (needed by " + gav[0] + ":" + gav[1] + ":" + gav[2] + ")");
+            }
+        }
+        for (String problem : graph.problems()) {
+            lines.append("WARN ").append(problem).append('\n');
+        }
+        for (String note : graph.notes()) {
+            lines.append("WARN ").append(note).append('\n');
+        }
+        for (String gap : profileOnlyGaps) {
+            lines.append("WARN profile-only POM not packaged: ").append(gap).append('\n');
+        }
+        if (!profileOnlyGaps.isEmpty()) {
+            getLog().warn("POM closure: " + profileOnlyGaps.size()
+                    + " POM(s) are only referenced from inactive/side POM profiles and are not"
+                    + " packaged (they cannot break an offline build); see " + report.getFileName());
+        }
+        lines.append("POM descriptor closure: ").append(checked.size())
+                .append(" POMs checked, ").append(missing.size()).append(" missing")
+                .append(", ").append(profileOnlyGaps.size()).append(" profile-only gaps")
+                .append('\n');
+        return List.copyOf(missing);
     }
 
     private static String osId() {

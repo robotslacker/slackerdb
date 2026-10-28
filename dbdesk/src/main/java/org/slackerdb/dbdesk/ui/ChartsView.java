@@ -38,26 +38,27 @@ public class ChartsView extends HorizontalLayout {
     private final ChartStore charts = ChartStore.defaultStore();
 
     private final Grid<Chart> list = new Grid<>(Chart.class, false);
-    private final TextField name = new TextField("图表名");
-    private final ComboBox<String> dataset = new ComboBox<>("数据集");
-    private final ComboBox<String> type = new ComboBox<>("类型");
-    private final ComboBox<String> x = new ComboBox<>("X 轴（分类）");
-    private final MultiSelectComboBox<String> y = new MultiSelectComboBox<>("Y 轴（值，可多选）");
-    private final ComboBox<String> series = new ComboBox<>("分组（可选）");
-    private final ComboBox<String> aggregate = new ComboBox<>("聚合");
+    private final TextField name = new TextField(I18n.t("chart.name"));
+    private final ComboBox<String> dataset = new ComboBox<>(I18n.t("chart.dataset"));
+    private final ComboBox<String> type = new ComboBox<>(I18n.t("chart.type"));
+    private final ComboBox<String> x = new ComboBox<>(I18n.t("chart.x"));
+    private final MultiSelectComboBox<String> y = new MultiSelectComboBox<>(I18n.t("chart.y"));
+    private final ComboBox<String> series = new ComboBox<>(I18n.t("chart.series"));
+    private final ComboBox<String> aggregate = new ComboBox<>(I18n.t("chart.aggregate"));
     private final ChartView preview = new ChartView();
-    private final Span status = new Span("就绪");
+    private final Span status = new Span(I18n.t("chart.status.ready"));
 
-    private final Button save = new Button("保存");
-    private final Button render = new Button("预览");
-    private final Button remove = new Button("删除");
-    private final Button create = new Button("新建");
+    private final Button save = new Button(I18n.t("common.save"));
+    private final Button render = new Button(I18n.t("chart.preview"));
+    private final Button remove = new Button(I18n.t("common.delete"));
+    private final Button create = new Button(I18n.t("common.create"));
 
     private String editingId;
     /** 数据集名 → Dataset（下拉里显示名字，内部要 id）。 */
     private List<Dataset> datasetItems = List.of();
 
     public ChartsView() {
+        I18n.setTitle("nav.charts");
         setSizeFull();
         setPadding(true);
         setSpacing(true);
@@ -66,7 +67,7 @@ public class ChartsView extends HorizontalLayout {
         left.setWidth("300px");
         left.setHeightFull();
         left.setPadding(false);
-        H2 title = new H2("图表");
+        H2 title = new H2(I18n.t("nav.charts"));
         title.getStyle().set("margin", "0");
         create.setId("chart-new");
         create.addClickListener(event -> newChart());
@@ -74,8 +75,8 @@ public class ChartsView extends HorizontalLayout {
         list.setId("chart-list");
         list.setWidthFull();
         list.setHeightFull();
-        list.addColumn(Chart::name).setHeader("名称").setAutoWidth(true);
-        list.addColumn(Chart::type).setHeader("类型").setAutoWidth(true);
+        list.addColumn(Chart::name).setHeader(I18n.t("chart.column.name")).setAutoWidth(true);
+        list.addColumn(Chart::type).setHeader(I18n.t("chart.column.type")).setAutoWidth(true);
         list.addSelectionListener(event -> event.getFirstSelectedItem().ifPresent(this::load));
         left.add(title, new HorizontalLayout(create), list);
         left.setFlexGrow(1, list);
@@ -92,6 +93,7 @@ public class ChartsView extends HorizontalLayout {
         dataset.addValueChangeListener(event -> onDatasetSelected(event.getValue()));
         type.setId("chart-type");
         type.setItems(Chart.TYPES);
+        type.setItemLabelGenerator(ChartsView::typeLabel);
         type.setValue("line");
         type.setWidth("140px");
         x.setId("chart-x");
@@ -102,6 +104,7 @@ public class ChartsView extends HorizontalLayout {
         series.setWidth("200px");
         aggregate.setId("chart-aggregate");
         aggregate.setItems(Chart.AGGREGATES);
+        aggregate.setItemLabelGenerator(ChartsView::aggregateLabel);
         aggregate.setValue("none");
         aggregate.setWidth("140px");
 
@@ -121,7 +124,7 @@ public class ChartsView extends HorizontalLayout {
         right.add(new HorizontalLayout(name, dataset, type),
                 new HorizontalLayout(x, y, series, aggregate),
                 new HorizontalLayout(render, save, remove, status),
-                new H3("预览"), preview);
+                new H3(I18n.t("chart.preview")), preview);
         right.setFlexGrow(1, preview);
 
         add(left, right);
@@ -149,8 +152,8 @@ public class ChartsView extends HorizontalLayout {
         y.clear();
         series.clear();
         aggregate.setValue("none");
-        preview.setOption(Map.of("title", Map.of("text", "选择数据集后点『预览』")));
-        status.setText("新建图表");
+        preview.setOption(Map.of("title", Map.of("text", I18n.t("chart.preview.hint"))));
+        status.setText(I18n.t("chart.status.new"));
         list.deselectAll();
         if (dataset.getValue() == null && !datasetItems.isEmpty()) {
             dataset.setValue(datasetItems.get(0).name());
@@ -172,8 +175,8 @@ public class ChartsView extends HorizontalLayout {
         // 打开已保存的图表就直接出图，不用再点一次"预览"
         renderPreview();
         // 渲染成功时把状态改回"已载入"（失败信息要保留，别被覆盖）
-        if (!status.getText().startsWith("预览失败")) {
-            status.setText("已载入：" + chart.name());
+        if (!status.getText().startsWith(I18n.t("chart.error.preview", ""))) {
+            status.setText(I18n.t("chart.status.loaded", chart.name()));
         }
     }
 
@@ -224,7 +227,7 @@ public class ChartsView extends HorizontalLayout {
             }
             return columns;
         } catch (Exception e) {
-            status.setText("读取数据集列失败：" + message(e));
+            status.setText(I18n.t("chart.error.readColumns", I18n.message(e)));
             return List.of();
         }
     }
@@ -233,7 +236,7 @@ public class ChartsView extends HorizontalLayout {
         Dataset source = datasetItems.stream().filter(item -> item.name().equals(dataset.getValue()))
                 .findFirst().orElse(null);
         if (source == null) {
-            status.setText("先选一个数据集");
+            status.setText(I18n.t("chart.error.selectDataset"));
             return;
         }
         try {
@@ -242,14 +245,16 @@ public class ChartsView extends HorizontalLayout {
             ChartData.Result data = ChartData.build(rows, chart);
             preview.setOption(ChartOptions.toEcharts(chart, data));
             if (!data.ok()) {
-                status.setText("预览失败：" + data.error());
+                status.setText(I18n.t("chart.error.preview", data.error()));
                 return;
             }
-            status.setText(String.format("预览成功：%d 个分类 / %d 条序列%s",
-                    data.categories().size(), data.series().size(),
-                    data.truncated() ? "（数据已截断）" : ""));
+            status.setText(data.truncated()
+                    ? I18n.t("chart.status.previewOkTruncated",
+                            data.categories().size(), data.series().size())
+                    : I18n.t("chart.status.previewOk",
+                            data.categories().size(), data.series().size()));
         } catch (Exception e) {
-            status.setText("预览失败：" + message(e));
+            status.setText(I18n.t("chart.error.preview", I18n.message(e)));
         }
     }
 
@@ -263,15 +268,15 @@ public class ChartsView extends HorizontalLayout {
             editingId = saved.id();
             refreshList();
             charts.find(saved.id()).ifPresent(list::select);
-            status.setText("已保存：" + saved.name());
+            status.setText(I18n.t("chart.status.saved", saved.name()));
         } catch (Exception e) {
-            status.setText("保存失败：" + message(e));
+            status.setText(I18n.t("chart.error.save", I18n.message(e)));
         }
     }
 
     private void deleteCurrent() {
         if (editingId == null) {
-            status.setText("当前没有已保存的图表");
+            status.setText(I18n.t("chart.error.noSaved"));
             return;
         }
         try {
@@ -279,28 +284,45 @@ public class ChartsView extends HorizontalLayout {
             charts.delete(editingId);
             refreshList();
             newChart();
-            status.setText("已删除：" + deleted);
+            status.setText(I18n.t("chart.status.deleted", deleted));
         } catch (Exception e) {
-            status.setText("删除失败：" + message(e));
+            status.setText(I18n.t("chart.error.delete", I18n.message(e)));
         }
     }
 
     private Chart buildChart() {
         Dataset source = datasetItems.stream().filter(item -> item.name().equals(dataset.getValue()))
-                .findFirst().orElseThrow(() -> new IllegalArgumentException("先选一个数据集"));
+                .findFirst().orElseThrow(() -> new IllegalArgumentException(
+                        I18n.t("chart.error.selectDataset")));
         return new Chart(editingId, name.getValue() == null || name.getValue().isBlank()
-                ? "未命名图表" : name.getValue(),
+                ? I18n.t("chart.untitled") : name.getValue(),
                 source.id(), type.getValue(), x.getValue(),
                 new ArrayList<>(y.getValue()), series.getValue(), aggregate.getValue(),
                 Map.of(), null);
     }
 
-    private static String message(Throwable error) {
-        Throwable root = error;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        return root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage();
+    /** 图表类型是数据值，下拉里只翻译显示。 */
+    private static String typeLabel(String value) {
+        return switch (value) {
+            case "line" -> I18n.t("chart.type.line");
+            case "bar" -> I18n.t("chart.type.bar");
+            case "pie" -> I18n.t("chart.type.pie");
+            case "scatter" -> I18n.t("chart.type.scatter");
+            default -> value;
+        };
+    }
+
+    /** 聚合方式同样是数据值，下拉里只翻译显示。 */
+    private static String aggregateLabel(String value) {
+        return switch (value) {
+            case "none" -> I18n.t("chart.aggregate.none");
+            case "sum" -> I18n.t("chart.aggregate.sum");
+            case "avg" -> I18n.t("chart.aggregate.avg");
+            case "count" -> I18n.t("chart.aggregate.count");
+            case "min" -> I18n.t("chart.aggregate.min");
+            case "max" -> I18n.t("chart.aggregate.max");
+            default -> value;
+        };
     }
 
     /** 测试用。 */

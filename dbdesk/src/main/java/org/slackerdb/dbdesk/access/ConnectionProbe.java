@@ -5,6 +5,8 @@ import org.slackerdb.dbdesk.access.http.Health;
 import org.slackerdb.dbdesk.access.http.ManagementClient;
 import org.slackerdb.dbdesk.access.http.ManagementException;
 import org.slackerdb.dbdesk.access.profile.DbDeskProfile;
+import org.slackerdb.dbdesk.i18n.Localized;
+import org.slackerdb.dbdesk.i18n.LocalizedMessage;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +29,9 @@ import java.time.Duration;
  *       {@code /<database>}。如果代理转发的实例没有开放管理端口，降级为 SQL only；</li>
  *   <li>实例数据口 + 代理管理口、代理数据口 + 实例管理口：直接拒绝。</li>
  * </ul>
+ *
+ * <p>失败与告警都只携带 i18n key（{@link Localized}），由界面层按当前语言渲染；
+ * 日志里看到的是 key，便于检索。</p>
  */
 public final class ConnectionProbe {
 
@@ -73,39 +78,39 @@ public final class ConnectionProbe {
 
         String database = profile.database();
         if (database == null || database.isBlank()) {
-            throw new ProbeException("经代理管理实例时缺少数据库名");
+            throw new ProbeException("error.probe.proxyDatabaseRequired");
         }
         String instanceUrl = root + "/" + encodePathSegment(database);
-        String warning = "管理口可达，但实例 [" + database
-                + "] 未开放管理端口或管理口不可用，已按 SQL only 连接";
         try {
             Capabilities instanceCapabilities;
             Health health;
             try (ManagementClient client = new ManagementClient(instanceUrl, MANAGEMENT_TIMEOUT)) {
                 instanceCapabilities = client.capabilities();
                 if (instanceCapabilities.isProxy()) {
-                    return new Result(profile, jdbcUrl, "", "", ManagementScope.NONE,
-                            null, proxyCapabilities, warning + "（代理路径返回了代理能力）");
+                    return new Result(profile, jdbcUrl, "", "", ManagementScope.NONE, null,
+                            proxyCapabilities, LocalizedMessage.of(
+                            "warning.instanceManagementProxyCapabilities", database));
                 }
                 health = client.health();
             }
             if (!health.up()) {
-                return new Result(profile, jdbcUrl, "", "", ManagementScope.NONE,
-                        null, proxyCapabilities, warning + "（状态 " + health.status() + "）");
+                return new Result(profile, jdbcUrl, "", "", ManagementScope.NONE, null,
+                        proxyCapabilities, LocalizedMessage.of(
+                        "warning.instanceManagementUnhealthy", database, health.status()));
             }
             return new Result(profile, jdbcUrl, instanceUrl, "", ManagementScope.INSTANCE,
                     instanceCapabilities, null, null);
         } catch (ManagementException e) {
-            return new Result(profile, jdbcUrl, "", "", ManagementScope.NONE,
-                    null, proxyCapabilities, warning + "：" + message(e));
+            return new Result(profile, jdbcUrl, "", "", ManagementScope.NONE, null,
+                    proxyCapabilities, LocalizedMessage.of(
+                    "warning.instanceManagementUnreachable", database, e));
         }
     }
 
     private static Result probeInstance(DbDeskProfile profile, DatabaseChecker databaseChecker,
                                         Capabilities instanceCapabilities) throws ProbeException {
         if (!profile.hasDatabase()) {
-            throw new ProbeException("只填写管理端口时，管理口必须指向 dbproxy 本身；当前管理口是 dbserver 实例。"
-                    + "请补充数据库端口，或改连 dbproxy 管理端口。");
+            throw new ProbeException("error.probe.managementRequired");
         }
 
         requireMatchingDatabasePort(profile, instanceCapabilities, false);
@@ -114,10 +119,10 @@ public final class ConnectionProbe {
         try (ManagementClient client = new ManagementClient(profile.managementUrl(), MANAGEMENT_TIMEOUT)) {
             health = client.health();
         } catch (ManagementException e) {
-            throw new ProbeException("管理口不可达：" + message(e), e);
+            throw new ProbeException(e, "error.probe.managementUnreachable", e);
         }
         if (!health.up()) {
-            throw new ProbeException("管理口健康检查失败：" + health.status());
+            throw new ProbeException("error.probe.managementUnhealthy", health.status());
         }
 
         String jdbcUrl = databaseChecker.check(profile);
@@ -136,33 +141,28 @@ public final class ConnectionProbe {
         int expected = capabilities.pgPort();
         int actual = profile.databasePort();
         if (expected <= 0) {
-            throw new ProbeException("管理口（" + (proxy ? "dbproxy" : "dbserver")
-                    + "）没有声明可用的数据库端口，无法确认数据库端口与管理口是否匹配。");
+            throw new ProbeException("error.probe.pgPortMissing", proxy ? "dbproxy" : "dbserver");
         }
         if (expected == actual) {
             return;
         }
         if (proxy) {
-            throw new ProbeException("数据库端口与管理端口不匹配：管理口属于 dbproxy（其数据端口为 "
-                    + expected + "），但填写的是 " + actual
-                    + "。实例数据端口 + 代理管理端口不允许；直连实例请填写实例的管理端口。");
+            throw new ProbeException("error.probe.portMismatch.proxy", expected, actual);
         }
-        throw new ProbeException("数据库端口与管理端口不匹配：管理口属于 dbserver 实例（其数据端口为 "
-                + expected + "），但填写的是 " + actual
-                + "。代理数据端口 + 实例管理端口不允许；经代理请填写代理的管理端口。");
+        throw new ProbeException("error.probe.portMismatch.instance", expected, actual);
     }
 
     private static Capabilities readCapabilities(String managementUrl) throws ProbeException {
         try (ManagementClient client = new ManagementClient(managementUrl, MANAGEMENT_TIMEOUT)) {
             return client.capabilities();
         } catch (ManagementException e) {
-            throw new ProbeException("管理口不可达：" + message(e), e);
+            throw new ProbeException(e, "error.probe.managementUnreachable", e);
         }
     }
 
     private static String probeDatabase(DbDeskProfile profile) throws ProbeException {
         if (!profile.hasDatabase()) {
-            throw new ProbeException("数据库端口不可达：缺少数据库名");
+            throw new ProbeException("error.probe.databaseRequired");
         }
         JdbcDrivers.ensureLoaded();
 
@@ -172,10 +172,10 @@ public final class ConnectionProbe {
              Statement statement = connection.createStatement();
              ResultSet resultSet = statement.executeQuery("SELECT 1")) {
             if (!resultSet.next()) {
-                throw new ProbeException("数据库端口可以连接，但 SELECT 1 没有返回结果");
+                throw new ProbeException("error.probe.databaseEmpty");
             }
         } catch (SQLException e) {
-            throw new ProbeException("数据库端口不可达：" + message(e), e);
+            throw new ProbeException(e, "error.probe.databaseUnreachable", message(e));
         }
         return jdbcUrl;
     }
@@ -197,7 +197,7 @@ public final class ConnectionProbe {
             ManagementScope scope,
             Capabilities capabilities,
             Capabilities proxyCapabilities,
-            String warning) {
+            LocalizedMessage warning) {
 
         public boolean hasDatabase() {
             return jdbcUrl != null && !jdbcUrl.isBlank();
@@ -216,14 +216,32 @@ public final class ConnectionProbe {
         }
     }
 
-    /** 连接失败。 */
-    public static class ProbeException extends Exception {
-        public ProbeException(String message) {
-            super(message);
+    /** 连接失败；key 由界面层按当前语言渲染。 */
+    public static class ProbeException extends Exception implements Localized {
+
+        private final String messageKey;
+        private final Object[] messageArgs;
+
+        public ProbeException(String messageKey, Object... messageArgs) {
+            super(messageKey);
+            this.messageKey = messageKey;
+            this.messageArgs = messageArgs == null ? new Object[0] : messageArgs.clone();
         }
 
-        public ProbeException(String message, Throwable cause) {
-            super(message, cause);
+        public ProbeException(Throwable cause, String messageKey, Object... messageArgs) {
+            super(messageKey, cause);
+            this.messageKey = messageKey;
+            this.messageArgs = messageArgs == null ? new Object[0] : messageArgs.clone();
+        }
+
+        @Override
+        public String messageKey() {
+            return messageKey;
+        }
+
+        @Override
+        public Object[] messageArgs() {
+            return messageArgs.clone();
         }
     }
 }

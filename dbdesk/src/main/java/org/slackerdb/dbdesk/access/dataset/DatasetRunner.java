@@ -73,7 +73,7 @@ public final class DatasetRunner {
     public static Result run(Dataset dataset, Map<String, Object> values, int maxRows)
             throws SQLException {
         if (dataset.jdbcUrl() == null || dataset.jdbcUrl().isBlank()) {
-            throw new IllegalArgumentException("数据集没有绑定连接串");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.dataset.jdbcUrlRequired");
         }
         ensureSingleQuery(dataset.sql());
         Compiled compiled = compile(dataset.sql());
@@ -157,14 +157,14 @@ public final class DatasetRunner {
             trimmed = trimmed.substring(0, trimmed.length() - 1).strip();
         }
         if (StatementSplitter.topLevelSemicolons(trimmed).size() > 0) {
-            throw new IllegalArgumentException("数据集只允许单条查询");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.dataset.singleStatement");
         }
         String upper = stripLeadingComments(trimmed).toUpperCase(Locale.ROOT);
         if (!upper.startsWith("SELECT") && !upper.startsWith("WITH") && !upper.startsWith("FROM")) {
-            throw new IllegalArgumentException("数据集只允许查询语句（SELECT / WITH）");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.dataset.queryOnly");
         }
         if (semicolons.size() > 1) {
-            throw new IllegalArgumentException("数据集只允许单条查询");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.dataset.singleStatement");
         }
     }
 
@@ -294,8 +294,8 @@ public final class DatasetRunner {
                 statement.setString(index, String.valueOf(value));
             }
         } catch (RuntimeException conversionFailure) {
-            throw new SQLException("参数 " + (param == null ? "" : param.name())
-                    + " 的值不合法：" + value, conversionFailure);
+            throw new SQLException(org.slackerdb.dbdesk.i18n.MessageResolver.render(
+                    "error.dataset.paramValue", param == null ? "" : param.name(), value), conversionFailure);
         }
     }
 }

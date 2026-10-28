@@ -27,7 +27,7 @@ class DbDeskProfileTest {
     @Test
     @DisplayName("端口: 两个都空拒绝；只填管理口允许")
     void atLeastOnePort() {
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(org.slackerdb.dbdesk.i18n.LocalizedException.class,
                 () -> new DbDeskProfile("x", "127.0.0.1", null, null, "m0"));
 
         DbDeskProfile cluster = new DbDeskProfile("proxy", "127.0.0.1", null, 8409, null);
@@ -38,9 +38,9 @@ class DbDeskProfileTest {
     @Test
     @DisplayName("数据库名: 填数据库端口时必填，只填管理口时可空")
     void databaseNameRequiredOnlyWithDatabasePort() {
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(org.slackerdb.dbdesk.i18n.LocalizedException.class,
                 () -> new DbDeskProfile("x", "127.0.0.1", 4409, 8409, " "));
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(org.slackerdb.dbdesk.i18n.LocalizedException.class,
                 () -> new DbDeskProfile("x", "127.0.0.1", 4409, null, null));
 
         DbDeskProfile cluster = new DbDeskProfile("proxy", "127.0.0.1", null, 8409, " ");
@@ -50,11 +50,11 @@ class DbDeskProfileTest {
     @Test
     @DisplayName("端口范围仍然校验")
     void portRangesAreValidated() {
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(org.slackerdb.dbdesk.i18n.LocalizedException.class,
                 () -> new DbDeskProfile("x", "127.0.0.1", 0, null, "m0"));
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(org.slackerdb.dbdesk.i18n.LocalizedException.class,
                 () -> new DbDeskProfile("x", "127.0.0.1", 65536, null, "m0"));
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(org.slackerdb.dbdesk.i18n.LocalizedException.class,
                 () -> new DbDeskProfile("x", "127.0.0.1", null, 0, null));
     }
 

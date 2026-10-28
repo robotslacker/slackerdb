@@ -532,15 +532,9 @@ public class DBInstanceX {
                 // 复用的连接默认 autoCommit=false，DuckDB 会因为"当前事务里还有未完成的工作"
                 // 拒绝 DETACH，实测备份接口 100% 失败。
                 backupConnection.setAutoCommit(true);
-                String currentDatabaseName;
-                if (this.dbInstance.serverConfiguration.getData_Dir().equalsIgnoreCase(":memory:"))
-                {
-                    currentDatabaseName = "memory";
-                }
-                else
-                {
-                    currentDatabaseName = this.dbInstance.serverConfiguration.getData();
-                }
+                // 实例库名走唯一来源：没有 --data 时是 memory，内存模式带库名时是那个库名
+                // （旧代码按 data_dir 判断，带 --data 的内存模式会 COPY 到错的库）。
+                String currentDatabaseName = this.dbInstance.instanceName;
                 String backupDBName = "backup_" + backupTag;
                 Statement statement = backupConnection.createStatement();
                 statement.execute("DETACH DATABASE IF EXISTS " + backupDBName);
@@ -702,7 +696,7 @@ public class DBInstanceX {
 
         ServerConfiguration serverConfiguration = this.dbInstance.serverConfiguration;
         JSONObject server = new JSONObject();
-        server.put("name", serverConfiguration.getData() == null ? "" : serverConfiguration.getData());
+        server.put("name", this.dbInstance.instanceName);
         server.put("version", readServerVersion());
         server.put("pid", ProcessHandle.current().pid());
         capabilities.put("server", server);
@@ -897,7 +891,7 @@ public class DBInstanceX {
                     ? config.getAdvertiseAddress().toString() : "");
             parameters.put("advertiseNic", config.getAdvertiseNic());
             parameters.put("advertiseHost", config.getAdvertiseHost());
-            parameters.put("data", config.getData());
+            parameters.put("data", config.getInstanceName());
             parameters.put("dataDir", config.getData_Dir());
             parameters.put("tempDir", config.getTemp_dir());
             parameters.put("dataEncrypt", config.getDataEncrypt());

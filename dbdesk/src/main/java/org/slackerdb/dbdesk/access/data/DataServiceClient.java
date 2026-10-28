@@ -1,5 +1,6 @@
 package org.slackerdb.dbdesk.access.data;
 
+import org.slackerdb.dbdesk.i18n.LocalizedException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -63,7 +64,7 @@ public final class DataServiceClient implements AutoCloseable {
         body.put("searchPath", definition.searchPath());
         body.put("snapshotLimit", definition.snapshotLimit());
         body.put("parameters", writeJson(definition.parameters()));
-        requireOk(postJson("/api/registerService", body), "注册数据服务");
+        requireOk(postJson("/api/registerService", body), "error.dataService.register");
     }
 
     public void unregister(String name, String version, String type) throws DataServiceException {
@@ -71,16 +72,16 @@ public final class DataServiceClient implements AutoCloseable {
         body.put("serviceName", name);
         body.put("serviceVersion", version);
         body.put("serviceType", type);
-        requireOk(postJson("/api/unRegisterService", body), "注销数据服务");
+        requireOk(postJson("/api/unRegisterService", body), "error.dataService.unregister");
     }
 
     public void load(String rawJson) throws DataServiceException {
-        requireOk(postRaw("/api/loadRegisterService", rawJson), "加载数据服务定义");
+        requireOk(postRaw("/api/loadRegisterService", rawJson), "error.dataService.load");
     }
 
     public SaveResult save() throws DataServiceException {
         JsonNode root = postJson("/api/saveRegisterService", Map.of());
-        requireOk(root, "保存数据服务定义");
+        requireOk(root, "error.dataService.save");
         return new SaveResult(text(root, "savedPath"), text(root, "retMsg"));
     }
 
@@ -125,10 +126,10 @@ public final class DataServiceClient implements AutoCloseable {
         try {
             response = http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         } catch (IOException e) {
-            throw new DataServiceException("数据服务不可达：" + baseUrl, e);
+            throw new DataServiceException(e, "error.dataService.unreachable", baseUrl);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new DataServiceException("调用数据服务被中断", e);
+            throw new DataServiceException(e, "error.dataService.interrupted");
         }
         String body = response.body() == null ? "" : response.body();
         if (response.statusCode() / 100 != 2) {
@@ -137,7 +138,7 @@ public final class DataServiceClient implements AutoCloseable {
         try {
             return json.readTree(body);
         } catch (RuntimeException e) {
-            throw new DataServiceException("数据服务返回的不是合法 JSON：" + abbreviate(body), e);
+            throw new DataServiceException(e, "error.dataService.invalidJson", abbreviate(body));
         }
     }
 
@@ -145,17 +146,17 @@ public final class DataServiceClient implements AutoCloseable {
         try {
             return http.send(request, HttpResponse.BodyHandlers.ofByteArray());
         } catch (IOException e) {
-            throw new DataServiceException("数据服务不可达：" + baseUrl, e);
+            throw new DataServiceException(e, "error.dataService.unreachable", baseUrl);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new DataServiceException("调用数据服务被中断", e);
+            throw new DataServiceException(e, "error.dataService.interrupted");
         }
     }
 
-    private void requireOk(JsonNode root, String action) throws DataServiceException {
+    private void requireOk(JsonNode root, String actionKey) throws DataServiceException {
         int retCode = root.path("retCode").isNumber() ? root.path("retCode").asInt() : 0;
         if (retCode != 0) {
-            throw new DataServiceException(action + "失败：" + fallbackMessage(root));
+            throw new DataServiceException(actionKey, fallbackMessage(root));
         }
     }
 
@@ -167,19 +168,18 @@ public final class DataServiceClient implements AutoCloseable {
     }
 
     private DataServiceException error(int status, String body) {
-        String message = "数据服务返回 " + status;
         try {
             JsonNode root = json.readTree(body);
             String detail = fallbackMessage(root);
             if (detail != null && !detail.isBlank()) {
-                message += "（" + detail + "）";
+                return new DataServiceException("error.dataService.httpStatusWithDetail", status, detail);
             }
         } catch (RuntimeException ignored) {
             if (body != null && !body.isBlank()) {
-                message += "（" + abbreviate(body) + "）";
+                return new DataServiceException("error.dataService.httpStatusWithDetail", status, abbreviate(body));
             }
         }
-        return new DataServiceException(message);
+        return new DataServiceException("error.dataService.httpStatus", status);
     }
 
     private static String fallbackMessage(JsonNode root) {
@@ -191,7 +191,7 @@ public final class DataServiceClient implements AutoCloseable {
         try {
             return json.writeValueAsString(value);
         } catch (RuntimeException e) {
-            throw new DataServiceException("无法序列化请求体", e);
+            throw new DataServiceException(e, "error.dataService.serializeFailed");
         }
     }
 
@@ -226,14 +226,17 @@ public final class DataServiceClient implements AutoCloseable {
     public record SaveResult(String savedPath, String message) {
     }
 
-    /** 数据服务管理失败。 */
-    public static class DataServiceException extends Exception {
-        public DataServiceException(String message) {
-            super(message);
+    /**
+     * 数据服务管理失败：携带 i18n key 与参数（{@link LocalizedException}），
+     * 由界面层用 {@code I18n.message(e)} 按当前语言渲染；{@code getMessage()} 只是 key。
+     */
+    public static class DataServiceException extends LocalizedException {
+        public DataServiceException(String messageKey, Object... messageArgs) {
+            super(messageKey, messageArgs);
         }
 
-        public DataServiceException(String message, Throwable cause) {
-            super(message, cause);
+        public DataServiceException(Throwable cause, String messageKey, Object... messageArgs) {
+            super(cause, messageKey, messageArgs);
         }
     }
 }

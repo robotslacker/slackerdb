@@ -25,7 +25,7 @@ public record Dataset(String id, String name, String sql, String jdbcUrl,
     public record Param(String name, String type, String defaultValue, String description) {
         public Param {
             if (name == null || name.isBlank()) {
-                throw new IllegalArgumentException("参数名不能为空");
+                throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.dataset.paramNameRequired");
             }
             name = name.strip();
             type = normalizeType(type);
@@ -38,7 +38,7 @@ public record Dataset(String id, String name, String sql, String jdbcUrl,
     public record Column(String name, String type, String role) {
         public Column {
             if (name == null || name.isBlank()) {
-                throw new IllegalArgumentException("列名不能为空");
+                throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.dataset.columnNameRequired");
             }
             name = name.strip();
             type = type == null || type.isBlank() ? "other" : type.strip().toLowerCase(Locale.ROOT);
@@ -48,10 +48,10 @@ public record Dataset(String id, String name, String sql, String jdbcUrl,
 
     public Dataset {
         if (name == null || name.isBlank()) {
-            throw new IllegalArgumentException("数据集名不能为空");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.dataset.nameRequired");
         }
         if (sql == null || sql.isBlank()) {
-            throw new IllegalArgumentException("数据集 SQL 不能为空");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.dataset.sqlRequired");
         }
         id = id == null || id.isBlank() ? UUID.randomUUID().toString() : id.strip();
         name = name.strip();

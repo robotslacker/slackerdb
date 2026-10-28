@@ -27,36 +27,36 @@ final class ConnectDialog {
     static void open(ConnectionManager manager, Runnable afterSuccess) {
         Dialog dialog = new Dialog();
         dialog.setId("connect-dialog");
-        dialog.setHeaderTitle("连接服务端");
+        dialog.setHeaderTitle(I18n.t("connect.title"));
         dialog.setWidth("620px");
 
-        ComboBox<DbDeskProfile> history = new ComboBox<>("历史连接");
+        ComboBox<DbDeskProfile> history = new ComboBox<>(I18n.t("connect.history"));
         history.setId("connect-history");
         history.setWidthFull();
         history.setItemLabelGenerator(DbDeskProfile::alias);
         DbDeskProfileStore.Snapshot snapshot = manager.store().load();
         history.setItems(snapshot.profiles());
 
-        TextField alias = new TextField("别名");
+        TextField alias = new TextField(I18n.t("connect.alias"));
         alias.setId("connect-alias");
         alias.setRequiredIndicatorVisible(true);
-        TextField host = new TextField("主机");
+        TextField host = new TextField(I18n.t("connect.host"));
         host.setId("connect-host");
         host.setValue("127.0.0.1");
         host.setRequiredIndicatorVisible(true);
-        IntegerField databasePort = new IntegerField("数据库端口（可选）");
+        IntegerField databasePort = new IntegerField(I18n.t("connect.databasePort"));
         databasePort.setId("connect-db-port");
         databasePort.setMin(1);
         databasePort.setMax(65535);
-        databasePort.setHelperText("与管理端口至少填一个；只填管理端口时进入 dbproxy 集群管理");
-        IntegerField managementPort = new IntegerField("管理端口（可选）");
+        databasePort.setHelperText(I18n.t("connect.databasePort.helper"));
+        IntegerField managementPort = new IntegerField(I18n.t("connect.managementPort"));
         managementPort.setId("connect-mgmt-port");
         managementPort.setMin(1);
         managementPort.setMax(65535);
-        managementPort.setHelperText("实例或 dbproxy 的管理端口；程序会校验它与数据库端口是否匹配");
-        TextField database = new TextField("数据库名");
+        managementPort.setHelperText(I18n.t("connect.managementPort.helper"));
+        TextField database = new TextField(I18n.t("connect.database"));
         database.setId("connect-database");
-        database.setHelperText("填写数据库端口时必填；只连代理管理端口时可留空");
+        database.setHelperText(I18n.t("connect.database.helper"));
 
         Span status = new Span();
         status.setId("connect-status");
@@ -78,27 +78,27 @@ final class ConnectDialog {
             }
         });
 
-        Button connect = new Button("Connect");
+        Button connect = new Button(I18n.t("connection.connect"));
         connect.setId("connect-submit");
         connect.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
         connect.addClickListener(event -> {
             status.setText("");
             if (alias.getValue() == null || alias.getValue().isBlank()) {
-                status.setText("请填写别名");
+                status.setText(I18n.t("connect.alias.required"));
                 return;
             }
             if (host.getValue() == null || host.getValue().isBlank()) {
-                status.setText("请填写主机");
+                status.setText(I18n.t("connect.host.required"));
                 return;
             }
             Integer dbPort = databasePort.getValue();
             Integer mgmtPort = managementPort.getValue();
             if (dbPort == null && mgmtPort == null) {
-                status.setText("数据库端口和管理端口至少填写一个");
+                status.setText(I18n.t("connect.port.required"));
                 return;
             }
             if (dbPort != null && (database.getValue() == null || database.getValue().isBlank())) {
-                status.setText("填写数据库端口时必须填写数据库名");
+                status.setText(I18n.t("connect.database.required"));
                 return;
             }
 
@@ -106,13 +106,13 @@ final class ConnectDialog {
             try {
                 candidate = new DbDeskProfile(
                         alias.getValue(), host.getValue(), dbPort, mgmtPort, database.getValue());
-            } catch (IllegalArgumentException e) {
-                status.setText(e.getMessage());
+            } catch (RuntimeException e) {
+                status.setText(I18n.message(e));
                 return;
             }
 
             connect.setEnabled(false);
-            status.setText("连接中…");
+            status.setText(I18n.t("connect.connecting"));
             try {
                 manager.connect(candidate);
                 dialog.close();
@@ -120,15 +120,15 @@ final class ConnectDialog {
                     afterSuccess.run();
                 }
             } catch (ConnectionProbe.ProbeException e) {
-                status.setText(e.getMessage());
+                status.setText(I18n.message(e));
                 connect.setEnabled(true);
             } catch (RuntimeException e) {
-                status.setText("连接失败：" + e.getMessage());
+                status.setText(I18n.t("connect.failed", I18n.message(e)));
                 connect.setEnabled(true);
             }
         });
 
-        Button cancel = new Button("取消", event -> dialog.close());
+        Button cancel = new Button(I18n.t("common.cancel"), event -> dialog.close());
         cancel.setId("connect-cancel");
 
         dialog.add(new VerticalLayout(

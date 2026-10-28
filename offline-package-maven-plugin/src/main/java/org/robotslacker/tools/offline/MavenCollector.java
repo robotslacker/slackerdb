@@ -4,7 +4,6 @@ import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.lifecycle.mapping.LifecycleMapping;
 import org.apache.maven.model.Model;
-import org.apache.maven.model.Parent;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.io.xpp3.MavenXpp3Reader;
 import org.apache.maven.plugin.MavenPluginManager;
@@ -14,7 +13,6 @@ import org.apache.maven.project.DependencyResolutionResult;
 import org.apache.maven.project.DefaultDependencyResolutionRequest;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.project.ProjectDependenciesResolver;
-import org.codehaus.plexus.util.xml.pull.XmlPullParserException;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
@@ -35,9 +33,11 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -75,6 +75,7 @@ public final class MavenCollector {
     private final MavenPluginManager pluginManager;
     private final OfflineLog log;
     private final List<Platform> platforms;
+    private final boolean candidateJars;
     private final Set<String> projectGavs = new HashSet<>();
     private final Map<String, ArtifactRecord> artifacts = new LinkedHashMap<>();
     private final Map<String, Family> families = new LinkedHashMap<>();
@@ -86,13 +87,15 @@ public final class MavenCollector {
                           ProjectDependenciesResolver dependenciesResolver,
                           MavenPluginManager pluginManager,
                           OfflineLog log,
-                          List<Platform> platforms) {
+                          List<Platform> platforms,
+                          boolean candidateJars) {
         this.session = session;
         this.repositorySystem = repositorySystem;
         this.dependenciesResolver = dependenciesResolver;
         this.pluginManager = pluginManager;
         this.log = log;
         this.platforms = platforms;
+        this.candidateJars = candidateJars;
         for (MavenProject p : session.getProjects()) {
             projectGavs.add(gav(p.getGroupId(), p.getArtifactId(), p.getVersion()));
         }
@@ -107,9 +110,10 @@ public final class MavenCollector {
             collectSurefireProvider(rs);
         }
         expandPlatformFamilies();
-        materialize(javarepo);
-        return new MavenCollectionResult(artifacts.size(), families, warnings,
-                optionalAccelerators);
+        MaterializeResult materialized = materialize(javarepo);
+        return new MavenCollectionResult(artifacts.size(), materialized.poms(),
+                materialized.candidateJars(), materialized.candidateJarCandidates(),
+                families, warnings, optionalAccelerators);
     }
 
     private RepositorySystemSession sessionFor(Platform platform) {
@@ -524,163 +528,200 @@ public final class MavenCollector {
         return List.copyOf(all);
     }
 
-    private void materialize(Path javarepo) throws Exception {
+    /**
+     * Copies the classpath artifacts plus the complete POM descriptor closure.
+     *
+     * <p>Copying only the winning versions is not enough: Maven reads the descriptor of every
+     * candidate node it collects (including the versions dropped by nearest-wins mediation), of
+     * every parent POM and of every imported BOM. Online the missing ones are fetched on demand;
+     * offline the build only gets a "The POM for ... is missing, no dependency information
+     * available" warning that hides an incomplete repository. Walking the closure makes the
+     * package self-contained.</p>
+     *
+     * <p>With {@code offline.candidate.jars} the jars of those losing versions are shipped as
+     * well. Maven does not need them for this reactor, but they keep the repository usable when
+     * a module POM is edited offline or a different resolution order selects another version.</p>
+     */
+    private MaterializeResult materialize(Path javarepo) throws Exception {
         Path localRepo = Path.of(session.getLocalRepository().getBasedir());
-        Set<String> copiedPoms = new HashSet<>();
-        copyProjectBoms(javarepo, localRepo, copiedPoms);
+        RepositorySystemSession rs = session.getRepositorySession();
+
+        Deque<PendingPom> pending = new ArrayDeque<>();
+        Set<String> jarsPresent = new HashSet<>();
         for (ArtifactRecord record : artifacts.values()) {
             if (record.extension().equals("pom")) {
-                continue;
+                jarsPresent.add(record.key());
+            } else {
+                Path target = javarepo.resolve(record.repositoryPath());
+                Files.createDirectories(target.getParent());
+                Files.copy(record.file(), target, StandardCopyOption.REPLACE_EXISTING);
+                jarsPresent.add(record.key());
             }
-            Path target = javarepo.resolve(record.repositoryPath());
-            Files.createDirectories(target.getParent());
-            Files.copy(record.file(), target, StandardCopyOption.REPLACE_EXISTING);
+            pending.add(new PendingPom(record.gav(), null));
+        }
+        for (String bom : projectBomGavs()) {
+            pending.add(new PendingPom(bom, PomGraph.Kind.IMPORT));
+        }
 
-            Path pom = localRepo.resolve(pomPath(record));
-            if (!Files.isRegularFile(pom)) {
-                try {
-                    pom = ensurePom(record.groupId(), record.artifactId(), record.version(),
-                            localRepo, session.getRepositorySession());
-                } catch (Exception e) {
-                    warnings.add("POM missing for " + record.gav() + ": " + e.getMessage());
+        PomGraph graph = new PomGraph((groupId, artifactId, version) ->
+                ensurePom(groupId, artifactId, version, localRepo, rs));
+        Set<String> visited = new HashSet<>();
+        List<String> unavailable = new ArrayList<>();
+        int poms = 0;
+        int candidateJarsCopied = 0;
+        int candidateJarsAttempted = 0;
+        while (!pending.isEmpty()) {
+            PendingPom next = pending.removeFirst();
+            String gav = next.gav();
+            String[] parts = gav.split(":", 3);
+            // A GAV can be reached both as a POM reference and as a dependency, so the jar is
+            // decided per queued reference, not per visited POM.
+            if (candidateJars && next.expectsJar() && parts.length == 3) {
+                String key = parts[0] + ":" + parts[1] + ":" + parts[2] + "::jar";
+                if (jarsPresent.add(key)) {
+                    candidateJarsAttempted++;
+                    if (copyCandidateJar(parts[0], parts[1], parts[2], javarepo, rs)) {
+                        candidateJarsCopied++;
+                    }
                 }
             }
-            if (Files.isRegularFile(pom)) {
-                copyPom(pom, javarepo, localRepo, copiedPoms, session.getRepositorySession());
+            if (!visited.add(gav)) {
+                continue;
+            }
+            if (parts.length != 3) {
+                unavailable.add("malformed coordinates: " + gav);
+                continue;
+            }
+            Path pom;
+            try {
+                pom = ensurePom(parts[0], parts[1], parts[2], localRepo, rs);
+            } catch (Exception e) {
+                unavailable.add(gav + " (" + e.getMessage() + ")");
+                continue;
+            }
+            copyPomFile(pom, javarepo, localRepo);
+            poms++;
+            try {
+                for (PomGraph.Reference reference : graph.references(parts[0], parts[1], parts[2])) {
+                    pending.add(new PendingPom(reference.gav(), reference.kind()));
+                }
+            } catch (PomGraph.MissingPomException e) {
+                unavailable.add(e.gav() + " (needed by " + gav + ")");
             }
         }
+        if (!graph.notes().isEmpty()) {
+            log.info("POM closure: " + graph.notes().size()
+                    + " profile-only dependency reference(s) skipped (Maven activates POM"
+                    + " profiles itself, so they are not gaps)");
+        }
+        log.info("Maven repository: " + artifacts.size() + " artifacts, " + poms
+                + " POMs (descriptor closure)");
+        if (candidateJars) {
+            log.info("Candidate jars: " + candidateJarsCopied + "/" + candidateJarsAttempted
+                    + " losing dependency version(s) packaged for alternative resolution paths");
+        }
+
+        // A gap here is exactly what produces "The POM for ... is missing, no dependency
+        // information available" in an offline build, so never write an incomplete package.
+        List<String> gaps = new ArrayList<>(graph.problems());
+        gaps.addAll(unavailable);
+        if (!gaps.isEmpty()) {
+            throw new IllegalStateException("The offline Maven repository would be incomplete: "
+                    + gaps.size() + " POM reference(s) cannot be packaged, so an offline build"
+                    + " would report \"The POM for ... is missing, no dependency information"
+                    + " available\". Resolve the dependency first:\n  - "
+                    + String.join("\n  - ", gaps));
+        }
+        return new MaterializeResult(poms, candidateJarsCopied, candidateJarsAttempted);
     }
 
     /**
-     * Effective models do not expose imported BOM coordinates. The offline build still
-     * needs those POMs to build the root model, so copy every import (and its parent chain)
-     * from the reactor POMs without copying the project POMs themselves.
+     * Copies the jar of a dependency version that lost mediation. Such a jar is not needed by
+     * this reactor (Maven never resolves it), so an unavailable jar is not a packaging gap; it is
+     * only best-effort insurance. POM-only artifacts (BOMs, parent POMs) simply fail the lookup.
      */
-    private void copyProjectBoms(Path javarepo, Path localRepo, Set<String> visited)
-            throws Exception {
+    private boolean copyCandidateJar(String groupId, String artifactId, String version,
+                                     Path javarepo, RepositorySystemSession rs) {
+        DefaultArtifact artifact = new DefaultArtifact(groupId, artifactId, "", "jar", version);
+        ArtifactRequest request = new ArtifactRequest();
+        request.setArtifact(artifact);
+        request.setRepositories(session.getTopLevelProject().getRemoteProjectRepositories());
+        try {
+            ArtifactResult result = repositorySystem.resolveArtifact(rs, request);
+            if (result.getArtifact() == null || result.getArtifact().getFile() == null) {
+                return false;
+            }
+            Path file = result.getArtifact().getFile().toPath();
+            if (!Files.isRegularFile(file)) {
+                return false;
+            }
+            ArtifactRecord record = new ArtifactRecord(
+                    groupId, artifactId, version, "", "jar", file, "candidate-jar");
+            Path target = javarepo.resolve(record.repositoryPath());
+            Files.createDirectories(target.getParent());
+            Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** A POM waiting to be packaged; {@code kind} is null for the reactor's own artifacts. */
+    private record PendingPom(String gav, PomGraph.Kind kind) {
+        boolean expectsJar() {
+            return kind == PomGraph.Kind.DEPENDENCY || kind == PomGraph.Kind.PROFILE_DEPENDENCY;
+        }
+    }
+
+    private record MaterializeResult(int poms, int candidateJars, int candidateJarCandidates) {
+    }
+
+
+    /**
+     * Effective models do not expose imported BOM coordinates. The offline build still needs
+     * those POMs to build the root model, so seed them from the reactor POMs (interpolated with
+     * the effective project properties) without copying the project POMs themselves.
+     */
+    private List<String> projectBomGavs() throws Exception {
+        List<String> result = new ArrayList<>();
         for (MavenProject p : session.getProjects()) {
             if (p.getFile() == null || !Files.isRegularFile(p.getFile().toPath())) {
                 continue;
             }
             Model model;
             try (InputStream in = Files.newInputStream(p.getFile().toPath())) {
-                model = new MavenXpp3Reader().read(in);
+                model = new MavenXpp3Reader().read(in, false);
             } catch (Exception e) {
                 throw new IllegalStateException("Cannot parse project POM " + p.getFile(), e);
             }
             if (model.getDependencyManagement() == null) {
                 continue;
             }
+            Map<String, String> properties = new LinkedHashMap<>(PomGraph.propertyMap(p.getProperties()));
+            properties.put("project.groupId", p.getGroupId());
+            properties.put("project.artifactId", p.getArtifactId());
+            properties.put("project.version", p.getVersion());
+            properties.put("pom.groupId", p.getGroupId());
+            properties.put("pom.artifactId", p.getArtifactId());
+            properties.put("pom.version", p.getVersion());
             for (org.apache.maven.model.Dependency dependency
                     : model.getDependencyManagement().getDependencies()) {
-                if (!"pom".equals(dependency.getType())
-                        || !"import".equals(dependency.getScope())) {
+                if (!PomGraph.isImport(dependency)) {
                     continue;
                 }
-                java.util.Map<String, String> projectProperties = propertyMap(p.getProperties());
-                String groupId = interpolate(dependency.getGroupId(), projectProperties);
-                String artifactId = interpolate(dependency.getArtifactId(), projectProperties);
-                String version = interpolate(dependency.getVersion(), projectProperties);
-                Path imported = ensurePom(groupId, artifactId, version, localRepo,
-                        session.getRepositorySession());
-                copyPom(imported, javarepo, localRepo, visited, session.getRepositorySession());
+                result.add(PomGraph.interpolateRequired(dependency.getGroupId(), properties) + ":"
+                        + PomGraph.interpolateRequired(dependency.getArtifactId(), properties) + ":"
+                        + PomGraph.interpolateRequired(dependency.getVersion(), properties));
             }
         }
+        return result;
     }
 
-    private void copyPom(Path pom, Path javarepo, Path localRepo, Set<String> visited,
-                         RepositorySystemSession rs) throws Exception {
-        if (!visited.add(pom.toString())) {
-            return;
-        }
+    private static void copyPomFile(Path pom, Path javarepo, Path localRepo) throws IOException {
         Path relative = localRepo.relativize(pom);
         Path target = javarepo.resolve(relative.toString().replace('\\', '/'));
         Files.createDirectories(target.getParent());
         Files.copy(pom, target, StandardCopyOption.REPLACE_EXISTING);
-
-        Model model;
-        try (InputStream in = Files.newInputStream(pom)) {
-            model = new MavenXpp3Reader().read(in);
-        } catch (IOException | XmlPullParserException e) {
-            warnings.add("Cannot parse POM " + pom + ": " + e.getMessage());
-            return;
-        }
-        Map<String, String> properties = modelProperties(
-                model, localRepo, rs, new HashSet<>());
-        Parent parent = model.getParent();
-        if (parent != null) {
-            Map<String, String> raw = ownProperties(model);
-            Path parentPom = ensurePom(
-                    interpolate(parent.getGroupId(), raw),
-                    interpolate(parent.getArtifactId(), raw),
-                    interpolate(parent.getVersion(), raw), localRepo, rs);
-            copyPom(parentPom, javarepo, localRepo, visited, rs);
-        }
-        if (model.getDependencyManagement() != null) {
-            for (org.apache.maven.model.Dependency dependency
-                    : model.getDependencyManagement().getDependencies()) {
-                if ("pom".equals(dependency.getType()) && "import".equals(dependency.getScope())) {
-                    String groupId = interpolate(dependency.getGroupId(), properties);
-                    String artifactId = interpolate(dependency.getArtifactId(), properties);
-                    String version = interpolate(dependency.getVersion(), properties);
-                    Path imported = ensurePom(groupId, artifactId, version, localRepo, rs);
-                    copyPom(imported, javarepo, localRepo, visited, rs);
-                }
-            }
-        }
-    }
-
-    /** Merge parent properties into the model's own properties. */
-    private Map<String, String> modelProperties(Model model, Path localRepo,
-                                                RepositorySystemSession rs,
-                                                Set<String> visiting) throws Exception {
-        Map<String, String> result = new LinkedHashMap<>();
-        Parent parent = model.getParent();
-        if (parent != null) {
-            Map<String, String> raw = ownProperties(model);
-            String groupId = interpolate(parent.getGroupId(), raw);
-            String artifactId = interpolate(parent.getArtifactId(), raw);
-            String version = interpolate(parent.getVersion(), raw);
-            String key = groupId + ":" + artifactId + ":" + version;
-            if (visiting.add(key)) {
-                Path parentPom = ensurePom(groupId, artifactId, version, localRepo, rs);
-                Model parentModel;
-                try (InputStream in = Files.newInputStream(parentPom)) {
-                    parentModel = new MavenXpp3Reader().read(in);
-                } catch (IOException | XmlPullParserException e) {
-                    throw new IllegalStateException("Cannot parse parent POM " + parentPom, e);
-                }
-                result.putAll(modelProperties(parentModel, localRepo, rs, visiting));
-            }
-        }
-        result.putAll(ownProperties(model));
-        return result;
-    }
-
-    private static Map<String, String> ownProperties(Model model) {
-        Map<String, String> result = propertyMap(model.getProperties());
-        if (model.getVersion() != null) {
-            result.putIfAbsent("project.version", model.getVersion());
-            result.putIfAbsent("pom.version", model.getVersion());
-        }
-        if (model.getGroupId() != null) {
-            result.putIfAbsent("project.groupId", model.getGroupId());
-            result.putIfAbsent("pom.groupId", model.getGroupId());
-        }
-        if (model.getArtifactId() != null) {
-            result.putIfAbsent("project.artifactId", model.getArtifactId());
-            result.putIfAbsent("pom.artifactId", model.getArtifactId());
-        }
-        return result;
-    }
-
-    private static Map<String, String> propertyMap(java.util.Properties properties) {
-        Map<String, String> result = new LinkedHashMap<>();
-        if (properties != null) {
-            properties.stringPropertyNames()
-                    .forEach(name -> result.put(name, properties.getProperty(name)));
-        }
-        return result;
     }
 
     private Path ensurePom(String groupId, String artifactId, String version,
@@ -718,8 +759,8 @@ public final class MavenCollector {
         }
         if (!resolved.toAbsolutePath().normalize().equals(path.toAbsolutePath().normalize())) {
             // maven.repo.local.tail is read-only: the resolver can return a POM from the tail
-            // without copying it into the writable main repository. Materialize it there so
-            // copyPom() can walk a normal local-repository path.
+            // without copying it into the writable main repository. Materialize it there so the
+            // POM closure walker sees a normal local-repository path.
             Files.createDirectories(path.getParent());
             Files.copy(resolved, path, StandardCopyOption.REPLACE_EXISTING);
         }
@@ -739,32 +780,6 @@ public final class MavenCollector {
         return isBlank(tails) ? "<none>" : tails;
     }
 
-    private static String interpolate(String value, Map<String, String> properties) {
-        if (value == null) {
-            return null;
-        }
-        String result = value;
-        for (int i = 0; i < 10 && result.contains("${"); i++) {
-            int start = result.indexOf("${");
-            int end = result.indexOf('}', start);
-            if (end < 0) {
-                break;
-            }
-            String key = result.substring(start + 2, end);
-            String replacement = properties == null ? null : properties.get(key);
-            if (replacement == null) {
-                throw new IllegalStateException("Cannot resolve POM property ${" + key
-                        + "} in " + value);
-            }
-            result = result.substring(0, start) + replacement + result.substring(end + 1);
-        }
-        return result;
-    }
-
-    private static String pomPath(ArtifactRecord record) {
-        return pomPath(record.groupId(), record.artifactId(), record.version());
-    }
-
     private static String pomPath(String groupId, String artifactId, String version) {
         return groupId.replace('.', '/') + "/" + artifactId + "/" + version
                 + "/" + artifactId + "-" + version + ".pom";
@@ -779,9 +794,13 @@ public final class MavenCollector {
     }
 
     public record MavenCollectionResult(int artifactCount,
+                                        int pomCount,
+                                        int candidateJarCount,
+                                        int candidateJarCandidateCount,
                                         Map<String, Family> families,
                                         List<String> warnings,
                                         List<String> optionalAccelerators) {
     }
 
 }
+

@@ -129,7 +129,8 @@ public final class ServerDefinitionBackend implements DefinitionBackend {
         try {
             return http.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         } catch (Exception e) {
-            throw new IllegalStateException("定义服务不可达（" + baseUrl + "）：" + e.getMessage(), e);
+            throw new IllegalStateException(org.slackerdb.dbdesk.i18n.MessageResolver.render(
+                    "error.definitions.unreachable", baseUrl, e.getMessage()), e);
         }
     }
 
@@ -137,7 +138,8 @@ public final class ServerDefinitionBackend implements DefinitionBackend {
         if (response.statusCode() >= 200 && response.statusCode() < 300) {
             return;
         }
-        throw new IllegalStateException(what + " 失败（HTTP " + response.statusCode() + "）：" + messageOf(response));
+        throw new IllegalStateException(org.slackerdb.dbdesk.i18n.MessageResolver.render(
+                "error.definitions.httpFailed", what, response.statusCode(), messageOf(response)));
     }
 
     private static String messageOf(HttpResponse<String> response) {

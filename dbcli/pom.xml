@@ -284,7 +284,7 @@
                         </goals>
                     </execution>
                     <!--
-                      源码包：口径见 build/sources-assembly.xml —— 与 git 里提交的 src/main 树一致，
+                      源码包：口径见 release/src/main/assembly/sources-assembly.xml —— 与 git 里提交的 src/main 树一致，
                       不含 target/ 下的任何构建产物。
                     -->
                     <execution>
@@ -299,7 +299,7 @@
                               这里 id 就是 sources。
                             -->
                             <descriptors>
-                                <descriptor>${project.basedir}/../build/sources-assembly.xml</descriptor>
+                                <descriptor>${project.basedir}/../release/src/main/assembly/sources-assembly.xml</descriptor>
                             </descriptors>
                         </configuration>
                     </execution>

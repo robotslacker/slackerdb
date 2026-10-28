@@ -1,0 +1,42 @@
+<!--
+    文档包描述符：dist/slackerdb-docs_<version>.zip（仅 -Ppdf 构建）
+
+    包里只有 PDF，不含 jar / 配置 / 脚本，也不含生成 PDF 用的 .adoc 与封面图：
+
+        README.pdf              工程说明（英文）
+        README-CN.pdf           工程说明（中文）
+        dbcli/README.pdf        dbcli 用户手册（英文）
+        dbcli/README-CN.pdf     dbcli 用户手册（中文）
+
+    不带顶层目录（includeBaseDirectory=false），与 slackerdb-dist / slackerdb-src 一致：
+    解压即得这四个文件。dbcli 手册放子目录，避免与工程主手册同名互相覆盖。
+
+    两份 PDF 分别来自 asciidoctor 的两个输出目录（见 docs/pom.xml 的 pdf profile）：
+    顶层 README 用 generated-docs/，dbcli 手册用 generated-docs-dbcli/。
+-->
+<assembly>
+    <id>docs</id>
+    <formats>
+        <format>zip</format>
+    </formats>
+    <includeBaseDirectory>false</includeBaseDirectory>
+
+    <fileSets>
+        <fileSet>
+            <directory>${docs.main.dir}</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>README.pdf</include>
+                <include>README-CN.pdf</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${docs.dbcli.dir}</directory>
+            <outputDirectory>dbcli</outputDirectory>
+            <includes>
+                <include>README.pdf</include>
+                <include>README-CN.pdf</include>
+            </includes>
+        </fileSet>
+    </fileSets>
+</assembly>

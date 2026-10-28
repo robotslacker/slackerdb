@@ -5,7 +5,6 @@ import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.grid.Grid;
-import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
@@ -36,18 +35,18 @@ public class PortalsView extends HorizontalLayout {
     private final DashboardStore dashboards = DashboardStore.defaultStore();
 
     private final Grid<Portal> list = new Grid<>(Portal.class, false);
-    private final TextField name = new TextField("门户名");
-    private final ComboBox<String> dashboard = new ComboBox<>("仪表板");
-    private final IntegerField refreshSeconds = new IntegerField("自动刷新（秒，0=不刷新）");
+    private final TextField name = new TextField(I18n.t("portal.name"));
+    private final ComboBox<String> dashboard = new ComboBox<>(I18n.t("portal.dashboard"));
+    private final IntegerField refreshSeconds = new IntegerField(I18n.t("portal.refresh"));
     private final com.vaadin.flow.component.checkbox.Checkbox revoked =
-            new com.vaadin.flow.component.checkbox.Checkbox("已撤销（链接立即失效）");
+            new com.vaadin.flow.component.checkbox.Checkbox(I18n.t("portal.revoked"));
     private final Span link = new Span();
-    private final Span status = new Span("就绪");
+    private final Span status = new Span(I18n.t("portal.status.ready"));
 
-    private final Button create = new Button("新建");
-    private final Button save = new Button("保存");
-    private final Button remove = new Button("删除");
-    private final Button copy = new Button("复制链接");
+    private final Button create = new Button(I18n.t("common.create"));
+    private final Button save = new Button(I18n.t("common.save"));
+    private final Button remove = new Button(I18n.t("common.delete"));
+    private final Button copy = new Button(I18n.t("portal.copy"));
 
     private String editingId;
     private String currentToken;
@@ -57,22 +56,24 @@ public class PortalsView extends HorizontalLayout {
         setSizeFull();
         setPadding(true);
         setSpacing(true);
+        I18n.setTitle("nav.portals");
 
         VerticalLayout left = new VerticalLayout();
         left.setWidth("340px");
         left.setHeightFull();
         left.setPadding(false);
-        H2 title = new H2("数据门户");
+        H2 title = new H2(I18n.t("portal.title"));
         title.getStyle().set("margin", "0");
         create.setId("portal-new");
         create.addClickListener(event -> newPortal());
         list.setId("portal-list");
         list.setWidthFull();
         list.setHeightFull();
-        list.addColumn(Portal::name).setHeader("名称").setAutoWidth(true);
-        list.addColumn(portal -> dashboardName(portal.dashboardId())).setHeader("仪表板").setAutoWidth(true);
-        list.addColumn(portal -> portal.statusAt(java.time.Instant.now()))
-                .setHeader("状态").setAutoWidth(true);
+        list.addColumn(Portal::name).setHeader(I18n.t("portal.column.name")).setAutoWidth(true);
+        list.addColumn(portal -> dashboardName(portal.dashboardId()))
+                .setHeader(I18n.t("portal.column.dashboard")).setAutoWidth(true);
+        list.addColumn(portal -> I18n.text(portal.statusAt(java.time.Instant.now())))
+                .setHeader(I18n.t("portal.column.status")).setAutoWidth(true);
         list.addSelectionListener(event -> event.getFirstSelectedItem().ifPresent(this::load));
         left.add(title, new HorizontalLayout(create), list);
         left.setFlexGrow(1, list);
@@ -98,20 +99,20 @@ public class PortalsView extends HorizontalLayout {
         copy.setId("portal-copy");
         copy.addClickListener(event -> {
             if (currentToken == null) {
-                status.setText("先保存门户");
+                status.setText(I18n.t("portal.link.saveFirst"));
                 return;
             }
             String url = absoluteUrl(currentToken);
             UI.getCurrent().getPage().executeJs("navigator.clipboard && navigator.clipboard.writeText($0)", url);
-            status.setText("链接已复制：" + url);
+            status.setText(I18n.t("portal.link.copied", url));
         });
 
         right.add(new HorizontalLayout(name, dashboard, refreshSeconds),
                 new HorizontalLayout(revoked),
                 new HorizontalLayout(save, remove, copy, status),
-                new H3("分享链接"), link,
-                new H3("说明"));
-        right.add(new Span("门户是只读页面：没有 SQL 编辑器、没有连接切换，只有看板本身与自动刷新。"));
+                new H3(I18n.t("portal.link.title")), link,
+                new H3(I18n.t("portal.notes.title")));
+        right.add(new Span(I18n.t("portal.notes.body")));
         add(left, right);
         setFlexGrow(1, right);
 
@@ -131,7 +132,7 @@ public class PortalsView extends HorizontalLayout {
 
     private String dashboardName(String id) {
         return dashboardItems.stream().filter(item -> item.id().equals(id))
-                .map(Dashboard::name).findFirst().orElse("(已删除)");
+                .map(Dashboard::name).findFirst().orElse(I18n.t("portal.deletedDashboard"));
     }
 
     private String absoluteUrl(String token) {
@@ -182,8 +183,8 @@ public class PortalsView extends HorizontalLayout {
         name.setValue("");
         refreshSeconds.setValue(60);
         revoked.setValue(false);
-        link.setText("（保存后生成）");
-        status.setText("新建门户");
+        link.setText(I18n.t("portal.link.pending"));
+        status.setText(I18n.t("portal.newStatus"));
         list.deselectAll();
         if (dashboard.getValue() == null && !dashboardItems.isEmpty()) {
             dashboard.setValue(dashboardItems.get(0).name());
@@ -198,7 +199,7 @@ public class PortalsView extends HorizontalLayout {
         revoked.setValue(portal.revoked());
         dashboard.setValue(dashboardName(portal.dashboardId()));
         link.setText(absoluteUrl(portal.token()));
-        status.setText("已载入：" + portal.name());
+        status.setText(I18n.t("portal.loaded", portal.name()));
     }
 
     private void saveCurrent() {
@@ -206,9 +207,9 @@ public class PortalsView extends HorizontalLayout {
             Dashboard target = dashboardItems.stream()
                     .filter(item -> item.name().equals(dashboard.getValue()))
                     .findFirst()
-                    .orElseThrow(() -> new IllegalArgumentException("先选一个仪表板"));
+                    .orElseThrow(() -> new org.slackerdb.dbdesk.i18n.LocalizedException("portal.dashboard.required"));
             Portal portal = new Portal(editingId, name.getValue() == null || name.getValue().isBlank()
-                    ? "未命名门户" : name.getValue(), target.id(), currentToken,
+                    ? I18n.t("portal.unnamed") : name.getValue(), target.id(), currentToken,
                     refreshSeconds.getValue() == null ? 0 : refreshSeconds.getValue(), null,
                     null, revoked.getValue());
             portals.save(portal);
@@ -216,15 +217,15 @@ public class PortalsView extends HorizontalLayout {
             currentToken = portal.token();
             link.setText(absoluteUrl(portal.token()));
             refreshList();
-            status.setText("已保存：" + portal.name());
+            status.setText(I18n.t("portal.saved", portal.name()));
         } catch (Exception e) {
-            status.setText("保存失败：" + message(e));
+            status.setText(I18n.t("portal.saveFailed", I18n.message(e)));
         }
     }
 
     private void deleteCurrent() {
         if (editingId == null) {
-            status.setText("当前没有已保存的门户");
+            status.setText(I18n.t("portal.none"));
             return;
         }
         try {
@@ -232,18 +233,10 @@ public class PortalsView extends HorizontalLayout {
             portals.delete(editingId);
             refreshList();
             newPortal();
-            status.setText("已删除：" + deleted + "（对应链接立即失效）");
+            status.setText(I18n.t("portal.deleted", deleted));
         } catch (Exception e) {
-            status.setText("删除失败：" + message(e));
+            status.setText(I18n.t("portal.deleteFailed", I18n.message(e)));
         }
-    }
-
-    private static String message(Throwable error) {
-        Throwable root = error;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        return root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage();
     }
 
     /** 测试用。 */

@@ -39,15 +39,17 @@ public class DefinitionService {
 
     private final DBInstance dbInstance;
     private final Logger logger;
-    /** 全限定表名：连接池里的连接默认不在实例库上（内部服务都要自己 set search_path），
-    /** 所以这里用 {@code <库名>.sysaux.definitions} 写死，避免落到 memory 目录去。 */
+    /**
+     * 全限定表名：连接池里的连接默认不在实例库上（内部服务都要自己 set search_path），
+     * 所以这里用 {@code <库名>.sysaux.definitions} 写死，避免落到 memory 目录去。
+     * 库名统一取 {@link DBInstance#sysauxSchema()}（没有 {@code --data} 时是 memory，且带引号）。
+     */
     private final String qualifiedTable;
 
     public DefinitionService(DBInstance dbInstance, Javalin managementApp, Logger logger) {
         this.dbInstance = dbInstance;
         this.logger = logger;
-        String database = dbInstance.serverConfiguration.getData();
-        this.qualifiedTable = database + ".sysaux.definitions";
+        this.qualifiedTable = dbInstance.sysauxSchema() + ".definitions";
         ensureTable();
         registerRoutes(managementApp);
     }
@@ -55,10 +57,11 @@ public class DefinitionService {
     private void ensureTable() {
         // sysaux 是服务端自己的 schema：由服务端保证存在（插件也这么干）。
         // 表名用 <库名>.sysaux.definitions 全限定：池里的连接默认不在实例库上，不限定会落到 memory。
+        // 注意库名必须走 sysauxSchema()：直接拼 getData() 在没有 --data 时会得到 ".sysaux"，
+        // DuckDB 报 Parser Error: syntax error at or near "."，管理接口整个起不来。
         try (Connection connection = dbInstance.dbDataSourcePool.getConnection();
              Statement statement = connection.createStatement()) {
-            statement.execute("create schema if not exists "
-                    + dbInstance.serverConfiguration.getData() + ".sysaux");
+            statement.execute("create schema if not exists " + dbInstance.sysauxSchema());
             statement.execute("create table if not exists " + qualifiedTable + " ("
                     + "kind varchar not null, "
                     + "id varchar not null, "

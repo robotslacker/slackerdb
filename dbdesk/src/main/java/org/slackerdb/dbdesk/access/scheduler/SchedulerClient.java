@@ -1,5 +1,7 @@
 package org.slackerdb.dbdesk.access.scheduler;
 
+import org.slackerdb.dbdesk.i18n.LocalizedException;
+import org.slackerdb.dbdesk.i18n.LocalizedMessage;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -48,12 +50,13 @@ public final class SchedulerClient implements AutoCloseable {
     public record HistoryRow(String runId, String taskName, String startTime, String endTime,
                              int retCode, String retMsg, String logFile) {
 
-        /** 结果列：成功 / 失败 / 进行中。 */
-        public String result() {
+        /** 结果列：成功 / 失败 / 进行中（只带 i18n key，由界面层渲染）。 */
+        public LocalizedMessage result() {
             if (endTime == null || endTime.isBlank()) {
-                return "进行中";
+                return LocalizedMessage.of("error.scheduler.historyResultRunning");
             }
-            return retCode == 0 ? "成功" : "失败";
+            return LocalizedMessage.of(retCode == 0
+                    ? "error.scheduler.historyResultSuccess" : "error.scheduler.historyResultFailed");
         }
 
         /** 耗时（开始→结束）；跑着或时间缺失时给 "—"。 */
@@ -340,36 +343,45 @@ public final class SchedulerClient implements AutoCloseable {
         } catch (SchedulerException e) {
             throw e;
         } catch (Exception e) {
-            throw new SchedulerException("调度器不可达：" + e.getMessage(), e);
+            throw new SchedulerException(e, "error.scheduler.unreachable", e.getMessage());
         }
     }
 
-    private static String extractError(String body, int status) {
+    private static LocalizedMessage extractError(String body, int status) {
         try {
             JsonNode node = JSON.readTree(body);
             String error = node.path("error").asString("");
             if (!error.isBlank()) {
                 String problems = node.path("problems").isArray() ? node.path("problems").toString() : "";
-                return "HTTP " + status + " · " + error + (problems.isBlank() ? "" : " " + problems);
+                return problems.isBlank()
+                        ? LocalizedMessage.of("error.scheduler.httpStatusWithDetail", status, error)
+                        : LocalizedMessage.of("error.scheduler.httpStatusWithProblems", status, error, problems);
             }
         } catch (RuntimeException ignored) {
             // 非 JSON：原样带上
         }
-        return "HTTP " + status + " · " + body;
+        return LocalizedMessage.of("error.scheduler.httpStatusRaw", status, body);
     }
 
     private static String urlEncode(String value) {
         return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8);
     }
 
-    /** 调度器调用失败（含服务端 error 文案）。 */
-    public static class SchedulerException extends Exception {
-        public SchedulerException(String message) {
-            super(message);
+    /**
+     * 调度器调用失败（含服务端 error 文案）：携带 i18n key 与参数（{@link LocalizedException}），
+     * 由界面层用 {@code I18n.message(e)} 按当前语言渲染；{@code getMessage()} 只是 key。
+     */
+    public static class SchedulerException extends LocalizedException {
+        public SchedulerException(String messageKey, Object... messageArgs) {
+            super(messageKey, messageArgs);
         }
 
-        public SchedulerException(String message, Throwable cause) {
-            super(message, cause);
+        public SchedulerException(Throwable cause, String messageKey, Object... messageArgs) {
+            super(cause, messageKey, messageArgs);
+        }
+
+        public SchedulerException(LocalizedMessage detail) {
+            super(detail.messageKey(), detail.messageArgs());
         }
     }
 }

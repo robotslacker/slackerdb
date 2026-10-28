@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <artifactId>slackerdb-release</artifactId>
+    <packaging>pom</packaging>
+
+    <parent>
+        <groupId>org.robotslacker</groupId>
+        <artifactId>slackerdb</artifactId>
+        <version>0.2.2</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!--
+        发行物打包模块：只负责把各模块 target/ 下的产物收成 dist/ 下的两个 zip。
+
+          slackerdb-dist_<version>.zip   发布包：standalone jar + conf + bin + 插件，拿来就跑
+          slackerdb-src_<version>.zip    源码包：完整多模块 Maven 工程，解开即可编译
+
+        为什么单独一个模块，而不是留在 docs 模块里：
+        文档 PDF 由 docs 模块生成（它需要 asciidoctor 和仓库根的 README.adoc）。而
+        `mvn -Ppdf -pl docs package` 是有意义的用法——只重新生成文档，不碰发行包；
+        装配如果还挂在 docs 模块上，这条命令就会顺手用各模块**上一次**的 target 产物
+        重打 dist 包（或打出缺 jar 的残包）。把装配放到本模块后，-pl docs 选不到它：
+          完整 reactor（mvn -Ppdf package）  -> dist 包、src 包、docs 包全部产出
+          单模块（mvn -Ppdf -pl docs package）-> 只产出 docs 包
+
+        本模块在 reactor 中排在最后（根 pom 的 <modules> 顺序），因此执行到它时各模块的
+        target/ 已经就绪。与以前一样，并行构建（-T）不保证这个顺序，请勿用 -T 打发行包。
+    -->
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <configuration>
+                    <appendAssemblyId>false</appendAssemblyId>
+                    <outputDirectory>${project.basedir}/../dist</outputDirectory>
+                </configuration>
+                <executions>
+                    <!-- 源码包：先打包，便于发布包构建失败时也能拿到源码 -->
+                    <execution>
+                        <id>make-source-assembly</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/main/assembly/source.xml</descriptor>
+                            </descriptors>
+                            <finalName>slackerdb-src_${project.version}</finalName>
+                            <attach>false</attach>
+                        </configuration>
+                    </execution>
+                    <!-- 发布包 -->
+                    <execution>
+                        <id>make-assembly</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/main/assembly/deployment.xml</descriptor>
+                            </descriptors>
+                            <finalName>slackerdb-dist_${project.version}</finalName>
+                            <attach>false</attach>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

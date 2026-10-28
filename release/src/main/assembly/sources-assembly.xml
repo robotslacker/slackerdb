@@ -14,6 +14,9 @@
 
   目录用相对路径：assembly 按**模块自身的 basedir** 解析；某个模块没有该目录时该 fileSet 为空，
   不影响打包。
+
+  文件位置：放在 release 模块（集中构建资产），各模块用
+  ${project.basedir}/../release/src/main/assembly/sources-assembly.xml 引用。
 -->
 <assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"

@@ -40,15 +40,16 @@ public class McpView extends VerticalLayout {
         setSizeFull();
         setPadding(true);
         setSpacing(true);
+        I18n.setTitle("nav.mcp");
 
-        H2 title = new H2("MCP");
+        H2 title = new H2(I18n.t("mcp.title"));
         if (!ConnectionManager.current().hasInstanceManagement()) {
-            Span guard = new Span("当前连接没有实例级管理口，MCP 不可用。");
+            Span guard = new Span(I18n.t("mcp.guard"));
             guard.setId("mcp-guard");
             add(title, guard);
             return;
         }
-        Span endpoint = new Span("管理口：" + ConnectionManager.current().managementUrl());
+        Span endpoint = new Span(I18n.t("management.label") + ConnectionManager.current().managementUrl());
         endpoint.setId("mcp-endpoint");
 
         TabSheet tabs = new TabSheet();
@@ -58,9 +59,9 @@ public class McpView extends VerticalLayout {
         McpToolsPanel tools = new McpToolsPanel();
         McpResourcesPanel resources = new McpResourcesPanel();
         McpServicesPanel services = new McpServicesPanel();
-        tabs.add("工具", tools);
-        tabs.add("资源", resources);
-        tabs.add("服务", services);
+        tabs.add(I18n.t("mcp.tab.tools"), tools);
+        tabs.add(I18n.t("mcp.tab.resources"), resources);
+        tabs.add(I18n.t("mcp.tab.services"), services);
         tabs.setSelectedIndex(0);
 
         add(title, endpoint, tabs);
@@ -76,7 +77,7 @@ public class McpView extends VerticalLayout {
 
         protected final McpAdminClient client;
         protected final Grid<T> grid;
-        protected final Span status = new Span("就绪");
+        protected final Span status = new Span(I18n.t("mcp.status.ready"));
         protected final HorizontalLayout downloadLinks = new HorizontalLayout();
         protected final String idPrefix;
 
@@ -98,28 +99,28 @@ public class McpView extends VerticalLayout {
         protected final void init() {
             configureGrid();
 
-            Button refresh = new Button("刷新");
+            Button refresh = new Button(I18n.t("common.refresh"));
             refresh.setId(idPrefix + "-refresh");
             refresh.addClickListener(event -> refresh());
 
-            Button register = new Button("注册");
+            Button register = new Button(I18n.t("mcp.register"));
             register.setId(idPrefix + "-register");
             register.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
             register.addClickListener(event -> openRegisterDialog());
 
-            Button load = new Button("加载 JSON");
+            Button load = new Button(I18n.t("mcp.loadJson"));
             load.setId(idPrefix + "-load");
             load.addClickListener(event -> openLoadDialog());
 
-            Button save = new Button("保存到服务端");
+            Button save = new Button(I18n.t("mcp.saveToServer"));
             save.setId(idPrefix + "-save");
             save.addClickListener(event -> saveAll());
 
-            Button download = new Button("下载 JSON");
+            Button download = new Button(I18n.t("mcp.downloadJson"));
             download.setId(idPrefix + "-download");
             download.addClickListener(event -> downloadAll());
 
-            Button unregister = new Button("注销");
+            Button unregister = new Button(I18n.t("mcp.unregister"));
             unregister.setId(idPrefix + "-unregister");
             unregister.addThemeVariants(ButtonVariant.LUMO_ERROR, ButtonVariant.LUMO_TERTIARY);
             unregister.addClickListener(event -> confirmUnregister());
@@ -149,21 +150,23 @@ public class McpView extends VerticalLayout {
         protected abstract String save() throws Exception;
 
         protected final void refresh() {
-            status.setText("读取中…");
+            status.setText(I18n.t("common.loading"));
             try {
                 List<T> items = loadItems();
                 grid.setItems(items);
-                status.setText(items.isEmpty() ? "没有条目" : "共 " + items.size() + " 条");
+                status.setText(items.isEmpty()
+                        ? I18n.t("common.empty")
+                        : I18n.t("mcp.count", items.size()));
             } catch (Exception e) {
                 grid.setItems(List.of());
-                status.setText("读取失败：" + message(e));
+                status.setText(I18n.t("mcp.error.loadFailed", I18n.message(e)));
             }
         }
 
         private void openLoadDialog() {
             Dialog dialog = new Dialog();
-            dialog.setHeaderTitle("从 JSON 加载");
-            Span dialogStatus = new Span("选择 JSON 文件");
+            dialog.setHeaderTitle(I18n.t("mcp.load.title"));
+            Span dialogStatus = new Span(I18n.t("mcp.load.hint"));
             dialogStatus.setId(idPrefix + "-load-status");
 
             Upload upload = new Upload(event -> {
@@ -171,21 +174,22 @@ public class McpView extends VerticalLayout {
                     String raw = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
                     loadJson(raw);
                     dialog.close();
-                    status.setText("加载成功");
+                    status.setText(I18n.t("mcp.loaded"));
                     refresh();
                 } catch (IOException e) {
-                    dialogStatus.setText("读取文件失败：" + e.getMessage());
+                    dialogStatus.setText(I18n.t("mcp.error.readFileFailed", I18n.message(e)));
                 } catch (Exception e) {
-                    dialogStatus.setText("加载失败：" + message(e));
+                    dialogStatus.setText(I18n.t("mcp.error.loadJsonFailed", I18n.message(e)));
                 }
             });
             upload.setId(idPrefix + "-upload");
+            UploadTexts.apply(upload);
             upload.setMaxFiles(1);
             upload.setAcceptedFileTypes(".json", ".tool", ".resource", ".service");
             upload.setMaxFileSize(20 * 1024 * 1024);
 
             dialog.add(new VerticalLayout(dialogStatus, upload,
-                    new HorizontalLayout(new Button("关闭", event -> dialog.close()))));
+                    new HorizontalLayout(new Button(I18n.t("common.close"), event -> dialog.close()))));
             dialog.open();
         }
 
@@ -193,7 +197,7 @@ public class McpView extends VerticalLayout {
             try {
                 status.setText(save());
             } catch (Exception e) {
-                status.setText("保存失败：" + message(e));
+                status.setText(I18n.t("mcp.error.saveFailed", I18n.message(e)));
             }
         }
 
@@ -202,31 +206,32 @@ public class McpView extends VerticalLayout {
                 byte[] payload = dump();
                 downloadLinks.removeAll();
                 downloadLinks.add(DownloadSupport.anchor(dumpFilename(), payload));
-                status.setText("已生成下载：" + payload.length + " 字节");
+                status.setText(I18n.t("mcp.status.downloadReady", payload.length));
             } catch (Exception e) {
-                status.setText("下载失败：" + message(e));
+                status.setText(I18n.t("mcp.error.downloadFailed", I18n.message(e)));
             }
         }
 
         private void confirmUnregister() {
             T selected = grid.asSingleSelect().getValue();
             if (selected == null) {
-                status.setText("先选中一条记录");
+                status.setText(I18n.t("mcp.unregister.required"));
                 return;
             }
             ConfirmDialog dialog = new ConfirmDialog();
-            dialog.setHeader("确认注销？");
+            dialog.setHeader(I18n.t("mcp.unregister.title"));
             dialog.setText(itemLabel(selected));
             dialog.setCancelable(true);
-            dialog.setConfirmText("注销");
+            dialog.setCancelText(I18n.t("common.cancel"));
+            dialog.setConfirmText(I18n.t("mcp.unregister"));
             dialog.setConfirmButtonTheme("error primary");
             dialog.addConfirmListener(event -> {
                 try {
                     unregister(selected);
-                    status.setText("已注销：" + itemLabel(selected));
+                    status.setText(I18n.t("mcp.unregistered", itemLabel(selected)));
                     refresh();
                 } catch (Exception e) {
-                    status.setText("注销失败：" + message(e));
+                    status.setText(I18n.t("mcp.error.unregisterFailed", I18n.message(e)));
                 }
             });
             dialog.open();
@@ -249,11 +254,11 @@ public class McpView extends VerticalLayout {
 
         @Override
         protected void configureGrid() {
-            grid.addColumn(McpTool::name).setHeader("名称").setAutoWidth(true);
-            grid.addColumn(McpTool::description).setHeader("描述").setAutoWidth(true);
-            grid.addColumn(McpTool::category).setHeader("分类").setAutoWidth(true);
+            grid.addColumn(McpTool::name).setHeader(I18n.t("mcp.column.name")).setAutoWidth(true);
+            grid.addColumn(McpTool::description).setHeader(I18n.t("mcp.column.description")).setAutoWidth(true);
+            grid.addColumn(McpTool::category).setHeader(I18n.t("mcp.column.category")).setAutoWidth(true);
             grid.addColumn(tool -> tool.inputSchema() == null ? "" : String.valueOf(tool.inputSchema()))
-                    .setHeader("Input Schema").setAutoWidth(true);
+                    .setHeader(I18n.t("mcp.column.inputSchema")).setAutoWidth(true);
         }
 
         @Override
@@ -269,41 +274,41 @@ public class McpView extends VerticalLayout {
         @Override
         protected void openRegisterDialog() {
             Dialog dialog = new Dialog();
-            dialog.setHeaderTitle("注册 MCP 工具");
+            dialog.setHeaderTitle(I18n.t("mcp.register.tool.title"));
             dialog.setWidth("760px");
-            TextField name = new TextField("名称");
+            TextField name = new TextField(I18n.t("mcp.field.name"));
             name.setId("mcp-tool-name");
-            TextField category = new TextField("分类");
+            TextField category = new TextField(I18n.t("mcp.field.category"));
             category.setId("mcp-tool-category");
-            TextArea description = new TextArea("描述");
+            TextArea description = new TextArea(I18n.t("mcp.field.description"));
             description.setId("mcp-tool-description");
             description.setWidthFull();
-            TextArea inputSchema = new TextArea("Input Schema（JSON 对象）");
+            TextArea inputSchema = new TextArea(I18n.t("mcp.field.inputSchema"));
             inputSchema.setId("mcp-tool-schema");
             inputSchema.setWidthFull();
             inputSchema.setHeight("160px");
             Span dialogStatus = new Span();
             dialogStatus.setId("mcp-tool-dialog-status");
 
-            Button submit = new Button("注册", event -> {
+            Button submit = new Button(I18n.t("mcp.register"), event -> {
                 try {
                     JsonNode schema = json.readTree(inputSchema.getValue());
                     if (!schema.isObject()) {
-                        throw new IllegalArgumentException("Input Schema 必须是 JSON 对象");
+                        throw new IllegalArgumentException(I18n.t("mcp.error.schemaNotObject"));
                     }
                     client.registerTool(new McpTool(
                             name.getValue(), description.getValue(),
                             json.convertValue(schema, Object.class), category.getValue()));
                     dialog.close();
-                    status.setText("已注册：" + name.getValue());
+                    status.setText(I18n.t("mcp.registered", name.getValue()));
                     refresh();
                 } catch (Exception e) {
-                    dialogStatus.setText("注册失败：" + message(e));
+                    dialogStatus.setText(I18n.t("mcp.error.registerFailed", I18n.message(e)));
                 }
             });
             submit.setId("mcp-tool-submit");
             submit.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-            Button cancel = new Button("取消", event -> dialog.close());
+            Button cancel = new Button(I18n.t("common.cancel"), event -> dialog.close());
             dialog.add(new VerticalLayout(new HorizontalLayout(name, category), description,
                     inputSchema, dialogStatus, new HorizontalLayout(submit, cancel)));
             dialog.open();
@@ -332,7 +337,9 @@ public class McpView extends VerticalLayout {
         @Override
         protected String save() throws Exception {
             McpAdminClient.SaveResult result = client.saveTools();
-            return "已保存" + (result.savedPath() == null ? "" : "：" + result.savedPath());
+            return result.savedPath() == null
+                    ? I18n.t("mcp.saved")
+                    : I18n.t("mcp.saved.path", result.savedPath());
         }
     }
 
@@ -346,11 +353,11 @@ public class McpView extends VerticalLayout {
 
         @Override
         protected void configureGrid() {
-            grid.addColumn(McpResource::uri).setHeader("URI").setAutoWidth(true);
-            grid.addColumn(McpResource::name).setHeader("名称").setAutoWidth(true);
-            grid.addColumn(McpResource::description).setHeader("描述").setAutoWidth(true);
-            grid.addColumn(McpResource::mimeType).setHeader("MIME").setAutoWidth(true);
-            grid.addColumn(McpResource::category).setHeader("分类").setAutoWidth(true);
+            grid.addColumn(McpResource::uri).setHeader(I18n.t("mcp.column.uri")).setAutoWidth(true);
+            grid.addColumn(McpResource::name).setHeader(I18n.t("mcp.column.name")).setAutoWidth(true);
+            grid.addColumn(McpResource::description).setHeader(I18n.t("mcp.column.description")).setAutoWidth(true);
+            grid.addColumn(McpResource::mimeType).setHeader(I18n.t("mcp.column.mime")).setAutoWidth(true);
+            grid.addColumn(McpResource::category).setHeader(I18n.t("mcp.column.category")).setAutoWidth(true);
         }
 
         @Override
@@ -366,42 +373,42 @@ public class McpView extends VerticalLayout {
         @Override
         protected void openRegisterDialog() {
             Dialog dialog = new Dialog();
-            dialog.setHeaderTitle("注册 MCP 资源");
+            dialog.setHeaderTitle(I18n.t("mcp.register.resource.title"));
             dialog.setWidth("760px");
-            TextField uri = new TextField("URI");
+            TextField uri = new TextField(I18n.t("mcp.field.uri"));
             uri.setId("mcp-resource-uri");
-            TextField name = new TextField("名称");
+            TextField name = new TextField(I18n.t("mcp.field.name"));
             name.setId("mcp-resource-name");
-            TextField mimeType = new TextField("MIME Type");
+            TextField mimeType = new TextField(I18n.t("mcp.field.mimeType"));
             mimeType.setId("mcp-resource-mime");
-            TextField category = new TextField("分类");
+            TextField category = new TextField(I18n.t("mcp.field.category"));
             category.setId("mcp-resource-category");
-            TextArea description = new TextArea("描述");
+            TextArea description = new TextArea(I18n.t("mcp.field.description"));
             description.setId("mcp-resource-description");
             description.setWidthFull();
-            TextArea contents = new TextArea("Contents（JSON）");
+            TextArea contents = new TextArea(I18n.t("mcp.field.contents"));
             contents.setId("mcp-resource-contents");
             contents.setWidthFull();
             contents.setHeight("140px");
             Span dialogStatus = new Span();
             dialogStatus.setId("mcp-resource-dialog-status");
 
-            Button submit = new Button("注册", event -> {
+            Button submit = new Button(I18n.t("mcp.register"), event -> {
                 try {
                     JsonNode parsed = json.readTree(contents.getValue());
                     client.registerResource(new McpResource(
                             uri.getValue(), name.getValue(), description.getValue(), mimeType.getValue(),
                             json.convertValue(parsed, Object.class), category.getValue()));
                     dialog.close();
-                    status.setText("已注册：" + uri.getValue());
+                    status.setText(I18n.t("mcp.registered", uri.getValue()));
                     refresh();
                 } catch (Exception e) {
-                    dialogStatus.setText("注册失败：" + message(e));
+                    dialogStatus.setText(I18n.t("mcp.error.registerFailed", I18n.message(e)));
                 }
             });
             submit.setId("mcp-resource-submit");
             submit.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-            Button cancel = new Button("取消", event -> dialog.close());
+            Button cancel = new Button(I18n.t("common.cancel"), event -> dialog.close());
             dialog.add(new VerticalLayout(new HorizontalLayout(uri, name), new HorizontalLayout(mimeType, category),
                     description, contents, dialogStatus, new HorizontalLayout(submit, cancel)));
             dialog.open();
@@ -430,7 +437,9 @@ public class McpView extends VerticalLayout {
         @Override
         protected String save() throws Exception {
             McpAdminClient.SaveResult result = client.saveResources();
-            return "已保存" + (result.savedPath() == null ? "" : "：" + result.savedPath());
+            return result.savedPath() == null
+                    ? I18n.t("mcp.saved")
+                    : I18n.t("mcp.saved.path", result.savedPath());
         }
     }
 
@@ -444,16 +453,16 @@ public class McpView extends VerticalLayout {
 
         @Override
         protected void configureGrid() {
-            grid.addColumn(McpService::name).setHeader("名称").setAutoWidth(true);
-            grid.addColumn(McpService::apiName).setHeader("API Name").setAutoWidth(true);
-            grid.addColumn(McpService::version).setHeader("版本").setAutoWidth(true);
-            grid.addColumn(McpService::method).setHeader("方法").setAutoWidth(true);
-            grid.addColumn(McpService::category).setHeader("分类").setAutoWidth(true);
-            grid.addColumn(McpService::description).setHeader("描述").setAutoWidth(true);
+            grid.addColumn(McpService::name).setHeader(I18n.t("mcp.column.name")).setAutoWidth(true);
+            grid.addColumn(McpService::apiName).setHeader(I18n.t("mcp.column.apiName")).setAutoWidth(true);
+            grid.addColumn(McpService::version).setHeader(I18n.t("mcp.column.version")).setAutoWidth(true);
+            grid.addColumn(McpService::method).setHeader(I18n.t("mcp.column.method")).setAutoWidth(true);
+            grid.addColumn(McpService::category).setHeader(I18n.t("mcp.column.category")).setAutoWidth(true);
+            grid.addColumn(McpService::description).setHeader(I18n.t("mcp.column.description")).setAutoWidth(true);
             grid.addColumn(service -> String.join(",", service.capabilities()))
-                    .setHeader("Capabilities").setAutoWidth(true);
+                    .setHeader(I18n.t("mcp.column.capabilities")).setAutoWidth(true);
             grid.addColumn(service -> String.join(",", service.useCases()))
-                    .setHeader("Use Cases").setAutoWidth(true);
+                    .setHeader(I18n.t("mcp.column.useCases")).setAutoWidth(true);
         }
 
         @Override
@@ -469,45 +478,45 @@ public class McpView extends VerticalLayout {
         @Override
         protected void openRegisterDialog() {
             Dialog dialog = new Dialog();
-            dialog.setHeaderTitle("注册 MCP 服务");
+            dialog.setHeaderTitle(I18n.t("mcp.register.service.title"));
             dialog.setWidth("860px");
-            TextField name = new TextField("名称");
+            TextField name = new TextField(I18n.t("mcp.field.name"));
             name.setId("mcp-service-name");
-            TextField apiName = new TextField("API Name");
+            TextField apiName = new TextField(I18n.t("mcp.field.apiName"));
             apiName.setId("mcp-service-api");
-            TextField version = new TextField("版本");
+            TextField version = new TextField(I18n.t("mcp.field.version"));
             version.setId("mcp-service-version");
-            ComboBox<String> method = new ComboBox<>("方法");
+            ComboBox<String> method = new ComboBox<>(I18n.t("mcp.field.method"));
             method.setId("mcp-service-method");
             method.setItems("GET", "POST");
             method.setValue("GET");
-            TextField category = new TextField("分类");
+            TextField category = new TextField(I18n.t("mcp.field.category"));
             category.setId("mcp-service-category");
-            TextArea description = new TextArea("描述");
+            TextArea description = new TextArea(I18n.t("mcp.field.description"));
             description.setId("mcp-service-description");
             description.setWidthFull();
-            TextArea capabilities = new TextArea("Capabilities（JSON 字符串数组）");
+            TextArea capabilities = new TextArea(I18n.t("mcp.field.capabilities"));
             capabilities.setId("mcp-service-capabilities");
             capabilities.setWidthFull();
             capabilities.setHeight("80px");
             capabilities.setValue("[\"query\"]");
-            TextArea useCases = new TextArea("Use Cases（JSON 字符串数组）");
+            TextArea useCases = new TextArea(I18n.t("mcp.field.useCases"));
             useCases.setId("mcp-service-usecases");
             useCases.setWidthFull();
             useCases.setHeight("80px");
             useCases.setValue("[\"Data query service\"]");
-            TextArea parameters = new TextArea("Parameters（JSON 数组，可空）");
+            TextArea parameters = new TextArea(I18n.t("mcp.field.parameters"));
             parameters.setId("mcp-service-parameters");
             parameters.setWidthFull();
             parameters.setHeight("80px");
-            TextArea examples = new TextArea("Examples（JSON 数组，可空）");
+            TextArea examples = new TextArea(I18n.t("mcp.field.examples"));
             examples.setId("mcp-service-examples");
             examples.setWidthFull();
             examples.setHeight("80px");
             Span dialogStatus = new Span();
             dialogStatus.setId("mcp-service-dialog-status");
 
-            Button submit = new Button("注册", event -> {
+            Button submit = new Button(I18n.t("mcp.register"), event -> {
                 try {
                     client.registerService(new McpService(
                             name.getValue(), apiName.getValue(), version.getValue(), method.getValue(),
@@ -515,15 +524,15 @@ public class McpView extends VerticalLayout {
                             stringList(capabilities.getValue()), stringList(useCases.getValue()),
                             jsonValue(parameters.getValue()), jsonValue(examples.getValue())));
                     dialog.close();
-                    status.setText("已注册：" + name.getValue());
+                    status.setText(I18n.t("mcp.registered", name.getValue()));
                     refresh();
                 } catch (Exception e) {
-                    dialogStatus.setText("注册失败：" + message(e));
+                    dialogStatus.setText(I18n.t("mcp.error.registerFailed", I18n.message(e)));
                 }
             });
             submit.setId("mcp-service-submit");
             submit.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-            Button cancel = new Button("取消", event -> dialog.close());
+            Button cancel = new Button(I18n.t("common.cancel"), event -> dialog.close());
             dialog.add(new VerticalLayout(
                     new HorizontalLayout(name, apiName, version, method),
                     new HorizontalLayout(category),
@@ -555,7 +564,9 @@ public class McpView extends VerticalLayout {
         @Override
         protected String save() throws Exception {
             McpAdminClient.SaveResult result = client.saveServices();
-            return "已保存" + (result.savedPath() == null ? "" : "：" + result.savedPath());
+            return result.savedPath() == null
+                    ? I18n.t("mcp.saved")
+                    : I18n.t("mcp.saved.path", result.savedPath());
         }
 
         private List<String> stringList(String text) {
@@ -564,7 +575,7 @@ public class McpView extends VerticalLayout {
             }
             JsonNode root = json.readTree(text);
             if (!root.isArray()) {
-                throw new IllegalArgumentException("必须是 JSON 字符串数组");
+                throw new IllegalArgumentException(I18n.t("mcp.error.jsonStringArray"));
             }
             List<String> values = new ArrayList<>();
             for (JsonNode item : root) {
@@ -580,13 +591,5 @@ public class McpView extends VerticalLayout {
             JsonNode root = json.readTree(text);
             return json.convertValue(root, Object.class);
         }
-    }
-
-    private static String message(Throwable error) {
-        Throwable root = error;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        return root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage();
     }
 }

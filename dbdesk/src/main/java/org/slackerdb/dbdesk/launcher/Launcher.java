@@ -40,7 +40,7 @@ public final class Launcher {
         }
 
         springArgs.add("--server.port=" + options.consolePort);
-        System.out.printf("[launcher] DbDesk 已启动，请手动访问 http://127.0.0.1:%d/%n", options.consolePort);
+        System.out.printf("[launcher] DbDesk is starting; open http://127.0.0.1:%d/ manually%n", options.consolePort);
 
         new SpringApplicationBuilder(DbDeskApplication.class)
                 .run(springArgs.toArray(String[]::new));
@@ -49,13 +49,13 @@ public final class Launcher {
     /** 命令行参数（解析结果）。 */
     static final class Options {
         static final String USAGE = """
-                用法：java -jar slackerdb-dbdesk-<version>.jar [选项] [--spring 参数…]
+                Usage: java -jar slackerdb-dbdesk-<version>.jar [options] [--spring args…]
 
-                  --port <n>      控制台端口（默认 8090）
-                  --datadir <dir> 本地上传暂存目录（默认 ~/.slackerdb/dbdesk-data）
-                  --help          显示本帮助
+                  --port <n>      console port (default 8090)
+                  --datadir <dir> local upload staging directory (default ~/.slackerdb/dbdesk-data)
+                  --help          show this help
 
-                DbDesk 只启动自己的 Web UI；dbserver 的启停由用户自己负责。
+                DbDesk only starts its own web UI; starting/stopping dbserver is up to the user.
                 """;
 
         int consolePort = DEFAULT_CONSOLE_PORT;

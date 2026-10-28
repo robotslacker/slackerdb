@@ -29,6 +29,8 @@ import java.util.Optional;
  * 唯一的动作是定时重绘。token 不存在时给一个明确的失效页，不抛 500。</p>
  *
  * <p>该路由**不套 MainLayout**：门户是给业务方看的，出现侧边栏（能点进 SQL 工作台）就失去了只读的意义。</p>
+ *
+ * <p>语言跟随浏览者当前会话（默认英文）：门户本身不提供切换入口。</p>
  */
 @Route("portal/:token")
 public class PortalView extends VerticalLayout implements BeforeEnterObserver {
@@ -74,16 +76,16 @@ public class PortalView extends VerticalLayout implements BeforeEnterObserver {
         Optional<Portal> portal = portals.findByToken(token);
         // 生命周期检查：撤销/过期都要给出明确原因，而不是笼统的"无效"
         if (portal.isPresent() && !portal.get().usableAt(java.time.Instant.now())) {
-            title.setText(portal.get().revoked() ? "该分享链接已被撤销" : "该分享链接已过期");
-            subtitle.setText("请联系看板维护者重新生成分享链接。");
+            title.setText(portal.get().revoked() ? I18n.t("share.revoked.title") : I18n.t("share.expired.title"));
+            subtitle.setText(I18n.t("share.contact"));
             canvas.removeAll();
             status.setText("");
             UI.getCurrent().setPollInterval(-1);
             return;
         }
         if (portal.isEmpty()) {
-            title.setText("链接无效或已失效");
-            subtitle.setText("请联系看板维护者重新生成分享链接。");
+            title.setText(I18n.t("share.invalid.title"));
+            subtitle.setText(I18n.t("share.contact"));
             canvas.removeAll();
             status.setText("");
             return;
@@ -91,20 +93,20 @@ public class PortalView extends VerticalLayout implements BeforeEnterObserver {
         Dashboard dashboard = dashboards.find(portal.get().dashboardId()).orElse(null);
         if (dashboard == null) {
             title.setText(portal.get().name());
-            subtitle.setText("仪表板已删除");
+            subtitle.setText(I18n.t("share.dashboardDeleted"));
             canvas.removeAll();
             return;
         }
         title.setText(dashboard.name());
-        subtitle.setText("数据门户 · 只读 · 最后刷新 "
-                + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")));
+        subtitle.setText(I18n.t("share.subtitle",
+                LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))));
 
         DashboardData.Result result = new DashboardData(datasets, charts).render(dashboard, null, 2_000);
         canvas.removeAll();
         for (DashboardData.CardResult card : result.cards()) {
             canvas.add(buildCard(card));
         }
-        status.setText(String.format("%d 张卡片 / %d ms", result.cards().size(), result.elapsedMillis()));
+        status.setText(I18n.t("share.stats", result.cards().size(), result.elapsedMillis()));
 
         UI ui = UI.getCurrent();
         if (portal.get().autoRefreshSeconds() > 0) {
@@ -128,7 +130,7 @@ public class PortalView extends VerticalLayout implements BeforeEnterObserver {
         cardTitle.getStyle().set("margin", "0 0 4px 0");
         box.add(cardTitle);
         if (card.error() != null) {
-            box.add(new Span("加载失败：" + card.error()));
+            box.add(new Span(I18n.t("share.card.failed", card.error())));
             return box;
         }
         ChartView view = new ChartView();

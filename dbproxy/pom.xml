@@ -118,7 +118,7 @@
                 <artifactId>maven-assembly-plugin</artifactId>
                 <executions>
                     <!--
-                      源码包（<artifactId>-<version>-sources.jar）：口径见 build/sources-assembly.xml ——
+                      源码包（<artifactId>-<version>-sources.jar）：口径见 release/src/main/assembly/sources-assembly.xml ——
                       与 git 里提交的 src/main 树一致（java + antlr4 语法 + 资源），不含任何构建产物。
                     -->
                     <execution>
@@ -129,7 +129,7 @@
                         </goals>
                         <configuration>
                             <descriptors>
-                                <descriptor>${project.basedir}/../build/sources-assembly.xml</descriptor>
+                                <descriptor>${project.basedir}/../release/src/main/assembly/sources-assembly.xml</descriptor>
                             </descriptors>
                         </configuration>
                     </execution>

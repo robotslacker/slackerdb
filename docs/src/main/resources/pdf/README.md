@@ -1,6 +1,6 @@
 # 中文 PDF 的字体与主题
 
-本目录的东西只服务于 `build/pom.xml` 里的中文 PDF 构建（`README-CN.adoc` → `README-CN.pdf`）。
+本目录的东西只服务于 `docs/pom.xml` 里的中文 PDF 构建（`README-CN.adoc` → `README-CN.pdf`）。
 
 | 文件 | 用途 |
 |---|---|
@@ -61,7 +61,7 @@ base:
   text_align: left
 ```
 
-英文 PDF（`README.adoc`）继续用默认主题的 justify，不受影响——`build/pom.xml` 里两个
+英文 PDF（`README.adoc`）继续用默认主题的 justify，不受影响——`docs/pom.xml` 里两个
 asciidoctor 执行各自指定主题，EN 那份没有 `<pdf-theme>`。
 
 需要换字体（例如换更小的子集、或补一份 Bold）时，重复上面这一步，然后把新文件放进本目录并改

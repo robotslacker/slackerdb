@@ -19,13 +19,9 @@ import com.vaadin.flow.router.RouteAlias;
 @RouteAlias("console")
 public class SqlWorkbenchView extends VerticalLayout {
 
-    private static final String SAMPLE_SQL = """
-            -- Ctrl+Enter 或点「执行」
-            """;
-
-    private final Button newTab = new Button("+ 新建查询");
-    private final Button renameTab = new Button("重命名");
-    private final Button closeTab = new Button("关闭标签");
+    private final Button newTab = new Button(I18n.t("sql.newTab"));
+    private final Button renameTab = new Button(I18n.t("sql.renameTab"));
+    private final Button closeTab = new Button(I18n.t("sql.closeTab"));
     private final TabSheet tabs = new TabSheet();
     private final String jdbcUrl;
     private final MetadataPanel metadata;
@@ -36,13 +32,14 @@ public class SqlWorkbenchView extends VerticalLayout {
         setSizeFull();
         setPadding(true);
         setSpacing(true);
+        I18n.setTitle("nav.sql");
 
-        H2 title = new H2("SQL 控制台");
+        H2 title = new H2(I18n.t("nav.sql"));
         ConnectionManager connection = ConnectionManager.current();
         if (!connection.isConnected()) {
             jdbcUrl = null;
             metadata = null;
-            Span guard = new Span("未连接服务端，请使用右上角 Connect。");
+            Span guard = new Span(I18n.t("sql.guard.disconnected"));
             guard.setId("sql-console-guard");
             add(title, guard);
             return;
@@ -50,7 +47,7 @@ public class SqlWorkbenchView extends VerticalLayout {
         if (!connection.hasDatabase()) {
             jdbcUrl = null;
             metadata = null;
-            Span guard = new Span("当前连接只有 dbproxy 管理端口，没有数据库端口，SQL 控制台不可用。");
+            Span guard = new Span(I18n.t("sql.guard.noDatabase"));
             guard.setId("sql-console-guard");
             add(title, guard);
             return;
@@ -86,8 +83,8 @@ public class SqlWorkbenchView extends VerticalLayout {
         }
         tabSequence++;
         String suffix = tabSequence == 1 ? "" : "-" + tabSequence;
-        QueryPanel panel = new QueryPanel(jdbcUrl, SAMPLE_SQL, suffix);
-        Tab tab = tabs.add("查询 " + tabSequence, panel);
+        QueryPanel panel = new QueryPanel(jdbcUrl, I18n.t("sql.sample.comment"), suffix);
+        Tab tab = tabs.add(I18n.t("sql.tab.label", tabSequence), panel);
         tabs.setSelectedTab(tab);
     }
 
@@ -97,20 +94,20 @@ public class SqlWorkbenchView extends VerticalLayout {
         if (tab == null) {
             return;
         }
-        TextField name = new TextField("标签名");
+        TextField name = new TextField(I18n.t("sql.rename.label"));
         name.setValue(tab.getLabel());
         name.setId("rename-field");
 
         Dialog dialog = new Dialog();
-        dialog.setHeaderTitle("重命名标签");
-        Button confirm = new Button("确定", event -> {
+        dialog.setHeaderTitle(I18n.t("sql.rename.title"));
+        Button confirm = new Button(I18n.t("common.ok"), event -> {
             if (name.getValue() != null && !name.getValue().isBlank()) {
                 tab.setLabel(name.getValue().strip());
             }
             dialog.close();
         });
         confirm.setId("rename-confirm");
-        Button cancel = new Button("取消", event -> dialog.close());
+        Button cancel = new Button(I18n.t("common.cancel"), event -> dialog.close());
         dialog.add(new VerticalLayout(name, new HorizontalLayout(confirm, cancel)));
         dialog.open();
     }

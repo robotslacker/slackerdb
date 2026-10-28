@@ -19,6 +19,12 @@ import org.slackerdb.common.utils.Utils;
 
 public class ServerConfiguration {
     // 设置默认参数
+    /**
+     * 内存模式下实例库的 catalog 名：DuckDB 后端连接的默认 catalog 就叫 {@code memory}
+     * （连接串固定为 {@code jdbc:duckdb:memory:db<UUID>}）。见 {@link #getInstanceName()}。
+     */
+    public static final String MEMORY_DATABASE = "memory";
+
     // 默认的数据库名称
     private final String default_data = "";
     // 默认启动在内存下
@@ -674,6 +680,20 @@ public class ServerConfiguration {
     public String getData()
     {
         return data;
+    }
+
+    /**
+     * 实例库名：{@code ATTACH} 进来的 catalog 名，也是内部服务拼 {@code <库名>.sysaux} 用的名字。
+     *
+     * <p><b>拼 SQL 标识符时不要直接用 {@link #getData()}</b>：没有配置 {@code --data} 时它返回空串，
+     * 拼出来就是 {@code .sysaux} / {@code .duck_catalog.pg_type} 这种非法 SQL，DuckDB 直接报
+     * {@code Parser Error: syntax error at or near "."}。此时服务端根本不 ATTACH 任何库
+     * （见 {@code DBInstance#attachDatabase}），连接的默认 catalog 就是 {@code memory}，
+     * 所以这里回落到 {@link #MEMORY_DATABASE}。</p>
+     */
+    public String getInstanceName()
+    {
+        return data == null || data.isBlank() ? MEMORY_DATABASE : data;
     }
     public String getData_Dir()
     {

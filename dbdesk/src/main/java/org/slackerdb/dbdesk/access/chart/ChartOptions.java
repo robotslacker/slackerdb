@@ -19,7 +19,7 @@ public final class ChartOptions {
     public static Map<String, Object> toEcharts(Chart chart, ChartData.Result data) {
         Map<String, Object> option = new LinkedHashMap<>();
         if (!data.ok()) {
-            option.put("title", Map.of("text", "图表数据加载失败：" + data.error()));
+            option.put("title", Map.of("text", org.slackerdb.dbdesk.i18n.MessageResolver.render("chart.error.load", data.error())));
             return option;
         }
         option.put("title", Map.of("text", chart.name()));
@@ -50,7 +50,7 @@ public final class ChartOptions {
 
     private static Map<String, Object> pieSeries(Chart chart, ChartData.Result data) {
         Map<String, Object> item = new LinkedHashMap<>();
-        item.put("name", chart.y().isEmpty() ? "值" : chart.y().get(0));
+        item.put("name", chart.y().isEmpty() ? org.slackerdb.dbdesk.i18n.MessageResolver.render("chart.series.value") : chart.y().get(0));
         item.put("type", "pie");
         item.put("radius", "62%");
         List<Map<String, Object>> points = new ArrayList<>();

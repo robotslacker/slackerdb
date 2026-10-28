@@ -298,7 +298,7 @@ public final class ManagementClient implements AutoCloseable {
         boolean success = integer(root, "retCode", -1) == 0;
         String message = text(root, "retMsg");
         if (message == null || message.isBlank()) {
-            message = success ? "OK" : "插件操作失败";
+            message = success ? "OK" : "";
         }
         return new PluginActionResult(success, message, text(root, "pluginId"));
     }
@@ -340,8 +340,8 @@ public final class ManagementClient implements AutoCloseable {
         try {
             return objectMapper.readTree(body);
         } catch (RuntimeException e) {
-            throw new ManagementException("管理口返回的不是合法 JSON（" + request.uri() + "）："
-                    + abbreviate(body), e);
+            throw new ManagementException(org.slackerdb.dbdesk.i18n.LocalizedMessage.of(
+                    "error.management.invalidJson", request.uri().toString(), abbreviate(body)), e);
         }
     }
 
@@ -350,10 +350,10 @@ public final class ManagementClient implements AutoCloseable {
         try {
             response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         } catch (IOException e) {
-            throw new ManagementException("调用管理口失败：" + request.uri(), e);
+            throw new ManagementException(org.slackerdb.dbdesk.i18n.LocalizedMessage.of("error.management.requestFailed", request.uri().toString()), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new ManagementException("调用管理口被中断：" + request.uri(), e);
+            throw new ManagementException(org.slackerdb.dbdesk.i18n.LocalizedMessage.of("error.management.interrupted", request.uri().toString()), e);
         }
 
         String body = response.body() == null ? "" : response.body();
@@ -368,10 +368,10 @@ public final class ManagementClient implements AutoCloseable {
         try {
             response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
         } catch (IOException e) {
-            throw new ManagementException("调用管理口失败：" + request.uri(), e);
+            throw new ManagementException(org.slackerdb.dbdesk.i18n.LocalizedMessage.of("error.management.requestFailed", request.uri().toString()), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new ManagementException("调用管理口被中断：" + request.uri(), e);
+            throw new ManagementException(org.slackerdb.dbdesk.i18n.LocalizedMessage.of("error.management.interrupted", request.uri().toString()), e);
         }
         if (response.statusCode() / 100 != 2) {
             String body = response.body() == null ? "" : new String(response.body(), StandardCharsets.UTF_8);
@@ -396,14 +396,16 @@ public final class ManagementClient implements AutoCloseable {
                 retMsg = abbreviate(body);
             }
         }
-        return new ManagementException("管理口返回 " + status, status, retCode, retMsg);
+        return retMsg == null || retMsg.isBlank()
+                ? new ManagementException(org.slackerdb.dbdesk.i18n.LocalizedMessage.of("error.management.httpStatus", status), status, retCode, retMsg)
+                : new ManagementException(org.slackerdb.dbdesk.i18n.LocalizedMessage.of("error.management.httpStatus.detail", status, retMsg), status, retCode, retMsg);
     }
 
     private String writeJson(Object value) throws ManagementException {
         try {
             return objectMapper.writeValueAsString(value);
         } catch (RuntimeException e) {
-            throw new ManagementException("无法序列化请求体", e);
+            throw new ManagementException(org.slackerdb.dbdesk.i18n.LocalizedMessage.of("error.management.serializeFailed"), e);
         }
     }
 

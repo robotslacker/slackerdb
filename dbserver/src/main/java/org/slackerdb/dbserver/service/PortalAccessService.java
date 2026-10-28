@@ -37,7 +37,8 @@ public class PortalAccessService {
     public PortalAccessService(DBInstance dbInstance, Javalin managementApp, Logger logger) {
         this.dbInstance = dbInstance;
         this.logger = logger;
-        this.qualifiedTable = dbInstance.serverConfiguration.getData() + ".sysaux.portal_access";
+        // 库名统一取 sysauxSchema()：没有 --data 时是 memory，且带引号（实例名允许 -）。
+        this.qualifiedTable = dbInstance.sysauxSchema() + ".portal_access";
         ensureTable();
         registerRoutes(managementApp);
     }
@@ -45,8 +46,7 @@ public class PortalAccessService {
     private void ensureTable() {
         try (Connection connection = dbInstance.dbDataSourcePool.getConnection();
              Statement statement = connection.createStatement()) {
-            statement.execute("create schema if not exists "
-                    + dbInstance.serverConfiguration.getData() + ".sysaux");
+            statement.execute("create schema if not exists " + dbInstance.sysauxSchema());
             statement.execute("create table if not exists " + qualifiedTable + " ("
                     + "id varchar not null, "
                     + "portal_id varchar not null, "

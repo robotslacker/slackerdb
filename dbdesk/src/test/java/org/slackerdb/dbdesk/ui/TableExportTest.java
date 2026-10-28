@@ -63,6 +63,7 @@ class TableExportTest {
                 consoleErrors.add(message.text());
             }
         });
+        UiTestSupport.useChinese(page);
         page.navigate(URL);
     }
 

@@ -34,7 +34,11 @@ public final class JdbcPageSource implements AutoCloseable {
     /** 单元格字符上限：超过就截断（决策：单结果 100 万行 / 50 列 / 单值 1 MB 截断）。 */
     public static final int MAX_CELL_CHARS = 1_048_576;
 
-    private static final String TRUNCATED_SUFFIX_FORMAT = "…[已截断，原长 %d 字符]";
+    /**
+     * 截断标记：拼进单元格的值本身、随数据一起返回（网格/图表原样展示），属于数据而非界面文案，
+     * 因此不做 i18n —— access 层拿不到会话语言，而值在渲染前就已经定稿。
+     */
+    private static final String TRUNCATED_SUFFIX_FORMAT = "…[已截断，原长 %d 字符]"; // i18n-ignore: 单元格数据，非 UI 文案
 
     private final String url;
     private final int maxCellChars;

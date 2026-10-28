@@ -63,6 +63,7 @@ class SqlConsoleTest {
     @Test
     void runsSimpleQueryWithoutLegacyConnectionControls() {
         connect();
+        UiTestSupport.useChinese(page);
         page.navigate(BASE + "/sql");
         page.waitForSelector("#run-button");
         assertTrue(page.locator("#jdbc-url").count() == 0);

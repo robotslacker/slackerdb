@@ -43,25 +43,26 @@ public class DashboardsView extends HorizontalLayout {
     private final DashboardData renderer = new DashboardData(datasets, charts);
 
     private final Grid<Dashboard> list = new Grid<>(Dashboard.class, false);
-    private final TextField name = new TextField("名称");
+    private final TextField name = new TextField(I18n.t("dashboard.name"));
     private final Grid<Dashboard.Filter> filters = new Grid<>(Dashboard.Filter.class, false);
     private final List<Dashboard.Filter> filterRows = new ArrayList<>();
     private final Map<String, TextField> filterInputs = new LinkedHashMap<>();
     private final Grid<Dashboard.Card> cards = new Grid<>(Dashboard.Card.class, false);
     private final List<Dashboard.Card> cardRows = new ArrayList<>();
-    private final ComboBox<String> chartToAdd = new ComboBox<>("添加图表卡片");
+    private final ComboBox<String> chartToAdd = new ComboBox<>(I18n.t("dashboard.chartToAdd"));
     private final Div canvas = new Div();
-    private final Span status = new Span("就绪");
+    private final Span status = new Span(I18n.t("dashboard.status.ready"));
 
-    private final Button refresh = new Button("刷新全部");
-    private final Button save = new Button("保存");
-    private final Button remove = new Button("删除");
-    private final Button create = new Button("新建");
+    private final Button refresh = new Button(I18n.t("common.refresh"));
+    private final Button save = new Button(I18n.t("common.save"));
+    private final Button remove = new Button(I18n.t("common.delete"));
+    private final Button create = new Button(I18n.t("common.create"));
 
     private String editingId;
     private List<Chart> chartItems = List.of();
 
     public DashboardsView() {
+        I18n.setTitle("nav.dashboards");
         setSizeFull();
         setPadding(true);
         setSpacing(true);
@@ -70,7 +71,7 @@ public class DashboardsView extends HorizontalLayout {
         left.setWidth("300px");
         left.setHeightFull();
         left.setPadding(false);
-        H2 title = new H2("仪表板");
+        H2 title = new H2(I18n.t("nav.dashboards"));
         title.getStyle().set("margin", "0");
         create.setId("dashboard-new");
         create.addClickListener(event -> newDashboard());
@@ -78,7 +79,7 @@ public class DashboardsView extends HorizontalLayout {
         list.setId("dashboard-list");
         list.setWidthFull();
         list.setHeightFull();
-        list.addColumn(Dashboard::name).setHeader("名称").setAutoWidth(true);
+        list.addColumn(Dashboard::name).setHeader(I18n.t("dashboard.column.name")).setAutoWidth(true);
         list.addSelectionListener(event -> event.getFirstSelectedItem().ifPresent(this::load));
         left.add(title, new HorizontalLayout(create), list);
         left.setFlexGrow(1, list);
@@ -97,8 +98,8 @@ public class DashboardsView extends HorizontalLayout {
             field.addValueChangeListener(event -> filterRows.set(filterRows.indexOf(filter),
                     new Dashboard.Filter(event.getValue(), filter.type(), filter.defaultValue())));
             return field;
-        }).setHeader("筛选名").setFlexGrow(1);
-        filters.addColumn(Dashboard.Filter::type).setHeader("类型").setAutoWidth(true);
+        }).setHeader(I18n.t("dashboard.column.filterName")).setFlexGrow(1);
+        filters.addColumn(Dashboard.Filter::type).setHeader(I18n.t("dashboard.column.type")).setAutoWidth(true);
         filters.addComponentColumn(filter -> {
             TextField field = new TextField();
             field.setValue(filter.defaultValue());
@@ -106,8 +107,8 @@ public class DashboardsView extends HorizontalLayout {
             field.addValueChangeListener(event -> filterRows.set(filterRows.indexOf(filter),
                     new Dashboard.Filter(filter.name(), filter.type(), event.getValue())));
             return field;
-        }).setHeader("默认值").setFlexGrow(1);
-        Button addFilter = new Button("添加筛选");
+        }).setHeader(I18n.t("dashboard.column.defaultValue")).setFlexGrow(1);
+        Button addFilter = new Button(I18n.t("dashboard.filter.add"));
         addFilter.setId("dashboard-add-filter");
         addFilter.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
         addFilter.addClickListener(event -> {
@@ -118,10 +119,10 @@ public class DashboardsView extends HorizontalLayout {
 
         cards.setId("dashboard-cards");
         cards.setHeight("160px");
-        cards.addColumn(card -> chartName(card.chartId())).setHeader("图表").setAutoWidth(true);
-        cards.addColumn(card -> card.w() + "×" + card.h()).setHeader("尺寸").setAutoWidth(true);
+        cards.addColumn(card -> chartName(card.chartId())).setHeader(I18n.t("dashboard.column.chart")).setAutoWidth(true);
+        cards.addColumn(card -> card.w() + "×" + card.h()).setHeader(I18n.t("dashboard.column.size")).setAutoWidth(true);
         cards.addComponentColumn(card -> {
-            Button delete = new Button("移除");
+            Button delete = new Button(I18n.t("dashboard.card.remove"));
             delete.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_ERROR);
             delete.addClickListener(event -> {
                 cardRows.remove(card);
@@ -132,11 +133,11 @@ public class DashboardsView extends HorizontalLayout {
 
         chartToAdd.setId("dashboard-chart-to-add");
         chartToAdd.setWidth("260px");
-        Button addCard = new Button("添加卡片");
+        Button addCard = new Button(I18n.t("dashboard.card.add"));
         addCard.setId("dashboard-add-card");
         addCard.addClickListener(event -> {
             if (chartToAdd.getValue() == null) {
-                status.setText("先选一个图表");
+                status.setText(I18n.t("dashboard.error.selectChart"));
                 return;
             }
             String chartId = chartItems.stream().filter(chart -> chart.name().equals(chartToAdd.getValue()))
@@ -167,10 +168,10 @@ public class DashboardsView extends HorizontalLayout {
                 .set("min-height", "200px");
 
         right.add(new HorizontalLayout(name),
-                new H3("全局筛选"), new HorizontalLayout(addFilter), filters,
-                new H3("卡片"), new HorizontalLayout(chartToAdd, addCard), cards,
+                new H3(I18n.t("dashboard.filters")), new HorizontalLayout(addFilter), filters,
+                new H3(I18n.t("dashboard.cards")), new HorizontalLayout(chartToAdd, addCard), cards,
                 new HorizontalLayout(refresh, save, remove, status),
-                new H3("看板"), canvas);
+                new H3(I18n.t("dashboard.canvas")), canvas);
         right.setFlexGrow(1, canvas);
 
         add(left, right);
@@ -192,7 +193,7 @@ public class DashboardsView extends HorizontalLayout {
 
     private String chartName(String chartId) {
         return chartItems.stream().filter(chart -> chart.id().equals(chartId))
-                .map(Chart::name).findFirst().orElse("(图表已删除)");
+                .map(Chart::name).findFirst().orElse(I18n.t("dashboard.card.chartDeleted"));
     }
 
     private void newDashboard() {
@@ -203,7 +204,7 @@ public class DashboardsView extends HorizontalLayout {
         cardRows.clear();
         cards.setItems(cardRows);
         canvas.removeAll();
-        status.setText("新建仪表板");
+        status.setText(I18n.t("dashboard.status.new"));
         list.deselectAll();
     }
 
@@ -216,30 +217,30 @@ public class DashboardsView extends HorizontalLayout {
         cardRows.clear();
         cardRows.addAll(dashboard.cards());
         cards.setItems(cardRows);
-        status.setText("已载入：" + dashboard.name());
+        status.setText(I18n.t("dashboard.status.loaded", dashboard.name()));
         render();
-        if (!status.getText().startsWith("刷新失败")) {
-            status.setText("已载入：" + dashboard.name());
+        if (!status.getText().startsWith(I18n.t("dashboard.error.refresh", ""))) {
+            status.setText(I18n.t("dashboard.status.loaded", dashboard.name()));
         }
     }
 
     private void saveCurrent() {
         try {
             Dashboard dashboard = new Dashboard(editingId, name.getValue() == null || name.getValue().isBlank()
-                    ? "未命名看板" : name.getValue(), filterRows, cardRows, null);
+                    ? I18n.t("dashboard.untitled") : name.getValue(), filterRows, cardRows, null);
             dashboards.save(dashboard);
             editingId = dashboard.id();
             refreshList();
             dashboards.find(dashboard.id()).ifPresent(list::select);
-            status.setText("已保存：" + dashboard.name());
+            status.setText(I18n.t("dashboard.status.saved", dashboard.name()));
         } catch (Exception e) {
-            status.setText("保存失败：" + message(e));
+            status.setText(I18n.t("dashboard.error.save", I18n.message(e)));
         }
     }
 
     private void deleteCurrent() {
         if (editingId == null) {
-            status.setText("当前没有已保存的仪表板");
+            status.setText(I18n.t("dashboard.error.noSaved"));
             return;
         }
         try {
@@ -247,16 +248,16 @@ public class DashboardsView extends HorizontalLayout {
             dashboards.delete(editingId);
             refreshList();
             newDashboard();
-            status.setText("已删除：" + deleted);
+            status.setText(I18n.t("dashboard.status.deleted", deleted));
         } catch (Exception e) {
-            status.setText("删除失败：" + message(e));
+            status.setText(I18n.t("dashboard.error.delete", I18n.message(e)));
         }
     }
 
     /** 用当前编辑中的定义（不要求先保存）刷新看板。 */
     private void render() {
         Dashboard dashboard = new Dashboard(editingId, name.getValue() == null || name.getValue().isBlank()
-                ? "未命名看板" : name.getValue(), filterRows, cardRows, null);
+                ? I18n.t("dashboard.untitled") : name.getValue(), filterRows, cardRows, null);
         Map<String, Object> values = new LinkedHashMap<>();
         for (Dashboard.Filter filter : dashboard.filters()) {
             TextField input = filterInputs.get(filter.name());
@@ -269,7 +270,7 @@ public class DashboardsView extends HorizontalLayout {
         for (DashboardData.CardResult card : result.cards()) {
             canvas.add(buildCard(card));
         }
-        status.setText(String.format("刷新成功：%d 张卡片 / %d ms", result.cards().size(), result.elapsedMillis()));
+        status.setText(I18n.t("dashboard.status.refreshed", result.cards().size(), result.elapsedMillis()));
     }
 
     private VerticalLayout buildCard(DashboardData.CardResult card) {
@@ -286,7 +287,7 @@ public class DashboardsView extends HorizontalLayout {
         title.getStyle().set("margin", "0 0 4px 0");
         box.add(title);
         if (card.error() != null) {
-            box.add(new Span("加载失败：" + card.error()));
+            box.add(new Span(I18n.t("dashboard.card.loadFailed", card.error())));
             box.setHeight("120px");
             return box;
         }
@@ -297,14 +298,6 @@ public class DashboardsView extends HorizontalLayout {
         view.setOption(card.option());
         box.add(view);
         return box;
-    }
-
-    private static String message(Throwable error) {
-        Throwable root = error;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        return root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage();
     }
 
     /** 测试用。 */

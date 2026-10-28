@@ -50,7 +50,7 @@ public final class ChartData {
         for (String column : chart.y()) {
             int index = indexOf(source.columns(), column);
             if (index < 0) {
-                return Result.error("数据集中没有列：" + column);
+                return Result.error(org.slackerdb.dbdesk.i18n.MessageResolver.render("chart.error.missingColumn", column));
             }
             yIndexes.add(index);
         }
@@ -77,7 +77,7 @@ public final class ChartData {
                 Object value = yIndex < row.size() ? row.get(yIndex) : null;
                 String name = chart.y().get(i);
                 if (seriesIndex >= 0) {
-                    name = name + " · " + (group == null ? "null" : group);
+                    name = org.slackerdb.dbdesk.i18n.MessageResolver.render("chart.series.group", name, group == null ? "null" : group);
                 }
                 buckets.computeIfAbsent(name, key -> new LinkedHashMap<>())
                         .merge(category, value, (oldValue, newValue) -> combine(oldValue, newValue, chart.aggregate()));

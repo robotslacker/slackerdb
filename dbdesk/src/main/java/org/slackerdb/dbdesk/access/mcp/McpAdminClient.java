@@ -1,5 +1,6 @@
 package org.slackerdb.dbdesk.access.mcp;
 
+import org.slackerdb.dbdesk.i18n.LocalizedException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -91,7 +92,7 @@ public final class McpAdminClient implements AutoCloseable {
                 try {
                     payload = json.readTree(text);
                 } catch (RuntimeException e) {
-                    throw new McpException("MCP 服务清单不是合法 JSON", e);
+                    throw new McpException(e, "error.mcp.invalidServiceListJson");
                 }
                 JsonNode array = payload.path("services");
                 if (array.isArray()) {
@@ -122,11 +123,11 @@ public final class McpAdminClient implements AutoCloseable {
         body.put("description", tool.description());
         body.put("inputSchema", tool.inputSchema());
         body.put("category", tool.category());
-        requireOk(postJson("/mcp/registerMCPTool", body), "注册 MCP 工具");
+        requireOk(postJson("/mcp/registerMCPTool", body), "error.mcp.registerTool");
     }
 
     public void unregisterTool(String name) throws McpException {
-        requireOk(postJson("/mcp/unregisterMCPTool", Map.of("name", name)), "注销 MCP 工具");
+        requireOk(postJson("/mcp/unregisterMCPTool", Map.of("name", name)), "error.mcp.unregisterTool");
     }
 
     public void registerResource(McpResource resource) throws McpException {
@@ -137,11 +138,11 @@ public final class McpAdminClient implements AutoCloseable {
         body.put("mimeType", resource.mimeType());
         body.put("contents", resource.contents());
         body.put("category", resource.category());
-        requireOk(postJson("/mcp/registerMCPResource", body), "注册 MCP 资源");
+        requireOk(postJson("/mcp/registerMCPResource", body), "error.mcp.registerResource");
     }
 
     public void unregisterResource(String uri) throws McpException {
-        requireOk(postJson("/mcp/unregisterMCPResource", Map.of("uri", uri)), "注销 MCP 资源");
+        requireOk(postJson("/mcp/unregisterMCPResource", Map.of("uri", uri)), "error.mcp.unregisterResource");
     }
 
     public void registerService(McpService service) throws McpException {
@@ -156,35 +157,35 @@ public final class McpAdminClient implements AutoCloseable {
         body.put("use_cases", service.useCases());
         body.put("parameters", service.parameters());
         body.put("examples", service.examples());
-        requireOk(postJson("/mcp/registerMCPService", body), "注册 MCP 服务");
+        requireOk(postJson("/mcp/registerMCPService", body), "error.mcp.registerService");
     }
 
     public void unregisterService(String name) throws McpException {
-        requireOk(postJson("/mcp/unregisterMCPService", Map.of("name", name)), "注销 MCP 服务");
+        requireOk(postJson("/mcp/unregisterMCPService", Map.of("name", name)), "error.mcp.unregisterService");
     }
 
     public void loadTools(String rawJson) throws McpException {
-        requireOk(postRaw("/mcp/loadMCPTool", rawJson), "加载 MCP 工具");
+        requireOk(postRaw("/mcp/loadMCPTool", rawJson), "error.mcp.loadTools");
     }
 
     public void loadResources(String rawJson) throws McpException {
-        requireOk(postRaw("/mcp/loadMCPResource", rawJson), "加载 MCP 资源");
+        requireOk(postRaw("/mcp/loadMCPResource", rawJson), "error.mcp.loadResources");
     }
 
     public void loadServices(String rawJson) throws McpException {
-        requireOk(postRaw("/mcp/loadMCPService", rawJson), "加载 MCP 服务");
+        requireOk(postRaw("/mcp/loadMCPService", rawJson), "error.mcp.loadServices");
     }
 
     public SaveResult saveTools() throws McpException {
-        return save("/mcp/saveMCPTool", "保存 MCP 工具");
+        return save("/mcp/saveMCPTool", "error.mcp.saveTools");
     }
 
     public SaveResult saveResources() throws McpException {
-        return save("/mcp/saveMCPSource", "保存 MCP 资源");
+        return save("/mcp/saveMCPSource", "error.mcp.saveResources");
     }
 
     public SaveResult saveServices() throws McpException {
-        return save("/mcp/saveMCPService", "保存 MCP 服务");
+        return save("/mcp/saveMCPService", "error.mcp.saveServices");
     }
 
     public byte[] dumpTools() throws McpException {
@@ -210,14 +211,14 @@ public final class McpAdminClient implements AutoCloseable {
         JsonNode root = postJson("/mcp", body);
         JsonNode error = root.path("error");
         if (error.isObject()) {
-            throw new McpException("MCP " + method + " 失败：" + fallbackMessage(error));
+            throw new McpException("error.mcp.jsonRpc", method, fallbackMessage(error));
         }
         return root.path("result");
     }
 
-    private SaveResult save(String path, String action) throws McpException {
+    private SaveResult save(String path, String actionKey) throws McpException {
         JsonNode root = postJson(path, Map.of());
-        requireOk(root, action);
+        requireOk(root, actionKey);
         return new SaveResult(text(root, "savedPath"), text(root, "retMsg"));
     }
 
@@ -255,10 +256,10 @@ public final class McpAdminClient implements AutoCloseable {
         try {
             response = http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         } catch (IOException e) {
-            throw new McpException("MCP 管理口不可达：" + baseUrl, e);
+            throw new McpException(e, "error.mcp.unreachable", baseUrl);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new McpException("调用 MCP 管理口被中断", e);
+            throw new McpException(e, "error.mcp.interrupted");
         }
         String body = response.body() == null ? "" : response.body();
         if (response.statusCode() / 100 != 2) {
@@ -267,7 +268,7 @@ public final class McpAdminClient implements AutoCloseable {
         try {
             return json.readTree(body);
         } catch (RuntimeException e) {
-            throw new McpException("MCP 管理口返回的不是合法 JSON：" + abbreviate(body), e);
+            throw new McpException(e, "error.mcp.invalidJson", abbreviate(body));
         }
     }
 
@@ -275,17 +276,17 @@ public final class McpAdminClient implements AutoCloseable {
         try {
             return http.send(request, HttpResponse.BodyHandlers.ofByteArray());
         } catch (IOException e) {
-            throw new McpException("MCP 管理口不可达：" + baseUrl, e);
+            throw new McpException(e, "error.mcp.unreachable", baseUrl);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new McpException("调用 MCP 管理口被中断", e);
+            throw new McpException(e, "error.mcp.interrupted");
         }
     }
 
-    private void requireOk(JsonNode root, String action) throws McpException {
+    private void requireOk(JsonNode root, String actionKey) throws McpException {
         int retCode = root.path("retCode").isNumber() ? root.path("retCode").asInt() : 0;
         if (retCode != 0) {
-            throw new McpException(action + "失败：" + fallbackMessage(root));
+            throw new McpException(actionKey, fallbackMessage(root));
         }
     }
 
@@ -297,19 +298,18 @@ public final class McpAdminClient implements AutoCloseable {
     }
 
     private McpException error(int status, String body) {
-        String message = "MCP 管理口返回 " + status;
         try {
             JsonNode root = json.readTree(body);
             String detail = fallbackMessage(root);
             if (detail != null && !detail.isBlank()) {
-                message += "（" + detail + "）";
+                return new McpException("error.mcp.httpStatusWithDetail", status, detail);
             }
         } catch (RuntimeException ignored) {
             if (body != null && !body.isBlank()) {
-                message += "（" + abbreviate(body) + "）";
+                return new McpException("error.mcp.httpStatusWithDetail", status, abbreviate(body));
             }
         }
-        return new McpException(message);
+        return new McpException("error.mcp.httpStatus", status);
     }
 
     private static String fallbackMessage(JsonNode root) {
@@ -321,7 +321,7 @@ public final class McpAdminClient implements AutoCloseable {
         try {
             return json.writeValueAsString(value);
         } catch (RuntimeException e) {
-            throw new McpException("无法序列化请求体", e);
+            throw new McpException(e, "error.mcp.serializeFailed");
         }
     }
 
@@ -378,14 +378,17 @@ public final class McpAdminClient implements AutoCloseable {
     public record SaveResult(String savedPath, String message) {
     }
 
-    /** MCP 管理失败。 */
-    public static class McpException extends Exception {
-        public McpException(String message) {
-            super(message);
+    /**
+     * MCP 管理失败：携带 i18n key 与参数（{@link LocalizedException}），
+     * 由界面层用 {@code I18n.message(e)} 按当前语言渲染；{@code getMessage()} 只是 key。
+     */
+    public static class McpException extends LocalizedException {
+        public McpException(String messageKey, Object... messageArgs) {
+            super(messageKey, messageArgs);
         }
 
-        public McpException(String message, Throwable cause) {
-            super(message, cause);
+        public McpException(Throwable cause, String messageKey, Object... messageArgs) {
+            super(cause, messageKey, messageArgs);
         }
     }
 }

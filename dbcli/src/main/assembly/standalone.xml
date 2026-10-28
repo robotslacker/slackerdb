@@ -11,7 +11,7 @@
 
   内容等价于 jar-with-dependencies：把 runtime 依赖全部解包进同一个 jar。
 
-  schema 版本与 build/sources-assembly.xml 一致：maven-assembly-plugin 3.7.1 的模型版本就是 2.2.0，
+  schema 版本与 release/src/main/assembly/sources-assembly.xml 一致：maven-assembly-plugin 3.7.1 的模型版本就是 2.2.0，
   XSD 也发布在 https 下（https://maven.apache.org/xsd/assembly-2.2.0.xsd）。原来写的是
   2.1.1 + http 的地址，IDEA 解析不到会报"无法解析符号 ...assembly-2.1.1.xsd"，描述符整份标红。
 -->

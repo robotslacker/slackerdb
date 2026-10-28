@@ -29,7 +29,7 @@ import org.slackerdb.dbdesk.access.profile.DbDeskProfile;
 final class ConnectionBar extends HorizontalLayout {
 
     private final ConnectionManager manager;
-    private final Span status = new Span("未连接");
+    private final Span status = new Span();
     private final Runnable onChanged = this::refresh;
 
     ConnectionBar(ConnectionManager manager) {
@@ -60,15 +60,15 @@ final class ConnectionBar extends HorizontalLayout {
                 add(status, connect);
             }
             case SQL_ONLY -> {
-                String label = manager.profile().alias() + " · " + I18n.t("connection.sqlOnly");
-                if (manager.warning() != null && manager.profile().hasManagement()) {
-                    label += " · " + I18n.t("connection.managementUnavailable");
-                }
+                String alias = manager.profile().alias();
+                String label = manager.warning() != null && manager.profile().hasManagement()
+                        ? I18n.t("connection.status.sqlOnly.managementUnavailable", alias)
+                        : I18n.t("connection.status.sqlOnly", alias);
                 setStatus(label, "var(--lumo-success-text-color)");
                 add(status, switchButton(), disconnectButton());
             }
             case CLUSTER_ONLY -> {
-                setStatus(manager.profile().alias() + " · " + I18n.t("connection.clusterOnly"),
+                setStatus(I18n.t("connection.status.clusterOnly", manager.profile().alias()),
                         "var(--lumo-success-text-color)");
                 add(status, switchButton(), disconnectButton());
             }
@@ -124,7 +124,7 @@ final class ConnectionBar extends HorizontalLayout {
                     dialog.close();
                     goMain();
                 } catch (ConnectionProbe.ProbeException e) {
-                    error.setText(I18n.t("connection.failed") + ": " + e.getMessage());
+                    error.setText(I18n.t("connection.switchFailed", I18n.message(e)));
                 }
             });
             content.add(switchButton);

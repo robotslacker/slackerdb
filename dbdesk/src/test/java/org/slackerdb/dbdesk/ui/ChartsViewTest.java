@@ -81,6 +81,7 @@ class ChartsViewTest {
                 consoleErrors.add(message.text());
             }
         });
+        UiTestSupport.useChinese(page);
         page.navigate(BASE + "/charts");
     }
 

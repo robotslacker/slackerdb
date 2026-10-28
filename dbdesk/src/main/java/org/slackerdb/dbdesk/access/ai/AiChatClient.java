@@ -1,5 +1,6 @@
 package org.slackerdb.dbdesk.access.ai;
 
+import org.slackerdb.dbdesk.i18n.LocalizedException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -104,7 +105,8 @@ public final class AiChatClient implements AutoCloseable {
                     if (error != null) {
                         Listener current = listener;
                         if (current != null) {
-                            current.onError("连接 AI Chat 失败：" + error.getMessage());
+                            // Listener#onError 的形参是 String（界面实现签名不能改），这里只能给英文兜底文案
+                            current.onError("Failed to connect to AI Chat: " + error.getMessage());
                         }
                         return;
                     }
@@ -115,12 +117,12 @@ public final class AiChatClient implements AutoCloseable {
     public synchronized void send(String content) {
         WebSocket current = socket;
         if (current == null || current.isOutputClosed()) {
-            throw new IllegalStateException("AI Chat 未连接");
+            throw new LocalizedException("error.aiChat.notConnected");
         }
         try {
             current.sendText(json.writeValueAsString(Map.of("type", "chat", "content", content)), true);
         } catch (RuntimeException e) {
-            throw new IllegalStateException("发送 AI Chat 消息失败：" + e.getMessage(), e);
+            throw new LocalizedException(e, "error.aiChat.sendFailed", e.getMessage());
         }
     }
 
@@ -152,7 +154,8 @@ public final class AiChatClient implements AutoCloseable {
             } else if ("response".equals(type)) {
                 content = root.path("content").asText("");
             } else if ("error".equals(type)) {
-                content = root.path("message").asText("未知错误");
+                // 消息正文是 String（AiChatMessage.content 契约），只能给英文兜底
+                content = root.path("message").asText("Unknown error");
             } else if ("pong".equals(type)) {
                 return;
             }

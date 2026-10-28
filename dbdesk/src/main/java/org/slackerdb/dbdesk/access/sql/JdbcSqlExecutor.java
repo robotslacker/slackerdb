@@ -108,8 +108,9 @@ public final class JdbcSqlExecutor implements AutoCloseable {
                     for (int i = 1; i <= columnCount; i++) {
                         Object value = rs.getObject(i);
                         if (value instanceof String text && text.length() > maxCellChars) {
+                            // 截断标记拼进单元格的值本身（数据，不是 UI 文案），故不做 i18n
                             value = text.substring(0, maxCellChars)
-                                    + String.format("…[已截断，原长 %d 字符]", text.length());
+                                    + String.format("…[已截断，原长 %d 字符]", text.length()); // i18n-ignore: 单元格数据
                             truncated = true;
                         }
                         row.add(value);

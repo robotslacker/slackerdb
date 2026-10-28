@@ -18,10 +18,10 @@ import org.slackerdb.dbdesk.access.http.ManagementClient;
 @Route(value = "logs", layout = MainLayout.class)
 public class LogsView extends VerticalLayout {
 
-    private final ComboBox<Integer> lines = new ComboBox<>("行数");
-    private final Button refresh = new Button("刷新");
-    private final Checkbox autoRefresh = new Checkbox("自动刷新（5 s）");
-    private final Span status = new Span("就绪");
+    private final ComboBox<Integer> lines = new ComboBox<>(I18n.t("log.lines"));
+    private final Button refresh = new Button(I18n.t("common.refresh"));
+    private final Checkbox autoRefresh = new Checkbox(I18n.t("log.autoRefresh"));
+    private final Span status = new Span(I18n.t("log.status.ready"));
     private final TextArea content = new TextArea();
 
     private transient ManagementClient client;
@@ -30,15 +30,16 @@ public class LogsView extends VerticalLayout {
         setSizeFull();
         setPadding(true);
         setSpacing(true);
+        I18n.setTitle("nav.logs");
 
-        H2 title = new H2("日志");
+        H2 title = new H2(I18n.t("log.title"));
         if (!ConnectionManager.current().hasInstanceManagement()) {
-            Span guard = new Span("当前连接没有实例级管理口，日志不可用。");
+            Span guard = new Span(I18n.t("log.guard"));
             guard.setId("log-guard");
             add(title, guard);
             return;
         }
-        Span endpoint = new Span("管理口：" + ConnectionManager.current().managementUrl());
+        Span endpoint = new Span(ConnectionManager.current().managementUrl());
         endpoint.setId("log-endpoint");
 
         lines.setId("log-lines");
@@ -59,7 +60,7 @@ public class LogsView extends VerticalLayout {
         content.getStyle().set("font-family", "monospace").set("font-size", "12px");
 
         add(title,
-                new HorizontalLayout(new Span("管理口："), endpoint),
+                new HorizontalLayout(new Span(I18n.t("management.label")), endpoint),
                 new HorizontalLayout(lines, refresh, autoRefresh, status),
                 content);
         setFlexGrow(1, content);
@@ -73,7 +74,7 @@ public class LogsView extends VerticalLayout {
 
     private void load() {
         int count = lines.getValue() == null ? 500 : lines.getValue();
-        status.setText("读取中…");
+        status.setText(I18n.t("log.status.loading"));
         UI ui = getUI().orElse(null);
         ManagementClient management = client();
         java.util.concurrent.CompletableFuture.runAsync(() -> {
@@ -82,12 +83,13 @@ public class LogsView extends VerticalLayout {
                 if (ui != null) {
                     ui.access(() -> {
                         content.setValue(text == null ? "" : text);
-                        status.setText("已加载 " + count + " 行（最多）");
+                        status.setText(I18n.t("log.status.loaded", count));
                     });
                 }
             } catch (Exception e) {
                 if (ui != null) {
-                    ui.access(() -> status.setText("读取失败：" + message(e)));
+                    ui.access(() -> status.setText(
+                            I18n.t("log.status.loadFailed", I18n.message(e))));
                 }
             }
         });
@@ -119,13 +121,5 @@ public class LogsView extends VerticalLayout {
             client.close();
             client = null;
         }
-    }
-
-    private static String message(Throwable error) {
-        Throwable root = error;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        return root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage();
     }
 }

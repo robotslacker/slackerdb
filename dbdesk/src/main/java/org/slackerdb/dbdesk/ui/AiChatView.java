@@ -22,13 +22,13 @@ import org.slackerdb.dbdesk.access.ai.AiChatMessage;
 @Route(value = "ai-chat", layout = MainLayout.class)
 public class AiChatView extends VerticalLayout {
 
-    private final Span status = new Span("未连接");
+    private final Span status = new Span(I18n.t("ai.status.disconnected"));
     private final VerticalLayout messages = new VerticalLayout();
     private final TextArea input = new TextArea();
-    private final Button connect = new Button("连接");
-    private final Button disconnect = new Button("断开");
-    private final Button send = new Button("发送");
-    private final Button clear = new Button("清空");
+    private final Button connect = new Button(I18n.t("common.connect"));
+    private final Button disconnect = new Button(I18n.t("connection.disconnect"));
+    private final Button send = new Button(I18n.t("ai.send"));
+    private final Button clear = new Button(I18n.t("ai.clear"));
 
     private transient AiChatClient chat;
     private boolean available;
@@ -37,9 +37,10 @@ public class AiChatView extends VerticalLayout {
         setSizeFull();
         setPadding(true);
         setSpacing(true);
+        I18n.setTitle("nav.aiChat");
 
-        H2 title = new H2("AI 助手");
-        Span endpoint = new Span("管理口：" + ConnectionManager.current().managementUrl());
+        H2 title = new H2(I18n.t("ai.title"));
+        Span endpoint = new Span(ConnectionManager.current().managementUrl());
         endpoint.setId("ai-chat-endpoint");
         status.setId("ai-chat-status");
 
@@ -54,7 +55,7 @@ public class AiChatView extends VerticalLayout {
         input.setId("ai-chat-input");
         input.setWidthFull();
         input.setHeight("90px");
-        input.setPlaceholder("输入消息后点「发送」");
+        input.setPlaceholder(I18n.t("ai.input.placeholder"));
 
         connect.setId("ai-chat-connect");
         connect.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
@@ -68,7 +69,7 @@ public class AiChatView extends VerticalLayout {
         clear.addClickListener(event -> clear());
 
         add(title,
-                new HorizontalLayout(new Span("管理口："), endpoint),
+                new HorizontalLayout(new Span(I18n.t("management.label")), endpoint),
                 new HorizontalLayout(connect, disconnect, clear, status),
                 messages,
                 input,
@@ -86,10 +87,10 @@ public class AiChatView extends VerticalLayout {
         if (!available) {
             connect.setEnabled(false);
             send.setEnabled(false);
-            status.setText("服务端未启用 AI Chat（未配置 mcp_llm_server）");
-            addMessage("system", "AI Chat 未启用。请在服务端配置 mcp_llm_server 后刷新。");
+            status.setText(I18n.t("ai.disabled.status"));
+            addMessage("system", I18n.t("ai.disabled.message"));
         } else {
-            addMessage("system", "点击「连接」开始与 AI 助手对话。");
+            addMessage("system", I18n.t("ai.hint.connect"));
         }
     }
 
@@ -98,14 +99,14 @@ public class AiChatView extends VerticalLayout {
             return;
         }
         UI ui = getUI().orElse(null);
-        status.setText("连接中…");
+        status.setText(I18n.t("connection.connecting"));
         chat = new AiChatClient(ConnectionManager.current().managementUrl());
         chat.connect(new AiChatClient.Listener() {
             @Override
             public void onConnected() {
                 if (ui != null) {
                     ui.access(() -> {
-                        status.setText("已连接");
+                        status.setText(I18n.t("ai.status.connected"));
                         connect.setEnabled(false);
                         disconnect.setEnabled(true);
                         send.setEnabled(true);
@@ -124,7 +125,7 @@ public class AiChatView extends VerticalLayout {
             public void onError(String error) {
                 if (ui != null) {
                     ui.access(() -> {
-                        status.setText("连接错误：" + error);
+                        status.setText(I18n.t("ai.status.error", error));
                         connect.setEnabled(true);
                         disconnect.setEnabled(false);
                     });
@@ -135,7 +136,7 @@ public class AiChatView extends VerticalLayout {
             public void onClosed() {
                 if (ui != null) {
                     ui.access(() -> {
-                        status.setText("已断开");
+                        status.setText(I18n.t("ai.status.closed"));
                         connect.setEnabled(true);
                         disconnect.setEnabled(false);
                     });
@@ -149,7 +150,7 @@ public class AiChatView extends VerticalLayout {
             chat.close();
             chat = null;
         }
-        status.setText("已断开");
+        status.setText(I18n.t("ai.status.closed"));
         connect.setEnabled(true);
         disconnect.setEnabled(false);
     }
@@ -160,7 +161,7 @@ public class AiChatView extends VerticalLayout {
             return;
         }
         if (chat == null || !chat.connected()) {
-            status.setText("尚未连接");
+            status.setText(I18n.t("ai.status.notConnected"));
             return;
         }
         try {
@@ -168,7 +169,7 @@ public class AiChatView extends VerticalLayout {
             addMessage("user", text);
             input.clear();
         } catch (Exception e) {
-            status.setText("发送失败：" + message(e));
+            status.setText(I18n.t("ai.status.sendFailed", I18n.message(e)));
         }
     }
 
@@ -177,7 +178,7 @@ public class AiChatView extends VerticalLayout {
             chat.clearHistory();
         }
         messages.removeAll();
-        addMessage("system", "已清空本地消息");
+        addMessage("system", I18n.t("ai.status.cleared"));
     }
 
     private void addMessage(String role, String content) {
@@ -193,10 +194,19 @@ public class AiChatView extends VerticalLayout {
         } else {
             row.getStyle().set("background", "var(--lumo-contrast-5pct)");
         }
-        Span who = new Span(role + "：");
+        Span who = new Span(I18n.t("ai.role.label", I18n.t(roleKey(role))));
         who.getStyle().set("font-weight", "600");
         row.add(who, new Span(content == null ? "" : content));
         messages.add(row);
+    }
+
+    /** 角色是协议值（user/system/error），显示文案单独翻译。 */
+    private static String roleKey(String role) {
+        return switch (role) {
+            case "user" -> "ai.role.user";
+            case "error" -> "ai.role.error";
+            default -> "ai.role.system";
+        };
     }
 
     @Override
@@ -206,13 +216,5 @@ public class AiChatView extends VerticalLayout {
             chat.close();
             chat = null;
         }
-    }
-
-    private static String message(Throwable error) {
-        Throwable root = error;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        return root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage();
     }
 }

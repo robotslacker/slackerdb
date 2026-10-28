@@ -81,6 +81,7 @@ class DashboardsViewTest {
                 consoleErrors.add(message.text());
             }
         });
+        UiTestSupport.useChinese(page);
         page.navigate(BASE + "/dashboards");
     }
 

@@ -51,6 +51,10 @@ public final class ManifestWriter {
         root.put("javaVersion", javaVersion);
         root.put("javarepoFileCount", mavenStats.files);
         root.put("javarepoSizeBytes", mavenStats.bytes);
+        root.put("javarepoArtifactCount", maven.artifactCount());
+        root.put("javarepoPomCount", maven.pomCount());
+        root.put("javarepoCandidateJarCount", maven.candidateJarCount());
+        root.put("javarepoCandidateJarCandidateCount", maven.candidateJarCandidateCount());
         root.put("npmrepoFileCount", npmStats.files);
         root.put("npmrepoSizeBytes", npmStats.bytes);
         root.put("javarepoZipBytes", javarepoZipBytes);
@@ -127,6 +131,15 @@ public final class ManifestWriter {
         sb.append("\n\n");
         sb.append("Maven repository: ").append(root.path("javarepoFileCount").asInt())
                 .append(" files, ").append(mb(root.path("javarepoSizeBytes").asLong())).append('\n');
+        sb.append("  artifacts     : ").append(root.path("javarepoArtifactCount").asInt()).append('\n');
+        sb.append("  POMs          : ").append(root.path("javarepoPomCount").asInt())
+                .append(" (full descriptor closure: parents, imported BOMs and every")
+                .append(" candidate dependency version)\n");
+        if (root.path("javarepoCandidateJarCandidateCount").asInt() > 0) {
+            sb.append("  Jars          : ").append(root.path("javarepoCandidateJarCount").asInt())
+                    .append(" of ").append(root.path("javarepoCandidateJarCandidateCount").asInt())
+                    .append(" losing dependency version(s) also packaged\n");
+        }
         sb.append("npm repository  : ").append(root.path("npmrepoFileCount").asInt())
                 .append(" files, ").append(mb(root.path("npmrepoSizeBytes").asLong())).append('\n');
         sb.append("javarepo.zip    : ").append(mb(root.path("javarepoZipBytes").asLong())).append('\n');
@@ -155,6 +168,19 @@ public final class ManifestWriter {
 
                 * `javarepo.zip` - clean Maven local repository. Unzip it to `javarepo/`, then use
                   `-Dmaven.repo.local.tail=<dir>/javarepo` with a writable main repository.
+                  It contains every artifact plus the full POM descriptor closure (parents,
+                  imported BOMs and every candidate dependency version Maven may read while
+                  collecting), so an offline build does not degrade to "The POM for ... is
+                  missing, no dependency information available".
+                  `mvn -o org.robotslacker.tools:offline-package-maven-plugin:1.0.0:verify`
+                  re-checks that closure where the plugin is installed.
+                  The jars of the losing candidate versions are packaged too
+                  (`-Doffline.candidate.jars`, on by default): Maven never resolves them for
+                  this reactor, but they keep the repository usable when a POM is edited offline
+                  or another resolution order picks such a version.
+                  `mvn clean` does not delete this directory, because it is also the
+                  `-Dmaven.repo.local.tail` repository of the offline build.
+
                 * `npmrepo.zip` - npm cache root plus tarball mirror. Unzip it to `npmrepo/`, then use
                   `NPM_CONFIG_CACHE=<dir>/npmrepo`.
                 * `manifest.json` - machine-readable inventory.

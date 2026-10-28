@@ -98,7 +98,7 @@
                         </goals>
                     </execution>
                     <!--
-                      源码包（<artifactId>-<version>-sources.jar）：口径见 build/sources-assembly.xml ——
+                      源码包（<artifactId>-<version>-sources.jar）：口径见 release/src/main/assembly/sources-assembly.xml ——
                       与 git 里提交的 src/main 树一致（java + antlr4 语法 + 资源），不含任何构建产物。
                       执行级必须显式把 appendAssemblyId 改回 true 并换掉 descriptorRefs：
                       插件级那份配置是给 jar-with-dependencies 用的（appendAssemblyId=false）。
@@ -113,7 +113,7 @@
                             <appendAssemblyId>true</appendAssemblyId>
                             <descriptorRefs combine.self="override"/>
                             <descriptors>
-                                <descriptor>${project.basedir}/../build/sources-assembly.xml</descriptor>
+                                <descriptor>${project.basedir}/../release/src/main/assembly/sources-assembly.xml</descriptor>
                             </descriptors>
                         </configuration>
                     </execution>

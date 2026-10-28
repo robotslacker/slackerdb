@@ -62,6 +62,7 @@ class ExportCancelTest {
                 consoleErrors.add(message.text());
             }
         });
+        UiTestSupport.useChinese(page);
         page.navigate(URL);
     }
 

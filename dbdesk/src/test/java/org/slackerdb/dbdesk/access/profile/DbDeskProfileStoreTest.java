@@ -49,7 +49,7 @@ class DbDeskProfileStoreTest {
 
     @Test
     void databaseNameIsRequiredWhenDatabasePortIsPresent() {
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(org.slackerdb.dbdesk.i18n.LocalizedException.class,
                 () -> new DbDeskProfile("x", "127.0.0.1", 4409, 8409, " "));
     }
 

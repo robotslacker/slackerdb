@@ -11,7 +11,8 @@ public class DBInstances {
     public static final Map<String, DBInstance> dbInstanceMap = new HashMap<>();
 
     public static synchronized DBInstance createInstance(ServerConfiguration serverConfiguration) throws ServerException {
-        String instanceName = serverConfiguration.getData();
+        // 实例名统一取 getInstanceName()：没有 --data 时是 memory，避免注册表里出现空名字。
+        String instanceName = serverConfiguration.getInstanceName();
 
         // 检查实例名是否已经重复
         if (dbInstanceMap.containsKey(instanceName))
@@ -27,7 +28,7 @@ public class DBInstances {
             {
                 throw new ServerException(
                         "SLACKERDB-00010",
-                        "[SERVER] " + Utils.getMessage("SLACKERDB-00010", dbInstance.serverConfiguration.getData()));
+                        "[SERVER] " + Utils.getMessage("SLACKERDB-00010", dbInstance.instanceName));
             }
         }
         DBInstance dbInstance = new DBInstance(serverConfiguration);

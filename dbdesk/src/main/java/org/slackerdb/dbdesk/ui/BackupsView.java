@@ -25,10 +25,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Route(value = "backups", layout = MainLayout.class)
 public class BackupsView extends VerticalLayout {
 
-    private final TextField tag = new TextField("备份标签");
-    private final Button start = new Button("开始备份");
-    private final Button refresh = new Button("刷新列表");
-    private final Span status = new Span("就绪");
+    private final TextField tag = new TextField(I18n.t("backup.tag.label"));
+    private final Button start = new Button(I18n.t("backup.start"));
+    private final Button refresh = new Button(I18n.t("backup.refresh"));
+    private final Span status = new Span(I18n.t("backup.status.ready"));
     private final Grid<BackupInfo> grid = new Grid<>(BackupInfo.class, false);
     private final HorizontalLayout downloads = new HorizontalLayout();
 
@@ -39,18 +39,19 @@ public class BackupsView extends VerticalLayout {
         setSizeFull();
         setPadding(true);
         setSpacing(true);
+        I18n.setTitle("nav.backups");
 
-        H2 title = new H2("备份");
+        H2 title = new H2(I18n.t("backup.title"));
         if (!ConnectionManager.current().hasInstanceManagement()) {
-            Span guard = new Span("当前连接没有实例级管理口，备份不可用。");
+            Span guard = new Span(I18n.t("backup.guard"));
             guard.setId("backup-guard");
             add(title, guard);
             return;
         }
-        Span endpoint = new Span("管理口：" + ConnectionManager.current().managementUrl());
+        Span endpoint = new Span(ConnectionManager.current().managementUrl());
         endpoint.setId("backup-endpoint");
         tag.setId("backup-tag");
-        tag.setPlaceholder("例如 mybackup（不能包含点或路径符号）");
+        tag.setPlaceholder(I18n.t("backup.tag.placeholder"));
         tag.setWidth("320px");
         start.setId("backup-start");
         start.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
@@ -62,17 +63,17 @@ public class BackupsView extends VerticalLayout {
 
         grid.setId("backup-grid");
         grid.setSizeFull();
-        grid.addColumn(BackupInfo::status).setHeader("状态").setAutoWidth(true);
-        grid.addColumn(BackupInfo::backupTag).setHeader("标签").setAutoWidth(true);
+        grid.addColumn(BackupInfo::status).setHeader(I18n.t("backup.column.status")).setAutoWidth(true);
+        grid.addColumn(BackupInfo::backupTag).setHeader(I18n.t("backup.column.tag")).setAutoWidth(true);
         grid.addColumn(info -> info.sizeBytes() > 0 ? String.valueOf(info.sizeBytes()) : "")
-                .setHeader("字节数").setAutoWidth(true);
-        grid.addColumn(BackupInfo::startedAt).setHeader("开始").setAutoWidth(true);
-        grid.addColumn(BackupInfo::finishedAt).setHeader("结束").setAutoWidth(true);
-        grid.addColumn(BackupInfo::error).setHeader("错误").setAutoWidth(true);
+                .setHeader(I18n.t("backup.column.bytes")).setAutoWidth(true);
+        grid.addColumn(BackupInfo::startedAt).setHeader(I18n.t("backup.column.started")).setAutoWidth(true);
+        grid.addColumn(BackupInfo::finishedAt).setHeader(I18n.t("backup.column.finished")).setAutoWidth(true);
+        grid.addColumn(BackupInfo::error).setHeader(I18n.t("backup.column.error")).setAutoWidth(true);
         grid.addComponentColumn(this::downloadButton).setHeader("").setAutoWidth(true);
 
         add(title,
-                new HorizontalLayout(new Span("管理口："), endpoint),
+                new HorizontalLayout(new Span(I18n.t("management.label")), endpoint),
                 new HorizontalLayout(tag, start, refresh),
                 status, grid, downloads);
         setFlexGrow(1, grid);
@@ -81,7 +82,7 @@ public class BackupsView extends VerticalLayout {
     }
 
     private Button downloadButton(BackupInfo info) {
-        Button download = new Button("下载");
+        Button download = new Button(I18n.t("backup.download"));
         download.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
         download.setEnabled(info.completed());
         download.addClickListener(event -> download(info));
@@ -91,23 +92,23 @@ public class BackupsView extends VerticalLayout {
     private void startBackup() {
         String backupTag = tag.getValue() == null ? "" : tag.getValue().strip();
         if (backupTag.isEmpty()) {
-            status.setText("请输入备份标签");
+            status.setText(I18n.t("backup.tag.required"));
             return;
         }
         if (backupTag.matches(".*[<>:\"|?*\\\\/.].*")) {
-            status.setText("备份标签不能包含路径符号或点");
+            status.setText(I18n.t("backup.tag.invalid"));
             return;
         }
         start.setEnabled(false);
-        status.setText("启动备份…");
+        status.setText(I18n.t("backup.status.starting"));
         try {
             BackupInfo info = client().startBackup(backupTag);
-            status.setText("备份已启动：" + info.id());
+            status.setText(I18n.t("backup.status.started", info.id()));
             refreshList();
             poll(info.id());
         } catch (Exception e) {
             start.setEnabled(true);
-            status.setText("启动失败：" + message(e));
+            status.setText(I18n.t("backup.status.startFailed", I18n.message(e)));
         }
     }
 
@@ -125,7 +126,8 @@ public class BackupsView extends VerticalLayout {
                         info = management.backup(id);
                     } catch (Exception e) {
                         if (ui != null) {
-                            ui.access(() -> status.setText("查询备份状态失败：" + message(e)));
+                            ui.access(() -> status.setText(
+                                    I18n.t("backup.status.pollFailed", I18n.message(e))));
                         }
                         return;
                     }
@@ -134,22 +136,22 @@ public class BackupsView extends VerticalLayout {
                             ui.access(() -> {
                                 start.setEnabled(true);
                                 status.setText(info.completed()
-                                        ? "备份完成：" + info.filename() + "（" + info.sizeBytes() + " 字节）"
-                                        : "备份失败：" + info.error());
+                                        ? I18n.t("backup.status.done", info.filename(), info.sizeBytes())
+                                        : I18n.t("backup.status.failed", info.error()));
                                 refreshList();
                             });
                         }
                         return;
                     }
                     if (ui != null) {
-                        ui.access(() -> status.setText("备份中…（" + info.backupTag() + "）"));
+                        ui.access(() -> status.setText(I18n.t("backup.status.running", info.backupTag())));
                     }
                     Thread.sleep(1_000);
                 }
                 if (ui != null) {
                     ui.access(() -> {
                         start.setEnabled(true);
-                        status.setText("备份仍在服务端进行，可稍后刷新列表查看");
+                        status.setText(I18n.t("backup.status.stillRunning"));
                     });
                 }
             } catch (InterruptedException e) {
@@ -161,7 +163,7 @@ public class BackupsView extends VerticalLayout {
     }
 
     private void download(BackupInfo info) {
-        status.setText("下载中…");
+        status.setText(I18n.t("backup.status.downloading"));
         UI ui = getUI().orElse(null);
         ManagementClient management = client();
         java.util.concurrent.CompletableFuture.runAsync(() -> {
@@ -170,13 +172,15 @@ public class BackupsView extends VerticalLayout {
                 if (ui != null) {
                     ui.access(() -> {
                         downloads.removeAll();
-                        downloads.add(DownloadSupport.anchor(info.filename() == null ? "backup.db" : info.filename(), payload));
-                        status.setText("已生成下载：" + payload.length + " 字节");
+                        downloads.add(DownloadSupport.anchor(
+                                info.filename() == null ? "backup.db" : info.filename(), payload));
+                        status.setText(I18n.t("backup.status.downloadReady", payload.length));
                     });
                 }
             } catch (Exception e) {
                 if (ui != null) {
-                    ui.access(() -> status.setText("下载失败：" + message(e)));
+                    ui.access(() -> status.setText(
+                            I18n.t("backup.status.downloadFailed", I18n.message(e))));
                 }
             }
         });
@@ -186,10 +190,12 @@ public class BackupsView extends VerticalLayout {
         try {
             List<BackupInfo> items = client().backups();
             grid.setItems(items);
-            status.setText(items.isEmpty() ? "暂无备份任务" : "共 " + items.size() + " 个备份任务");
+            status.setText(items.isEmpty()
+                    ? I18n.t("backup.empty")
+                    : I18n.t("backup.count", items.size()));
         } catch (Exception e) {
             grid.setItems(List.of());
-            status.setText("读取失败：" + message(e));
+            status.setText(I18n.t("backup.status.loadFailed", I18n.message(e)));
         }
     }
 
@@ -208,13 +214,5 @@ public class BackupsView extends VerticalLayout {
             client.close();
             client = null;
         }
-    }
-
-    private static String message(Throwable error) {
-        Throwable root = error;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        return root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage();
     }
 }

@@ -17,11 +17,12 @@ final class DownloadSupport {
         try {
             Path target = Files.createTempFile("dbdesk-", "-" + safeName(filename));
             Files.write(target, bytes);
-            Anchor anchor = new Anchor(DownloadHandler.forFile(target.toFile()), "下载 " + filename);
+            Anchor anchor = new Anchor(DownloadHandler.forFile(target.toFile()),
+                    I18n.t("download.link", filename));
             anchor.setId("download-" + target.getFileName());
             return anchor;
         } catch (IOException e) {
-            throw new IllegalStateException("无法准备下载文件：" + e.getMessage(), e);
+            throw new IllegalStateException(I18n.t("download.prepareFailed", I18n.message(e)), e);
         }
     }
 

@@ -99,6 +99,7 @@ class PortalLifecycleViewTest {
     }
 
     private String openAndReadTitle(String token) {
+        UiTestSupport.useChinese(page);
         page.navigate(BASE + "/portal/" + token);
         page.waitForFunction("() => { const el = document.querySelector('#portal-title');"
                         + " return !!el && el.textContent.length > 0; }",

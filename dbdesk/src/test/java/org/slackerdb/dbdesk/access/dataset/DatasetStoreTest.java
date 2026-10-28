@@ -54,9 +54,10 @@ class DatasetStoreTest {
     void rejectsDuplicateName() throws Exception {
         DatasetStore store = store();
         store.save(dataset("重复名", "select 1"));
-        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+        org.slackerdb.dbdesk.i18n.LocalizedException error = assertThrows(
+                org.slackerdb.dbdesk.i18n.LocalizedException.class,
                 () -> store.save(dataset("重复名", "select 2")));
-        assertTrue(error.getMessage().contains("同名"));
+        assertEquals("error.dataset.duplicate", error.messageKey());
     }
 
     @Test

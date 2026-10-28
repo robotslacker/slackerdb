@@ -1,5 +1,6 @@
 package org.slackerdb.dbdesk.ui;
 
+import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.applayout.AppLayout;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
@@ -31,8 +32,9 @@ public class MainLayout extends AppLayout {
 
     public MainLayout() {
         setPrimarySection(Section.DRAWER);
+        I18n.applyPageMeta(UI.getCurrent(), null);
 
-        addToDrawer(Branding.brand("DbDesk"), nav);
+        addToDrawer(Branding.brand(I18n.t("app.title")), nav);
 
         HorizontalLayout topBar = new HorizontalLayout(connectionBar, languageButton());
         topBar.setWidthFull();
@@ -47,11 +49,15 @@ public class MainLayout extends AppLayout {
     }
 
     private Button languageButton() {
-        Button language = new Button(I18n.isEnglish() ? "中文" : "EN");
+        // 按钮显示“将切换到的语言”，用该语言自己的写法
+        boolean english = I18n.isEnglish();
+        Button language = new Button(english ? I18n.t("language.zh") : I18n.t("language.en"));
         language.setId("language-switch");
+        language.setTooltipText(I18n.t("language.switch.tooltip"));
+        language.getElement().setAttribute("aria-label", I18n.t("language.switch.tooltip"));
         language.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
         language.addClickListener(event -> {
-            I18n.setLocale(I18n.isEnglish() ? Locale.SIMPLIFIED_CHINESE : Locale.ENGLISH);
+            I18n.setLocale(english ? Locale.SIMPLIFIED_CHINESE : Locale.ENGLISH);
             getUI().ifPresent(ui -> ui.getPage().reload());
         });
         return language;

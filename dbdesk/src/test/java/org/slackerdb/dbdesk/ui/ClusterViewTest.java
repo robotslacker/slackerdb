@@ -94,6 +94,7 @@ class ClusterViewTest {
                 consoleErrors.add(message.text());
             }
         });
+        UiTestSupport.useChinese(page);
         page.navigate(BASE + "/main");
     }
 

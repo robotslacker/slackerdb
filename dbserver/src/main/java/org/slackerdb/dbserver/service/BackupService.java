@@ -159,9 +159,9 @@ public final class BackupService {
             backupConnection.setAutoCommit(true);
             statement = backupConnection.createStatement();
 
-            String currentDatabaseName = dbInstance.serverConfiguration.getData_Dir().equalsIgnoreCase(":memory:")
-                    ? "memory"
-                    : dbInstance.serverConfiguration.getData();
+            // 实例库名走唯一来源：没有 --data 时是 memory，内存模式带库名时是那个库名
+            // （旧代码按 data_dir 判断，带 --data 的内存模式会 COPY 到错的库）。
+            String currentDatabaseName = dbInstance.instanceName;
             String backupDBName = "backup_" + task.backupTag;
             statement.execute("DETACH DATABASE IF EXISTS " + backupDBName);
             statement.execute("ATTACH '" + target + "' as " + backupDBName);

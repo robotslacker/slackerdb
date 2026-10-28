@@ -132,6 +132,9 @@ class ResultExporterTest {
                         rows -> lastProgress.set(rows)));
 
         assertTrue(lastProgress.get() > 0, "取消前应当至少回报过一次进度，实际：" + lastProgress.get());
-        assertTrue(error.getMessage().contains("已取消"), "异常信息应说明已取消，实际：" + error.getMessage());
+        assertTrue(error instanceof org.slackerdb.dbdesk.i18n.LocalizedException, "取消异常应携带 i18n key");
+        assertEquals("error.export.cancelled",
+                ((org.slackerdb.dbdesk.i18n.LocalizedException) error).messageKey(),
+                "异常信息应说明已取消（key 由界面层翻译）");
     }
 }

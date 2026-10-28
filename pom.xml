@@ -32,7 +32,9 @@
         <module>plugin-example</module>
         <module>plugin-scheduler</module>
         <module>dbdesk</module>
-        <module>build</module>
+        <module>docs</module>
+        <!-- 发行物装配：排在最后，各模块 target/ 就绪后才打 dist/src 包 -->
+        <module>release</module>
     </modules>
 
     <dependencyManagement>
@@ -303,8 +305,22 @@
                 <inherited>false</inherited>
                 <configuration>
                     <filesets>
+                        <!--
+                            注意：这里不清理 offline/。离线包既是产物又是离线构建的
+                            `-Dmaven.repo.local.tail` 仓库；若 `mvn clean` 删掉它，离线机上
+                            `mvn -o ... clean package` 会在第一步就把自己依赖的仓库删掉。
+                            重新生成时由 offline-package:collect 自己整体替换输出目录
+                            （CollectMojo 先写 staging 再替换），不需要 clean 参与。
+                        -->
+                        <!--
+                            发行物输出目录由根项目清理：dist 不再属于某个模块
+                            （文档包由 docs 模块产出，dist/src 包由 release 产出），
+                            放在根项目能保证 `mvn clean package` 一开始就清空，
+                            不会出现"后一个模块的 clean 抹掉前一个模块刚写的包"。
+                            注意 `-pl docs clean` 不会选中根项目，因此不会误删已有发行包。
+                        -->
                         <fileset>
-                            <directory>${project.basedir}/offline</directory>
+                            <directory>${project.basedir}/dist</directory>
                             <includes>
                                 <include>**</include>
                             </includes>

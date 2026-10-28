@@ -140,7 +140,7 @@ public final class SlackerCatalog {
                        6 as encoding
                 from   pg_catalog.pg_database
                 where  datname not in ('system', 'temp')
-                """.formatted(dbInstance.serverConfiguration.getData().toLowerCase()));
+                """.formatted(dbInstance.instanceName.toLowerCase()));
 
         // ------------------------------------------------------------------
         // 2. 函数 / 扩展 / 继承

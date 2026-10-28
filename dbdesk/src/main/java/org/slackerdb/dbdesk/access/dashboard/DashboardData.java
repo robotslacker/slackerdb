@@ -63,11 +63,11 @@ public final class DashboardData {
     private CardResult renderCard(Dashboard.Card card, Map<String, Object> values, int maxRows) {
         Chart chart = charts.find(card.chartId()).orElse(null);
         if (chart == null) {
-            return new CardResult(card, "(图表已删除)", null, null, "图表不存在：" + card.chartId());
+            return new CardResult(card, org.slackerdb.dbdesk.i18n.MessageResolver.render("dashboard.card.chartDeleted"), null, null, org.slackerdb.dbdesk.i18n.MessageResolver.render("dashboard.card.chartMissing", card.chartId()));
         }
         Dataset dataset = datasets.find(chart.datasetId()).orElse(null);
         if (dataset == null) {
-            return new CardResult(card, chart.name(), null, null, "数据集不存在：" + chart.datasetId());
+            return new CardResult(card, chart.name(), null, null, org.slackerdb.dbdesk.i18n.MessageResolver.render("dashboard.card.datasetMissing", chart.datasetId()));
         }
         try {
             DatasetRunner.Result rows = DatasetRunner.run(dataset, values, maxRows);

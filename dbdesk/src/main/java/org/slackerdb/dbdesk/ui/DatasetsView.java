@@ -35,17 +35,17 @@ public class DatasetsView extends HorizontalLayout {
     private final DatasetStore store = DatasetStore.defaultStore();
 
     private final Grid<Dataset> list = new Grid<>(Dataset.class, false);
-    private final TextField name = new TextField("名称");
+    private final TextField name = new TextField(I18n.t("dataset.name"));
     private final SqlEditor sql = new SqlEditor("select 1 as a, 'x' as b");
     private final Grid<ParamRow> params = new Grid<>(ParamRow.class, false);
     private final Grid<Dataset.Column> columns = new Grid<>(Dataset.Column.class, false);
     private final Grid<List<Object>> preview = new Grid<>();
-    private final Span status = new Span("就绪");
+    private final Span status = new Span(I18n.t("dataset.status.ready"));
 
-    private final Button save = new Button("保存");
-    private final Button testRun = new Button("试跑");
-    private final Button remove = new Button("删除");
-    private final Button create = new Button("新建");
+    private final Button save = new Button(I18n.t("common.save"));
+    private final Button testRun = new Button(I18n.t("dataset.testRun"));
+    private final Button remove = new Button(I18n.t("common.delete"));
+    private final Button create = new Button(I18n.t("common.create"));
 
     private String editingId;
     private final List<ParamRow> paramRows = new ArrayList<>();
@@ -70,6 +70,7 @@ public class DatasetsView extends HorizontalLayout {
     }
 
     public DatasetsView() {
+        I18n.setTitle("nav.datasets");
         setSizeFull();
         setPadding(true);
         setSpacing(true);
@@ -78,10 +79,10 @@ public class DatasetsView extends HorizontalLayout {
         left.setWidth("320px");
         left.setHeightFull();
         left.setPadding(false);
-        H2 title = new H2("数据集");
+        H2 title = new H2(I18n.t("nav.datasets"));
         title.getStyle().set("margin", "0");
         if (!ConnectionManager.current().hasInstanceManagement()) {
-            Span guard = new Span("当前连接不可用，请先连接带实例管理口的服务端。");
+            Span guard = new Span(I18n.t("dataset.guard"));
             guard.setId("dataset-guard");
             add(title, guard);
             return;
@@ -92,8 +93,8 @@ public class DatasetsView extends HorizontalLayout {
         list.setId("dataset-list");
         list.setWidthFull();
         list.setHeightFull();
-        list.addColumn(Dataset::name).setHeader("名称").setAutoWidth(true);
-        list.addColumn(Dataset::updatedAt).setHeader("更新").setAutoWidth(true);
+        list.addColumn(Dataset::name).setHeader(I18n.t("dataset.name")).setAutoWidth(true);
+        list.addColumn(Dataset::updatedAt).setHeader(I18n.t("dataset.updatedAt")).setAutoWidth(true);
         list.addSelectionListener(event -> event.getFirstSelectedItem().ifPresent(this::load));
         left.add(title, new HorizontalLayout(create), list);
         left.setFlexGrow(1, list);
@@ -116,28 +117,29 @@ public class DatasetsView extends HorizontalLayout {
             TextField field = new TextField();
             field.setValue(row.name == null ? "" : row.name);
             field.setWidthFull();
-            field.setPlaceholder("参数名（对应 SQL 里的 :name）");
+            field.setPlaceholder(I18n.t("dataset.param.namePlaceholder"));
             field.addValueChangeListener(e -> row.name = e.getValue());
             return field;
-        }).setHeader("参数名").setFlexGrow(1);
+        }).setHeader(I18n.t("dataset.column.paramName")).setFlexGrow(1);
         params.addComponentColumn(row -> {
             ComboBox<String> type = new ComboBox<>();
             type.setItems("text", "number", "date");
+            type.setItemLabelGenerator(DatasetsView::paramTypeLabel);
             type.setValue(row.type);
             type.setWidthFull();
             type.addValueChangeListener(e -> row.type = e.getValue());
             return type;
-        }).setHeader("类型").setWidth("140px");
+        }).setHeader(I18n.t("dataset.column.type")).setWidth("140px");
         params.addComponentColumn(row -> {
             TextField field = new TextField();
             field.setValue(row.defaultValue == null ? "" : row.defaultValue);
             field.setWidthFull();
-            field.setPlaceholder("默认值");
+            field.setPlaceholder(I18n.t("dataset.param.defaultValuePlaceholder"));
             field.addValueChangeListener(e -> row.defaultValue = e.getValue());
             return field;
-        }).setHeader("默认值").setFlexGrow(1);
+        }).setHeader(I18n.t("dataset.column.defaultValue")).setFlexGrow(1);
 
-        Button addParam = new Button("添加参数");
+        Button addParam = new Button(I18n.t("dataset.addParam"));
         addParam.setId("dataset-add-param");
         addParam.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
         addParam.addClickListener(event -> {
@@ -149,15 +151,16 @@ public class DatasetsView extends HorizontalLayout {
         columns.setId("dataset-columns");
         columns.setWidthFull();
         columns.setHeight("160px");
-        columns.addColumn(Dataset.Column::name).setHeader("列").setAutoWidth(true);
-        columns.addColumn(Dataset.Column::type).setHeader("类型").setAutoWidth(true);
+        columns.addColumn(Dataset.Column::name).setHeader(I18n.t("dataset.column.name")).setAutoWidth(true);
+        columns.addColumn(Dataset.Column::type).setHeader(I18n.t("dataset.column.type")).setAutoWidth(true);
         columns.addComponentColumn(column -> {
             ComboBox<String> role = new ComboBox<>();
             role.setItems("dimension", "measure", "ignore");
+            role.setItemLabelGenerator(DatasetsView::roleLabel);
             role.setValue(column.role());
             role.setWidthFull();
             return role;
-        }).setHeader("角色").setWidth("160px");
+        }).setHeader(I18n.t("dataset.column.role")).setWidth("160px");
 
         save.setId("dataset-save");
         save.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
@@ -175,10 +178,10 @@ public class DatasetsView extends HorizontalLayout {
 
         right.add(new HorizontalLayout(name),
                 sql,
-                new H3("参数"), new HorizontalLayout(addParam), params,
-                new H3("列（试跑后自动推断，可调整角色）"), columns,
+                new H3(I18n.t("dataset.section.params")), new HorizontalLayout(addParam), params,
+                new H3(I18n.t("dataset.section.columns")), columns,
                 new HorizontalLayout(testRun, save, remove, status),
-                new H3("预览"), preview);
+                new H3(I18n.t("dataset.section.preview")), preview);
 
         add(left, right);
         setFlexGrow(1, right);
@@ -205,7 +208,7 @@ public class DatasetsView extends HorizontalLayout {
         columns.setItems(List.of());
         preview.removeAllColumns();
         preview.setItems(List.of());
-        status.setText("新建数据集");
+        status.setText(I18n.t("dataset.status.new"));
         list.deselectAll();
     }
 
@@ -223,7 +226,7 @@ public class DatasetsView extends HorizontalLayout {
         }
         params.setItems(paramRows);
         columns.setItems(dataset.columns());
-        status.setText("已载入：" + dataset.name());
+        status.setText(I18n.t("dataset.status.loaded", dataset.name()));
     }
 
     private void saveCurrent() {
@@ -234,16 +237,16 @@ public class DatasetsView extends HorizontalLayout {
                 store.save(dataset);
                 editingId = dataset.id();
                 refreshListSelecting(dataset.id());
-                status.setText("已保存：" + dataset.name());
+                status.setText(I18n.t("dataset.status.saved", dataset.name()));
             } catch (Exception e) {
-                status.setText("保存失败：" + message(e));
+                status.setText(I18n.t("dataset.status.saveFailed", I18n.message(e)));
             }
         });
     }
 
     private void deleteCurrent() {
         if (editingId == null) {
-            status.setText("当前没有已保存的数据集");
+            status.setText(I18n.t("dataset.status.none"));
             return;
         }
         try {
@@ -252,9 +255,9 @@ public class DatasetsView extends HorizontalLayout {
             refreshList();
             newDataset();
             // newDataset() 会把状态重置成"新建数据集"：删除成功的信息要在它之后写
-            status.setText("已删除：" + deleted);
+            status.setText(I18n.t("dataset.status.deleted", deleted));
         } catch (Exception e) {
-            status.setText("删除失败：" + message(e));
+            status.setText(I18n.t("dataset.status.deleteFailed", I18n.message(e)));
         }
     }
 
@@ -262,7 +265,7 @@ public class DatasetsView extends HorizontalLayout {
         sql.readValue(sqlText -> {
             try {
                 Dataset probe = new Dataset(editingId, name.getValue() == null || name.getValue().isBlank()
-                        ? "临时" : name.getValue(), sqlText, activeJdbcUrl(),
+                        ? I18n.t("dataset.untitled") : name.getValue(), sqlText, activeJdbcUrl(),
                         currentParams(), List.of(), null);
                 DatasetRunner.Result result = DatasetRunner.run(probe, Map.of(), 1000);
                 showPreview(result);
@@ -273,11 +276,12 @@ public class DatasetsView extends HorizontalLayout {
                             "number".equals(type) ? "measure" : "dimension"));
                 }
                 columns.setItems(inferred);
-                status.setText(String.format("试跑成功：%,d 行 / %d ms%s",
-                        result.rows().size(), result.elapsedMillis(),
-                        result.truncated() ? "（已截断到 1000 行）" : ""));
+                int rowCount = result.rows().size();
+                status.setText(result.truncated()
+                        ? I18n.t("dataset.status.testOk.truncated", rowCount, result.elapsedMillis(), 1000)
+                        : I18n.t("dataset.status.testOk", rowCount, result.elapsedMillis()));
             } catch (Exception e) {
-                status.setText("试跑失败：" + message(e));
+                status.setText(I18n.t("dataset.status.testFailed", I18n.message(e)));
             }
         });
     }
@@ -307,12 +311,36 @@ public class DatasetsView extends HorizontalLayout {
         return ConnectionManager.current().jdbcUrl();
     }
 
-    private static String message(Throwable error) {
-        Throwable root = error;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
+    /**
+     * 参数类型的显示文案：下拉框里的 value 仍是 {@code text} / {@code number} / {@code date}
+     * （保存到数据集里的线值不变），只有标签跟着语言走。
+     */
+    private static String paramTypeLabel(String type) {
+        if (type == null) {
+            return "";
         }
-        return root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage();
+        return switch (type) {
+            case "number" -> I18n.t("dataset.paramType.number");
+            case "date" -> I18n.t("dataset.paramType.date");
+            case "text" -> I18n.t("dataset.paramType.text");
+            default -> type;
+        };
+    }
+
+    /**
+     * 列角色的显示文案：value 仍是 {@code dimension} / {@code measure} / {@code ignore}，
+     * 只有标签跟着语言走。
+     */
+    private static String roleLabel(String role) {
+        if (role == null) {
+            return "";
+        }
+        return switch (role) {
+            case "dimension" -> I18n.t("dataset.role.dimension");
+            case "measure" -> I18n.t("dataset.role.measure");
+            case "ignore" -> I18n.t("dataset.role.ignore");
+            default -> role;
+        };
     }
 
     /** 测试用：当前状态文本。 */

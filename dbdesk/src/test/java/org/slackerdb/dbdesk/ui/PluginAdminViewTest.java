@@ -81,6 +81,7 @@ class PluginAdminViewTest {
                 consoleErrors.add(message.text());
             }
         });
+        UiTestSupport.useChinese(page);
         page.navigate(BASE + "/main");
         connect();
         page.navigate(BASE + "/instances");

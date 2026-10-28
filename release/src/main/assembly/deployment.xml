@@ -1,19 +1,18 @@
 <!--
     发布包描述符：dist/slackerdb-dist_<version>.zip
 
-    面向“拿来就跑”的使用者：standalone jar + conf + bin + 插件，加工程说明与许可声明。
+    面向“拿来就跑”的使用者：standalone jar + conf + bin + 插件，加许可声明。
     布局说明：
-      README.pdf / README-CN.pdf    工程说明（仅 -Ppdf 构建时包含）
       LICENSE                       许可声明
       jlib/                         可执行 jar（dbserver/dbproxy standalone、dbdriver、plugin api、dbcli、dbdesk）
       conf/                         运行期配置
       bin/                          启停脚本
       plugins/                      随包分发的可选插件（默认不加载）
-      doc/dbcli/                    dbcli 中英文手册（仅 -Ppdf 构建时包含）
 
     说明：
       * LICENSE 是发行物的一部分：源码包与发布包都必须带上，否则再分发时缺少许可声明。
-      * 默认构建不生成 PDF，发布包也不包含任何文档；-Ppdf 才生成并收取 README 与 dbcli 手册。
+      * 文档不在本包内：README 与 dbcli 手册的 PDF 统一由 slackerdb-docs_<version>.zip
+        交付（见 docs.xml），本包无论是否 -Ppdf 都不含任何 PDF。
       * 各模块 target/ 下的产物由本描述符逐个点名收取，不整目录拷贝。
 -->
 <assembly>
@@ -25,20 +24,12 @@
     <baseDirectory>/</baseDirectory>
 
     <fileSets>
-        <!-- 工程说明与许可声明 -->
+        <!-- 许可声明 -->
         <fileSet>
             <directory>${project.basedir}/../</directory>
             <outputDirectory>/</outputDirectory>
             <includes>
                 <include>LICENSE</include>
-            </includes>
-        </fileSet>
-        <fileSet>
-            <directory>${docs.main.dir}</directory>
-            <outputDirectory>/</outputDirectory>
-            <includes>
-                <include>README.pdf</include>
-                <include>README-CN.pdf</include>
             </includes>
         </fileSet>
         <fileSet>
@@ -212,25 +203,9 @@
             <fileMode>0755</fileMode>
         </fileSet>
         <!--
-            dbcli 的中英文用户手册只带 PDF，放在 doc/dbcli/ 下，
-            避免与工程主手册的 README.pdf/README-CN.pdf 在同一个目录里混淆。
-            默认构建 docs.dbcli.dir 指向空目录，因此不会收进任何文档；
-            -Ppdf 时才指向 generated-docs-dbcli/。
+            dbcli 的中英文用户手册是 PDF，随文档包 slackerdb-docs_<version>.zip
+            的 dbcli/ 目录交付（见 docs.xml），不再塞进发布包。
         -->
-        <fileSet>
-            <directory>${docs.dbcli.dir}</directory>
-            <outputDirectory>doc/dbcli</outputDirectory>
-            <includes>
-                <include>README.pdf</include>
-            </includes>
-        </fileSet>
-        <fileSet>
-            <directory>${docs.dbcli.dir}</directory>
-            <outputDirectory>doc/dbcli</outputDirectory>
-            <includes>
-                <include>README-CN.pdf</include>
-            </includes>
-        </fileSet>
     </fileSets>
 
 </assembly>

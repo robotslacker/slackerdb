@@ -41,9 +41,9 @@ public class ClusterView extends VerticalLayout {
     private static final String ALIAS_PATTERN = "[a-z][a-z0-9_-]{0,62}";
     private static final String NAME_PATTERN = "[A-Za-z][A-Za-z0-9_-]{0,62}";
 
-    private final Button refresh = new Button("刷新");
-    private final Checkbox autoRefresh = new Checkbox("自动刷新（5 s，缓存）");
-    private final Button add = new Button("添加实例");
+    private final Button refresh = new Button(I18n.t("common.refresh"));
+    private final Checkbox autoRefresh = new Checkbox(I18n.t("cluster.autoRefresh"));
+    private final Button add = new Button(I18n.t("cluster.add"));
     private final Span endpoint = new Span();
     private final Span summary = new Span("—");
     private final Span status = new Span();
@@ -65,10 +65,11 @@ public class ClusterView extends VerticalLayout {
         setPadding(true);
         setSpacing(true);
         setId("cluster-view");
+        I18n.setTitle("nav.cluster");
 
-        H2 title = new H2("实例管理");
+        H2 title = new H2(I18n.t("nav.cluster"));
         if (!ConnectionManager.current().hasClusterManagement()) {
-            Span guard = new Span("当前连接的管理口没有指向 dbproxy，实例管理不可用。");
+            Span guard = new Span(I18n.t("cluster.guard"));
             guard.setId("cluster-guard");
             add(title, guard);
             return;
@@ -76,10 +77,10 @@ public class ClusterView extends VerticalLayout {
         ready = true;
 
         endpoint.setId("cluster-endpoint");
-        endpoint.setText("管理口：" + ConnectionManager.current().clusterUrl());
+        endpoint.setText(I18n.t("management.label") + ConnectionManager.current().clusterUrl());
         summary.setId("cluster-summary");
         status.setId("cluster-status");
-        status.setText("就绪");
+        status.setText(I18n.t("cluster.status.ready"));
 
         refresh.setId("cluster-refresh");
         refresh.addClickListener(event -> refresh(true));
@@ -108,22 +109,28 @@ public class ClusterView extends VerticalLayout {
         grid.setId("cluster-grid");
         grid.setWidthFull();
         grid.setHeight("calc(100vh - 330px)");
-        grid.addColumn(ClusterInstance::alias).setHeader("别名").setAutoWidth(true);
-        grid.addColumn(item -> item.external() ? "外部（组播）" : "内部")
-                .setHeader("来源").setAutoWidth(true);
-        grid.addColumn(ClusterInstance::nameText).setHeader("库名").setAutoWidth(true);
+        grid.addColumn(ClusterInstance::alias).setHeader(I18n.t("cluster.column.alias")).setAutoWidth(true);
+        grid.addColumn(item -> item.external()
+                        ? I18n.t("cluster.source.external") : I18n.t("cluster.source.internal"))
+                .setHeader(I18n.t("cluster.column.source")).setAutoWidth(true);
+        grid.addColumn(ClusterInstance::nameText)
+                .setHeader(I18n.t("cluster.column.database")).setAutoWidth(true);
         grid.addComponentColumn(item -> stateBadge(item.stateText()))
-                .setHeader("状态").setAutoWidth(true);
-        grid.addColumn(ClusterInstance::healthText).setHeader("健康").setAutoWidth(true);
+                .setHeader(I18n.t("cluster.column.state")).setAutoWidth(true);
+        grid.addColumn(ClusterInstance::healthText)
+                .setHeader(I18n.t("cluster.column.health")).setAutoWidth(true);
         grid.addColumn(ClusterInstance::pidText).setHeader("PID").setAutoWidth(true);
-        grid.addColumn(ClusterInstance::pgPortText).setHeader("PG 端口").setAutoWidth(true);
-        grid.addColumn(ClusterInstance::mgmtPortText).setHeader("管理端口").setAutoWidth(true);
-        grid.addColumn(ClusterInstance::uptimeText).setHeader("运行时长").setAutoWidth(true);
-        grid.addColumn(ClusterInstance::locationText).setHeader("位置/目标")
+        grid.addColumn(ClusterInstance::pgPortText)
+                .setHeader(I18n.t("cluster.column.pgPort")).setAutoWidth(true);
+        grid.addColumn(ClusterInstance::mgmtPortText)
+                .setHeader(I18n.t("cluster.column.managementPort")).setAutoWidth(true);
+        grid.addColumn(ClusterInstance::uptimeText)
+                .setHeader(I18n.t("cluster.column.uptime")).setAutoWidth(true);
+        grid.addColumn(ClusterInstance::locationText).setHeader(I18n.t("cluster.column.location"))
                 .setWidth("260px").setFlexGrow(0);
-        grid.addColumn(ClusterInstance::errorText).setHeader("错误")
+        grid.addColumn(ClusterInstance::errorText).setHeader(I18n.t("cluster.column.error"))
                 .setWidth("220px").setFlexGrow(0);
-        grid.addComponentColumn(this::actions).setHeader("操作")
+        grid.addComponentColumn(this::actions).setHeader(I18n.t("cluster.column.actions"))
                 .setWidth("300px").setFlexGrow(0);
     }
 
@@ -141,15 +148,15 @@ public class ClusterView extends VerticalLayout {
 
     private static String stateText(String state) {
         if (state == null) {
-            return "未知";
+            return I18n.t("cluster.state.unknown");
         }
         return switch (state) {
-            case "RUNNING" -> "运行中";
-            case "DEGRADED" -> "降级";
-            case "STOPPED" -> "已停止";
-            case "STARTING" -> "启动中";
-            case "STOPPING" -> "停止中";
-            default -> "未知";
+            case "RUNNING" -> I18n.t("cluster.state.running");
+            case "DEGRADED" -> I18n.t("cluster.state.degraded");
+            case "STOPPED" -> I18n.t("cluster.state.stopped");
+            case "STARTING" -> I18n.t("cluster.state.starting");
+            case "STOPPING" -> I18n.t("cluster.state.stopping");
+            default -> I18n.t("cluster.state.unknown");
         };
     }
 
@@ -157,12 +164,12 @@ public class ClusterView extends VerticalLayout {
         HorizontalLayout actions = new HorizontalLayout();
         actions.setSpacing(false);
 
-        Button view = smallButton("查看", "cluster-view-" + item.alias());
+        Button view = smallButton(I18n.t("cluster.view"), "cluster-view-" + item.alias());
         view.addClickListener(event -> openDetail(item));
         actions.add(view);
 
         if (!item.manageable()) {
-            Span readOnly = new Span("只读");
+            Span readOnly = new Span(I18n.t("cluster.readOnly"));
             readOnly.getStyle().set("color", "var(--lumo-secondary-text-color)")
                     .set("font-size", "var(--lumo-font-size-s)");
             actions.add(readOnly);
@@ -170,18 +177,18 @@ public class ClusterView extends VerticalLayout {
         }
 
         if (!item.busyState() && item.stopped()) {
-            Button start = smallButton("启动", "cluster-start-" + item.alias());
+            Button start = smallButton(I18n.t("cluster.start"), "cluster-start-" + item.alias());
             start.addClickListener(event -> start(item));
             actions.add(start);
         }
         if (!item.busyState() && item.running()) {
-            Button stop = smallButton("停止", "cluster-stop-" + item.alias());
+            Button stop = smallButton(I18n.t("cluster.stop"), "cluster-stop-" + item.alias());
             stop.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL,
                     ButtonVariant.LUMO_ERROR);
             stop.addClickListener(event -> confirmStop(item));
             actions.add(stop);
         }
-        Button destroy = smallButton("销毁", "cluster-destroy-" + item.alias());
+        Button destroy = smallButton(I18n.t("cluster.destroy"), "cluster-destroy-" + item.alias());
         destroy.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL,
                 ButtonVariant.LUMO_ERROR);
         destroy.setEnabled(!item.busyState());
@@ -224,7 +231,7 @@ public class ClusterView extends VerticalLayout {
                     instances = List.of();
                     grid.setItems(List.of());
                     summary.setText("—");
-                    setStatus("加载失败：" + message(error), true);
+                    setStatus(I18n.t("cluster.error.loadFailed", I18n.message(error)), true);
                 } else {
                     instances = List.copyOf(list);
                     grid.setItems(instances);
@@ -238,7 +245,7 @@ public class ClusterView extends VerticalLayout {
         long internal = instances.stream().filter(ClusterInstance::manageable).count();
         long external = instances.size() - internal;
         long running = instances.stream().filter(ClusterInstance::running).count();
-        summary.setText("内部实例 " + internal + " · 外部实例 " + external + " · 运行中 " + running);
+        summary.setText(I18n.t("cluster.summary", internal, external, running));
     }
 
     private void updateControls() {
@@ -259,35 +266,36 @@ public class ClusterView extends VerticalLayout {
 
     private void start(ClusterInstance item) {
         ProxyAdminClient admin = client();
-        runInstanceAction("正在启动 " + item.alias() + "…",
+        runInstanceAction(I18n.t("cluster.starting", item.alias()),
                 () -> admin.start(item.alias()),
-                "已启动 " + item.alias());
+                I18n.t("cluster.started", item.alias()));
     }
 
     private void confirmStop(ClusterInstance item) {
         ConfirmDialog dialog = new ConfirmDialog();
-        dialog.setHeader("停止实例 " + item.alias() + "？");
-        dialog.setText("将优雅停止该实例，并断开所有客户端连接；数据会保留。");
+        dialog.setHeader(I18n.t("cluster.confirm.stop.title", item.alias()));
+        dialog.setText(I18n.t("cluster.confirm.stop.body"));
         dialog.setCancelable(true);
-        dialog.setConfirmText("停止");
+        dialog.setCancelText(I18n.t("common.cancel"));
+        dialog.setConfirmText(I18n.t("cluster.stop"));
         dialog.setConfirmButtonTheme("error primary");
         ProxyAdminClient admin = client();
         dialog.addConfirmListener(event -> {
             dialog.close();
-            runInstanceAction("正在停止 " + item.alias() + "…",
+            runInstanceAction(I18n.t("cluster.stopping", item.alias()),
                     () -> admin.shutdown(item.alias()),
-                    "已停止 " + item.alias());
+                    I18n.t("cluster.stopped", item.alias()));
         });
         dialog.open();
     }
 
     private void confirmDestroy(ClusterInstance item) {
         ConfirmDialog dialog = new ConfirmDialog();
-        dialog.setHeader("销毁实例 " + item.alias() + "？");
-        dialog.setText("将先停止实例，再删除整个实例目录：\n" + item.locationText()
-                + "\n\n数据不可恢复；如果当前 SQL 连接指向该实例，也会断开。");
+        dialog.setHeader(I18n.t("cluster.confirm.destroy.title", item.alias()));
+        dialog.setText(I18n.t("cluster.confirm.destroy.body", item.locationText()));
         dialog.setCancelable(true);
-        dialog.setConfirmText("销毁");
+        dialog.setCancelText(I18n.t("common.cancel"));
+        dialog.setConfirmText(I18n.t("cluster.destroy"));
         dialog.setConfirmButtonTheme("error primary");
         dialog.addConfirmListener(event -> {
             dialog.close();
@@ -332,7 +340,7 @@ public class ClusterView extends VerticalLayout {
             return;
         }
         busy = true;
-        setStatus("正在销毁 " + item.alias() + "…", false);
+        setStatus(I18n.t("cluster.destroying", item.alias()), false);
         updateControls();
         ProxyAdminClient admin = client();
         CompletableFuture.supplyAsync(() -> {
@@ -353,7 +361,7 @@ public class ClusterView extends VerticalLayout {
                 if (error != null) {
                     showOperationFailure(error);
                 } else {
-                    setStatus("已销毁 " + item.alias(), false);
+                    setStatus(I18n.t("cluster.destroyed", item.alias()), false);
                     refresh(false);
                 }
             });
@@ -361,9 +369,9 @@ public class ClusterView extends VerticalLayout {
     }
 
     private void showOperationFailure(Throwable error) {
-        String text = message(error);
-        setStatus("操作失败：" + text, true);
-        showErrorDialog("操作失败", text);
+        String text = I18n.message(error);
+        setStatus(I18n.t("cluster.error.actionFailed", text), true);
+        showErrorDialog(I18n.t("cluster.error.title"), text);
         refresh(false);
     }
 
@@ -372,46 +380,46 @@ public class ClusterView extends VerticalLayout {
     private void openAddDialog() {
         Dialog dialog = new Dialog();
         dialog.setId("cluster-create-dialog");
-        dialog.setHeaderTitle("添加实例");
+        dialog.setHeaderTitle(I18n.t("cluster.add"));
         dialog.setWidth("520px");
 
-        TextField alias = new TextField("别名");
+        TextField alias = new TextField(I18n.t("cluster.field.alias"));
         alias.setId("cluster-create-alias");
         alias.setRequiredIndicatorVisible(true);
-        alias.setPlaceholder("小写字母开头，例如 sales");
-        alias.setHelperText("目录名 / 代理路由键；创建后不可修改");
+        alias.setPlaceholder(I18n.t("cluster.create.alias.placeholder"));
+        alias.setHelperText(I18n.t("cluster.create.alias.helper"));
 
-        TextField name = new TextField("数据库名（可选）");
+        TextField name = new TextField(I18n.t("cluster.create.database"));
         name.setId("cluster-create-name");
-        name.setPlaceholder("默认同别名");
+        name.setPlaceholder(I18n.t("cluster.create.database.placeholder"));
 
-        Checkbox start = new Checkbox("立即启动", true);
+        Checkbox start = new Checkbox(I18n.t("cluster.create.start"), true);
         start.setId("cluster-create-start");
 
         Span error = new Span();
         error.setId("cluster-create-error");
         error.getStyle().set("color", "var(--lumo-error-text-color)");
 
-        Button submit = new Button("创建");
+        Button submit = new Button(I18n.t("cluster.create.submit"));
         submit.setId("cluster-create-submit");
         submit.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-        Button cancel = new Button("取消", event -> dialog.close());
+        Button cancel = new Button(I18n.t("common.cancel"), event -> dialog.close());
         cancel.setId("cluster-create-cancel");
 
         submit.addClickListener(event -> {
             String normalized = alias.getValue() == null
                     ? "" : alias.getValue().strip().toLowerCase(Locale.ROOT);
             if (!normalized.matches(ALIAS_PATTERN)) {
-                error.setText("别名必须以小写字母开头，只能包含小写字母、数字、下划线和连字符");
+                error.setText(I18n.t("cluster.create.alias.invalid"));
                 return;
             }
             if (RESERVED_ALIASES.contains(normalized)) {
-                error.setText("别名 [" + normalized + "] 被代理管理口保留，请换一个");
+                error.setText(I18n.t("cluster.create.alias.reserved", normalized));
                 return;
             }
             String database = name.getValue() == null ? "" : name.getValue().strip();
             if (!database.isEmpty() && !database.matches(NAME_PATTERN)) {
-                error.setText("数据库名必须以字母开头，只能包含字母、数字、下划线和连字符");
+                error.setText(I18n.t("cluster.create.database.invalid"));
                 return;
             }
 
@@ -433,11 +441,11 @@ public class ClusterView extends VerticalLayout {
                 ui.access(() -> {
                     submit.setEnabled(true);
                     if (failure != null) {
-                        error.setText(message(failure));
+                        error.setText(I18n.message(failure));
                         return;
                     }
                     dialog.close();
-                    setStatus("已创建 " + created.alias(), false);
+                    setStatus(I18n.t("cluster.created", created.alias()), false);
                     refresh(false);
                 });
             });
@@ -453,27 +461,28 @@ public class ClusterView extends VerticalLayout {
     private void openDetail(ClusterInstance item) {
         Dialog dialog = new Dialog();
         dialog.setId("cluster-detail-dialog");
-        dialog.setHeaderTitle("实例详情：" + item.alias());
+        dialog.setHeaderTitle(I18n.t("cluster.detail.title", item.alias()));
         dialog.setWidth("760px");
 
         VerticalLayout content = new VerticalLayout();
         content.setPadding(false);
         content.setSpacing(false);
-        content.add(field("别名", item.alias()),
-                field("来源", item.external() ? "外部（组播）" : "内部"),
-                field("数据库名", item.nameText()),
-                field("状态", stateText(item.stateText())),
-                field("健康", item.healthText()),
+        content.add(field(I18n.t("cluster.field.alias"), item.alias()),
+                field(I18n.t("cluster.field.source"), item.external()
+                        ? I18n.t("cluster.source.external") : I18n.t("cluster.source.internal")),
+                field(I18n.t("cluster.field.database"), item.nameText()),
+                field(I18n.t("cluster.field.state"), stateText(item.stateText())),
+                field(I18n.t("cluster.field.health"), item.healthText()),
                 field("PID", item.pidText()),
-                field("PG 端口", item.pgPortText()),
-                field("管理端口", item.mgmtPortText()),
-                field("运行时长", item.uptimeText()),
-                field("位置/目标", item.locationText()));
+                field(I18n.t("cluster.field.pgPort"), item.pgPortText()),
+                field(I18n.t("cluster.field.managementPort"), item.mgmtPortText()),
+                field(I18n.t("cluster.field.uptime"), item.uptimeText()),
+                field(I18n.t("cluster.field.location"), item.locationText()));
         if (!"—".equals(item.errorText())) {
-            content.add(field("错误", item.errorText()));
+            content.add(field(I18n.t("cluster.field.error"), item.errorText()));
         }
 
-        H3 confTitle = new H3("配置");
+        H3 confTitle = new H3(I18n.t("cluster.detail.config"));
         confTitle.getStyle().set("margin-bottom", "0");
         content.add(confTitle);
 
@@ -481,14 +490,14 @@ public class ClusterView extends VerticalLayout {
         confGrid.setId("cluster-conf-grid");
         confGrid.setWidthFull();
         confGrid.setHeight("220px");
-        confGrid.addColumn(MapRow::key).setHeader("配置项").setAutoWidth(true);
-        confGrid.addColumn(MapRow::value).setHeader("值").setAutoWidth(true);
+        confGrid.addColumn(MapRow::key).setHeader(I18n.t("cluster.column.confKey")).setAutoWidth(true);
+        confGrid.addColumn(MapRow::value).setHeader(I18n.t("cluster.column.confValue")).setAutoWidth(true);
 
         if (!item.conf().isEmpty()) {
             confGrid.setItems(confRows(item));
             content.add(confGrid);
         } else {
-            Span loading = new Span("加载配置…");
+            Span loading = new Span(I18n.t("cluster.detail.config.loading"));
             content.add(loading);
             ProxyAdminClient admin = client();
             CompletableFuture.supplyAsync(() -> {
@@ -505,7 +514,8 @@ public class ClusterView extends VerticalLayout {
                 ui.access(() -> {
                     content.remove(loading);
                     if (failure != null) {
-                        content.add(new Span("配置加载失败：" + message(failure)));
+                        content.add(new Span(
+                                I18n.t("cluster.detail.config.loadFailed", I18n.message(failure))));
                     } else if (full.conf().isEmpty()) {
                         content.add(new Span("—"));
                     } else {
@@ -516,7 +526,7 @@ public class ClusterView extends VerticalLayout {
             });
         }
 
-        Button close = new Button("关闭", event -> dialog.close());
+        Button close = new Button(I18n.t("common.close"), event -> dialog.close());
         close.setId("cluster-detail-close");
         content.add(new HorizontalLayout(close));
         dialog.add(content);
@@ -530,7 +540,7 @@ public class ClusterView extends VerticalLayout {
     }
 
     private static HorizontalLayout field(String label, String value) {
-        Span name = new Span(label + "：");
+        Span name = new Span(I18n.t("cluster.field.label", label));
         name.getStyle().set("color", "var(--lumo-secondary-text-color)");
         name.setWidth("110px");
         Span text = new Span(value == null || value.isBlank() ? "—" : value);
@@ -553,22 +563,10 @@ public class ClusterView extends VerticalLayout {
         text.setReadOnly(true);
         text.setWidthFull();
         text.setHeight("240px");
-        Button close = new Button("关闭", event -> dialog.close());
+        Button close = new Button(I18n.t("common.close"), event -> dialog.close());
         close.setId("cluster-error-close");
         dialog.add(new VerticalLayout(text, new HorizontalLayout(close)));
         dialog.open();
-    }
-
-    private static String message(Throwable error) {
-        Throwable cause = error;
-        while (cause instanceof CompletionException && cause.getCause() != null) {
-            cause = cause.getCause();
-        }
-        if (cause instanceof ManagementException management) {
-            return management.retMsg() != null && !management.retMsg().isBlank()
-                    ? management.retMsg() : management.getMessage();
-        }
-        return cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
     }
 
     // ------------------------------------------------------------------ 生命周期

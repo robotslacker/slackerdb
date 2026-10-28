@@ -37,6 +37,30 @@ final class UiTestSupport {
     private UiTestSupport() {
     }
 
+    /**
+     * 给测试浏览器设置界面语言。
+     *
+     * <p>语言落在 cookie {@code dbdesk.lang} 上而不是本机 profile：测试之间互不影响，
+     * 也不会把开发机上的 {@code ~/.slackerdb/profiles.json} 改成测试语言。</p>
+     */
+    static void useLanguage(com.microsoft.playwright.Page page, String lang) {
+        String base = System.getProperty("dbdesk.ui.url");
+        if (page == null || base == null || base.isBlank()) {
+            return;
+        }
+        page.context().addCookies(List.of(
+                new com.microsoft.playwright.options.Cookie("dbdesk.lang", lang).setUrl(base)));
+    }
+
+    /** 既有用例的断言都是中文文案；显式指定中文，避免依赖开发机上的语言设置。 */
+    static void useChinese(com.microsoft.playwright.Page page) {
+        useLanguage(page, "zh-CN");
+    }
+
+    static void useEnglish(com.microsoft.playwright.Page page) {
+        useLanguage(page, "en");
+    }
+
     static Playwright createPlaywright() {
         return Playwright.create(new Playwright.CreateOptions()
                 .setEnv(Map.of("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1")));

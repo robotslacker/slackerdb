@@ -59,10 +59,18 @@ It runs either as a standalone server (`dbserver`, `dbproxy`) or **embedded dire
     #        content a shallow clone would give you (no git history, no build
     #        output). Unzip it and run the very same maven command inside to
     #        rebuild everything from source.
+    #    slackerdb-docs_0.2.2.zip   (only when built with -Ppdf)
+    #        PDF documentation - README.pdf and README-CN.pdf at the top level,
+    #        the dbcli manual (README.pdf / README-CN.pdf) under dbcli/.
 
-    # PDF documentation is not built by default. To generate the PDFs and
-    # include them in dist/ and the distribution zip, add -Ppdf:
+    # PDF documentation is not built by default, and it is not packed into the
+    # distribution package either: the PDFs ship in slackerdb-docs_0.2.2.zip.
+    # To generate them, add -Ppdf:
     #    mvn -Ppdf clean compile package -Dmaven.test.skip=true
+    # To rebuild only the documentation, build the docs module on its own:
+    # that writes dist/slackerdb-docs_0.2.2.zip and leaves the release
+    # packages untouched.
+    #    mvn -Ppdf -pl docs package
 ....
 
 ==== How to develop in an offline environment
@@ -78,6 +86,24 @@ On a machine with network access, install the plugin once and generate `offline/
 The command also writes `offline/javarepo.zip` and `offline/npmrepo.zip`, and removes the
 uncompressed `javarepo/` and `npmrepo/` directories. Copy those two zips to the offline
 machine and unzip them into the same directory.
+
+`javarepo` does not only contain the jars that end up on the classpath: it carries the complete
+POM descriptor closure (parent POMs, imported BOMs, and every candidate dependency version Maven
+reads while collecting, including the ones dropped by nearest-wins mediation). An offline build
+therefore never degrades to `[WARNING] The POM for ... is missing, no dependency information
+available`; if a required POM cannot be packaged, the collection fails instead of shipping an
+incomplete package. Unpack `javarepo.zip` and re-check the closure on the generating machine
+with `mvn -o -N org.robotslacker.tools:offline-package-maven-plugin:1.0.0:verify`.
+
+The jars of the losing candidate versions are packaged as well (`offline.candidate.jars`, on by
+default, about 25 MB). Maven never resolves them for this reactor, but they keep the repository
+usable if a module POM is edited offline or another resolution order picks such a version. Use
+`-Doffline.candidate.jars=false` to skip them.
+
+`mvn clean` does not delete `offline/`: the offline package is also the `-Dmaven.repo.local.tail`
+repository of the offline build, so cleaning it would delete the repository the build depends on.
+Regenerating replaces the directory by itself (`offline-package:collect` stages the new package
+and swaps it in).
 
 Before building, make sure the required JDK, Maven, and Node are installed and available on `PATH`.
 
@@ -132,7 +158,8 @@ Run the following commands to complete the build:
 ==== Server configuration file template
 
 ....
-# Database name, default is none.
+# Database name. Empty means the built-in memory database (named memory, nothing written
+# to disk); the management API and internal tables such as sysaux live in it.
 data=
 
 # Path where data files are saved

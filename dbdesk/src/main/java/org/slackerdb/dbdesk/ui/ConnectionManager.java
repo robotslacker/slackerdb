@@ -45,7 +45,7 @@ public final class ConnectionManager {
     private String clusterUrl = "";
     private Capabilities capabilities;
     private Capabilities proxyCapabilities;
-    private String warning;
+    private org.slackerdb.dbdesk.i18n.LocalizedMessage warning;
 
     private ConnectionManager() {
     }
@@ -54,7 +54,7 @@ public final class ConnectionManager {
     public static ConnectionManager current() {
         VaadinSession session = VaadinSession.getCurrent();
         if (session == null) {
-            throw new IllegalStateException("ConnectionManager 只能在 Vaadin 会话内使用");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.sessionRequired");
         }
         ConnectionManager manager = session.getAttribute(ConnectionManager.class);
         if (manager == null) {
@@ -134,7 +134,7 @@ public final class ConnectionManager {
     }
 
     public String warning() {
-        return warning;
+        return warning == null ? null : I18n.text(warning);
     }
 
     /** 初始连接：失败时状态回 DISCONNECTED，并把异常抛给对话框。 */
@@ -178,8 +178,12 @@ public final class ConnectionManager {
             try {
                 store.recordSuccessful(result.profile());
             } catch (IOException e) {
-                String historyError = "连接成功，但历史保存失败：" + e.getMessage();
-                warning = warning == null ? historyError : warning + "；" + historyError;
+                org.slackerdb.dbdesk.i18n.LocalizedMessage historyError =
+                        org.slackerdb.dbdesk.i18n.LocalizedMessage.of(
+                                "connection.historySaveFailed", I18n.message(e));
+                warning = warning == null ? historyError
+                        : org.slackerdb.dbdesk.i18n.LocalizedMessage.of(
+                                "connection.warningJoin", warning, historyError);
             }
         }
         notifyListeners();
@@ -201,7 +205,7 @@ public final class ConnectionManager {
     /** 每次新建一个客户端；页面自己负责关闭。 */
     public ManagementClient managementClient() {
         if (!hasInstanceManagement()) {
-            throw new IllegalStateException("当前连接没有实例级管理口");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.noInstanceManagement");
         }
         return new ManagementClient(managementUrl, Duration.ofSeconds(5));
     }
@@ -209,7 +213,7 @@ public final class ConnectionManager {
     /** 每次新建一个代理管理客户端；页面自己负责关闭。 */
     public ProxyAdminClient clusterClient() {
         if (!hasClusterManagement()) {
-            throw new IllegalStateException("当前连接没有 dbproxy 集群管理口");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.noClusterManagement");
         }
         return new ProxyAdminClient(clusterUrl, Duration.ofSeconds(30));
     }

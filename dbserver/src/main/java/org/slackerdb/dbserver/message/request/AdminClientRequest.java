@@ -136,7 +136,7 @@ public class AdminClientRequest  extends PostgresRequest {
                             + " (nic: " + (advertiseNic.isEmpty() ? "auto" : advertiseNic) + ")";
                 }
                 feedBackMsg.append(String.format("%-20s", "  Advertise:")).append(advertiseText).append("\n");
-                feedBackMsg.append(String.format("%-20s", "  Data:")).append(this.dbInstance.serverConfiguration.getData()).append("\n");
+                feedBackMsg.append(String.format("%-20s", "  Data:")).append(this.dbInstance.instanceName).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Data_Dir:")).append(this.dbInstance.serverConfiguration.getData_Dir()).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Temp_Dir:")).append(this.dbInstance.serverConfiguration.getTemp_dir()).append("\n");
                 feedBackMsg.append(String.format("%-20s", "  Data_Encrypt:")).append(this.dbInstance.serverConfiguration.getDataEncrypt()).append("\n");

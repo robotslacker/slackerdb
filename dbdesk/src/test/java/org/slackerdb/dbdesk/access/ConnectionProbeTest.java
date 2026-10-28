@@ -135,7 +135,7 @@ class ConnectionProbeTest {
         ConnectionProbe.ProbeException error = assertThrows(ConnectionProbe.ProbeException.class,
                 () -> ConnectionProbe.probe(profile, mustNotRun()));
 
-        assertTrue(error.getMessage().contains("dbproxy"), error.getMessage());
+        assertEquals("error.probe.managementRequired", error.messageKey());
     }
 
     @Test
@@ -146,8 +146,8 @@ class ConnectionProbeTest {
         ConnectionProbe.ProbeException error = assertThrows(ConnectionProbe.ProbeException.class,
                 () -> ConnectionProbe.probe(profile, mustNotRun()));
 
-        assertTrue(error.getMessage().contains("不匹配"), error.getMessage());
-        assertTrue(error.getMessage().contains("实例数据端口"), error.getMessage());
+        assertEquals("error.probe.portMismatch.proxy", error.messageKey());
+        assertEquals(2, error.messageArgs().length);
     }
 
     @Test
@@ -158,8 +158,8 @@ class ConnectionProbeTest {
         ConnectionProbe.ProbeException error = assertThrows(ConnectionProbe.ProbeException.class,
                 () -> ConnectionProbe.probe(profile, mustNotRun()));
 
-        assertTrue(error.getMessage().contains("不匹配"), error.getMessage());
-        assertTrue(error.getMessage().contains("代理数据端口"), error.getMessage());
+        assertEquals("error.probe.portMismatch.instance", error.messageKey());
+        assertEquals(2, error.messageArgs().length);
     }
 
     @Test
@@ -190,7 +190,7 @@ class ConnectionProbeTest {
         assertFalse(result.hasClusterManagement());
         assertNotNull(result.jdbcUrl());
         assertNotNull(result.warning());
-        assertTrue(result.warning().contains("SQL only"), result.warning());
+        assertEquals("warning.instanceManagementUnreachable", result.warning().messageKey());
     }
 
     @Test
@@ -214,7 +214,7 @@ class ConnectionProbeTest {
         ConnectionProbe.ProbeException error = assertThrows(ConnectionProbe.ProbeException.class,
                 () -> ConnectionProbe.probe(profile, mustNotRun()));
 
-        assertTrue(error.getMessage().contains("健康"), error.getMessage());
+        assertEquals("error.probe.managementUnhealthy", error.messageKey());
     }
 
     @Test

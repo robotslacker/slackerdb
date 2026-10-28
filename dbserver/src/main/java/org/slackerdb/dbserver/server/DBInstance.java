@@ -67,8 +67,26 @@ public class DBInstance {
     // 实例的名称
     public String instanceName;
 
+    /**
+     * 内部表所在的 schema 的全限定写法：{@code "<实例库>".sysaux}。
+     *
+     * <p>两件事都必须在这里保证，不要让调用方各自拼接：</p>
+     * <ul>
+     *   <li><b>全限定</b>：连接池里的连接默认 catalog 是 {@code memory}，不限定就会落到
+     *       memory 目录，而不是实例库（内部服务都踩过这个坑）；</li>
+     *   <li><b>加引号</b>：实例名允许 {@code -}（见 {@link #attachDatabase} 的校验），
+     *       不加引号会被 DuckDB 当成减号；没有 {@code --data} 时名字是 {@code memory}，
+     *       以前直接用 {@link org.slackerdb.dbserver.configuration.ServerConfiguration#getData()}
+     *       拼出过 {@code .sysaux}，启动时直接 {@code Parser Error}。</li>
+     * </ul>
+     */
+    public String sysauxSchema()
+    {
+        return "\"" + instanceName + "\".sysaux";
+    }
+
     /** DuckDB 内存主 catalog 的名字，也是 fake catalog 的唯一归属地。 */
-    private static final String MEMORY_CATALOG = "memory";
+    private static final String MEMORY_CATALOG = ServerConfiguration.MEMORY_DATABASE;
 
     /**
      * 承载 fake catalog（{@code duck_catalog}）的 catalog 名，也是 SQL 改写与会话
@@ -469,7 +487,7 @@ public class DBInstance {
                     multicastAddress,
                     candidate.getNic(),
                     candidate.getAddress(),
-                    serverConfiguration.getData(),
+                    instanceName,
                     serverConfiguration.getPort(),
                     serverConfiguration.getPortX())
                     // 别名沿用库名，与旧 REGISTER 的 "AS <data>" 完全一致：客户端连接串不用改
@@ -599,6 +617,8 @@ public class DBInstance {
             // 注意：SQLReplacer 的改写规则是按 catalogName 生成的静态规则表，而 catalogName
             // 由 refreshCatalogName() 决定；规则表因此统一放到本方法的 finally 里加载一次，
             // 保证无论走哪条分支（data 为空 / 等密钥挂起 / 正常挂载）规则都与最终前缀一致。
+            // 这里故意读原始 getData()：空值表示"不 ATTACH 任何实例库"，与 getInstanceName()
+            // 回落到 memory 是两件事，不要合并。
             String instanceName = this.serverConfiguration.getData();
             if (instanceName.isEmpty())
             {
@@ -868,7 +888,9 @@ public class DBInstance {
         resourceBundle = ResourceBundle.getBundle("message", serverConfiguration.getLocale());
 
         // 检查是否包含路径分隔符
-        String instanceName = serverConfiguration.getData();
+        // 实例名统一取自 getInstanceName()：没有 --data 时是 memory，不要在这里用 getData() 拿到空串
+        // （空的实例名会一路带到内部建表 SQL 里，拼出非法的 ".sysaux"）。
+        String instanceName = serverConfiguration.getInstanceName();
         if (instanceName.contains("/") || instanceName.contains("\\")) {
             throw new ServerException("Invalid character. Invalid instance name [" + instanceName + "]");
         }
@@ -884,7 +906,7 @@ public class DBInstance {
     }
 
     public synchronized void start(org.slf4j.Logger appLogger) throws ServerException {
-        String instanceName = serverConfiguration.getData();
+        String instanceName = serverConfiguration.getInstanceName();
 
         // 使用外部的日志，而不是自己创建日志
         this.logger = (ch.qos.logback.classic.Logger) appLogger;
@@ -1226,7 +1248,7 @@ public class DBInstance {
     public synchronized void start() throws ServerException {
         // 初始化日志服务
         Logger appLogger = AppLogger.createLogger(
-                serverConfiguration.getData(),
+                serverConfiguration.getInstanceName(),
                 serverConfiguration.getLog_level().levelStr,
                 serverConfiguration.getLog());
 

@@ -31,16 +31,16 @@ public class DataServicesView extends VerticalLayout {
 
     private final Grid<DataServiceDefinition> grid = new Grid<>(DataServiceDefinition.class, false);
     private final Span endpoint = new Span();
-    private final Span status = new Span("就绪");
+    private final Span status = new Span(I18n.t("dataService.status.ready"));
     private final HorizontalLayout downloadLinks = new HorizontalLayout();
     private final ObjectMapper json = new ObjectMapper();
 
-    private final Button refresh = new Button("刷新");
-    private final Button register = new Button("注册");
-    private final Button load = new Button("加载 JSON");
-    private final Button save = new Button("保存到服务端");
-    private final Button download = new Button("下载 JSON");
-    private final Button unregister = new Button("注销");
+    private final Button refresh = new Button(I18n.t("common.refresh"));
+    private final Button register = new Button(I18n.t("dataService.button.register"));
+    private final Button load = new Button(I18n.t("dataService.button.loadJson"));
+    private final Button save = new Button(I18n.t("dataService.button.saveToServer"));
+    private final Button download = new Button(I18n.t("dataService.button.downloadJson"));
+    private final Button unregister = new Button(I18n.t("dataService.button.unregister"));
 
     private transient DataServiceClient client;
 
@@ -48,10 +48,11 @@ public class DataServicesView extends VerticalLayout {
         setSizeFull();
         setPadding(true);
         setSpacing(true);
+        I18n.setTitle("nav.dataServices");
 
-        H2 title = new H2("数据服务");
+        H2 title = new H2(I18n.t("dataService.title"));
         if (!ConnectionManager.current().hasInstanceManagement()) {
-            Span guard = new Span("当前连接没有实例级管理口，数据服务不可用。");
+            Span guard = new Span(I18n.t("dataService.guard"));
             guard.setId("data-service-guard");
             add(title, guard);
             return;
@@ -65,7 +66,7 @@ public class DataServicesView extends VerticalLayout {
         configureButtons();
 
         add(title,
-                new HorizontalLayout(new Span("管理口："), endpoint),
+                new HorizontalLayout(new Span(I18n.t("management.label")), endpoint),
                 new HorizontalLayout(refresh, register, load, save, download, unregister),
                 status,
                 grid,
@@ -80,13 +81,20 @@ public class DataServicesView extends VerticalLayout {
         grid.setWidthFull();
         grid.setHeight("420px");
         grid.setSelectionMode(Grid.SelectionMode.SINGLE);
-        grid.addColumn(DataServiceDefinition::serviceType).setHeader("类型").setAutoWidth(true);
-        grid.addColumn(DataServiceDefinition::serviceName).setHeader("名称").setAutoWidth(true);
-        grid.addColumn(DataServiceDefinition::serviceVersion).setHeader("版本").setAutoWidth(true);
-        grid.addColumn(DataServiceDefinition::category).setHeader("分类").setAutoWidth(true);
-        grid.addColumn(DataServiceDefinition::description).setHeader("描述").setAutoWidth(true);
-        grid.addColumn(DataServiceDefinition::snapshotLimit).setHeader("快照限制").setAutoWidth(true);
-        grid.addColumn(service -> parametersText(service.parameters())).setHeader("参数").setAutoWidth(true);
+        grid.addColumn(DataServiceDefinition::serviceType)
+                .setHeader(I18n.t("dataService.column.type")).setAutoWidth(true);
+        grid.addColumn(DataServiceDefinition::serviceName)
+                .setHeader(I18n.t("dataService.column.name")).setAutoWidth(true);
+        grid.addColumn(DataServiceDefinition::serviceVersion)
+                .setHeader(I18n.t("dataService.column.version")).setAutoWidth(true);
+        grid.addColumn(DataServiceDefinition::category)
+                .setHeader(I18n.t("dataService.column.category")).setAutoWidth(true);
+        grid.addColumn(DataServiceDefinition::description)
+                .setHeader(I18n.t("dataService.column.description")).setAutoWidth(true);
+        grid.addColumn(DataServiceDefinition::snapshotLimit)
+                .setHeader(I18n.t("dataService.column.snapshotLimit")).setAutoWidth(true);
+        grid.addColumn(service -> parametersText(service.parameters()))
+                .setHeader(I18n.t("dataService.column.parameters")).setAutoWidth(true);
         grid.addColumn(DataServiceDefinition::sql).setHeader("SQL").setAutoWidth(true);
     }
 
@@ -113,33 +121,35 @@ public class DataServicesView extends VerticalLayout {
     }
 
     private void refreshList() {
-        status.setText("读取中…");
+        status.setText(I18n.t("common.loading"));
         try {
             List<DataServiceDefinition> services = client().list();
             grid.setItems(services);
-            status.setText(services.isEmpty() ? "没有已注册的数据服务" : "共 " + services.size() + " 条");
+            status.setText(services.isEmpty()
+                    ? I18n.t("dataService.empty")
+                    : I18n.t("dataService.count", services.size()));
         } catch (Exception e) {
             grid.setItems(List.of());
-            status.setText("读取失败：" + message(e));
+            status.setText(I18n.t("dataService.error.loadFailed", I18n.message(e)));
         }
     }
 
     private void openRegisterDialog() {
         Dialog dialog = new Dialog();
-        dialog.setHeaderTitle("注册数据服务");
+        dialog.setHeaderTitle(I18n.t("dataService.register.title"));
         dialog.setWidth("760px");
 
-        TextField name = new TextField("服务名");
+        TextField name = new TextField(I18n.t("dataService.field.name"));
         name.setId("data-service-name");
-        TextField version = new TextField("版本");
+        TextField version = new TextField(I18n.t("dataService.field.version"));
         version.setId("data-service-version");
-        TextField category = new TextField("分类");
+        TextField category = new TextField(I18n.t("dataService.field.category"));
         category.setId("data-service-category");
         TextField searchPath = new TextField("Search Path");
         searchPath.setId("data-service-search-path");
-        TextField snapshotLimit = new TextField("快照限制（如 5m）");
+        TextField snapshotLimit = new TextField(I18n.t("dataService.field.snapshotLimit"));
         snapshotLimit.setId("data-service-snapshot-limit");
-        ComboBox<String> type = new ComboBox<>("类型");
+        ComboBox<String> type = new ComboBox<>(I18n.t("dataService.field.type"));
         type.setId("data-service-type");
         type.setItems("GET", "POST");
         type.setValue("GET");
@@ -148,10 +158,10 @@ public class DataServicesView extends VerticalLayout {
         sql.setId("data-service-sql");
         sql.setWidthFull();
         sql.setHeight("150px");
-        TextArea description = new TextArea("描述");
+        TextArea description = new TextArea(I18n.t("dataService.field.description"));
         description.setId("data-service-description");
         description.setWidthFull();
-        TextArea parameters = new TextArea("参数（JSON 数组，可空）");
+        TextArea parameters = new TextArea(I18n.t("dataService.field.parameters"));
         parameters.setId("data-service-parameters");
         parameters.setWidthFull();
         parameters.setHeight("100px");
@@ -159,7 +169,7 @@ public class DataServicesView extends VerticalLayout {
         Span dialogStatus = new Span();
         dialogStatus.setId("data-service-dialog-status");
 
-        Button submit = new Button("注册", event -> {
+        Button submit = new Button(I18n.t("dataService.button.register"), event -> {
             try {
                 List<DataServiceDefinition.Parameter> parsed = parseParameters(parameters.getValue());
                 DataServiceDefinition definition = new DataServiceDefinition(
@@ -168,15 +178,15 @@ public class DataServicesView extends VerticalLayout {
                         snapshotLimit.getValue(), parsed);
                 client().register(definition);
                 dialog.close();
-                status.setText("已注册：" + definition.serviceName());
+                status.setText(I18n.t("dataService.status.registered", definition.serviceName()));
                 refreshList();
             } catch (Exception e) {
-                dialogStatus.setText("注册失败：" + message(e));
+                dialogStatus.setText(I18n.t("dataService.error.registerFailed", I18n.message(e)));
             }
         });
         submit.setId("data-service-submit");
         submit.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-        Button cancel = new Button("取消", event -> dialog.close());
+        Button cancel = new Button(I18n.t("common.cancel"), event -> dialog.close());
 
         dialog.add(new VerticalLayout(
                 new HorizontalLayout(name, version, type),
@@ -188,30 +198,31 @@ public class DataServicesView extends VerticalLayout {
 
     private void openLoadDialog() {
         Dialog dialog = new Dialog();
-        dialog.setHeaderTitle("从 JSON 加载数据服务定义");
-        Span dialogStatus = new Span("选择 .service 或 .json 文件");
+        dialog.setHeaderTitle(I18n.t("dataService.load.title"));
+        Span dialogStatus = new Span(I18n.t("dataService.load.hint"));
         dialogStatus.setId("data-service-load-status");
 
         Upload upload = new Upload(event -> {
             try (var in = event.getInputStream()) {
                 String raw = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
                 client().load(raw);
-                dialogStatus.setText("加载成功");
+                dialogStatus.setText(I18n.t("dataService.status.loaded"));
                 dialog.close();
-                status.setText("已加载 JSON 定义");
+                status.setText(I18n.t("dataService.status.loadedJson"));
                 refreshList();
             } catch (IOException e) {
-                dialogStatus.setText("读取文件失败：" + e.getMessage());
+                dialogStatus.setText(I18n.t("dataService.error.readFileFailed", I18n.message(e)));
             } catch (Exception e) {
-                dialogStatus.setText("加载失败：" + message(e));
+                dialogStatus.setText(I18n.t("dataService.error.loadJsonFailed", I18n.message(e)));
             }
         });
         upload.setId("data-service-upload");
+        UploadTexts.apply(upload);
         upload.setMaxFiles(1);
         upload.setAcceptedFileTypes(".service", ".json");
         upload.setMaxFileSize(20 * 1024 * 1024);
 
-        Button close = new Button("关闭", event -> dialog.close());
+        Button close = new Button(I18n.t("common.close"), event -> dialog.close());
         dialog.add(new VerticalLayout(dialogStatus, upload, new HorizontalLayout(close)));
         dialog.open();
     }
@@ -219,9 +230,11 @@ public class DataServicesView extends VerticalLayout {
     private void saveDefinitions() {
         try {
             DataServiceClient.SaveResult result = client().save();
-            status.setText("已保存" + (result.savedPath() == null ? "" : "：" + result.savedPath()));
+            status.setText(result.savedPath() == null
+                    ? I18n.t("dataService.status.saved")
+                    : I18n.t("dataService.status.savedTo", result.savedPath()));
         } catch (Exception e) {
-            status.setText("保存失败：" + message(e));
+            status.setText(I18n.t("dataService.error.saveFailed", I18n.message(e)));
         }
     }
 
@@ -230,31 +243,32 @@ public class DataServicesView extends VerticalLayout {
             byte[] payload = client().download();
             downloadLinks.removeAll();
             downloadLinks.add(DownloadSupport.anchor("services.json", payload));
-            status.setText("已生成下载：" + payload.length + " 字节");
+            status.setText(I18n.t("dataService.status.downloadReady", payload.length));
         } catch (Exception e) {
-            status.setText("下载失败：" + message(e));
+            status.setText(I18n.t("dataService.error.downloadFailed", I18n.message(e)));
         }
     }
 
     private void confirmUnregister() {
         DataServiceDefinition selected = grid.asSingleSelect().getValue();
         if (selected == null) {
-            status.setText("先选中一条数据服务");
+            status.setText(I18n.t("dataService.unregister.required"));
             return;
         }
         ConfirmDialog dialog = new ConfirmDialog();
-        dialog.setHeader("注销数据服务？");
+        dialog.setHeader(I18n.t("dataService.unregister.title"));
         dialog.setText(selected.serviceType() + " " + selected.serviceName() + "@" + selected.serviceVersion());
         dialog.setCancelable(true);
-        dialog.setConfirmText("注销");
+        dialog.setCancelText(I18n.t("common.cancel"));
+        dialog.setConfirmText(I18n.t("dataService.button.unregister"));
         dialog.setConfirmButtonTheme("error primary");
         dialog.addConfirmListener(event -> {
             try {
                 client().unregister(selected.serviceName(), selected.serviceVersion(), selected.serviceType());
-                status.setText("已注销：" + selected.serviceName());
+                status.setText(I18n.t("dataService.status.unregistered", selected.serviceName()));
                 refreshList();
             } catch (Exception e) {
-                status.setText("注销失败：" + message(e));
+                status.setText(I18n.t("dataService.error.unregisterFailed", I18n.message(e)));
             }
         });
         dialog.open();
@@ -267,7 +281,7 @@ public class DataServicesView extends VerticalLayout {
         try {
             JsonNode root = json.readTree(text);
             if (!root.isArray()) {
-                throw new IllegalArgumentException("参数必须是 JSON 数组");
+                throw new IllegalArgumentException(I18n.t("dataService.error.parametersNotArray"));
             }
             List<DataServiceDefinition.Parameter> result = new ArrayList<>();
             for (JsonNode item : root) {
@@ -277,7 +291,8 @@ public class DataServicesView extends VerticalLayout {
             }
             return result;
         } catch (RuntimeException e) {
-            throw new IllegalArgumentException("参数 JSON 非法：" + e.getMessage(), e);
+            throw new IllegalArgumentException(
+                    I18n.t("dataService.error.parametersInvalid", I18n.message(e)), e);
         }
     }
 
@@ -306,14 +321,6 @@ public class DataServicesView extends VerticalLayout {
             client.close();
             client = null;
         }
-    }
-
-    private static String message(Throwable error) {
-        Throwable root = error;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        return root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage();
     }
 
     /** 测试用。 */

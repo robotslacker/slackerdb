@@ -52,7 +52,7 @@ class ChartDataTest {
 
         assertEquals(List.of("A", "B"), data.categories());
         assertEquals(2, data.series().size());
-        assertTrue(data.series().get(0).name().startsWith("v · "), "序列名应带分组值：" + data.series().get(0).name());
+        assertTrue(data.series().get(0).name().contains("v") && data.series().get(0).name().contains("x"), "序列名应带分组值：" + data.series().get(0).name());
         assertEquals(List.of(1, 3), data.series().get(0).data());
         assertEquals(List.of(2, 4), data.series().get(1).data());
     }

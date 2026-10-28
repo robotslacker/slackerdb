@@ -1,6 +1,7 @@
 package org.slackerdb.dbdesk.access.sql;
 
 import org.slackerdb.dbdesk.access.JdbcDrivers;
+import org.slackerdb.dbdesk.i18n.LocalizedException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.BufferedWriter;
@@ -70,9 +71,9 @@ public final class ResultExporter {
     }
 
     /** 导出被取消时抛出。调用方负责删掉写了一半的文件。 */
-    public static final class ExportCancelledException extends RuntimeException {
+    public static final class ExportCancelledException extends LocalizedException {
         ExportCancelledException(long rowsWritten) {
-            super("导出已取消（已写 " + rowsWritten + " 行）");
+            super("error.export.cancelled", Long.toString(rowsWritten));
         }
     }
 

@@ -26,22 +26,22 @@ public record DbDeskProfile(
 
     public DbDeskProfile {
         if (alias == null || alias.isBlank()) {
-            throw new IllegalArgumentException("连接别名不能为空");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.profile.aliasRequired");
         }
         if (host == null || host.isBlank()) {
-            throw new IllegalArgumentException("主机不能为空");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.profile.hostRequired");
         }
         if (databasePort == null && managementPort == null) {
-            throw new IllegalArgumentException("数据库端口和管理端口不能同时为空");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.profile.portRequired");
         }
         if (databasePort != null && (databasePort <= 0 || databasePort > 65535)) {
-            throw new IllegalArgumentException("数据库端口必须在 1-65535 之间");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.profile.databasePortRange");
         }
         if (managementPort != null && (managementPort <= 0 || managementPort > 65535)) {
-            throw new IllegalArgumentException("管理端口必须在 1-65535 之间");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.profile.managementPortRange");
         }
         if (databasePort != null && (database == null || database.isBlank())) {
-            throw new IllegalArgumentException("填写数据库端口时数据库名不能为空");
+            throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.profile.databaseRequired");
         }
         alias = alias.strip();
         host = host.strip();

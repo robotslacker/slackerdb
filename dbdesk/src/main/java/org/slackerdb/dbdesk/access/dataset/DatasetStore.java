@@ -118,7 +118,7 @@ public final class DatasetStore {
         List<Dataset> datasets = load();
         for (Dataset existing : datasets) {
             if (!existing.id().equals(dataset.id()) && existing.name().equals(dataset.name())) {
-                throw new IllegalArgumentException("已存在同名数据集：" + dataset.name());
+                throw new org.slackerdb.dbdesk.i18n.LocalizedException("error.dataset.duplicate", dataset.name());
             }
         }
         boolean replaced = false;

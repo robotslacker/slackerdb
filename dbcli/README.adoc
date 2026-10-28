@@ -29,7 +29,7 @@ In the distribution `dbcli` lives in:
 ----
 jlib/slackerdb-dbcli-<version>-standalone.jar   main program (all dependencies included)
 bin/dbcli.bat | bin/dbcli.sh                    launcher (Windows | Linux/macOS)
-doc/dbcli/README*.adoc | README*.pdf            this manual (Chinese and English)
+dbcli/README*.pdf in slackerdb-docs_<version>.zip   this manual (Chinese and English)
 ----
 
 Common ways to start it:

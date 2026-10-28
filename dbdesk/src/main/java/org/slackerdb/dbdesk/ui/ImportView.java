@@ -39,23 +39,23 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Route(value = "import", layout = MainLayout.class)
 public class ImportView extends VerticalLayout {
 
-    private final ComboBox<String> table = new ComboBox<>("目标表");
-    private final TextField newTable = new TextField("或新建表（DDL，可选）");
-    private final Button loadTables = new Button("读取表");
+    private final ComboBox<String> table = new ComboBox<>(I18n.t("import.target"));
+    private final TextField newTable = new TextField(I18n.t("import.newTable"));
+    private final Button loadTables = new Button(I18n.t("import.readTables"));
 
     private Upload upload;
-    private final ComboBox<String> delimiter = new ComboBox<>("分隔符");
-    private final Checkbox header = new Checkbox("首行是表头");
-    private final TextField nullText = new TextField("NULL 文本");
-    private final ComboBox<String> charset = new ComboBox<>("编码");
-    private final IntegerField batchSize = new IntegerField("每批提交行数");
-    private final ComboBox<String> errorPolicy = new ComboBox<>("错误策略");
+    private final ComboBox<Delimiter> delimiter = new ComboBox<>(I18n.t("import.delimiter"));
+    private final Checkbox header = new Checkbox(I18n.t("import.header"));
+    private final TextField nullText = new TextField(I18n.t("import.nullText"));
+    private final ComboBox<Encoding> charset = new ComboBox<>(I18n.t("import.encoding"));
+    private final IntegerField batchSize = new IntegerField(I18n.t("import.batchSize"));
+    private final ComboBox<ErrorPolicy> errorPolicy = new ComboBox<>(I18n.t("import.errorPolicy"));
 
     private final Grid<List<String>> preview = new Grid<>();
     private final Grid<Mapping> mapping = new Grid<>(Mapping.class, false);
-    private final Button run = new Button("开始导入");
-    private final Button cancel = new Button("取消");
-    private final Span status = new Span("就绪");
+    private final Button run = new Button(I18n.t("import.start"));
+    private final Button cancel = new Button(I18n.t("common.cancel"));
+    private final Span status = new Span(I18n.t("import.status.ready"));
 
     private final AtomicBoolean cancelFlag = new AtomicBoolean(false);
     private Path csvFile;
@@ -84,14 +84,92 @@ public class ImportView extends VerticalLayout {
         }
     }
 
+    /**
+     * 分隔符选项：显示文案走 {@link #labelKey()}，传给导入器的仍是原来的
+     * {@link #wireValue()}（{@code \t} 也保持原来的两字符写法）。
+     */
+    private enum Delimiter {
+        COMMA("import.delimiter.comma", ","),
+        SEMICOLON("import.delimiter.semicolon", ";"),
+        TAB("import.delimiter.tab", "\\t"),
+        PIPE("import.delimiter.pipe", "|");
+
+        private final String labelKey;
+        private final String wireValue;
+
+        Delimiter(String labelKey, String wireValue) {
+            this.labelKey = labelKey;
+            this.wireValue = wireValue;
+        }
+
+        String labelKey() {
+            return labelKey;
+        }
+
+        String wireValue() {
+            return wireValue;
+        }
+    }
+
+    /**
+     * 编码选项：显示文案与 value 分开，value 仍是原来传给导入器的
+     * {@code UTF-8} / {@code GBK}，改语言不会影响解析行为。
+     */
+    private enum Encoding {
+        UTF8("import.encoding.utf8", "UTF-8"),
+        GBK("import.encoding.gbk", "GBK");
+
+        private final String labelKey;
+        private final String wireValue;
+
+        Encoding(String labelKey, String wireValue) {
+            this.labelKey = labelKey;
+            this.wireValue = wireValue;
+        }
+
+        String labelKey() {
+            return labelKey;
+        }
+
+        String wireValue() {
+            return wireValue;
+        }
+    }
+
+    /**
+     * 错误策略选项：原来把中文标签当 value 再和 {@code "遇到错误停止"} 比较；
+     * 现在由 {@link #stopOnError()} 直接给出传给导入器的布尔值，行为不变。
+     */
+    private enum ErrorPolicy {
+        STOP("import.errorPolicy.stop", true),
+        SKIP("import.errorPolicy.skip", false);
+
+        private final String labelKey;
+        private final boolean stopOnError;
+
+        ErrorPolicy(String labelKey, boolean stopOnError) {
+            this.labelKey = labelKey;
+            this.stopOnError = stopOnError;
+        }
+
+        String labelKey() {
+            return labelKey;
+        }
+
+        boolean stopOnError() {
+            return stopOnError;
+        }
+    }
+
     public ImportView() {
         setPadding(true);
         setSpacing(true);
         setHeightFull();
+        I18n.setTitle("nav.import");
 
-        H2 title = new H2("数据导入（CSV → 表）");
+        H2 title = new H2(I18n.t("import.title"));
         if (!ConnectionManager.current().hasInstanceManagement()) {
-            Span guard = new Span("当前连接不可用，请先连接带实例管理口的服务端。");
+            Span guard = new Span(I18n.t("import.guard"));
             guard.setId("import-guard");
             add(title, guard);
             return;
@@ -118,33 +196,38 @@ public class ImportView extends VerticalLayout {
                 csvFile = target;
                 long size = Files.size(target);
                 getUI().ifPresent(ui -> ui.access(() -> {
-                    status.setText("已上传到暂存目录：" + target + "（" + size + " 字节）");
+                    status.setText(I18n.t("import.uploaded", target.toString(), Long.toString(size)));
                     refreshPreview();
                 }));
             } catch (Exception e) {
-                getUI().ifPresent(ui -> ui.access(() -> status.setText("读取上传失败：" + e.getMessage())));
+                getUI().ifPresent(ui -> ui.access(() ->
+                        status.setText(I18n.t("import.uploadFailed", I18n.message(e)))));
             }
         });
         upload.setId("import-upload");
+        UploadTexts.apply(upload);
         upload.setMaxFiles(1);
         upload.setAcceptedFileTypes(".csv", ".txt");
         upload.setMaxFileSize(100 * 1024 * 1024);
 
         delimiter.setId("import-delimiter");
-        delimiter.setItems(",", ";", "\\t", "|");
-        delimiter.setValue(",");
+        delimiter.setItems(Delimiter.values());
+        delimiter.setItemLabelGenerator(option -> I18n.t(option.labelKey()));
+        delimiter.setValue(Delimiter.COMMA);
         header.setId("import-header");
         header.setValue(true);
         nullText.setId("import-null");
         nullText.setWidth("120px");
         charset.setId("import-charset");
-        charset.setItems("UTF-8", "GBK");
-        charset.setValue("UTF-8");
+        charset.setItems(Encoding.values());
+        charset.setItemLabelGenerator(option -> I18n.t(option.labelKey()));
+        charset.setValue(Encoding.UTF8);
         batchSize.setId("import-batch");
         batchSize.setValue(1_000);
         errorPolicy.setId("import-policy");
-        errorPolicy.setItems("遇到错误停止", "跳过错误行继续");
-        errorPolicy.setValue("遇到错误停止");
+        errorPolicy.setItems(ErrorPolicy.values());
+        errorPolicy.setItemLabelGenerator(option -> I18n.t(option.labelKey()));
+        errorPolicy.setValue(ErrorPolicy.STOP);
 
         preview.setId("import-preview");
         preview.setWidthFull();
@@ -153,7 +236,7 @@ public class ImportView extends VerticalLayout {
         mapping.setId("import-mapping");
         mapping.setWidthFull();
         mapping.setHeight("220px");
-        mapping.addColumn(Mapping::getSource).setHeader("CSV 列").setAutoWidth(true);
+        mapping.addColumn(Mapping::getSource).setHeader(I18n.t("import.column.csv")).setAutoWidth(true);
         mapping.addComponentColumn(row -> {
             ComboBox<String> target = new ComboBox<>();
             target.setItems(currentColumns);
@@ -162,7 +245,7 @@ public class ImportView extends VerticalLayout {
             target.setWidthFull();
             target.addValueChangeListener(event -> row.setTarget(event.getValue()));
             return target;
-        }).setHeader("目标列").setFlexGrow(1);
+        }).setHeader(I18n.t("import.column.target")).setFlexGrow(1);
 
         run.setId("import-run");
         run.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
@@ -177,8 +260,8 @@ public class ImportView extends VerticalLayout {
                 new HorizontalLayout(table, newTable),
                 new HorizontalLayout(upload),
                 new HorizontalLayout(delimiter, header, nullText, charset, batchSize, errorPolicy),
-                new H3("预览"), preview,
-                new H3("列映射"), mapping,
+                new H3(I18n.t("import.preview")), preview,
+                new H3(I18n.t("import.mapping")), mapping,
                 new HorizontalLayout(run, cancel, status));
         setFlexGrow(1, mapping);
 
@@ -190,13 +273,16 @@ public class ImportView extends VerticalLayout {
     }
 
     private CsvImporter.Options options() {
-        String text = delimiter.getValue();
-        char separator = "\\t".equals(text) ? '\t' : (text == null || text.isEmpty() ? ',' : text.charAt(0));
-        Charset cs = "GBK".equals(charset.getValue()) ? Charset.forName("GBK") : StandardCharsets.UTF_8;
+        String text = delimiter.getValue() == null
+                ? Delimiter.COMMA.wireValue() : delimiter.getValue().wireValue();
+        char separator = "\\t".equals(text) ? '\t' : (text.isEmpty() ? ',' : text.charAt(0));
+        String encoding = charset.getValue() == null
+                ? Encoding.UTF8.wireValue() : charset.getValue().wireValue();
+        Charset cs = "GBK".equals(encoding) ? Charset.forName("GBK") : StandardCharsets.UTF_8;
         int size = batchSize.getValue() == null ? 1_000 : batchSize.getValue();
         return new CsvImporter.Options(separator, header.getValue(),
                 nullText.getValue() == null ? "" : nullText.getValue(),
-                size, "遇到错误停止".equals(errorPolicy.getValue()), cs,
+                size, errorPolicy.getValue() == ErrorPolicy.STOP, cs,
                 true, 10_000);
     }
 
@@ -209,10 +295,10 @@ public class ImportView extends VerticalLayout {
                 table.setValue(names.get(0));
             }
             if (names.isEmpty()) {
-                status.setText("这个库里没有表");
+                status.setText(I18n.t("import.status.noTables"));
             }
         } catch (Exception e) {
-            status.setText("读表失败：" + e.getMessage());
+            status.setText(I18n.t("import.status.loadTablesFailed", I18n.message(e)));
         }
     }
 
@@ -233,7 +319,7 @@ public class ImportView extends VerticalLayout {
             for (int i = 0; i < width; i++) {
                 int index = i;
                 preview.addColumn(row -> index < row.size() ? row.get(index) : "")
-                        .setHeader("列 " + (i + 1));
+                        .setHeader(I18n.t("import.column.indexed", Integer.toString(i + 1)));
             }
             preview.setItems(rows);
 
@@ -242,14 +328,15 @@ public class ImportView extends VerticalLayout {
             List<Mapping> mappings = new ArrayList<>();
             List<String> firstRow = rows.isEmpty() ? List.of() : rows.get(0);
             for (int i = 0; i < width; i++) {
-                String source = header.getValue() && i < firstRow.size() ? firstRow.get(i) : "列 " + (i + 1);
+                String source = header.getValue() && i < firstRow.size() ? firstRow.get(i)
+                        : I18n.t("import.column.indexed", Integer.toString(i + 1));
                 String target = currentColumns.stream()
                         .filter(name -> name.equalsIgnoreCase(source)).findFirst().orElse(null);
                 mappings.add(new Mapping(source, target));
             }
             mapping.setItems(mappings);
         } catch (Exception e) {
-            status.setText("预览失败：" + e.getMessage());
+            status.setText(I18n.t("import.status.previewFailed", I18n.message(e)));
         }
     }
 
@@ -269,7 +356,7 @@ public class ImportView extends VerticalLayout {
     private void startImport() {
         Path file = resolvedFile();
         if (file == null) {
-            status.setText("先上传一个 CSV 文件");
+            status.setText(I18n.t("import.status.noFile"));
             return;
         }
         String target = table.getValue();
@@ -280,12 +367,12 @@ public class ImportView extends VerticalLayout {
                 target = org.slackerdb.dbdesk.access.sql.SqlDdl.tableNameFromDdl(ddl);
                 table.setValue(target);
             } catch (Exception e) {
-                status.setText("建表失败：" + e.getMessage());
+                status.setText(I18n.t("import.status.createTableFailed", I18n.message(e)));
                 return;
             }
         }
         if (target == null || target.isBlank()) {
-            status.setText("先选目标表（或写 DDL 新建）");
+            status.setText(I18n.t("import.status.noTarget"));
             return;
         }
 
@@ -296,7 +383,7 @@ public class ImportView extends VerticalLayout {
         cancelFlag.set(false);
         run.setEnabled(false);
         cancel.setEnabled(true);
-        status.setText("导入中…");
+        status.setText(I18n.t("import.status.running"));
 
         String tableName = target;
         CsvImporter.Options opts = options();
@@ -306,7 +393,8 @@ public class ImportView extends VerticalLayout {
             try {
                 return CsvImporter.importInto(url, tableName, targets, file, opts, cancelFlag::get);
             } catch (Exception e) {
-                throw new RuntimeException(e.getMessage(), e);
+                // 保留 cause：I18n.message(...) 在 ui.access 里按当前语言渲染 Localized 异常
+                throw new java.util.concurrent.CompletionException(e);
             }
         }).whenComplete((result, error) -> {
             if (ui == null) {
@@ -316,26 +404,20 @@ public class ImportView extends VerticalLayout {
                 run.setEnabled(true);
                 cancel.setEnabled(false);
                 if (error != null) {
-                    status.setText("导入失败：" + errorMessage(error));
+                    status.setText(I18n.t("import.status.failed", I18n.message(error)));
                     return;
                 }
-                StringBuilder text = new StringBuilder(String.format("成功 %d 行，失败 %d 行，耗时 %d ms%s",
-                        result.imported(), result.failed(), result.elapsedMillis(),
-                        result.cancelled() ? "（已取消）" : ""));
+                StringBuilder text = new StringBuilder(I18n.t(
+                        result.cancelled() ? "import.status.doneCancelled" : "import.status.done",
+                        Long.toString(result.imported()), Long.toString(result.failed()),
+                        Long.toString(result.elapsedMillis())));
                 for (CsvImporter.RowError rowError : result.errors()) {
-                    text.append("\n第 ").append(rowError.line()).append(" 行：").append(rowError.message());
+                    text.append('\n').append(I18n.t("import.status.rowError",
+                            Long.toString(rowError.line()), rowError.message()));
                 }
                 status.setText(text.toString());
             });
         });
-    }
-
-    private static String errorMessage(Throwable error) {
-        Throwable root = error;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        return root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage();
     }
 
     /** 测试用。 */

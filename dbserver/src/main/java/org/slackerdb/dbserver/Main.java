@@ -57,7 +57,7 @@ public class Main {
         System.out.println("  --auto_workload_threshold   Set auto workload threshold for memory limit calculation. Default: 0.8.");
         System.out.println("  --max_workers               Set maximum concurrent worker processes.");
         System.out.println("  --threads                   Set maximum thread count for server computation layer.");
-        System.out.println("  --data                      Specify database name. Default: none");
+        System.out.println("  --data                      Specify database name. Default: none (the built-in memory database, named memory)");
         System.out.println("  --data_encrypt              Enable data encryption. Default: false");
         System.out.println("  --data_dir                  Specify database file directory. Default: :memory:");
         System.out.println("  --temp_dir                  Specify temporary file directory. Default: same with data_dir(disk mode), OS-dependent(memory mode).");
@@ -331,7 +331,7 @@ public class Main {
 
             // 初始化日志服务
             logger = AppLogger.createLogger(
-                    serverConfiguration.getData(),
+                    serverConfiguration.getInstanceName(),
                     serverConfiguration.getLog_level().levelStr,
                     serverConfiguration.getLog());
 

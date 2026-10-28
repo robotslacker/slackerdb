@@ -58,6 +58,15 @@ public class CollectMojo extends AbstractMojo {
     @Parameter(property = "offline.zip", defaultValue = "true")
     private boolean zip;
 
+    /**
+     * Also package the jars of dependency versions that lost Maven's nearest-wins mediation.
+     * Maven reads their POMs while collecting and never resolves their jars, so they are not
+     * required for this reactor; shipping them keeps the repository usable when a module POM is
+     * edited offline or a different resolution order selects another version.
+     */
+    @Parameter(property = "offline.candidate.jars", defaultValue = "true")
+    private boolean candidateJars;
+
     @Parameter(property = "offline.platforms",
             defaultValue = "windows-x86_64,linux-amd64,linux-arm64")
     private String platformIds;
@@ -109,7 +118,7 @@ public class CollectMojo extends AbstractMojo {
             };
 
             MavenCollector maven = new MavenCollector(session, repositorySystem,
-                    dependenciesResolver, pluginManager, log, platforms);
+                    dependenciesResolver, pluginManager, log, platforms, candidateJars);
             MavenCollector.MavenCollectionResult mavenResult =
                     maven.collect(staging.resolve("javarepo"));
 

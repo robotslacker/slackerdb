@@ -66,6 +66,7 @@ class DatasetsViewTest {
                 consoleErrors.add(message.text());
             }
         });
+        UiTestSupport.useChinese(page);
         page.navigate(BASE + "/datasets");
     }
 

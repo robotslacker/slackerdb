@@ -60,6 +60,7 @@ class ConsoleFeatureSmokeTest {
     @Test
     void instancesBackupAndLogsRender() {
         connect();
+        UiTestSupport.useChinese(page);
         page.navigate(BASE + "/instances");
         page.waitForSelector("#session-grid");
         page.waitForSelector("#parameters-grid");

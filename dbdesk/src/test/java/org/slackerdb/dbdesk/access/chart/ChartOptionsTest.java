@@ -54,6 +54,6 @@ class ChartOptionsTest {
     void errorProducesTitleOnly() {
         Map<String, Object> option = ChartOptions.toEcharts(chart("line", "month", List.of("amount")),
                 ChartData.Result.error("数据集中没有列：nope"));
-        assertTrue(String.valueOf(option.get("title")).contains("图表数据加载失败"));
+        assertTrue(String.valueOf(option.get("title")).contains("chart.error.load"), "标题应带图表加载失败的 key：" + option.get("title"));
     }
 }

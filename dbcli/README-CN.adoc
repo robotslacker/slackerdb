@@ -24,7 +24,7 @@
 ----
 jlib/slackerdb-dbcli-<版本>-standalone.jar   主程序（已含全部依赖）
 bin/dbcli.bat | bin/dbcli.sh                 启动脚本（Windows | Linux/macOS）
-doc/dbcli/README*.adoc | README*.pdf         本手册（中英双语）
+slackerdb-docs_<版本>.zip 中的 dbcli/README*.pdf   本手册（中英双语）
 ----
 
 常用启动方式：

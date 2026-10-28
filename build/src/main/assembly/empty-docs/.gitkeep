@@ -1,2 +1,0 @@
-# 默认构建不生成 PDF；此目录用于让 assembly 的 docs fileSet 在默认构建时为空。
-# 使用 -Ppdf 时，docs.main.dir / docs.dbcli.dir 会改指向 build/target/generated-docs*。

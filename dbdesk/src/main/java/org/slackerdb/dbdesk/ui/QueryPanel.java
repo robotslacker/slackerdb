@@ -27,6 +27,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
@@ -42,23 +43,31 @@ import java.util.concurrent.CompletableFuture;
  *
  * <p><b>显示策略</b>：多语句只渲染**最后一条有结果集的语句**（前面的结果在状态行里报条数）。
  * 这是 M1 的取舍 —— 结果集分页签属于 P1 后续，不在这里堆。</p>
+ *
+ * <p><b>状态行</b>由若干片段拼成（{@code sql.segment.*}），不再对已经渲染的文本做
+ * "先追加后缀再 replace"——那种写法一旦换语言就失效。</p>
  */
 public class QueryPanel extends VerticalLayout {
 
     private static final int MAX_ROWS = 1_000;
 
+    /** 懒加载总行数的三种状态：没查 / 正在查 / 已知 / 查不到。 */
+    private enum TotalState {
+        NONE, COUNTING, KNOWN, UNKNOWN
+    }
+
     private final SqlEditor editor;
-    private final Button run = new Button("执行");
-    private final Button cancel = new Button("取消");
-    private final Button exportCsv = new Button("导出 CSV");
-    private final Button exportCancel = new Button("取消导出");
-    private final Button historyButton = new Button("历史");
-    private final Button saveScript = new Button("保存脚本");
+    private final Button run = new Button(I18n.t("sql.run"));
+    private final Button cancel = new Button(I18n.t("common.cancel"));
+    private final Button exportCsv = new Button(I18n.t("sql.exportCsv"));
+    private final Button exportCancel = new Button(I18n.t("sql.exportCancel"));
+    private final Button historyButton = new Button(I18n.t("sql.history"));
+    private final Button saveScript = new Button(I18n.t("sql.saveScript"));
     private final Upload loadScript;
     private final Span connectionBanner = new Span();
-    private final Button reconnect = new Button("重连");
-    private final Span status = new Span("就绪");
-    private final Span exportStatus = new Span("导出：未执行");
+    private final Button reconnect = new Button(I18n.t("sql.reconnect"));
+    private final Span status = new Span(I18n.t("sql.status.ready"));
+    private final Span exportStatus = new Span(I18n.t("sql.export.status.idle"));
     private final Grid<List<Object>> grid = new Grid<>();
 
     private final String jdbcUrl;
@@ -75,6 +84,10 @@ public class QueryPanel extends VerticalLayout {
     private String lastQuerySql;
     /** 最近一次执行的脚本原文（把错误里的"语句内行号"换算成编辑器绝对行号要用）。 */
     private String currentScript = "";
+    /** 最近一次执行结果，状态行按当前语言重新渲染。 */
+    private StatementResult lastResult;
+    private TotalState totalState = TotalState.NONE;
+    private long totalRows;
     private final SqlHistoryStore history = sessionHistory();
 
     private static SqlHistoryStore sessionHistory() {
@@ -127,7 +140,7 @@ public class QueryPanel extends VerticalLayout {
         exportCancel.setEnabled(false);
         exportCancel.addClickListener(event -> {
             exportCancelled.set(true);
-            exportStatus.setText("导出：正在取消…");
+            exportStatus.setText(I18n.t("sql.export.status.cancelling"));
         });
 
         exportStatus.setId("export-status" + idSuffix);
@@ -143,18 +156,19 @@ public class QueryPanel extends VerticalLayout {
         loadScript = new Upload(event -> {
             try (var input = event.getInputStream()) {
                 editor.setValue(new String(input.readAllBytes(), StandardCharsets.UTF_8));
-                status.setText("已加载脚本：" + event.getFileName());
+                status.setText(I18n.t("sql.script.loaded", event.getFileName()));
             } catch (IOException e) {
-                status.setText("加载脚本失败：" + e.getMessage());
+                status.setText(I18n.t("sql.script.loadFailed", I18n.message(e)));
             }
         });
         loadScript.setId("load-script" + idSuffix);
         loadScript.setMaxFiles(1);
         loadScript.setAcceptedFileTypes(".sql", ".txt");
-        Button loadScriptButton = new Button("加载脚本");
+        Button loadScriptButton = new Button(I18n.t("sql.loadScript"));
         loadScriptButton.setId("load-script-button" + idSuffix);
         loadScriptButton.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
         loadScript.setUploadButton(loadScriptButton);
+        UploadTexts.apply(loadScript);
 
         grid.setId("result-grid" + idSuffix);
         grid.setSizeFull();
@@ -183,8 +197,7 @@ public class QueryPanel extends VerticalLayout {
 
     /** SQLState 08xxx：连接断了/被杀了。此时提示"重连"，而不是让用户怀疑 SQL。 */
     private void showConnectionFailure(StatementResult result) {
-        connectionBanner.setText(String.format("连接已断开（SQLState %s）：请点「重连」后重新执行",
-                result.errorState()));
+        connectionBanner.setText(I18n.t("sql.status.connectionLost", result.errorState()));
         connectionBanner.setVisible(true);
         connectionBanner.getParent().ifPresent(parent -> parent.setVisible(true));
     }
@@ -205,7 +218,7 @@ public class QueryPanel extends VerticalLayout {
             pageSource = null;
         }
         hideConnectionFailure();
-        status.setText("已重建连接，请重新执行");
+        status.setText(I18n.t("sql.status.reconnected"));
     }
 
     /**
@@ -220,13 +233,13 @@ public class QueryPanel extends VerticalLayout {
 
     private void startExecution(String script) {
         if (script == null || script.isBlank()) {
-            status.setText("请先选中要执行的语句");
+            status.setText(I18n.t("sql.status.empty"));
             return;
         }
         currentScript = script;
         run.setEnabled(false);
         cancel.setEnabled(true);
-        status.setText("执行中…");
+        status.setText(I18n.t("sql.status.running"));
 
         UI ui = getUI().orElse(null);
         CompletableFuture
@@ -244,11 +257,11 @@ public class QueryPanel extends VerticalLayout {
         cancel.setEnabled(false);
 
         if (error != null) {
-            status.setText("执行失败：" + error.getMessage());
+            status.setText(I18n.t("sql.status.executeFailed", I18n.message(error)));
             return;
         }
         if (results == null || results.isEmpty()) {
-            status.setText("没有可执行的语句");
+            status.setText(I18n.t("sql.status.noStatements"));
             return;
         }
 
@@ -257,30 +270,29 @@ public class QueryPanel extends VerticalLayout {
                 .filter(StatementResult::query)
                 .reduce((first, second) -> second)
                 .orElse(last);
+        lastResult = last;
+        lastResultCount = results.size();
 
         if (last.failed()) {
+            totalState = TotalState.NONE;
             if (last.connectionFailure()) {
                 showConnectionFailure(last);
             } else {
                 hideConnectionFailure();
             }
             SqlError parsed = SqlError.parse(last.error());
-            String where = parsed.hasPosition()
-                    ? String.format("（第 %d 行第 %d 列）", parsed.line(), parsed.column())
-                    : "";
-            status.setText(String.format("%d 条语句，第 %d 条失败%s：%s",
-                    results.size(), results.size(), where, parsed.summary()));
             if (parsed.hasPosition()) {
+                status.setText(I18n.t("sql.status.failed.withPosition",
+                        results.size(), results.size(), parsed.line(), parsed.column(), parsed.summary()));
                 // 错误文案里的 LINE 是"这条语句内部"的行号，换算成编辑器里的绝对行
                 editor.setCursor(lineOffset(currentScript, last.sql()) + parsed.line(), parsed.column());
+            } else {
+                status.setText(I18n.t("sql.status.failed",
+                        results.size(), results.size(), parsed.summary()));
             }
         } else {
-            status.setText(String.format("%d 条语句 · 最后一条 %s · %d 行 · %d ms%s",
-                    results.size(),
-                    last.query() ? "查询" : "更新 " + last.updateCount() + " 行",
-                    last.rowCount(),
-                    last.elapsedMillis(),
-                    last.truncated() ? " · 有单元格被截断(>1MB)" : ""));
+            totalState = TotalState.NONE;
+            renderSuccessStatus();
         }
 
         renderGrid(rendered);
@@ -290,18 +302,48 @@ public class QueryPanel extends VerticalLayout {
         }
     }
 
+    /** 成功状态行：语句数、最后一条是查询还是更新、行数、耗时、截断、总行数状态。 */
+    private void renderSuccessStatus() {
+        StatementResult last = lastResult;
+        if (last == null) {
+            return;
+        }
+        List<String> parts = new ArrayList<>();
+        parts.add(I18n.t("sql.segment.statements", lastResultCount));
+        parts.add(last.query()
+                ? I18n.t("sql.segment.lastQuery")
+                : I18n.t("sql.segment.lastUpdate", last.updateCount()));
+        parts.add(I18n.t("sql.segment.rows", last.rowCount()));
+        parts.add(I18n.t("sql.segment.elapsed", last.elapsedMillis()));
+        if (last.truncated()) {
+            parts.add(I18n.t("sql.segment.truncated"));
+        }
+        switch (totalState) {
+            case COUNTING -> parts.add(I18n.t("sql.segment.counting"));
+            case KNOWN -> parts.add(I18n.t("sql.segment.totalKnown", totalRows));
+            case UNKNOWN -> parts.add(I18n.t("sql.segment.totalUnknown", MAX_ROWS));
+            case NONE -> {
+                // 不做懒加载时没有总行数片段
+            }
+        }
+        status.setText(String.join(I18n.t("common.segmentJoin"), parts));
+    }
+
+    /** 最近一次执行的语句条数（状态行用）。 */
+    private int lastResultCount = 1;
+
     private void renderGrid(StatementResult result) {
         grid.removeAllColumns();
         if (!result.query() || result.columns().isEmpty()) {
             lastQuerySql = null;
             exportCsv.setEnabled(false);
-            exportStatus.setText("导出：当前没有查询结果");
+            exportStatus.setText(I18n.t("sql.export.status.noResult"));
             grid.setItems(List.of());
             return;
         }
         lastQuerySql = result.sql();
         exportCsv.setEnabled(true);
-        exportStatus.setText("导出：可导出全部行（不含界面截断）");
+        exportStatus.setText(I18n.t("sql.export.status.ready"));
         for (int i = 0; i < result.columns().size(); i++) {
             int index = i;
             String type = i < result.columnTypes().size() ? result.columnTypes().get(i) : null;
@@ -328,7 +370,9 @@ public class QueryPanel extends VerticalLayout {
      */
     private void attachLazyLoading(String sql) {
         long sequence = ++querySequence;
-        status.setText(status.getText() + " · 统计总行数…");
+        totalState = TotalState.COUNTING;
+        totalRows = 0;
+        renderSuccessStatus();
 
         UI ui = getUI().orElse(null);
         CompletableFuture
@@ -348,22 +392,24 @@ public class QueryPanel extends VerticalLayout {
                             return; // 用户已经跑了新查询，这次统计作废
                         }
                         if (error != null || total == null || total <= 0) {
-                            status.setText(status.getText().replace(" · 统计总行数…", " · 总行数未知（仅显示前 "
-                                    + MAX_ROWS + " 行，可导出全部）"));
+                            totalState = TotalState.UNKNOWN;
+                            renderSuccessStatus();
                             return;
                         }
+                        totalRows = total;
+                        totalState = TotalState.KNOWN;
                         grid.setItems(DataProvider.fromCallbacks(
                                 query -> {
                                     try {
                                         return pageSource().fetch(sql, query.getOffset(), query.getLimit())
                                                 .rows().stream();
                                     } catch (SQLException e) {
-                                        throw new IllegalStateException("翻页取数失败：" + e.getMessage(), e);
+                                        throw new IllegalStateException(
+                                                I18n.t("sql.status.pageFailed", I18n.message(e)), e);
                                     }
                                 },
                                 query -> (int) Math.min(total, Integer.MAX_VALUE)));
-                        status.setText(status.getText()
-                                .replace(" · 统计总行数…", String.format(" · 共 %,d 行（可滚动加载）", total)));
+                        renderSuccessStatus();
                     });
                 });
     }
@@ -375,26 +421,26 @@ public class QueryPanel extends VerticalLayout {
 
     private void openCsvExportDialog(String sql) {
         if (sql == null || sql.isBlank()) {
-            exportStatus.setText("导出：先执行一条查询");
+            exportStatus.setText(I18n.t("sql.export.status.noQuery"));
             return;
         }
-        openPathDialog("导出 CSV", defaultPath("exports", "query", "csv"),
+        openPathDialog(I18n.t("sql.export.title"), defaultPath("exports", "query", "csv"),
                 path -> exportCsvTo(path, sql));
     }
 
     private void openSaveScriptDialog(String sql) {
         if (sql == null || sql.isBlank()) {
-            status.setText("当前编辑器没有可保存的脚本");
+            status.setText(I18n.t("sql.saveScript.empty"));
             return;
         }
-        openPathDialog("保存脚本", defaultPath("scripts", "query", "sql"), path -> {
+        openPathDialog(I18n.t("sql.saveScript.title"), defaultPath("scripts", "query", "sql"), path -> {
             try {
                 Path parent = path.toAbsolutePath().getParent();
                 if (parent != null) {
                     Files.createDirectories(parent);
                 }
                 Files.writeString(path, sql, StandardCharsets.UTF_8);
-                status.setText("已保存脚本：" + path);
+                status.setText(I18n.t("sql.saveScript.saved", path));
             } catch (IOException e) {
                 throw new IllegalStateException(e.getMessage(), e);
             }
@@ -405,35 +451,35 @@ public class QueryPanel extends VerticalLayout {
     private void openPathDialog(String title, String defaultPath, java.util.function.Consumer<Path> action) {
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle(title);
-        TextField location = new TextField("保存位置");
+        TextField location = new TextField(I18n.t("sql.savePath.label"));
         location.setId("save-path" + idSuffix);
         location.setWidth("620px");
         location.setValue(defaultPath);
         Span error = new Span();
         error.getStyle().set("color", "var(--lumo-error-text-color)");
-        Button confirm = new Button("保存", event -> {
+        Button confirm = new Button(I18n.t("common.save"), event -> {
             String text = location.getValue();
             if (text == null || text.isBlank()) {
-                error.setText("请填写保存位置");
+                error.setText(I18n.t("sql.savePath.required"));
                 return;
             }
             Path path;
             try {
                 path = Path.of(text.strip());
             } catch (RuntimeException e) {
-                error.setText("保存位置不合法：" + e.getMessage());
+                error.setText(I18n.t("sql.savePath.invalid", I18n.message(e)));
                 return;
             }
             try {
                 action.accept(path);
                 dialog.close();
             } catch (Exception e) {
-                error.setText("保存失败：" + e.getMessage());
+                error.setText(I18n.t("sql.savePath.failed", I18n.message(e)));
             }
         });
         confirm.setId("save-path-confirm" + idSuffix);
         confirm.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-        Button cancelButton = new Button("取消", event -> dialog.close());
+        Button cancelButton = new Button(I18n.t("common.cancel"), event -> dialog.close());
         cancelButton.setId("save-path-cancel" + idSuffix);
         dialog.add(new VerticalLayout(location, error, new HorizontalLayout(confirm, cancelButton)));
         dialog.open();
@@ -451,7 +497,7 @@ public class QueryPanel extends VerticalLayout {
         exportCancelled.set(false);
         exportCsv.setEnabled(false);
         exportCancel.setEnabled(true);
-        exportStatus.setText("导出中…（全部行）");
+        exportStatus.setText(I18n.t("sql.export.status.runningAll"));
 
         UI ui = getUI().orElse(null);
         long[] lastReported = {0};
@@ -469,7 +515,7 @@ public class QueryPanel extends VerticalLayout {
                                     if (ui != null && rows - lastReported[0] >= 50_000) {
                                         lastReported[0] = rows;
                                         ui.access(() -> exportStatus.setText(
-                                                String.format("导出中… 已写 %,d 行", rows)));
+                                                I18n.t("sql.export.status.progress", rows)));
                                     }
                                 });
                     } catch (Exception e) {
@@ -486,13 +532,13 @@ public class QueryPanel extends VerticalLayout {
                         if (error != null) {
                             Throwable root = rootCause(error);
                             if (root instanceof ResultExporter.ExportCancelledException) {
-                                exportStatus.setText(root.getMessage());
+                                exportStatus.setText(I18n.message(root));
                             } else {
-                                exportStatus.setText("导出失败：" + rootMessage(error));
+                                exportStatus.setText(I18n.t("sql.export.status.failed", I18n.message(error)));
                             }
                             return;
                         }
-                        exportStatus.setText(String.format("已导出 %,d 行到 %s（%,d 字节 / %d ms）",
+                        exportStatus.setText(I18n.t("sql.export.status.done",
                                 result.rows(), target, result.bytes(), result.elapsedMillis()));
                     });
                 });
@@ -528,7 +574,7 @@ public class QueryPanel extends VerticalLayout {
     private void openHistory() {
         List<SqlHistoryStore.Entry> entries = history.recent(20);
         Dialog dialog = new Dialog();
-        dialog.setHeaderTitle("SQL 历史（当前会话，最近 " + entries.size() + " 条）");
+        dialog.setHeaderTitle(I18n.t("sql.history.title", entries.size()));
         dialog.setWidth("720px");
 
         ListBox<SqlHistoryStore.Entry> list = new ListBox<>();
@@ -541,7 +587,7 @@ public class QueryPanel extends VerticalLayout {
             list.setValue(entries.get(0));
         }
 
-        Button insert = new Button("插入到编辑器", event -> {
+        Button insert = new Button(I18n.t("sql.history.insert"), event -> {
             SqlHistoryStore.Entry selected = list.getValue();
             if (selected != null) {
                 editor.setValue(selected.sql());
@@ -550,23 +596,15 @@ public class QueryPanel extends VerticalLayout {
         });
         insert.setId("history-insert" + idSuffix);
         insert.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-        Button close = new Button("关闭", event -> dialog.close());
+        Button close = new Button(I18n.t("common.close"), event -> dialog.close());
 
         dialog.add(new VerticalLayout(list, new HorizontalLayout(insert, close)));
         dialog.open();
     }
 
-    private static String rootMessage(Throwable error) {
-        Throwable root = error;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        return root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage();
-    }
-
     private void cancelExecution() {
         boolean cancelled = executor != null && executor.cancel();
-        status.setText(cancelled ? "已发出取消…" : "没有正在执行的语句");
+        status.setText(cancelled ? I18n.t("sql.status.cancelRequested") : I18n.t("sql.status.nothingRunning"));
     }
 
     private JdbcSqlExecutor executor() {

@@ -3,7 +3,7 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <artifactId>slackerdb-build</artifactId>
+    <artifactId>slackerdb-docs</artifactId>
     <packaging>pom</packaging>
 
     <parent>
@@ -13,12 +13,16 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
+    <!--
+        文档模块：把仓库根的 README 与 dbcli 用户手册渲染成 PDF，再打成一个文档包
+        dist/slackerdb-docs_<version>.zip。发行包（dist/src）不在这里，在 release 模块。
+
+        - 默认不生成 PDF，也不产出文档包；-Ppdf 才打开 asciidoctor 并打文档包；
+        - 因为装配不在本模块，`mvn -Ppdf -pl docs package` 只重生成文档，
+          不会用别的模块的旧 target 产物重打发行包。
+    -->
     <properties>
-        <!-- 默认不生成 PDF；-Ppdf 才打开 asciidoctor -->
         <asciidoctor.skip>true</asciidoctor.skip>
-        <!-- 默认指向空目录，发布包因此不带文档；-Ppdf 时指向生成目录 -->
-        <docs.main.dir>${project.basedir}/src/main/assembly/empty-docs</docs.main.dir>
-        <docs.dbcli.dir>${project.basedir}/src/main/assembly/empty-docs</docs.dbcli.dir>
     </properties>
 
     <build>
@@ -39,21 +43,6 @@
 
                 或者直接用当前最低要求的 JDK 21（默认字符集已是 UTF-8）。详见 README 的“从源码构建”。
             -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-clean-plugin</artifactId>
-                <configuration>
-                    <filesets>
-                        <fileset>
-                            <directory>${project.basedir}/../dist</directory>
-                            <includes>
-                                <include>**/*</include>
-                            </includes>
-                            <followSymlinks>false</followSymlinks>
-                        </fileset>
-                    </filesets>
-                </configuration>
-            </plugin>
             <plugin>
                 <groupId>org.asciidoctor</groupId>
                 <artifactId>asciidoctor-maven-plugin</artifactId>
@@ -139,7 +128,7 @@
                         **必须给独立输出目录**：asciidoctor-maven-plugin 的输出名取自
                         sourceDocumentName 的**文件名**（README.adoc → README.pdf），不保留子目录，
                         若沿用顶层 generated-docs 会把工程主手册的 README.pdf/README-CN.pdf 覆盖掉
-                        （实测发生过）。产物由 deployment.xml 收进发行包的 doc/ 目录。
+                        （实测发生过）。产物由 docs.xml 放到文档包的 dbcli/ 目录。
                         中文同样要换 CJK 主题。
                     -->
                     <execution>
@@ -167,60 +156,7 @@
                             <outputDirectory>${project.build.directory}/generated-docs-dbcli</outputDirectory>
                             <attributes>
                                 <icons>font</icons>
-                                <pdf-theme>${project.basedir}/src/main/resources/pdf/README-CN-theme.yml</pdf-theme>
                             </attributes>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <!--
-                发行物一共两个，平级落在 dist/ 下（clean 插件已把整个 dist 清空）：
-
-                  slackerdb-dist_<version>.zip  发布包：standalone jar + conf + bin + 插件，拿来就跑
-                  slackerdb-src_<version>.zip   源码包：完整多模块 Maven 工程，解开即可编译
-
-                为什么源码包是单独一个描述符而不是往发布包里塞各模块的 -sources.jar：
-                -sources.jar 只是 IDE 挂源码用的编译单元切片，既拼不成可编译的工程
-                （缺根 pom、缺模块间相对路径、缺 conf/bin），又让使用者多解一层压缩包。
-                源码包按“浅克隆”的形态组织，解压后 `mvn clean package` 直接可用。
-            -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-assembly-plugin</artifactId>
-                <inherited>false</inherited>
-                <configuration>
-                    <appendAssemblyId>false</appendAssemblyId>
-                    <outputDirectory>${project.basedir}/../dist</outputDirectory>
-                </configuration>
-                <executions>
-                    <!-- 源码包：先打包，便于发布包构建失败时也能拿到源码 -->
-                    <execution>
-                        <id>make-source-assembly</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                        <configuration>
-                            <descriptors>
-                                <descriptor>src/main/assembly/source.xml</descriptor>
-                            </descriptors>
-                            <finalName>slackerdb-src_${project.version}</finalName>
-                            <attach>false</attach>
-                        </configuration>
-                    </execution>
-                    <!-- 发布包 -->
-                    <execution>
-                        <id>make-assembly</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                        <configuration>
-                            <descriptors>
-                                <descriptor>src/main/assembly/deployment.xml</descriptor>
-                            </descriptors>
-                            <finalName>slackerdb-dist_${project.version}</finalName>
-                            <attach>false</attach>
                         </configuration>
                     </execution>
                 </executions>
@@ -230,10 +166,10 @@
 
     <!--
         PDF profile：
-          mvn -Ppdf clean package
+          mvn -Ppdf package                       完整构建：dist 包 + src 包 + docs 包
+          mvn -Ppdf -pl docs package              只重生成文档：只产出 docs 包
         - 打开 asciidoctor，生成 README / README-CN 与 dbcli 中英文 PDF；
-        - 把 PDF 复制到 dist/ 根目录（dbcli 放 dist/doc/dbcli/）；
-        - 发布包描述符此时从 generated-docs 收取文档，默认构建则从空目录收取。
+        - 把四个 PDF 收进 dist/slackerdb-docs_<version>.zip（README*.pdf 在根，dbcli 手册在 dbcli/）。
     -->
     <profiles>
         <profile>
@@ -247,34 +183,28 @@
                 <plugins>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-resources-plugin</artifactId>
+                        <artifactId>maven-assembly-plugin</artifactId>
+                        <configuration>
+                            <appendAssemblyId>false</appendAssemblyId>
+                            <outputDirectory>${project.basedir}/../dist</outputDirectory>
+                        </configuration>
                         <executions>
+                            <!--
+                                文档包。只在 pdf profile 里装配：没有生成 PDF 的构建不该往
+                                dist/ 里丢一个空 zip（也避免默认构建的产物清单里多出一个文件）。
+                            -->
                             <execution>
-                                <id>copy-pdf-to-dist</id>
+                                <id>make-docs-assembly</id>
                                 <phase>package</phase>
                                 <goals>
-                                    <goal>copy-resources</goal>
+                                    <goal>single</goal>
                                 </goals>
                                 <configuration>
-                                    <outputDirectory>${project.basedir}/../dist</outputDirectory>
-                                    <overwrite>true</overwrite>
-                                    <resources>
-                                        <resource>
-                                            <directory>${project.build.directory}/generated-docs</directory>
-                                            <includes>
-                                                <include>README.pdf</include>
-                                                <include>README-CN.pdf</include>
-                                            </includes>
-                                        </resource>
-                                        <resource>
-                                            <directory>${project.build.directory}/generated-docs-dbcli</directory>
-                                            <targetPath>doc/dbcli</targetPath>
-                                            <includes>
-                                                <include>README.pdf</include>
-                                                <include>README-CN.pdf</include>
-                                            </includes>
-                                        </resource>
-                                    </resources>
+                                    <descriptors>
+                                        <descriptor>src/main/assembly/docs.xml</descriptor>
+                                    </descriptors>
+                                    <finalName>slackerdb-docs_${project.version}</finalName>
+                                    <attach>false</attach>
                                 </configuration>
                             </execution>
                         </executions>

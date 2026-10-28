@@ -15,14 +15,16 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * DbDesk 连接历史存储。
+ * DbDesk 连接历史与界面偏好的存储。
  *
  * <p>路径保持 {@code ~/.slackerdb/profiles.json}。v1 里的 {@code managementPath} 字段
- * 已废弃：读取时直接忽略，由连接探测按“实例 / dbproxy”自动推导管理 URL。</p>
+ * 已废弃：读取时直接忽略，由连接探测按“实例 / dbproxy”自动推导管理 URL。
+ * v3 起多一个顶层 {@code language} 字段（{@code en} / {@code zh-CN}），记录界面语言；
+ * 缺省即英文，老文件不需要迁移。</p>
  */
 public final class DbDeskProfileStore {
 
-    private static final int VERSION = 2;
+    private static final int VERSION = 3;
 
     private final Path file;
     private final ObjectMapper json = new ObjectMapper();
@@ -71,10 +73,21 @@ public final class DbDeskProfileStore {
                     }
                 }
             }
-            return new Snapshot(lastAlias, List.copyOf(profiles));
+            return new Snapshot(lastAlias, List.copyOf(profiles), text(root, "language"));
         } catch (IOException | RuntimeException e) {
             return new Snapshot(null, List.of());
         }
+    }
+
+    /** 已保存的界面语言代码；没保存过时返回 {@code null}（调用方按英文处理）。 */
+    public String language() {
+        return load().language();
+    }
+
+    /** 记录界面语言；不动连接历史。 */
+    public void saveLanguage(String language) throws IOException {
+        Snapshot snapshot = load();
+        save(new Snapshot(snapshot.lastAlias(), snapshot.profiles(), language));
     }
 
     /**
@@ -90,7 +103,7 @@ public final class DbDeskProfileStore {
                 profiles.add(existing);
             }
         }
-        save(new Snapshot(profile.alias(), profiles));
+        save(new Snapshot(profile.alias(), profiles, snapshot.language()));
     }
 
     public void save(Snapshot snapshot) throws IOException {
@@ -101,6 +114,9 @@ public final class DbDeskProfileStore {
 
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("version", VERSION);
+        if (snapshot.language() != null && !snapshot.language().isBlank()) {
+            root.put("language", snapshot.language());
+        }
         if (snapshot.lastAlias() != null && !snapshot.lastAlias().isBlank()) {
             root.put("lastAlias", snapshot.lastAlias());
         }
@@ -137,9 +153,14 @@ public final class DbDeskProfileStore {
     }
 
     /** 一次读取的结果。 */
-    public record Snapshot(String lastAlias, List<DbDeskProfile> profiles) {
+    public record Snapshot(String lastAlias, List<DbDeskProfile> profiles, String language) {
         public Snapshot {
             profiles = profiles == null ? List.of() : List.copyOf(profiles);
+        }
+
+        /** 兼容旧调用：只关心连接历史时语言为空，保存时按英文处理。 */
+        public Snapshot(String lastAlias, List<DbDeskProfile> profiles) {
+            this(lastAlias, profiles, null);
         }
     }
 }

@@ -34,13 +34,13 @@ class PortalLifecycleTest {
     }
 
     @Test
-    @DisplayName("状态文案：有效（长期）/ 已撤销")
+    @DisplayName("状态文案：有效（长期）/ 已撤销（key 由界面层翻译）")
     void statusText() {
         Instant now = Instant.parse("2026-10-23T00:00:00Z");
-        assertEquals("有效（长期）", portal(null, false).statusAt(now));
-        assertEquals("有效（长期）", portal("2026-12-31T23:59:59Z", false).statusAt(now));
-        assertEquals("有效（长期）", portal("2026-01-01T00:00:00Z", false).statusAt(now));
-        assertEquals("已撤销", portal("2026-12-31T23:59:59Z", true).statusAt(now));
+        assertEquals("portal.status.valid", portal(null, false).statusAt(now).messageKey());
+        assertEquals("portal.status.valid", portal("2026-12-31T23:59:59Z", false).statusAt(now).messageKey());
+        assertEquals("portal.status.valid", portal("2026-01-01T00:00:00Z", false).statusAt(now).messageKey());
+        assertEquals("portal.status.revoked", portal("2026-12-31T23:59:59Z", true).statusAt(now).messageKey());
     }
 
     @Test

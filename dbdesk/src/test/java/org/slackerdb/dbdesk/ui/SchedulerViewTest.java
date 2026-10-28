@@ -70,6 +70,7 @@ class SchedulerViewTest {
                 consoleErrors.add(text);
             }
         });
+        UiTestSupport.useChinese(page);
         page.navigate(URL);
     }
 
