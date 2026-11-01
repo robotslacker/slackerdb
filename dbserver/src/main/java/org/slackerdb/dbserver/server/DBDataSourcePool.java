@@ -300,6 +300,24 @@ public class DBDataSourcePool {
                     this.poolName);
         }
 
+        // 清掉借用方可能设置的会话级执行超时（API 按查询覆盖、客户端 SET 等），
+        // 让下一位借用者回到服务器 GLOBAL 设置。没有覆盖时 RESET 是 no-op。
+        //
+        // 必须在 rollback 之后：会话处于"事务已中止"状态时，RESET 自己也会失败。
+        //
+        // 只对真实的 DuckDB 连接执行：max_execution_time 是 DuckDB 的设置；池允许注入
+        // 其它 Driver（测试里的假连接），对它们发这条 SQL 没有意义，而且假连接可能故意
+        // 阻塞语句创建/执行，会让归还流程挂住。
+        if (connection instanceof org.duckdb.DuckDBConnection) {
+            try (java.sql.Statement resetStatement = connection.createStatement()) {
+                resetStatement.execute("RESET max_execution_time");
+            } catch (SQLException sqlException) {
+                logger.warn("[SERVER][CONN POOL  ]: Pool [{}] Resetting max_execution_time before reuse failed ({}). "
+                        + "Connection will be retired.", this.poolName, sqlException.getMessage());
+                return false;
+            }
+        }
+
         try {
             boolean defaultAutoCommit = this.dbDataSourcePoolConfig.getAutoCommit();
             if (connection.getAutoCommit() != defaultAutoCommit) {

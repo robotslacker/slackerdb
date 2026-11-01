@@ -27,6 +27,7 @@ import java.util.*;
 import java.util.Date;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -40,6 +41,10 @@ public class APIService {
         public String sql;
         public String description;
         public Long snapshotLimit = 0L;
+        /**
+         * 单条查询的最长执行时间（毫秒）；{@code null} = 未设置、继承服务器 GLOBAL，{@code 0} = 该服务显式不限制。
+         */
+        public Long maxExecutionTime = null;
         public Map<String, String> parameter = new ConcurrentHashMap<>();
     }
     private final Logger logger;
@@ -56,12 +61,182 @@ public class APIService {
     /** 无 category 的服务在按 category 落盘时使用的文件名。 */
     private static final String UNCATEGORIZED_CATEGORY = "uncategorized";
 
+    /**
+     * 等待同一条缓存刷新结束的上限（毫秒）。
+     *
+     * <p>缓存过期后由 leader 去刷新，其他请求在这里等待。数据库刷新通常很快，30 秒只是
+     * "绝不无限挂住请求线程"的兜底：超时后等待者降级为自己直接查询，宁可多打一次库，
+     * 也不能让请求永久卡住。</p>
+     */
+    private static final long CACHE_REFRESH_WAIT_TIMEOUT_MS = 30_000L;
+
+    /**
+     * 一次数据库执行的结果。
+     *
+     * @param data         结果集（含 columnNames/columnTypes/dataset/timestamp/affectedRows）；
+     *                     非结果集语句（UPDATE/INSERT 等）为 {@code null}，这类语句本来就不进缓存
+     * @param affectedRows 非结果集语句的更新行数；有结果集时等于结果行数
+     * @param fromDatabase 该结果是否由本次调用真正查询数据库得到；{@code false} 表示复用了同一
+     *                     刷新窗口内已经落地的缓存条目
+     */
+    private record RefreshOutcome(Map<String, Object> data, int affectedRows, boolean fromDatabase) {
+    }
+
+    /**
+     * API 查询结果缓存。
+     *
+     * <p>在 Caffeine 存储之上补了两件事：</p>
+     * <ol>
+     *   <li><b>TTL 判断</b>（{@code snapshotLimit}）：条目按"写入时间 + TTL"判定是否仍然新鲜；</li>
+     *   <li><b>刷新合并</b>（{@link SingleFlight}）：条目过期后，同一时刻到达的并发请求里只有
+     *       一个线程真正去刷新，其余等待刷新结束再返回，避免集中过期瞬间把压力全打到数据库。</li>
+     * </ol>
+     */
+    static final class QueryResultCache {
+        private final Cache<String, Map<String, Object>> entries;
+        private final SingleFlight<String, RefreshOutcome> refreshes = new SingleFlight<>();
+
+        QueryResultCache(Cache<String, Map<String, Object>> entries) {
+            this.entries = entries;
+        }
+
+        /** 返回仍在 TTL 内的缓存条目；过期、缺失或数据格式异常时返回 {@code null}。 */
+        Map<String, Object> getFresh(String key, long snapshotLimitMs) {
+            Map<String, Object> entry = entries.getIfPresent(key);
+            if (entry == null) {
+                return null;
+            }
+            Object timestamp = entry.get("timestamp");
+            if (!(timestamp instanceof Number)) {
+                return null;
+            }
+            return System.currentTimeMillis() - ((Number) timestamp).longValue() <= snapshotLimitMs
+                    ? entry : null;
+        }
+
+        void put(String key, Map<String, Object> value) {
+            entries.put(key, value);
+        }
+
+        /** 合并同一 key 的并发刷新，语义见 {@link SingleFlight#load}。 */
+        SingleFlight.Result<RefreshOutcome> refresh(String key, long waitTimeoutMs,
+                                                    SingleFlight.Loader<RefreshOutcome> loader) throws Exception {
+            return refreshes.load(key, waitTimeoutMs, loader);
+        }
+    }
+
+    private static int affectedRowsOf(Map<String, Object> data) {
+        Object affectedRows = data.get("affectedRows");
+        return affectedRows instanceof Number ? ((Number) affectedRows).intValue() : 0;
+    }
+
+    private static String formatTimestamp(Object timestamp) {
+        long millis = timestamp instanceof Number number ? number.longValue() : System.currentTimeMillis();
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(millis));
+    }
+
+    /** 有结果集时的统一响应（缓存命中与刚刷新完走同一条路）。 */
+    private static void respondWithDataset(Context ctx, DBServiceDefinition service,
+                                           Map<String, Object> data, boolean cached) {
+        ctx.attribute("cached", cached);
+        ctx.attribute("affectedRows", data.get("affectedRows"));
+        ctx.json(
+                Map.of(
+                        "retCode", 0,
+                        "retMsg", "Successful",
+                        "description", service.description,
+                        "timestamp", formatTimestamp(data.get("timestamp")),
+                        "cached", cached,
+                        "data", data
+                )
+        );
+    }
+
+    private static void respondFailure(Context ctx, DBServiceDefinition service, String message) {
+        ctx.attribute("cached", false);
+        ctx.attribute("affectedRows", -1);
+        ctx.json(
+                Map.of(
+                        "retCode", -1,
+                        "retMsg", message == null || message.isBlank() ? "Query failed." : message,
+                        "description", service.description,
+                        "cached", false
+                )
+        );
+    }
+
+    /**
+     * 执行一次查询，把结果整理成 HTTP 响应需要的结构。
+     *
+     * <p>连接一定在 {@code finally} 里归还连接池：历史实现在成功路径末尾归还、异常路径再归还一次，
+     * 漏掉的异常分支会让连接永远挂在"使用中"。</p>
+     *
+     * @param maxExecutionTimeMs 本次查询的显式超时（毫秒）；{@code null} 表示没有显式设置，
+     *                           不下发 {@code SET SESSION}，连接跟随服务器 GLOBAL 设置
+     */
+    private static RefreshOutcome executeQuery(DBDataSourcePool dbDataSourcePool, String userSearchPath, String sql,
+                                               Long maxExecutionTimeMs)
+            throws SQLException {
+        Connection conn = null;
+        try {
+            conn = dbDataSourcePool.getConnection();
+            // 把查询路径指向默认数据库
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("set search_path = 'memory.duck_catalog," + userSearchPath + "'");
+            }
+            // 只有用户显式设置了（服务定义或请求头）才下发会话级覆盖：
+            // 连接归还时连接池会 RESET，因此未显式设置时它自然跟随 GLOBAL。
+            if (maxExecutionTimeMs != null) {
+                try (Statement stmt = conn.createStatement()) {
+                    stmt.execute("SET SESSION max_execution_time=" + maxExecutionTimeMs);
+                }
+            }
+            try (PreparedStatement preparedStatement = conn.prepareStatement(sql)) {
+                if (!preparedStatement.execute()) {
+                    // 非SQL查询语句
+                    return new RefreshOutcome(null, preparedStatement.getUpdateCount(), true);
+                }
+                try (ResultSet rs = preparedStatement.getResultSet()) {
+                    ResultSetMetaData resultSetMetaData = rs.getMetaData();
+                    List<String> columnNames = new ArrayList<>();
+                    List<String> columnTypes = new ArrayList<>();
+                    List<List<Object>> dataset = new ArrayList<>();
+                    for (int nPos = 0; nPos < resultSetMetaData.getColumnCount(); nPos++) {
+                        columnNames.add(resultSetMetaData.getColumnName(nPos + 1));
+                        columnTypes.add(resultSetMetaData.getColumnTypeName(nPos + 1));
+                    }
+                    while (rs.next()) {
+                        List<Object> row = new ArrayList<>();
+                        for (int nPos = 0; nPos < resultSetMetaData.getColumnCount(); nPos++) {
+                            // 统一转成 JSON 安全类型：DATE/TIME/TIMESTAMPTZ/BLOB/LIST/JSON
+                            // 等类型直接交给 Jackson 会失败（内部错误 500 / 类名泄漏），
+                            // 转换后 HTTP 与 SQL REPL 两个端点的取值形态保持一致。
+                            row.add(JsonValues.toJsonValue(rs.getObject(nPos + 1)));
+                        }
+                        dataset.add(row);
+                    }
+                    Map<String, Object> result = new HashMap<>();
+                    result.put("columnTypes", columnTypes);
+                    result.put("columnNames", columnNames);
+                    result.put("timestamp", System.currentTimeMillis());
+                    result.put("dataset", dataset);
+                    result.put("affectedRows", dataset.size());
+                    return new RefreshOutcome(result, dataset.size(), true);
+                }
+            }
+        } finally {
+            if (conn != null) {
+                dbDataSourcePool.releaseConnection(conn);
+            }
+        }
+    }
+
     private static void handleSqlQuery(
             Context ctx,
             DBServiceDefinition dbServiceDefinition,
             DBDataSourcePool dbDataSourcePool,
             String dbInstanceName,
-            Cache<String, Map<String, Object>> caffeineQueryCache,
+            QueryResultCache queryResultCache,
             ExpiringMap<String, HashMap<String, String>> expiringMap,
             Logger logger
     ) {
@@ -110,34 +285,42 @@ public class APIService {
             sqlParameters.putAll(expiringMap.get(token));
         }
 
-        // 数据结果缓存
-        String cacheKey = null;
+        // 请求级执行超时覆盖：优先级 请求头 > 服务定义 > 服务器 GLOBAL。
+        // null 表示"没有显式设置"——此时不下发 SET SESSION，连接自然跟随 GLOBAL。
+        Long requestMaxExecutionTime = null;
+        String maxExecutionTimeHeader = ctx.header("maxExecutionTime");
+        if (maxExecutionTimeHeader != null && !maxExecutionTimeHeader.isBlank()) {
+            try {
+                long parsed = Long.parseLong(maxExecutionTimeHeader.trim());
+                if (parsed < 0) {
+                    throw new NumberFormatException("negative");
+                }
+                requestMaxExecutionTime = parsed;
+            } catch (NumberFormatException invalidValue) {
+                respondFailure(ctx, dbServiceDefinition,
+                        "Invalid maxExecutionTime header: '" + maxExecutionTimeHeader
+                                + "' (expected a non-negative integer in milliseconds).");
+                return;
+            }
+        }
+        final Long effectiveMaxExecutionTime = requestMaxExecutionTime != null
+                ? requestMaxExecutionTime
+                : dbServiceDefinition.maxExecutionTime;
+
+        // 数据结果缓存：TTL 未到期时直接返回
         if (snapshotLimit > dbServiceDefinition.snapshotLimit)
         {
             snapshotLimit = dbServiceDefinition.snapshotLimit;
         }
-        if (caffeineQueryCache != null && snapshotLimit > 0) {
+        String cacheKey = null;
+        if (queryResultCache != null && snapshotLimit > 0) {
             cacheKey = generateCacheKey(dbServiceDefinition, sql, sqlParameters);
 
-            Map<String, Object> cacheResult = caffeineQueryCache.getIfPresent(cacheKey);
+            Map<String, Object> cacheResult = queryResultCache.getFresh(cacheKey, snapshotLimit);
             if (cacheResult != null) {
-                Long lastQueriedTimeStamp = (Long) cacheResult.get("timestamp");
-                if (System.currentTimeMillis() - lastQueriedTimeStamp <= snapshotLimit) {
-                    ctx.attribute("cached", true);
-                    ctx.attribute("affectedRows", cacheResult.get("affectedRows"));
-                    // 数据还没有过时，从缓存中获得
-                    ctx.json(
-                            Map.of(
-                                    "retCode", 0,
-                                    "retMsg", "Successful",
-                                    "description", dbServiceDefinition.description,
-                                    "timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(lastQueriedTimeStamp)),
-                                    "cached", true,
-                                    "data", cacheResult
-                            )
-                    );
-                    return;
-                }
+                // 数据还没有过时，从缓存中获得
+                respondWithDataset(ctx, dbServiceDefinition, cacheResult, true);
+                return;
             }
         }
 
@@ -179,106 +362,94 @@ public class APIService {
             sql = sb.toString();
         }
 
-        // 执行数据库查询
-        Connection conn = null;
-        Statement stmt = null;
+        String userSearchPath;
+        if (dbServiceDefinition.searchPath != null && !dbServiceDefinition.searchPath.isEmpty()) {
+            userSearchPath = dbServiceDefinition.searchPath;
+        }
+        else
+        {
+            userSearchPath = dbInstanceName;
+        }
+
+        // 这里的值是 lambda 捕获的，必须显式 final
+        final String executedSql = sql;
+        final String searchPath = userSearchPath;
+        final String key = cacheKey;
+        final long ttlMs = snapshotLimit;
+
+        // 执行数据库查询。
+        //
+        // 有缓存键时必须经过 SingleFlight：缓存过期（或被淘汰）后，同一份内容的并发请求里
+        // 只有一个线程真正查库，其余等待这次刷新结束后直接拿刷新结果返回；否则 N 个请求会在
+        // 同一瞬间全部打穿到数据库。
+        RefreshOutcome outcome;
+        boolean executedByCaller;
         try {
-            String userSearchPath;
-            if (dbServiceDefinition.searchPath != null && !dbServiceDefinition.searchPath.isEmpty()) {
-                userSearchPath = dbServiceDefinition.searchPath;
-            }
-            else
-            {
-                userSearchPath = dbInstanceName;
-            }
-
-            // 把查询路径指向默认数据库
-            conn = dbDataSourcePool.getConnection();
-            stmt = conn.createStatement();
-            stmt.execute("set search_path = 'memory.duck_catalog," + userSearchPath + "'");
-            stmt.close();
-            stmt = null;
-
-            try (PreparedStatement preparedStatement = conn.prepareStatement(sql)) {
-                boolean hasResultSet = preparedStatement.execute();
-                if (hasResultSet) {
-                    try (ResultSet rs = preparedStatement.getResultSet()) {
-                        ResultSetMetaData resultSetMetaData = rs.getMetaData();
-                        List<String> columnNames = new ArrayList<>();
-                        List<String> columnTypes = new ArrayList<>();
-                        List<List<Object>> dataset = new ArrayList<>();
-                        for (int nPos = 0; nPos < resultSetMetaData.getColumnCount(); nPos++) {
-                            columnNames.add(resultSetMetaData.getColumnName(nPos + 1));
-                            columnTypes.add(resultSetMetaData.getColumnTypeName(nPos + 1));
-                        }
-                        while (rs.next()) {
-                            List<Object> row = new ArrayList<>();
-                            for (int nPos = 0; nPos < resultSetMetaData.getColumnCount(); nPos++) {
-                                // 统一转成 JSON 安全类型：DATE/TIME/TIMESTAMPTZ/BLOB/LIST/JSON
-                                // 等类型直接交给 Jackson 会失败（内部错误 500 / 类名泄漏），
-                                // 转换后 HTTP 与 SQL REPL 两个端点的取值形态保持一致。
-                                row.add(JsonValues.toJsonValue(rs.getObject(nPos + 1)));
+            if (key == null) {
+                // 未开启缓存：每个请求各自查询
+                outcome = executeQuery(dbDataSourcePool, searchPath, executedSql, effectiveMaxExecutionTime);
+                executedByCaller = true;
+            } else {
+                SingleFlight.Result<RefreshOutcome> refreshed = queryResultCache.refresh(
+                        key,
+                        CACHE_REFRESH_WAIT_TIMEOUT_MS,
+                        () -> {
+                            // 成为 leader 后再确认一次：极小概率下别的线程已经在上面的缓存检查
+                            // 与本步之间完成刷新，这时直接复用，不再多打一次库。
+                            Map<String, Object> landed = queryResultCache.getFresh(key, ttlMs);
+                            if (landed != null) {
+                                return new RefreshOutcome(landed, affectedRowsOf(landed), false);
                             }
-                            dataset.add(row);
-                        }
-                        Map<String, Object> result = new HashMap<>();
-                        result.put("columnTypes", columnTypes);
-                        result.put("columnNames", columnNames);
-                        result.put("timestamp", System.currentTimeMillis());
-                        result.put("dataset", dataset);
-                        result.put("affectedRows", dataset.size());
-                        if (cacheKey != null) {
-                            caffeineQueryCache.put(cacheKey, result);
-                        }
-                        ctx.attribute("cached", false);
-                        ctx.attribute("affectedRows", dataset.size());
-                        ctx.json(
-                                Map.of(
-                                        "retCode", 0,
-                                        "retMsg", "Successful",
-                                        "description", dbServiceDefinition.description,
-                                        "timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(System.currentTimeMillis())),
-                                        "cached", false, "data", result
-                                )
-                        );
-                    }
-                } else {
-                    // 非SQL查询语句
-                    ctx.attribute("cached", false);
-                    ctx.attribute("affectedRows", -1);
-                    ctx.json(
-                            Map.of(
-                                    "retCode", 0,
-                                    "retMsg", "Successful",
-                                    "description", dbServiceDefinition.description,
-                                    "affectedRows", preparedStatement.getUpdateCount(),
-                                    "cached", false
-                            )
-                    );
+                            RefreshOutcome loaded = executeQuery(dbDataSourcePool, searchPath, executedSql, effectiveMaxExecutionTime);
+                            if (loaded.data() != null) {
+                                queryResultCache.put(key, loaded.data());
+                            }
+                            return loaded;
+                        });
+                outcome = refreshed.value();
+                executedByCaller = refreshed.loadedByCaller();
+                if (outcome.data() == null && !executedByCaller) {
+                    // 非结果集语句（UPDATE/INSERT 等）本来就不进缓存：等待者不能拿 leader 的
+                    // 更新行数当作自己的结果，自己执行一次。
+                    outcome = executeQuery(dbDataSourcePool, searchPath, executedSql, effectiveMaxExecutionTime);
+                    executedByCaller = true;
                 }
             }
-            dbDataSourcePool.releaseConnection(conn);
+        } catch (TimeoutException timeout) {
+            // 刷新者迟迟不结束：降级为自己直接查询，宁可多打一次库，也不能把请求永久挂住
+            logger.warn("[SERVER-API] Timed out after {} ms waiting for cache refresh, querying directly. key={}",
+                    CACHE_REFRESH_WAIT_TIMEOUT_MS, key);
+            try {
+                outcome = executeQuery(dbDataSourcePool, searchPath, executedSql, effectiveMaxExecutionTime);
+                executedByCaller = true;
+            } catch (Exception e) {
+                logger.trace("[SERVER-API] Query failed: ", e);
+                respondFailure(ctx, dbServiceDefinition, e.getMessage());
+                return;
+            }
         } catch (Exception e) {
             logger.trace("[SERVER-API] Query failed: ", e);
+            respondFailure(ctx, dbServiceDefinition, e.getMessage());
+            return;
+        }
+
+        if (outcome.data() == null) {
+            // 非SQL查询语句
             ctx.attribute("cached", false);
             ctx.attribute("affectedRows", -1);
-            if (conn != null) {
-                dbDataSourcePool.releaseConnection(conn);
-            }
             ctx.json(
                     Map.of(
-                            "retCode", -1,
-                            "retMsg", e.getMessage(),
+                            "retCode", 0,
+                            "retMsg", "Successful",
                             "description", dbServiceDefinition.description,
+                            "affectedRows", outcome.affectedRows(),
                             "cached", false
                     )
             );
-        } finally {
-            if (stmt != null) {
-                try {
-                    stmt.close();
-                } catch (SQLException ignored) {}
-            }
+        } else {
+            // 只有真正执行了本次刷新的请求才标记 cached=false，等待刷新的请求算缓存返回
+            boolean cached = !(executedByCaller && outcome.fromDatabase());
+            respondWithDataset(ctx, dbServiceDefinition, outcome.data(), cached);
         }
     }
 
@@ -342,6 +513,34 @@ public class APIService {
         return ILLEGAL_CATEGORY_CHARS.matcher(category).find();
     }
 
+    /**
+     * 解析服务定义里的 {@code maxExecutionTime}（毫秒；同时接受 {@code max_execution_time} 别名）。
+     *
+     * @return {@code null} 表示未设置（继承服务器 GLOBAL）；{@code 0} 表示该服务显式不限制
+     * @throws IllegalArgumentException 值为负数或不是整数毫秒
+     */
+    private static Long parseMaxExecutionTime(JSONObject serviceDefinition) {
+        if (serviceDefinition == null) {
+            return null;
+        }
+        Object raw = serviceDefinition.containsKey("maxExecutionTime")
+                ? serviceDefinition.get("maxExecutionTime")
+                : serviceDefinition.get("max_execution_time");
+        if (raw == null) {
+            return null;
+        }
+        long value;
+        try {
+            value = Long.parseLong(String.valueOf(raw).trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("maxExecutionTime must be a non-negative integer (milliseconds).");
+        }
+        if (value < 0) {
+            throw new IllegalArgumentException("maxExecutionTime must be a non-negative integer (milliseconds).");
+        }
+        return value;
+    }
+
     // 实现会话信息的自动过期处理,
     private final ExpiringMap<String, HashMap<String,String>> sessionContextMap = ExpiringMap.builder()
             .maxSize(1000)
@@ -349,8 +548,8 @@ public class APIService {
             .expirationPolicy(ExpirationPolicy.ACCESSED)
             .build();
 
-    // 数据结果缓存，在过期时间内的数据不会重复查询
-    private Cache<String, Map<String, Object>> queryResultCache =  null;
+    // 数据结果缓存：TTL 内不重复查询，过期后同一份内容只有一个线程去刷新
+    private QueryResultCache queryResultCache = null;
 
     // 加载服务定义文件
     private void registerServiceDefinitionFromFile(String serviceDefinitionFile) throws IOException, JSONException
@@ -389,6 +588,14 @@ public class APIService {
             if (serviceDefinitionJsonObj.containsKey("snapshotLimit")) {
                 dbService.snapshotLimit =
                         Utils.convertDurationStrToSeconds(serviceDefinitionJsonObj.getString("snapshotLimit")) * 1000;
+            }
+            try {
+                dbService.maxExecutionTime = parseMaxExecutionTime(serviceDefinitionJsonObj);
+            } catch (IllegalArgumentException invalidMaxExecutionTime) {
+                logger.warn("[SERVER][LOAD       ] Invalid maxExecutionTime ignored: {} (serviceName={}, serviceVersion={}) from {}",
+                        invalidMaxExecutionTime.getMessage(), dbService.serviceName, dbService.serviceVersion, source);
+                // 与非法 category 一致：跳过这一条定义，不影响同文件里的其它服务
+                continue;
             }
             String serviceParametersStr = serviceDefinitionJsonObj.getString("parameters");
             JSONArray serviceParameters;
@@ -433,11 +640,12 @@ public class APIService {
 
         // 初始化查询结果缓存
         if (this.dbInstance.serverConfiguration.getQuery_result_cache_size() > 0) {
-            queryResultCache = Caffeine.newBuilder()
+            Cache<String, Map<String, Object>> caffeineCache = Caffeine.newBuilder()
                     .maximumWeight(this.dbInstance.serverConfiguration.getQuery_result_cache_size())
                     .weigher((String key, Map<String, Object> value) -> estimateSize(value))
                     .recordStats()
                     .build();
+            queryResultCache = new QueryResultCache(caffeineCache);
         }
 
         // 加载注册服务的预定义文件
@@ -591,6 +799,12 @@ public class APIService {
                 dbService.snapshotLimit =
                         Utils.convertDurationStrToSeconds(bodyObject.getString("snapshotLimit")) * 1000;
             }
+            try {
+                dbService.maxExecutionTime = parseMaxExecutionTime(bodyObject);
+            } catch (IllegalArgumentException invalidMaxExecutionTime) {
+                ctx.json(Map.of("retCode", -1, "retMsg", "Rejected. " + invalidMaxExecutionTime.getMessage()));
+                return;
+            }
             String serviceParametersStr = bodyObject.getString("parameters");
             JSONArray serviceParameters;
             if (serviceParametersStr != null && !serviceParametersStr.trim().isEmpty())
@@ -660,6 +874,9 @@ public class APIService {
                         item.put("description", dbServiceDefinition.description);
                         item.put("serviceType", dbServiceDefinition.serviceType);
                         item.put("snapshotLimit", Utils.convertSecondsToHumanTime(dbServiceDefinition.snapshotLimit / 1000));
+                        if (dbServiceDefinition.maxExecutionTime != null) {
+                            item.put("maxExecutionTime", dbServiceDefinition.maxExecutionTime);
+                        }
                         item.put("parameter", dbServiceDefinition.parameter);
                         ret.add(item);
                     }
@@ -856,6 +1073,10 @@ public class APIService {
             if (service.searchPath != null && !service.searchPath.isBlank()) {
                 item.put("search_path", service.searchPath);
             }
+            // 服务级执行超时（毫秒）；未设置表示继承服务器 GLOBAL，0 表示不限制
+            if (service.maxExecutionTime != null) {
+                item.put("max_execution_time", service.maxExecutionTime);
+            }
             if (service.parameter != null && !service.parameter.isEmpty()) {
                 List<Map<String, Object>> params = new ArrayList<>();
                 for (Map.Entry<String, String> entry : service.parameter.entrySet()) {
@@ -895,6 +1116,9 @@ public class APIService {
             // 将snapshotLimit从毫秒转换为人类可读字符串
             long seconds = dbService.snapshotLimit / 1000;
             serviceObj.put("snapshotLimit", Utils.convertSecondsToHumanTime(seconds));
+            if (dbService.maxExecutionTime != null) {
+                serviceObj.put("maxExecutionTime", dbService.maxExecutionTime);
+            }
             // 转换parameters Map为JSON数组
             JSONArray paramArray = new JSONArray();
             for (Map.Entry<String, String> entry : dbService.parameter.entrySet()) {
@@ -953,6 +1177,9 @@ public class APIService {
                 }
                 long seconds = dbService.snapshotLimit / 1000;
                 serviceObj.put("snapshotLimit", Utils.convertSecondsToHumanTime(seconds));
+                if (dbService.maxExecutionTime != null) {
+                    serviceObj.put("maxExecutionTime", dbService.maxExecutionTime);
+                }
                 JSONArray paramArray = new JSONArray();
                 for (Map.Entry<String, String> paramEntry : dbService.parameter.entrySet()) {
                     JSONObject paramObj = new JSONObject();

@@ -93,6 +93,8 @@ public class DataServicesView extends VerticalLayout {
                 .setHeader(I18n.t("dataService.column.description")).setAutoWidth(true);
         grid.addColumn(DataServiceDefinition::snapshotLimit)
                 .setHeader(I18n.t("dataService.column.snapshotLimit")).setAutoWidth(true);
+        grid.addColumn(DataServiceDefinition::maxExecutionTime)
+                .setHeader(I18n.t("dataService.column.maxExecutionTime")).setAutoWidth(true);
         grid.addColumn(service -> parametersText(service.parameters()))
                 .setHeader(I18n.t("dataService.column.parameters")).setAutoWidth(true);
         grid.addColumn(DataServiceDefinition::sql).setHeader("SQL").setAutoWidth(true);
@@ -149,6 +151,8 @@ public class DataServicesView extends VerticalLayout {
         searchPath.setId("data-service-search-path");
         TextField snapshotLimit = new TextField(I18n.t("dataService.field.snapshotLimit"));
         snapshotLimit.setId("data-service-snapshot-limit");
+        TextField maxExecutionTime = new TextField(I18n.t("dataService.field.maxExecutionTime"));
+        maxExecutionTime.setId("data-service-max-execution-time");
         ComboBox<String> type = new ComboBox<>(I18n.t("dataService.field.type"));
         type.setId("data-service-type");
         type.setItems("GET", "POST");
@@ -175,7 +179,7 @@ public class DataServicesView extends VerticalLayout {
                 DataServiceDefinition definition = new DataServiceDefinition(
                         name.getValue(), version.getValue(), category.getValue(), type.getValue(),
                         sql.getValue(), description.getValue(), searchPath.getValue(),
-                        snapshotLimit.getValue(), parsed);
+                        snapshotLimit.getValue(), maxExecutionTime.getValue(), parsed);
                 client().register(definition);
                 dialog.close();
                 status.setText(I18n.t("dataService.status.registered", definition.serviceName()));

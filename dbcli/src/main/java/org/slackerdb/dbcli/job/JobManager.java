@@ -427,7 +427,7 @@ public final class JobManager implements AutoCloseable {
         return require(name);
     }
 
-    /** 尚未结束的作业（引擎收尾时用）。 */
+    /** 当前管理器里的全部作业（含已结束；{@code _JOB SHOW} 无参数时按名字排序展示）。 */
     public Collection<Job> jobs() {
         return List.copyOf(jobs.values());
     }

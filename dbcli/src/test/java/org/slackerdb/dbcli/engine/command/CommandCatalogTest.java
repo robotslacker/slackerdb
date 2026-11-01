@@ -3,6 +3,7 @@ package org.slackerdb.dbcli.engine.command;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slackerdb.dbcli.engine.CommandDispatcher;
+import org.slackerdb.dbcli.engine.flow.ControlFlow;
 import org.slackerdb.dbcli.help.HelpCatalog;
 
 import java.util.List;
@@ -26,8 +27,19 @@ class CommandCatalogTest {
                 continue;
             }
             String name = token.substring(1);
-            assertTrue(CommandCatalog.supports(name) || CommandDispatcher.supports(name),
-                    "帮助里有 [" + token + "]，但没有对应的实现（命令表/分派器都没有）");
+            assertTrue(CommandCatalog.supports(name) || CommandDispatcher.supports(name)
+                            || ControlFlow.supports(name),
+                    "帮助里有 [" + token + "]，但没有对应的实现（命令表/分派器/控制流都没有）");
+        }
+    }
+
+    @Test
+    @DisplayName("控制流的每个结构命令都出现在帮助里")
+    void everyControlCommandAppearsInHelp() {
+        String help = String.join("\n", HelpCatalog.overview());
+        for (String name : ControlFlow.commandNames()) {
+            assertTrue(help.contains("_" + name),
+                    "控制流 [" + name + "] 实现了，但 _HELP 里没有它");
         }
     }
 
@@ -49,7 +61,7 @@ class CommandCatalogTest {
         assertSame(CommandCatalog.find("EXIT"), CommandCatalog.find("QUIT"));
         assertFalse(CommandCatalog.supports("NOPE"));
         assertListHasAll(CommandCatalog.names(),
-                List.of("ASSERT", "ECHO", "EXIT", "HELP", "HOST", "LOAD", "QUIT", "SET", "SLEEP", "SPOOL",
+                List.of("API", "ASSERT", "ECHO", "EXIT", "HELP", "HOST", "LOAD", "QUIT", "SET", "SLEEP", "SPOOL",
                         "START", "WHENEVER"));
     }
 

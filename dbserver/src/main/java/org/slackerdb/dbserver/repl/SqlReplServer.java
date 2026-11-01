@@ -8,6 +8,7 @@ import io.javalin.websocket.WsContext;
 import org.duckdb.DuckDBConnection;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.dbserver.sql.JsonValues;
+import org.slackerdb.dbserver.sql.MaxExecutionTime;
 import org.slackerdb.plsql.PlSqlEngine;
 import org.slackerdb.plsql.detect.PlSqlDetector;
 import org.slackerdb.plsql.detect.PlSqlScript;
@@ -187,6 +188,11 @@ public class SqlReplServer {
             Connection localConn =
                     ((DuckDBConnection) this.dbInstance.backendSysConnection).duplicate();
             localConn.setAutoCommit(true);
+            // backend 连接为了内部执行豁免把会话值固定为 0，duplicate() 会继承它；
+            // SQL REPL 是客户端入口，必须 RESET 回服务器 GLOBAL 超时。
+            try (Statement resetStatement = localConn.createStatement()) {
+                resetStatement.execute("RESET max_execution_time");
+            }
 
             SqlSession session = new SqlSession(sid, localConn);
             sessions.put(sid, session);
@@ -330,6 +336,15 @@ public class SqlReplServer {
             return;
         }
 
+        // 单次执行超时覆盖（可选）：字段存在时只对本次任务生效，任务结束恢复会话原值
+        Long perExecMaxExecutionTime;
+        try {
+            perExecMaxExecutionTime = parseMaxExecutionTime(data.get("maxExecutionTime"));
+        } catch (IllegalArgumentException invalidValue) {
+            sendError(ctx, "Field 'maxExecutionTime' must be a non-negative integer (milliseconds)");
+            return;
+        }
+
         // 生成 taskId
         String taskId = UUID.randomUUID().toString();
         session.resetTask();
@@ -338,19 +353,80 @@ public class SqlReplServer {
         session.activeFuture = null;
         session.activeStatement = null;
 
+        // 补做上一次因事务中止未能完成的恢复（此时连接空闲，失败也不阻塞本次任务）
+        restorePendingMaxExecutionTime(session);
+
+        // 回显本次实际生效的超时：显式字段优先；否则是会话的真实值（若上次恢复在等
+        // 事务结束，用待恢复的原值而不是被污染的 current_setting）。
+        Long effectiveMaxExecutionTime = perExecMaxExecutionTime;
+        if (effectiveMaxExecutionTime == null) {
+            Long pending = session.pendingMaxExecutionTimeRestore;
+            if (pending != null) {
+                effectiveMaxExecutionTime = pending;
+            } else {
+                try {
+                    effectiveMaxExecutionTime = MaxExecutionTime.read(session.conn);
+                } catch (SQLException ignored) {
+                    // 不阻塞任务提交
+                }
+            }
+        }
+
         // 复制到 final 变量以便在 lambda 中使用
         final int finalFetchSize = fetchSize;
         final String finalSql = sql;
+        final Long finalPerExecMaxExecutionTime = perExecMaxExecutionTime;
 
         // 提交任务到线程池
-        session.activeFuture = sqlExecutor.submit(() -> runTask(session, finalSql, finalFetchSize));
+        session.activeFuture = sqlExecutor.submit(
+                () -> runTask(session, finalSql, finalFetchSize, finalPerExecMaxExecutionTime));
 
-        // 立即返回 taskId
+        // 立即返回 taskId（附带本次生效的超时）
+        Map<String, Object> execData = new HashMap<>();
+        execData.put("taskId", taskId);
+        execData.put("status", "running");
+        if (effectiveMaxExecutionTime != null) {
+            execData.put("maxExecutionTime", effectiveMaxExecutionTime);
+        }
         Map<String, Object> response = new HashMap<>();
         response.put("id", requestId);
         response.put("type", "exec");
-        response.put("data", Map.of("taskId", taskId, "status", "running"));
+        response.put("data", execData);
         sendJson(ctx, response);
+    }
+
+    /**
+     * 解析 {@code exec.data.maxExecutionTime}：整数毫秒、{@code >= 0}；缺省/JSON null 返回 {@code null}。
+     *
+     * <p>只接受整数：{@code 1.5} 这种带小数的值会被拒绝，避免"看起来设了 1.5ms"。
+     * 数字字符串等价接受（与 HTTP 头保持一致）。</p>
+     */
+    static Long parseMaxExecutionTime(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        long value;
+        if (raw instanceof Integer || raw instanceof Long || raw instanceof Short || raw instanceof Byte) {
+            value = ((Number) raw).longValue();
+        } else if (raw instanceof Number number) {
+            try {
+                value = new java.math.BigDecimal(number.toString()).longValueExact();
+            } catch (ArithmeticException | NumberFormatException e) {
+                throw new IllegalArgumentException("not an integer", e);
+            }
+        } else if (raw instanceof String text) {
+            try {
+                value = Long.parseLong(text.trim());
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("not an integer", e);
+            }
+        } else {
+            throw new IllegalArgumentException("not a number");
+        }
+        if (value < 0) {
+            throw new IllegalArgumentException("negative");
+        }
+        return value;
     }
 
     /**
@@ -360,7 +436,54 @@ public class SqlReplServer {
      * 在 REPL 里必然语法错误——而 PG 协议路径早就走 {@code PlSqlDetector/PlSqlEngine} 了。
      * 这里复用同一套检测与引擎，两条入口能力对齐。</p>
      */
-    private void runTask(SqlSession session, String sql, int fetchSize) {
+    private void runTask(SqlSession session, String sql, int fetchSize, Long perExecMaxExecutionTime) {
+        boolean overridden = perExecMaxExecutionTime != null;
+        Long baseline = null;
+        try {
+            if (overridden) {
+                // 上一次恢复还在等事务结束时，以那个原值为准，避免把被污染的当前值当成会话值
+                baseline = session.pendingMaxExecutionTimeRestore != null
+                        ? session.pendingMaxExecutionTimeRestore
+                        : MaxExecutionTime.read(session.conn);
+                MaxExecutionTime.apply(session.conn, perExecMaxExecutionTime);
+            }
+            executeTaskBody(session, sql, fetchSize);
+        } catch (Exception e) {
+            failTask(session, Objects.toString(e.getMessage(), ""));
+        } finally {
+            if (overridden && baseline != null) {
+                try {
+                    MaxExecutionTime.restore(session.conn, baseline,
+                            dbInstance.serverConfiguration.getMax_execution_time());
+                    session.pendingMaxExecutionTimeRestore = null;
+                } catch (Exception restoreFailure) {
+                    // 典型：超时把事务置为 aborted，此时 SET/RESET 也会失败。
+                    // 记下原值，下一次 exec 提交时重试；会话关闭时连接直接丢弃。
+                    session.pendingMaxExecutionTimeRestore = baseline;
+                    logger.warn("[SERVER][SQL REPL   ] Failed to restore max_execution_time ({}). "
+                            + "Will retry on the next exec.", restoreFailure.getMessage());
+                }
+            }
+        }
+    }
+
+    /** 补做上一次未能完成的会话超时恢复；失败则保留 pending，下次再试。 */
+    private void restorePendingMaxExecutionTime(SqlSession session) {
+        Long pending = session.pendingMaxExecutionTimeRestore;
+        if (pending == null) {
+            return;
+        }
+        try {
+            MaxExecutionTime.restore(session.conn, pending,
+                    dbInstance.serverConfiguration.getMax_execution_time());
+            session.pendingMaxExecutionTimeRestore = null;
+        } catch (Exception e) {
+            logger.warn("[SERVER][SQL REPL   ] Still cannot restore max_execution_time ({}).", e.getMessage());
+        }
+    }
+
+    /** 任务主体：普通 SQL、PL/SQL 匿名块或多语句脚本。 */
+    private void executeTaskBody(SqlSession session, String sql, int fetchSize) {
         try {
             PlSqlScript script = PlSqlDetector.analyze(sql);
             if (script.hasError()) {

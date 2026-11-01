@@ -72,6 +72,17 @@ class StatementBoundaryTest {
     }
 
     @Test
+    @DisplayName("_HOST \"\"\" 多行块：body 不是边界，只有收尾的 \"\"\" 是")
+    void hostBlocks() {
+        assertEquals(StatementBoundary.Kind.NONE, boundary("_host \"\"\"", "echo hi").kind(),
+                "没有收尾就是没写完");
+        assertEquals(StatementBoundary.Kind.COMMAND,
+                boundary("_host \"\"\"", "echo hi; _ENDIF", "\"\"\"").kind());
+        // 单行 _HOST 仍是普通命令
+        assertEquals(StatementBoundary.Kind.COMMAND, boundary("_host echo hi").kind());
+    }
+
+    @Test
     @DisplayName("字符串里的 ';' 与 '/' 不算边界（含未闭合引号 → NONE）")
     void quotesHideTerminators() {
         assertEquals(StatementBoundary.Kind.NONE, boundary("select 'a;b'").kind());

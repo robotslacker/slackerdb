@@ -39,6 +39,11 @@ public class SqlSession {
     // 缓冲行，用于处理分页时多读的一行
     public volatile Map<String, Object> pendingRow;
     public volatile boolean hasPendingRow;
+    /**
+     * 单次执行覆盖超时后恢复失败时暂存的原值（典型：超时把事务置为 aborted，
+     * 此时 RESET/SET 也会失败）。下一次任务开始时重试恢复。
+     */
+    public volatile Long pendingMaxExecutionTimeRestore;
 
     public SqlSession(String id, Connection conn) {
         this.id = id;

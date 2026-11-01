@@ -238,6 +238,25 @@ class InteractiveConsoleTest {
     }
 
     @Test
+    @DisplayName("控制流块：_IF 之后用续行提示，_ENDIF 之后回主提示符")
+    void controlFlowBlockUsesContinuationPrompt() {
+        ScriptedLineSource lines = new ScriptedLineSource(List.of(
+                "_IF {% TRUE %}", "_echo t", "inside", "echo off", "_ENDIF"));
+
+        int code = run(lines);
+
+        assertEquals(0, code, err.toString());
+        assertEquals("inside\n", out.toString(), out.toString());
+        List<String> prompts = lines.prompts();
+        assertEquals(InteractiveConsole.PROMPT, prompts.get(0), prompts.toString());
+        for (int index = 1; index <= 4; index++) {
+            assertEquals(InteractiveConsole.CONTINUATION_PROMPT, prompts.get(index),
+                    "块还没关闭时应当给续行提示: " + prompts);
+        }
+        assertEquals(InteractiveConsole.PROMPT, prompts.get(5), prompts.toString());
+    }
+
+    @Test
     @DisplayName("横幅只有客户端名字一行（stderr）：没有用法/连接状态那行，且无法关闭")
     void bannerIsJustTheClientNameOnStderr() {
         run(new ScriptedLineSource(List.of("_echo t", "data", "echo off")));

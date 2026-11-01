@@ -14,6 +14,15 @@
 
     <properties>
         <commons.cli.version>1.6.0</commons.cli.version>
+        <!--
+            live 组测试依赖外部 DuckDB 扩展（ducklake / quack）或真实服务环境，
+            默认不参与常规回归。运行方式：
+
+              mvn -pl dbserver -Plive test
+              mvn -pl dbserver -Plive -Dgroups=live test          # 只跑 live 组
+              mvn -pl dbserver -Dlive.tests.excludedGroups= test
+        -->
+        <live.tests.excludedGroups>live</live.tests.excludedGroups>
     </properties>
 
     <dependencies>
@@ -208,6 +217,11 @@
                 <configuration>
                     <argLine>--add-opens java.base/java.lang=ALL-UNNAMED -XX:+EnableDynamicAgentLoading -Djdk.instrument.traceUsage=false</argLine>
                     <!--
+                        live 组（@Tag("live")）依赖外部扩展，默认排除；-Plive 或
+                        -Dlive.tests.excludedGroups= 可放开。见 properties 中的说明。
+                    -->
+                    <excludedGroups>${live.tests.excludedGroups}</excludedGroups>
+                    <!--
                         随用随加的显式清单极易漏登记（历史上 CopySanityTest
                         [原 CopyCsvSemanticsTest / CopyFailureAtomicityTest / sql/CopyCsvReaderTest 已合并至此]、
                         SqlReplacerCacheTest 以及 Sanity01~03Test、
@@ -315,4 +329,15 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- 放开 live 组：依赖 ducklake / quack 等外部扩展，需显式启用 -->
+        <profile>
+            <id>live</id>
+            <properties>
+                <!-- 空值 = 不排除任何组；surefire 会把空串当作"无排除标签" -->
+                <live.tests.excludedGroups></live.tests.excludedGroups>
+            </properties>
+        </profile>
+    </profiles>
 </project>

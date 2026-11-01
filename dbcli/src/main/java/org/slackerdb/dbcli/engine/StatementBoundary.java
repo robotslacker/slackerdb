@@ -73,6 +73,18 @@ public final class StatementBoundary {
      */
     private boolean pendingEchoBlock;
 
+    /**
+     * 待处理语句是不是 {@code _HOST """ … """} 多行块。
+     *
+     * <p>与 {@code _ECHO} 同理：块体是命令文本，里面的引号/{@code ;} 不应参与普通扫描；
+     * 只有收尾行（以 {@code """} 开头）才是边界。少了这条，多行 {@code _HOST} 只会在 EOF
+     * 收尾，放进 {@code _LOOP} 时 {@code _ENDLOOP} 会被一起缓冲。</p>
+     */
+    private boolean pendingHostBlock;
+
+    /** {@code _HOST} 块的收尾 {@code """} 已经看到。 */
+    private boolean pendingHostClosed;
+
     /** 待处理语句最后一个非空行（去掉首尾空白），用于认 {@code /} 与 {@code echo off}。 */
     private String pendingLastNonBlankLine = "";
 
@@ -84,6 +96,8 @@ public final class StatementBoundary {
         pendingLineCount = 0;
         pendingStartsCommand = false;
         pendingEchoBlock = false;
+        pendingHostBlock = false;
+        pendingHostClosed = false;
         pendingLastNonBlankLine = "";
     }
 
@@ -116,6 +130,17 @@ public final class StatementBoundary {
         }
         if (pendingEchoBlock) {
             // _ECHO 的块体是数据行：不做引号/注释扫描（收尾只认下一行 `echo off`）
+            return;
+        }
+        if (pendingHostBlock) {
+            // _HOST 的多行块同样是命令文本；只有收尾的 `"""` 行才是边界
+            if (isHostBlockClose(stripped)) {
+                pendingHostClosed = true;
+            }
+            return;
+        }
+        if (pendingLineCount == 1 && pendingStartsCommand && startsHostBlock(stripped)) {
+            pendingHostBlock = true;
             return;
         }
         currentLine = text;
@@ -169,6 +194,30 @@ public final class StatementBoundary {
         return after == line.length() || Character.isWhitespace(line.charAt(after));
     }
 
+    /** 这一行是不是 `_HOST """`（只有开标记，没有同行闭合）。 */
+    private static boolean startsHostBlock(String strippedLine) {
+        if (strippedLine == null || strippedLine.isEmpty()) {
+            return false;
+        }
+        int index = 0;
+        while (index < strippedLine.length() && !Character.isWhitespace(strippedLine.charAt(index))) {
+            index++;
+        }
+        if (!"_host".equalsIgnoreCase(strippedLine.substring(0, index))) {
+            return false;
+        }
+        return strippedLine.substring(index).strip().equals("\"\"\"");
+    }
+
+    /** 这一行是不是 `_HOST` 块的收尾（`"""`，可带一个分号）。 */
+    private static boolean isHostBlockClose(String strippedLine) {
+        if (strippedLine == null || !strippedLine.startsWith("\"\"\"")) {
+            return false;
+        }
+        String rest = strippedLine.substring(3).strip();
+        return rest.isEmpty() || rest.startsWith(";");
+    }
+
     /**
      * 当前边界。
      *
@@ -183,6 +232,10 @@ public final class StatementBoundary {
         if (pendingEchoBlock) {
             // _ECHO 块只看结尾那一行：块体里的引号/分号都是数据（与词法的 EchoBlock 一致）
             return pendingLastNonBlankLine.equalsIgnoreCase("echo off") ? Kind.ECHO_OFF : Kind.NONE;
+        }
+        if (pendingHostBlock) {
+            // _HOST 多行块：收尾的 `"""` 行才收尾；块体里的 ; / 引号都不参与判定
+            return pendingHostClosed ? Kind.COMMAND : Kind.NONE;
         }
         if (scanner.insideQuoteOrBraces()) {
             return Kind.NONE;

@@ -1,10 +1,13 @@
 package org.slackerdb.dbcli.engine;
 
+import org.slackerdb.dbcli.assertion.ResultModel;
 import org.slackerdb.dbcli.common.CommandOutcome;
 import org.slackerdb.dbcli.engine.command.CommandCall;
 import org.slackerdb.dbcli.engine.command.CommandCatalog;
 import org.slackerdb.dbcli.engine.command.CommandHost;
 import org.slackerdb.dbcli.engine.command.ScriptCommand;
+import org.slackerdb.dbcli.engine.flow.ControlFlow;
+import org.slackerdb.dbcli.engine.flow.FlowHost;
 import org.slackerdb.dbcli.script.SqlAnalyzer;
 import org.slackerdb.dbcli.sql.SqlExecutor;
 
@@ -49,7 +52,7 @@ import java.util.Set;
  * {@link ScriptStoppedException}，并让 {@code _SLEEP}/{@code _HOST} 提前醒来。父脚本与控制台拿的是
  * {@link StopSignal#NEVER}，因此这条分支对它们不生效。</p>
  */
-public final class ScriptRunner implements CommandHost {
+public final class ScriptRunner implements CommandHost, FlowHost {
 
     /** {@code _START} 的递归深度上限（防止脚本互相调用把栈撑爆）。 */
     public static final int MAX_SCRIPT_DEPTH = 16;
@@ -121,6 +124,41 @@ public final class ScriptRunner implements CommandHost {
     @Override
     public void countFailure(String message) {
         errors.fail(message);
+    }
+
+    // ------------------------------------------------------------------ FlowHost
+
+    @Override
+    public ResultModel conditionModel() {
+        return context.assertModel();
+    }
+
+    @Override
+    public String resolveText(String text) {
+        try {
+            return context.variables().resolve(text);
+        } catch (VariableExpressionException variableError) {
+            reportError(variableError.getMessage());
+            return null;
+        }
+    }
+
+    @Override
+    public void executeLeaf(String rawText) {
+        // 块内重放：输入已经在读取时 echo 过一次，这里不再重复。
+        executeLeaf(rawText, false, false);
+    }
+
+    @Override
+    public boolean exitRequested() {
+        return context.exitRequested();
+    }
+
+    @Override
+    public void printStatus(String line) {
+        if (context.loopTraceOn()) {
+            context.output().printStatus(line);
+        }
     }
 
     // ---------------------------------------------------------------------- 入口
@@ -233,56 +271,110 @@ public final class ScriptRunner implements CommandHost {
 
     // ---------------------------------------------------------------- 语句累积/分派
 
-    /**
-     * 把一段候选文本当作**一条**语句处理：变量替换 → 分析 → 执行（或交给执行层）。
-     *
-     * <p>这是"语句 → 结果"的唯一入口，也是 {@link ScriptSession} 判断"前缀是否可消费"的判据。</p>
-     *
-     * @param rawCandidate 候选语句原文（可能只是累积缓冲的前缀）
-     * @return {@code true} 表示这条候选**已定性**（已执行或已报错，调用方可从缓冲消费掉）；
-     *         {@code false} 表示"还没写完"，调用方应继续累积或尝试更长的前缀
-     */
-    boolean executeStatement(String rawCandidate) {
-        long startedAt = System.nanoTime();
-        diagnostics.begin();
-        boolean handled = handleStatement(rawCandidate);
-        if (handled) {
-            diagnostics.finish(startedAt);
-        }
-        return handled;
+    /** 叶子语句的两种结论：已执行/已报错，或"还没写完"。 */
+    private enum LeafResult {
+        HANDLED,
+        INCOMPLETE
     }
 
-    /** {@link #executeStatement} 的本体：判定 + 分派，返回"这条候选是否已定性"。 */
-    private boolean handleStatement(String rawCandidate) {
-        // 作业被请求停止时，下一条语句不再执行：让作业线程尽快收尾
+    /**
+     * 把一段候选文本当作**一条**语句处理：控制行 → 块捕获 → 普通叶子。
+     *
+     * @param flow 当前会话的控制流状态
+     * @return {@code true} 表示这条候选**已定性**（已执行/已捕获/已报错，调用方可消费）；
+     *         {@code false} 表示"还没写完"，调用方应继续累积
+     */
+    boolean executeStatement(String rawCandidate, ControlFlow flow) {
         checkStopRequested();
+        String firstWord = StatementText.firstWord(rawCandidate);
+
+        if (flow != null && ControlFlow.isControlCommand(firstWord)) {
+            // 控制行的条件不在这里展开 ${}：ControlFlow 在求值/执行时展开，循环每轮都能看到最新值。
+            SqlAnalyzer.Result result = SqlAnalyzer.analyze(rawCandidate);
+            echoInput(rawCandidate);
+            flow.accept(rawCandidate, result.parsedObject(), result.errorMsg(), result.parserError());
+            return true;
+        }
+
+        if (flow != null && flow.isCapturing()) {
+            // 结构探测只关心语句边界；${} 先替换成 x，避免未展开变量影响词法/语法判定。
+            SqlAnalyzer.Result probe = SqlAnalyzer.analyze(
+                    context.variables().maskForAnalysis(rawCandidate));
+            if (!probe.isFinished() && probe.incompleteInput()) {
+                return false;
+            }
+            echoInput(rawCandidate);
+            flow.appendStatement(rawCandidate);
+            return true;
+        }
+
+        return executeLeaf(rawCandidate, true, true) == LeafResult.HANDLED;
+    }
+
+    /**
+     * 真正执行一条叶子语句：变量替换 → 分析 → 执行/可读错误/SQL 兜底。
+     *
+     * @param echo            是否写输入回显（普通语句 true；块内重放 false）
+     * @param allowIncomplete true 表示"没写完"可以返回 INCOMPLETE 让调用方继续累积；
+     *                        false 表示这是重放，没写完就是脚本错误，报告后按已处理
+     */
+    private LeafResult executeLeaf(String rawCandidate, boolean echo, boolean allowIncomplete) {
+        long startedAt = System.nanoTime();
+        diagnostics.begin();
         String resolved;
         try {
             resolved = context.variables().resolve(rawCandidate);
         } catch (VariableExpressionException variableError) {
             // 替换目标非法（含表达式/函数调用）：该语句不执行，按错误语句处理
             reportError(variableError.getMessage());
-            return true;
+            diagnostics.finish(startedAt);
+            return LeafResult.HANDLED;
         }
         SqlAnalyzer.Result result = SqlAnalyzer.analyze(resolved);
         if (!result.isFinished()) {
-            // 语句还没写完（缺 ';' / 缺行首 '/' / _echo 缺 echo off…）：继续读下一行
-            return false;
+            // 语句还没写完（缺 ';' / 缺行首 '/' / _echo 缺 echo off…）
+            if (allowIncomplete) {
+                return LeafResult.INCOMPLETE;
+            }
+            reportIncomplete(rawCandidate);
+            diagnostics.finish(startedAt);
+            return LeafResult.HANDLED;
         }
         Map<String, Object> ir = result.parsedObject();
-        if (!StatementText.turnsEchoOff(ir)) {
+        if (echo && !StatementText.turnsEchoOff(ir)) {
             // `_SET ECHO OFF` 这一行自己不回显
             echoInput(rawCandidate);
         }
         if (ir != null && result.errorCode() == 0) {
             execute(ir);
-            return true;
+            diagnostics.finish(startedAt);
+            return LeafResult.HANDLED;
         }
         if (ir != null && !result.parserError() && reportReadableIrError(resolved, ir, result.errorMsg())) {
             // 访问器的可读错误已经报过（不是解析层文案，因此不能送去数据库）
-            return true;
+            diagnostics.finish(startedAt);
+            return LeafResult.HANDLED;
         }
-        return handleUnparsable(resolved, result.incompleteInput());
+        boolean handled = handleUnparsable(resolved, result.incompleteInput());
+        if (!handled && !allowIncomplete) {
+            reportIncomplete(rawCandidate);
+            handled = true;
+        }
+        if (handled) {
+            diagnostics.finish(startedAt);
+            return LeafResult.HANDLED;
+        }
+        return LeafResult.INCOMPLETE;
+    }
+
+    /** 重放时发现语句不完整：不执行，给一条可读错误。 */
+    private void reportIncomplete(String raw) {
+        String firstWord = StatementText.firstWord(raw);
+        if (firstWord != null && firstWord.startsWith("_")) {
+            reportError("Incomplete command [" + firstWord + "]: the command is not finished yet.");
+        } else {
+            reportError("Incomplete statement: the statement is not finished yet.");
+        }
     }
 
     /**
@@ -334,9 +426,18 @@ public final class ScriptRunner implements CommandHost {
      * <p>区别只有两点：变量替换的时机（这里的文本还没替换过），以及**此时已经没有下一行了** ——
      * 所以 {@code _} 命令不再返回"继续累积"，而是如实报一条 {@code Incomplete command [...]}。</p>
      */
-    void finishPending(String raw) {
+    void finishPending(String raw, ControlFlow flow) {
         long startedAt = System.nanoTime();
         diagnostics.begin();
+        String firstWord = StatementText.firstWord(raw);
+        if (flow != null && ControlFlow.isControlCommand(firstWord)) {
+            // EOF 时未配对的 _ENDIF/_ELSE 等由 ControlFlow 给结构错误，而不是 "Incomplete command"。
+            SqlAnalyzer.Result result = SqlAnalyzer.analyze(raw);
+            echoInput(raw);
+            flow.accept(raw, result.parsedObject(), result.errorMsg(), result.parserError());
+            diagnostics.finish(startedAt);
+            return;
+        }
         handlePending(raw);
         diagnostics.finish(startedAt);
     }

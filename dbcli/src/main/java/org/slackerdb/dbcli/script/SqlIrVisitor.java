@@ -29,9 +29,10 @@ import java.util.regex.Pattern;
  * </ul>
  *
  * <p><b>范围</b>：只实现下列命令 —— {@code EXIT QUIT USE(仅 SQL) SLEEP START
- * HOST HELP SET SPOOL ECHO ASSERT WHENEVER COMPARE JOB SSH CONNECT DISCONNECT
- * SESSION} 与全部 SQL 语句。{@code _IF/_ENDIF/_LOOP/{@code {% %}}/_DATA/_MONITOR/_<PLUGIN>/
- * 历史上的"加载"类命令（驱动/脚本/插件/映射文件）与 {@code _USE} 都不在语法里，因此这里没有对应 visit 方法。</p>
+ * HOST API HELP SET SPOOL ECHO ASSERT WHENEVER COMPARE JOB SSH CONNECT DISCONNECT
+ * SESSION IF ELSEIF ELSE ENDIF LOOP ENDLOOP} 与全部 SQL 语句。{@code {% %}} 内嵌脚本、
+ * {@code _DATA}/{@code _MONITOR}/{@code _<PLUGIN>}、历史上的"加载"类命令（驱动/脚本/插件/映射文件）
+ * 与 {@code _USE} 都不在语法里，因此这里没有对应 visit 方法。</p>
  *
  * <p><b>{@code _ASSERT} 的两种外观</b>：
  * {@code _ASSERT {% 取值器 比较符 字面量 %}} 与裸形态 {@code _ASSERT 取值器 比较符 字面量}，
@@ -662,6 +663,108 @@ public class SqlIrVisitor extends SQLParserBaseVisitor<Object> {
         return apply(tail(ctx, parsedObject));
     }
 
+    // ------------------------------------------------------------------ 控制流
+
+    @Override
+    public Object visitIfCommand(SQLParser.IfCommandContext ctx) {
+        Map<String, Object> parsedObject = object();
+        parsedObject.put("name", "IF");
+        parsedObject.put("expression", conditionText(ctx.CONDITION_BRACED(), ctx.CONDITION_TEXT(), "_IF"));
+        return apply(withArgumentError(tail(ctx, parsedObject), parsedObject));
+    }
+
+    @Override
+    public Object visitElseIfCommand(SQLParser.ElseIfCommandContext ctx) {
+        Map<String, Object> parsedObject = object();
+        parsedObject.put("name", "ELSEIF");
+        parsedObject.put("expression", conditionText(ctx.CONDITION_BRACED(), ctx.CONDITION_TEXT(), "_ELSEIF"));
+        return apply(withArgumentError(tail(ctx, parsedObject), parsedObject));
+    }
+
+    @Override
+    public Object visitElseCommand(SQLParser.ElseCommandContext ctx) {
+        Map<String, Object> parsedObject = object();
+        parsedObject.put("name", "ELSE");
+        return apply(tail(ctx, parsedObject));
+    }
+
+    @Override
+    public Object visitEndifCommand(SQLParser.EndifCommandContext ctx) {
+        Map<String, Object> parsedObject = object();
+        parsedObject.put("name", "ENDIF");
+        return apply(tail(ctx, parsedObject));
+    }
+
+    @Override
+    public Object visitLoopCommand(SQLParser.LoopCommandContext ctx) {
+        Map<String, Object> parsedObject = object();
+        parsedObject.put("name", "LOOP");
+
+        if (ctx.LOOP_BREAK() != null) {
+            parsedObject.put("action", "BREAK");
+        } else if (ctx.LOOP_CONTINUE() != null) {
+            parsedObject.put("action", "CONTINUE");
+        } else {
+            parsedObject.put("action", "BLOCK");
+            if (ctx.LOOP_INT() != null) {
+                parsedObject.put("mode", "COUNT");
+                Integer count = intArgument(ctx.LOOP_INT(), "loop count", UserNumber.Rule.NON_NEGATIVE_INTEGER);
+                parsedObject.put("count", count == null ? 0 : count);
+            } else if (ctx.LOOP_WHILE() != null) {
+                parsedObject.put("mode", "WHILE");
+                parsedObject.put("expression", loopConditionText(ctx.LOOP_BRACED(), "WHILE"));
+            } else if (ctx.LOOP_UNTIL() != null) {
+                parsedObject.put("mode", "UNTIL");
+                parsedObject.put("expression", loopConditionText(ctx.LOOP_BRACED(), "UNTIL"));
+            } else {
+                // 裸 `_LOOP` 与 `_LOOP FOREVER` 同义
+                parsedObject.put("mode", "FOREVER");
+            }
+        }
+        return apply(withArgumentError(tail(ctx, parsedObject), parsedObject));
+    }
+
+    @Override
+    public Object visitEndloopCommand(SQLParser.EndloopCommandContext ctx) {
+        Map<String, Object> parsedObject = object();
+        parsedObject.put("name", "ENDLOOP");
+        return apply(tail(ctx, parsedObject));
+    }
+
+    /** `_IF` / `_ELSEIF` 的条件正文：只去掉最外层 {% %}，保留内部空白。 */
+    private String conditionText(TerminalNode braced, TerminalNode bare, String command) {
+        if (braced != null) {
+            return stripConditionBraces(braced.getText());
+        }
+        if (bare != null) {
+            noteArgumentError(command + " condition must be written as {% <left> <op> <right> %}.");
+            return bare.getText().strip();
+        }
+        noteArgumentError(command + " requires a {% <left> <op> <right> %} condition.");
+        return "";
+    }
+
+    /** `_LOOP WHILE|UNTIL` 的条件正文；缺 {% %} 时给可读错误。 */
+    private String loopConditionText(TerminalNode braced, String keyword) {
+        if (braced == null) {
+            noteArgumentError("_LOOP " + keyword + " requires a {% ... %} condition.");
+            return "";
+        }
+        return stripConditionBraces(braced.getText());
+    }
+
+    /** 去掉条件 token 的 {% %} 外壳；内部空白保留（求值器会 strip）。 */
+    private static String stripConditionBraces(String token) {
+        String text = token == null ? "" : token.strip();
+        if (text.startsWith("{%")) {
+            text = text.substring(2);
+        }
+        if (text.endsWith("%}")) {
+            text = text.substring(0, text.length() - 2);
+        }
+        return text;
+    }
+
     // ---------------------------------------------------------------------- HOST
 
     @Override
@@ -686,6 +789,21 @@ public class SqlIrVisitor extends SQLParserBaseVisitor<Object> {
             }
             parsedObject.put("script", script);
         }
+        return apply(tail(ctx, parsedObject));
+    }
+
+    // ---------------------------------------------------------------------- API
+
+    /**
+     * {@code _API ...}：语法层只取出整行原文，URL/header/body/选项全部交给
+     * {@code ApiRequestParser}。因此这里不做任何字段解析，也不因缺参数设置 errorCode。
+     */
+    @Override
+    public Object visitApi(SQLParser.ApiContext ctx) {
+        Map<String, Object> parsedObject = object();
+        parsedObject.put("name", "API");
+        String arguments = ctx.API_EXPRESSION() == null ? "" : ctx.API_EXPRESSION().getText().strip();
+        parsedObject.put("arguments", arguments);
         return apply(tail(ctx, parsedObject));
     }
 
@@ -1062,7 +1180,9 @@ public class SqlIrVisitor extends SQLParserBaseVisitor<Object> {
             }
         } else if (ctx.JOB_SHOW() != null) {
             parsedObject.put("action", "show");
-            parsedObject.put("jobName", ctx.JOB_EXPRESSION(0).getText().strip());
+            if (!ctx.JOB_EXPRESSION().isEmpty()) {
+                parsedObject.put("jobName", ctx.JOB_EXPRESSION(0).getText().strip());
+            }
         } else if (ctx.JOB_WAIT() != null) {
             parsedObject.put("action", "wait");
             JobParams params = jobParams(ctx.JOB_EXPRESSION());

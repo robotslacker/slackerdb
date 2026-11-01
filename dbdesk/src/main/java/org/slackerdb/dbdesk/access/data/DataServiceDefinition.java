@@ -20,6 +20,7 @@ public record DataServiceDefinition(
         String description,
         String searchPath,
         String snapshotLimit,
+        String maxExecutionTime,
         List<Parameter> parameters) {
 
     public record Parameter(String name, String defaultValue) {
@@ -55,6 +56,7 @@ public record DataServiceDefinition(
                 text(node, "description"),
                 text(node, "searchPath"),
                 text(node, "snapshotLimit"),
+                text(node, "maxExecutionTime"),
                 parameters);
     }
 

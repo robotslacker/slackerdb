@@ -175,6 +175,33 @@ class JobCommandDispatcherTest {
     }
 
     @Test
+    @DisplayName("SHOW 不带名字：全部作业一张表，按 name 排序")
+    void showAllJobsSortedByName() {
+        dispatcher.execute(ir("action", "startJobmanager"));
+        dispatcher.execute(ir("action", "create", "jobName", "J2", "param", params()));
+        dispatcher.execute(ir("action", "create", "jobName", "J1", "param", params()));
+
+        List<CommandOutcome> outcomes = dispatcher.execute(ir("action", "show"));
+
+        assertEquals(1, outcomes.size());
+        CommandOutcome.Table table = (CommandOutcome.Table) outcomes.get(0);
+        assertEquals(List.of("name", "state", "thread", "elapsed", "exitCode"), table.headers());
+        assertEquals(List.of("J1", "J2"),
+                table.rows().stream().map(row -> row.get(0)).toList());
+        assertEquals("CREATED", table.rows().get(0).get(1));
+    }
+
+    @Test
+    @DisplayName("SHOW 不带名字且没有作业：表头仍然存在，行数为 0")
+    void showAllJobsWithNoJobs() {
+        CommandOutcome.Table table = (CommandOutcome.Table)
+                dispatcher.execute(ir("action", "show")).get(0);
+
+        assertEquals(List.of("name", "state", "thread", "elapsed", "exitCode"), table.headers());
+        assertTrue(table.rows().isEmpty(), table.rows().toString());
+    }
+
+    @Test
     @DisplayName("SHOW 在作业跑起来之后给出线程名与状态")
     void showRunningJobReportsThread() {
         dispatcher.execute(ir("action", "startJobmanager"));
@@ -331,8 +358,6 @@ class JobCommandDispatcherTest {
     void errorPaths() {
         assertEquals("Unknown job action [nosuch].",
                 firstError(dispatcher.execute(ir("action", "nosuch"))));
-        assertEquals("Job command needs a 'jobName' value.",
-                firstError(dispatcher.execute(ir("action", "show"))));
         assertEquals("Job command needs a 'timerPoint' value.",
                 firstError(dispatcher.execute(ir("action", "timer"))));
 

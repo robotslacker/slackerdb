@@ -120,11 +120,13 @@ public class McpServer {
                 logger,
                 SESSION_IDLE_TIMEOUT_MS,
                 MAX_SESSIONS);
-        // MCP 是内部工具：不再施加只读、行数上限或语句超时；权限与
-        // access_mode 由服务器本身决定，run_sql 可以正常执行写语句。
+        // MCP 是内部工具：不再施加只读或行数上限；权限与 access_mode 由服务器本身决定，
+        // run_sql 可以正常执行写语句。语句超时默认跟随服务器 GLOBAL，调用方可用
+        // run_sql 的 maxExecutionTime 按次覆盖。
         this.toolkit = new McpToolkit(sessionStore, new McpToolkit.Config(
                 MAX_ROWS_CEILING,
-                mcpDefaultSchema), logger);
+                mcpDefaultSchema,
+                dbInstance.serverConfiguration.getMax_execution_time()), logger);
         sessionReaper.scheduleWithFixedDelay(() -> {
             try {
                 sessionStore.reapIdle();

@@ -5,6 +5,7 @@
  * <ol>
  *   <li>{@link org.slackerdb.dbcli.engine.ScriptRunner}：推进 + 分派（本包的门面）；</li>
  *   <li>{@link org.slackerdb.dbcli.engine.ScriptSession}：累积缓冲与语句切分；</li>
+ *   <li>{@code engine.flow.ControlFlow}：{@code _IF}/{@code _LOOP} 的块捕获与控制树执行；</li>
  *   <li>{@link org.slackerdb.dbcli.engine.LexicalScanner} /
  *       {@link org.slackerdb.dbcli.engine.StatementBoundary} /
  *       {@link org.slackerdb.dbcli.engine.StatementSplitter}：唯一的词法规则与边界判定；</li>

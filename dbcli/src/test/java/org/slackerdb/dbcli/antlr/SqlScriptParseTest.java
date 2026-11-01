@@ -75,13 +75,28 @@ class SqlScriptParseTest {
     }
 
     @Test
+    @DisplayName("控制流已重新加入：_IF/_ELSEIF/_ELSE/_ENDIF 与 _LOOP/_ENDLOOP 都能解析")
+    void controlFlowParses() {
+        assertTrue(ScriptParseProbe.parseOnce("_IF {% 3=2 %}\n").ok(), "_IF 必须能解析");
+        assertTrue(ScriptParseProbe.parseOnce("_ELSEIF {% RESULT.ROWCOUNT = 0 %}\n").ok(), "_ELSEIF 必须能解析");
+        assertTrue(ScriptParseProbe.parseOnce("_ELSE\n").ok(), "_ELSE 必须能解析");
+        assertTrue(ScriptParseProbe.parseOnce("_ENDIF\n").ok(), "_ENDIF 必须能解析");
+        assertTrue(ScriptParseProbe.parseOnce("_LOOP\n").ok(), "裸 _LOOP 必须能解析");
+        assertTrue(ScriptParseProbe.parseOnce("_LOOP 3\n").ok(), "_LOOP <n> 必须能解析");
+        assertTrue(ScriptParseProbe.parseOnce("_LOOP WHILE {% VAR.i < 3 %}\n").ok(), "_LOOP WHILE 必须能解析");
+        assertTrue(ScriptParseProbe.parseOnce("_LOOP UNTIL {% RESULT.ROWCOUNT = 0 %}\n").ok(), "_LOOP UNTIL 必须能解析");
+        assertTrue(ScriptParseProbe.parseOnce("_LOOP BREAK\n").ok(), "_LOOP BREAK 必须能解析");
+        assertTrue(ScriptParseProbe.parseOnce("_LOOP CONTINUE\n").ok(), "_LOOP CONTINUE 必须能解析");
+        assertTrue(ScriptParseProbe.parseOnce("_ENDLOOP\n").ok(), "_ENDLOOP 必须能解析");
+        assertTrue(ScriptParseProbe.parseOnce("_JOB SHOW\n").ok(), "_JOB SHOW 无参数必须能解析");
+        assertTrue(ScriptParseProbe.parseOnce("_JOB SHOW;\n").ok(), "_JOB SHOW 带分号必须能解析");
+    }
+
+    @Test
     @DisplayName("已删除的语句现在解析失败（保证裁剪确实生效，防止被误加回来）")
     void removedStatementsNoLongerParse() {
-        // 控制流与内嵌脚本：_IF / _LOOP / > {% %}
-        assertFalse(ScriptParseProbe.parseOnce("_IF {% 3==2 %}\n").ok(), "_IF 已从语法删除，应当解析失败");
-        assertFalse(ScriptParseProbe.parseOnce("_LOOP BEGIN UNTIL {% i==3 %}\n").ok(), "_LOOP 已从语法删除，应当解析失败");
+        // 内嵌脚本与运维类命令：> {% %} / _DATA / _MONITOR
         assertFalse(ScriptParseProbe.parseOnce("> {% i=0 %}\n").ok(), "内嵌脚本 {% %} 已从语法删除，应当解析失败");
-        // 运维类命令：_DATA / _MONITOR
         assertFalse(ScriptParseProbe.parseOnce("_DATA SET SEEDFILE DIR /tmp;\n").ok(), "_DATA 已从语法删除，应当解析失败");
         assertFalse(ScriptParseProbe.parseOnce("_MONITOR MANAGER ON\n").ok(), "_MONITOR 已从语法删除，应当解析失败");
         // API 命名空间：整个 APILexer/APIParser 已删除

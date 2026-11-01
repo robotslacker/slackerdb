@@ -5,11 +5,12 @@
 
 ## 1. 这个模块能做什么
 
-`dbcli` 是 SlackerDB 的命令行客户端，提供四种用法：
+`dbcli` 是 SlackerDB 的命令行客户端，提供五种用法：
 
 - **交互式控制台**：在终端里逐条输入 SQL 与命令；
 - **批处理**：`--execute <脚本>` 或从标准输入读脚本，跑完返回退出码；
 - **结果比对**：把本次运行的数据输出与参考文件比较，作为回归门禁（`--reference`）；
+- **HTTP 调用**：`_API` 调 REST API，响应状态/头/JSON 可进入断言与变量（`api` 包）；
 - **并发与远程**：作业（`_JOB`，线程或独立进程）、同步屏障、SSH/SFTP（`_SSH`）。
 
 依赖方向固定为 `dbcli → plsql → common`，并使用项目自带的 JDBC 驱动。`dbcli` 不被其它模块依赖，
@@ -21,7 +22,9 @@
 |-----------------------|--------------------------------------|
 | `org.slackerdb.dbcli` | 进程入口、命令行参数、运行形态、收尾（退出码与比对）           |
 | `engine`              | 脚本引擎：逐行累积 → 分析 → 分派 → 输出             |
+| `engine.flow`         | 控制流：`_IF`/`_LOOP` 的块捕获、控制树与解释执行       |
 | `engine.command`      | 一条命令一个类（`_SET`/`_ASSERT`/`_SPOOL`/…） |
+| `api`                 | `_API` 的请求解析、HTTP 客户端、响应与 JSON 变量          |
 | `script`              | 本模块使用的 SQL/命令语法与 IR                  |
 | `sql`                 | 数据库执行层与结果渲染                          |
 | `assertion`           | `_ASSERT` 的求值与结果模型                   |
@@ -71,12 +74,21 @@
 
 ### 会话与连接
 
-- `_SET` 的选项（含 `AUTOCOMMIT`、`TIMEOUT`）在**重连后继续生效**。
+- `_SET` 的选项（含 `AUTOCOMMIT`、`TIMEOUT`、`LOOPTRACE`）在**重连后继续生效**。
+
+### 控制流
+
+- `_IF` / `_ELSEIF` / `_ELSE` / `_ENDIF` 与 `_LOOP` / `_ENDLOOP` 都是客户端脚本层结构；
+  条件复用 `_ASSERT` 的固定形态（`{% 左值 比较符 右值 %}`）。
+- 块体在读取时捕获、`_ENDIF` / `_ENDLOOP` 后执行；循环每轮默认打印
+  `Loop iteration ...` 进度行（`_SET LOOPTRACE OFF` 可关）。
+- 块最多 64 层；单个循环最多 1,000,000 轮；`_START` 子脚本、作业、控制台各自有独立的控制流状态。
 
 ### 作业
 
 - 作业默认在线程里运行；`mode=process` 时在独立进程里运行，可硬超时并结束整棵进程树。
 - `_JOB WAIT` 不写 `timeout=` 会一直等；等待超时只是"这次没等到"，作业仍在运行。
+- `_JOB SHOW` 不带名字时把管理器里的全部作业（含已结束）按名字排序列成一张表；没有作业时只有表头。
 - `_JOB ABORT` / `_JOB SHUTDOWN` 是**请求**停止。作业正常响应时立即进入 `ABORTED` / `SHUTDOWN`；
   若作业暂时没有响应，状态保持 `RUNNING`，并在它真正结束后落到对应终态。
 
@@ -97,6 +109,10 @@
 - **新增一条 `_` 命令**：语法（`src/main/antlr4/.../BaseParser.g4`）→ IR（`script/SqlIrVisitor`）→
   实现（`engine/command` 下一个类）→ 登记（`engine.command/CommandCatalog`）→ 文案
   （`help/HelpCatalog` 与 README）→ 测试。
+- **新增结构命令（如 `_IF`/`_LOOP`）**：它不是叶子 `ScriptCommand`，不能只靠“一命令一类”；
+  需要同时改语法/IR、`engine.flow.ControlFlow`、`HelpCatalog`、两份 README 与
+  `CommandCatalogTest`（控制流名字由 `ControlFlow.commandNames()` 登记）。结构命令必须
+  先想清楚“捕获期做什么、执行期做什么、错误如何恢复”，不要把它塞进命令实现的 `execute`。
 - **新增一个 `_SET` 选项**：在 `engine/SetOption` 中声明（默认值、类型、校验、落地点都在那里）。
 - **新增结果输出形式**：从 `sql/ResultRenderers` 进入，保持"单元格文本先归一、再排版"的层次。
 

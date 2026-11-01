@@ -305,6 +305,9 @@ public final class AssertEvaluator {
         if (upper.startsWith("RESULT.ROWS[")) {
             return resolveCell(selector, result);
         }
+        if (upper.startsWith("API.")) {
+            return lookupApiValue(selector, result.variables());
+        }
         if (upper.startsWith("VAR.")) {
             return lookupVariable(selector.substring(4), result.variables());
         }
@@ -329,6 +332,32 @@ public final class AssertEvaluator {
             }
         }
         throw new AssertSyntaxException("unknown variable [" + name + "]");
+    }
+
+    /**
+     * {@code API.*} 取值：缺失返回 null（不是语法错误），因此 {@code EXISTS} 为 false、
+     * {@code = NULL} 为 true。
+     *
+     * <p>{@code API.JSON.*} 的 JSON 键区分大小写；数组下标 {@code [n]} 与 {@code .n} 等价。
+     * 其它 {@code API.*}（STATUS/OK/BODY/ERROR/HEADER）大小写不敏感。</p>
+     */
+    private static Object lookupApiValue(String selector, Map<String, String> variables) {
+        if (selector.regionMatches(true, 0, "API.JSON", 0, "API.JSON".length())) {
+            String path = selector.substring("API.JSON".length())
+                    .replaceAll("\\[(\\d+)]", ".$1");
+            String normalized = "API.JSON" + path;
+            return variables.get(normalized);
+        }
+        String value = variables.get(selector);
+        if (value != null) {
+            return value;
+        }
+        for (Map.Entry<String, String> entry : variables.entrySet()) {
+            if (entry.getKey().equalsIgnoreCase(selector)) {
+                return entry.getValue();
+            }
+        }
+        return null;
     }
 
     /** {@code RESULT.ROWS[r][c]}：**0 基**，越界报语法错而不是静默 false。 */

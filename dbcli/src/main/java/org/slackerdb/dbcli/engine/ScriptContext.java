@@ -1,5 +1,6 @@
 package org.slackerdb.dbcli.engine;
 
+import org.slackerdb.dbcli.api.ApiClient;
 import org.slackerdb.dbcli.assertion.ResultModel;
 import org.slackerdb.dbcli.job.Job;
 import org.slackerdb.dbcli.job.JobManager;
@@ -90,6 +91,9 @@ public final class ScriptContext implements AutoCloseable {
      */
     private boolean jobFailureReporting = true;
 
+    /** {@code _API} 的 HTTP 客户端；懒创建，首次真正调用 API 时才建。 */
+    private ApiClient apiClient;
+
     public ScriptContext(SqlExecutor sqlExecutor, ScriptOutput output, VariableResolver variables,
                          Path workingDirectory) {
         this(sqlExecutor, output, variables, workingDirectory, null);
@@ -143,6 +147,14 @@ public final class ScriptContext implements AutoCloseable {
 
     public ResultModel lastResult() {
         return lastResult;
+    }
+
+    /** {@code _API} 的 HTTP 客户端（懒创建；同一会话复用连接）。 */
+    public ApiClient apiClient() {
+        if (apiClient == null) {
+            apiClient = new ApiClient();
+        }
+        return apiClient;
     }
 
     public void setLastResult(ResultModel lastResult) {
@@ -272,6 +284,11 @@ public final class ScriptContext implements AutoCloseable {
     /** {@code _SET TIME}（默认 off）：每条语句跑完后是否在 stdout 打一行当前系统时间。 */
     public boolean timeOn() {
         return "on".equals(option("time"));
+    }
+
+    /** {@code _SET LOOPTRACE}（默认 on）：循环每轮是否打印一条进度状态行。 */
+    public boolean loopTraceOn() {
+        return !"off".equals(option("looptrace"));
     }
 
     /** {@code _SET DIFF_REPORT_HTML}（默认 off）：{@code _COMPARE} 有差异时是否另外写一份 HTML 报告。 */
@@ -407,6 +424,9 @@ public final class ScriptContext implements AutoCloseable {
     /** 收尾：关闭 SQL 执行层、作业管理器、SSH 会话与输出（spool/tee 落盘）。 */
     @Override
     public void close() {
+        if (apiClient != null) {
+            apiClient.close();
+        }
         output.close();
         dispatcher.close();
         sqlExecutor.close();

@@ -903,6 +903,7 @@ public class DBInstanceX {
             parameters.put("pluginsDir", config.getPlugins_dir());
             parameters.put("threads", config.getThreads());
             parameters.put("memoryLimit", config.getMemory_limit());
+            parameters.put("maxExecutionTime", config.getMax_execution_time());
             parameters.put("maxWorkers", config.getMax_Workers());
             parameters.put("accessMode", config.getAccess_mode());
             parameters.put("log", config.getLog());

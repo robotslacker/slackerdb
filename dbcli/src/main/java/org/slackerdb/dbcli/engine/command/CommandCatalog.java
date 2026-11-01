@@ -16,6 +16,7 @@ public final class CommandCatalog {
 
     /** 登记顺序不影响行为（按名字查），但列出来就是"这个客户端认识哪些命令"。 */
     private static final List<ScriptCommand> COMMANDS = List.of(
+            new ApiCommand(),
             new AssertCommand(),
             new EchoCommand(),
             new ExitCommand(),

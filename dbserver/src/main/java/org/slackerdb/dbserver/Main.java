@@ -53,13 +53,17 @@ public class Main {
                 + " Accepts an interface name (eth0, Ethernet) or a local IP. Default: first usable interface.");
         System.out.println("  --port                      Set data service listener port. Default: random");
         System.out.println("  --portX                     Set management service listener port. Default: none");
-        System.out.println("  --memory_limit              Set maximum memory allocation. Format: <value>(K|M|G)");
-        System.out.println("  --auto_workload_threshold   Set auto workload threshold for memory limit calculation. Default: 0.8.");
+        System.out.println("  --memory_limit              Set maximum memory allocation. Format: <value>(K|M|G) or a percentage such as 60%. Default: 80%.");
+        System.out.println("  --max_execution_time        Maximum execution time per query in milliseconds (0 = no limit). Default: 0.");
         System.out.println("  --max_workers               Set maximum concurrent worker processes.");
         System.out.println("  --threads                   Set maximum thread count for server computation layer.");
         System.out.println("  --data                      Specify database name. Default: none (the built-in memory database, named memory)");
         System.out.println("  --data_encrypt              Enable data encryption. Default: false");
-        System.out.println("  --data_dir                  Specify database file directory. Default: :memory:");
+        System.out.println("  --data_dir                  Specify database file directory, or ':ducklake:' for DuckLake mode. Default: :memory:");
+        System.out.println("  --ducklake_meta             DuckLake metadata connection, format: user/password@host:port/database."
+                + " Only used when data_dir=:ducklake: (required in that mode).");
+        System.out.println("  --ducklake_path             DuckLake data path (filesystem path or s3 path)."
+                + " Only used when data_dir=:ducklake: (optional).");
         System.out.println("  --temp_dir                  Specify temporary file directory. Default: same with data_dir(disk mode), OS-dependent(memory mode).");
         System.out.println("  --plugins_dir               Specify plugins file directory. Default: none.");
         System.out.println("  --extension_dir             Specify extension file directory. Default: $HOME/.duckdb/extensions.");
@@ -74,6 +78,8 @@ public class Main {
         System.out.println("  --mcp-llm-server            Specify MCP LLM server configuration. Format: <service>:<ip>:<port>:<model>. Default: empty.");
         System.out.println("  --socket                    Specify Unix Domain Socket file path for UDS connections. Default: empty (TCP mode).");
         System.out.println("  --quack_addr                Specify Quack remote server address. Format: IP:PORT. Default: none.");
+        System.out.println("  --quack_token               Specify Quack authentication token (at least 4 characters)."
+                + " Default: empty (a random token is generated, logged and shown by status).");
         System.out.println("  --<pluginId>.<param>         Specify plugin-specific parameters. Example: --scheduler.home=someDir");
 
     }
@@ -238,6 +244,14 @@ public class Main {
             {
                 serverConfiguration.setData_dir(appOptions.get("data_dir"));
             }
+            if (appOptions.containsKey("ducklake_meta"))
+            {
+                serverConfiguration.setDucklakeMeta(appOptions.get("ducklake_meta"));
+            }
+            if (appOptions.containsKey("ducklake_path"))
+            {
+                serverConfiguration.setDucklakePath(appOptions.get("ducklake_path"));
+            }
             if (appOptions.containsKey("temp_dir"))
             {
                 serverConfiguration.setTemp_dir(appOptions.get("temp_dir"));
@@ -278,9 +292,9 @@ public class Main {
             {
                 serverConfiguration.setMemory_limit(appOptions.get("memory_limit"));
             }
-            if (appOptions.containsKey("auto_workload_threshold"))
+            if (appOptions.containsKey("max_execution_time"))
             {
-                serverConfiguration.setAuto_workload_threshold(appOptions.get("auto_workload_threshold"));
+                serverConfiguration.setMax_execution_time(appOptions.get("max_execution_time"));
             }
             if (appOptions.containsKey("max_workers"))
             {
@@ -317,6 +331,10 @@ public class Main {
             if (appOptions.containsKey("quack_addr"))
             {
                 serverConfiguration.setQuackAddr(appOptions.get("quack_addr"));
+            }
+            if (appOptions.containsKey("quack_token"))
+            {
+                serverConfiguration.setQuackToken(appOptions.get("quack_token"));
             }
 
             // 处理插件自定义参数（格式为 <pluginId>.<paramName>）

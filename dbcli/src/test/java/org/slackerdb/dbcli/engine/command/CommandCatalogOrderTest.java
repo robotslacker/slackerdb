@@ -16,7 +16,7 @@ class CommandCatalogOrderTest {
     @Test
     @DisplayName("names() 按登记顺序；同一实现的多个名字相邻且按字母序（EXIT、QUIT）")
     void namesFollowRegistrationOrder() {
-        assertEquals(List.of("ASSERT", "ECHO", "EXIT", "QUIT", "HELP", "HOST", "LOAD", "SET", "SLEEP",
+        assertEquals(List.of("API", "ASSERT", "ECHO", "EXIT", "QUIT", "HELP", "HOST", "LOAD", "SET", "SLEEP",
                 "SPOOL", "START", "WHENEVER"), CommandCatalog.names());
     }
 }

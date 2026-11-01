@@ -38,6 +38,9 @@ START               : '_START' -> pushMode(StartMode);
 // 执行主机操作系统命令
 HOST                : '_HOST' -> pushMode(HostMode);
 
+// 调用 HTTP API（类似简化版 curl）：整行原文交给 ApiRequestParser 解析
+API                 : '_API' -> pushMode(ApiMode);
+
 // 指定帮助命令
 HELP                : '_HELP' -> pushMode(HelpMode);
 
@@ -61,6 +64,14 @@ JOB                 : '_JOB' ->pushMode(JobMode);
 
 // 比对文件的一致性
 COMPARE             : '_COMPARE' ->pushMode(CompareMode);
+
+// 脚本控制流：这里只识别单行结构标记，块配对由 engine.flow.ControlFlow 负责
+IF                  : '_IF' -> pushMode(ConditionMode);
+ELSEIF              : '_ELSEIF' -> pushMode(ConditionMode);
+ELSE                : '_ELSE';
+ENDIF               : '_ENDIF';
+LOOP                : '_LOOP' -> pushMode(LoopHeaderMode);
+ENDLOOP             : '_ENDLOOP';
 
 INT                 : DIGIT+ ;
 DECIMAL             : DIGIT+ '.' DIGIT+ ;
@@ -109,12 +120,24 @@ START_SEMICOLON    : ';';
 START_CRLF         : CRLF -> popMode;
 
 mode HostMode;
-HOST_SPACE         : [ \t]+ -> channel (HIDDEN);
+HOST_SPACE         : [ \t]+ -> channel(HIDDEN);
 HOST_EXPRESSION    :
     (OBS_TEXT | UNRESERVED | SUBDELIMS | PCTENCODED | DoubleQuoteString | SingleQuoteString | ':' | '/' | '\\' |' ')+;
 // 同 START_SEMICOLON：`_host echo hi;` 必须能吞掉那个分号（否则报未知命令）。
 HOST_SEMICOLON     : ';';
 HOST_CRLF          : CRLF -> popMode;
+
+/**
+ * HTTP API 参数模式。
+ *
+ * 语法层只负责“整行原样取出”：URL、header、JSON 请求体里可能出现
+ * `:`、`/`、`?`、`&`、`=`、`;`、引号、大括号，全部由 ApiRequestParser 在命令层解析，
+ * 不进入 ANTLR 语法。行尾 `;` 也留在表达式里，由命令层按“最后一个字符且不在引号内”去掉。
+ */
+mode ApiMode;
+API_SPACE          : [ \t]+ -> channel(HIDDEN);
+API_EXPRESSION     : ~[\r\n]+;
+API_CRLF           : CRLF -> popMode;
 
 mode WheneverMode;
 WHENEVER_SPACE      : [ \t]+ -> channel (HIDDEN);
@@ -260,3 +283,33 @@ SLEEP_EXPRESSION    :
     (OBS_TEXT | UNRESERVED | PCTENCODED | DoubleQuoteString | SingleQuoteString | ':' | '/' | '\\' | '{' | '}')+;
 SLEEP_CRLF          : CRLF -> popMode;
 SLEEP_SEMICOLON     : ';';
+
+/**
+ * 控制流条件模式：`_IF {% ... %}` / `_ELSEIF {% ... %}`。
+ *
+ * 只接受单行 `{% ... %}`；CONDITION_TEXT 仅用于把“没有写 {% %}”的输入接住，
+ * 由 ControlFlow 给可读错误，而不是让 ANTLR 报 missing token。
+ */
+mode ConditionMode;
+CONDITION_SPACE     : [ \t]+ -> channel (HIDDEN);
+CONDITION_BRACED    : [ \t]* '{%' ~[\n]*? '%}';
+CONDITION_COMMENT   : [ \t]* '--' ~('\n')* -> channel (HIDDEN);
+CONDITION_TEXT      : ~[\n;]+;
+CONDITION_SEMICOLON : ';';
+CONDITION_CRLF      : '\n' -> type(CRLF), popMode;
+
+/**
+ * 循环头模式：`_LOOP [n|WHILE {%...%}|UNTIL {%...%}|FOREVER|BREAK|CONTINUE]`。
+ */
+mode LoopHeaderMode;
+LOOP_SPACE        : [ \t]+ -> channel (HIDDEN);
+LOOP_WHILE        : 'WHILE';
+LOOP_UNTIL        : 'UNTIL';
+LOOP_FOREVER      : 'FOREVER';
+LOOP_BREAK        : 'BREAK';
+LOOP_CONTINUE     : 'CONTINUE';
+LOOP_INT          : [0-9]+;
+LOOP_BRACED       : [ \t]* '{%' ~[\n]*? '%}';
+LOOP_COMMENT      : [ \t]* '--' ~('\n')* -> channel (HIDDEN);
+LOOP_SEMICOLON    : ';';
+LOOP_CRLF         : '\n' -> type(CRLF), popMode;

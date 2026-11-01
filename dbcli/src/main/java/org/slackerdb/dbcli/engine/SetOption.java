@@ -27,6 +27,7 @@ public enum SetOption {
     TERMOUT("termout", Kind.BOOLEAN, "on"),
     TIMING("timing", Kind.BOOLEAN, "off"),
     TIME("time", Kind.BOOLEAN, "off"),
+    LOOPTRACE("looptrace", Kind.BOOLEAN, "on"),
     OUTFORMAT("outformat", Kind.CHOICE, "table", List.of("table", "vertical", "csv")),
     HEADER("header", Kind.BOOLEAN, "on"),
     LINEWIDTH("linewidth", Kind.INTEGER, "200"),
@@ -167,6 +168,9 @@ public enum SetOption {
                     UserNumber.nonNegativeInteger(optionName, context.option(optionName)));
             case TIMING, TIME -> {
                 // 只有引擎自己读（_SET TIMING/TIME 在每条语句收尾时看），没有下层要通知
+            }
+            case LOOPTRACE -> {
+                // 只有引擎自己读（ControlFlow 的进度行），没有下层要通知
             }
         }
     }

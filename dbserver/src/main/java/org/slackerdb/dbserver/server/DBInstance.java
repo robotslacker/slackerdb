@@ -168,6 +168,15 @@ public class DBInstance {
     // 实例的状态
     public String instanceState = "IDLE";
 
+    /**
+     * Quack 服务实际生效的认证令牌。
+     *
+     * <p>未配置 {@code quack_token} 时由 DuckDB 随机生成，启动时从
+     * {@code quack_serve} 的返回结果中取得；Quack 未启用时为 {@code null}。
+     * 这里保存的是"实际生效"的值，status 命令直接回显它。</p>
+     */
+    public String quackAuthToken = null;
+
     // 标记数据库是否正在等待输入密钥
     public boolean instanceSuspendForSecretKey = false;
 
@@ -317,6 +326,8 @@ public class DBInstance {
                 try {
                     sqlHistoryConn = ((DuckDBConnection) backendSysConnection).duplicate();
                     sqlHistoryConn.createStatement().execute("use memory");
+                    // 内部执行豁免：历史写入不能被全局查询超时打断
+                    sqlHistoryConn.createStatement().execute("SET SESSION max_execution_time=0");
                     sqlHistoryConn.setAutoCommit(false);
                     historyInsertStmt = sqlHistoryConn.prepareStatement(historyInsertSQL);
                     historyUpdateStmt = sqlHistoryConn.prepareStatement(historyUpdateSQL);
@@ -605,6 +616,10 @@ public class DBInstance {
     // 挂载数据库， 如果数据库的密钥为空，则不对数据库进行加密
     public void attachDatabase(String databaseEncryptKey)
     {
+        // DuckLake 模式的必填项校验必须发生在任何 ATTACH 之前：data_dir=:ducklake:
+        // 但缺少 ducklake_meta 时，程序不能悄悄退回内存模式继续启动。
+        validateDucklakeConfiguration(serverConfiguration);
+
         // 如果数据库开启了加密，但是没有设置环境变量，则不要进行Attach
         // 如果指定了Data，则需要Attach到指定的数据库上
         Statement stmt = null;
@@ -665,7 +680,18 @@ public class DBInstance {
 
             String attachString;
             String dataFilePath;
-            if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
+            boolean ducklakeMode = serverConfiguration.isDucklakeEnabled();
+            if (ducklakeMode) {
+                // DuckLake 不使用本地 .db 文件：元数据库由 ducklake_meta 描述，
+                // 数据文件位置由 ducklake_path 描述（为空时由 DuckLake 使用默认位置）。
+                attachString = buildDucklakeAttachSql(
+                        serverConfiguration.getDucklakeMeta(),
+                        serverConfiguration.getDucklakePath(),
+                        instanceName,
+                        serverConfiguration.getAccess_mode().equals("READ_ONLY"));
+                dataFilePath = "ducklake:" + redactDucklakeMeta(serverConfiguration.getDucklakeMeta());
+                databaseFirstOpened = true;
+            } else if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
                 attachString = "ATTACH ':memory:' AS \"" + instanceName + "\"";
                 dataFilePath = ":memory:";
                 databaseFirstOpened = true;
@@ -687,24 +713,27 @@ public class DBInstance {
                 dataFilePath = dataFile.getAbsolutePath();
                 attachString = "ATTACH '" + dataFile.getAbsolutePath() + "' AS \"" + instanceName + "\"";
             }
-            String attachOptions = "(";
-            if (serverConfiguration.getAccess_mode().equals("READ_ONLY")) {
-                attachOptions = attachOptions + "READ_ONLY";
-            }
-            if (serverConfiguration.getDataEncrypt())
-            {
-                if (attachOptions.equalsIgnoreCase("(")) {
-                    attachOptions = attachOptions + "ENCRYPTION_KEY '" + databaseEncryptKey + "'";
+            String attachOptions = "";
+            if (!ducklakeMode) {
+                attachOptions = "(";
+                if (serverConfiguration.getAccess_mode().equals("READ_ONLY")) {
+                    attachOptions = attachOptions + "READ_ONLY";
                 }
-                else
+                if (serverConfiguration.getDataEncrypt())
                 {
-                    attachOptions = attachOptions + ", ENCRYPTION_KEY '" + databaseEncryptKey + "'";
+                    if (attachOptions.equalsIgnoreCase("(")) {
+                        attachOptions = attachOptions + "ENCRYPTION_KEY '" + databaseEncryptKey + "'";
+                    }
+                    else
+                    {
+                        attachOptions = attachOptions + ", ENCRYPTION_KEY '" + databaseEncryptKey + "'";
+                    }
                 }
-            }
-            attachOptions = attachOptions + ")";
-            if (attachOptions.equalsIgnoreCase("()"))
-            {
-                attachOptions = "";
+                attachOptions = attachOptions + ")";
+                if (attachOptions.equalsIgnoreCase("()"))
+                {
+                    attachOptions = "";
+                }
             }
 
             stmt = backendSysConnection.createStatement();
@@ -745,7 +774,13 @@ public class DBInstance {
             // 就被调用了，所以 duck_catalog 恒在内存主 catalog。不要再根据"实例库已挂载"
             // 去改 catalogName / 改写前缀，否则磁盘模式下所有连接都会在 SET search_path 阶段失败
             // （详见 catalogName 字段说明）。
-            if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
+            if (ducklakeMode) {
+                logger.info("[SERVER][STARTUP    ] Instance mounted at DuckLake '{}' with data path '{}'.",
+                        "ducklake:" + redactDucklakeMeta(serverConfiguration.getDucklakeMeta()),
+                        serverConfiguration.getDucklakePath().isEmpty()
+                                ? "(default)" : serverConfiguration.getDucklakePath());
+            }
+            else if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
                 if (this.serverConfiguration.getDataEncrypt())
                 {
                     logger.info("[SERVER][STARTUP    ] Instance mounted with encrypted feature at ':memory:{}' successful.", instanceName);
@@ -827,8 +862,8 @@ public class DBInstance {
                 }
                 logger.debug("[SERVER][STARTUP    ] Startup {} script(s) execute completed.", startupScriptFiles.size());
 
-                // 检查模板文件是否存在
-                if (databaseFirstOpened && !serverConfiguration.getTemplate().trim().isEmpty()) {
+                // 检查模板文件是否存在（模板用于复制本地 DuckDB 库，不适用于 DuckLake）
+                if (databaseFirstOpened && !ducklakeMode && !serverConfiguration.getTemplate().trim().isEmpty()) {
                     String templateFileName = serverConfiguration.getTemplate().trim();
                     File templateFile = new File(templateFileName);
                     if (!templateFile.exists() || !templateFile.canRead()) {
@@ -871,6 +906,111 @@ public class DBInstance {
             refreshCatalogName();
             SQLReplacer.load(this);
         }
+    }
+
+    /**
+     * 拼装启动 Quack 服务的 SQL。
+     *
+     * <p>只有显式配置了 token 才拼接 {@code token := '...'}；未配置时省略该参数，
+     * 由 DuckDB 随机生成（见 {@code quack_serve} 的文档）。SQL 字符串中的单引号
+     * 统一成对转义，避免 token/地址里的引号破坏语句结构。</p>
+     *
+     * @param quackAddr Quack 监听地址，格式为 {@code IP:PORT}
+     * @param quackToken 认证令牌；空串或 {@code null} 表示随机生成
+     * @return 可直接执行的 {@code CALL quack_serve(...)} 语句
+     */
+    static String buildQuackServeSql(String quackAddr, String quackToken) {
+        StringBuilder sql = new StringBuilder("CALL quack_serve('quack:");
+        sql.append(quackAddr == null ? "" : quackAddr.replace("'", "''"));
+        sql.append("'");
+        if (quackToken != null && !quackToken.isEmpty()) {
+            sql.append(", token := '").append(quackToken.replace("'", "''")).append("'");
+        }
+        sql.append(", allow_other_hostname => true);");
+        return sql.toString();
+    }
+
+    /**
+     * 校验 DuckLake 模式的配置。
+     *
+     * <p>{@code data_dir=:ducklake:} 时，元数据链接必填、实例库名必填
+     * （{@code ATTACH ... AS <data>} 需要它）；数据路径可以为空。数据加密语义与
+     * DuckLake 的存储加密不同，这里直接拒绝而不是静默忽略。</p>
+     *
+     * @param configuration 服务器配置
+     * @throws ServerException 配置不满足 DuckLake 模式要求
+     */
+    static void validateDucklakeConfiguration(ServerConfiguration configuration) {
+        if (!configuration.isDucklakeEnabled()) {
+            return;
+        }
+        if (configuration.getDucklakeMeta() == null || configuration.getDucklakeMeta().isEmpty()) {
+            throw new ServerException(
+                    "ducklake_meta must be specified when data_dir is '" + ServerConfiguration.DUCKLAKE_DATA_DIR + "'!");
+        }
+        if (configuration.getData() == null || configuration.getData().isBlank()) {
+            throw new ServerException(
+                    "data must be specified when data_dir is '" + ServerConfiguration.DUCKLAKE_DATA_DIR + "'!");
+        }
+        if (configuration.getDataEncrypt()) {
+            throw new ServerException(
+                    "data_encrypt is not supported when data_dir is '" + ServerConfiguration.DUCKLAKE_DATA_DIR + "'!");
+        }
+    }
+
+    /** SQL 单引号字面量转义：把 {@code '} 写成 {@code ''}。 */
+    private static String escapeSqlLiteral(String value) {
+        return value == null ? "" : value.replace("'", "''");
+    }
+
+    /**
+     * 日志里隐藏 DuckLake 元数据链接中的密码（{@code user/password@host...}）。
+     */
+    static String redactDucklakeMeta(String ducklakeMeta) {
+        if (ducklakeMeta == null || ducklakeMeta.isEmpty()) {
+            return "";
+        }
+        int at = ducklakeMeta.indexOf('@');
+        if (at <= 0) {
+            return ducklakeMeta;
+        }
+        int slash = ducklakeMeta.lastIndexOf('/', at);
+        if (slash < 0) {
+            return ducklakeMeta;
+        }
+        return ducklakeMeta.substring(0, slash) + "/***" + ducklakeMeta.substring(at);
+    }
+
+    /**
+     * 拼装挂载 DuckLake 的 SQL。
+     *
+     * <p>形如 {@code ATTACH 'ducklake:<meta>' AS "<data>" (DATA_PATH '<path>')}；
+     * {@code ducklake_path} 为空时省略 {@code DATA_PATH}，只读模式追加 {@code READ_ONLY}。</p>
+     *
+     * @param ducklakeMeta 元数据链接
+     * @param ducklakePath 数据路径，可为空
+     * @param instanceName 挂载后的 catalog 名（即配置中的 {@code data}）
+     * @param readOnly     是否以只读方式挂载
+     * @return 可直接执行的 {@code ATTACH} 语句
+     */
+    static String buildDucklakeAttachSql(String ducklakeMeta, String ducklakePath,
+                                         String instanceName, boolean readOnly) {
+        StringBuilder sql = new StringBuilder("ATTACH 'ducklake:");
+        sql.append(escapeSqlLiteral(ducklakeMeta));
+        sql.append("' AS \"")
+                .append(instanceName == null ? "" : instanceName.replace("\"", "\"\""))
+                .append("\"");
+        List<String> options = new ArrayList<>();
+        if (ducklakePath != null && !ducklakePath.isEmpty()) {
+            options.add("DATA_PATH '" + escapeSqlLiteral(ducklakePath) + "'");
+        }
+        if (readOnly) {
+            options.add("READ_ONLY");
+        }
+        if (!options.isEmpty()) {
+            sql.append(" (").append(String.join(", ", options)).append(")");
+        }
+        return sql.toString();
     }
 
     /**
@@ -938,8 +1078,12 @@ public class DBInstance {
         this.instanceState = "STARTING";
         this.bootTime = LocalDateTime.now();
 
-        // 检查文件目录的可用性
-        if (!serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
+        // DuckLake 模式先校验必填参数，避免把 ":ducklake:" 当成普通目录去检查
+        validateDucklakeConfiguration(serverConfiguration);
+
+        // 检查文件目录的可用性（DuckLake 模式下 data_dir 是标志值，不是真实目录）
+        if (!serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")
+                && !serverConfiguration.isDucklakeEnabled()) {
             if (!new File(serverConfiguration.getData_Dir()).isDirectory()) {
                 throw new ServerException("Data directory [" + serverConfiguration.getData_Dir() + "] does not exist!");
             }
@@ -1023,6 +1167,14 @@ public class DBInstance {
                 logger.debug("[SERVER][STARTUP    ] SET threads to {}", serverConfiguration.getThreads());
                 stmt.execute("SET threads to " + serverConfiguration.getThreads());
             }
+            // 单条查询的最长执行时间：作为数据库级 GLOBAL 设置下发，服务定义/请求头可按查询覆盖。
+            logger.debug("[SERVER][STARTUP    ] SET GLOBAL max_execution_time to {}",
+                    serverConfiguration.getMax_execution_time());
+            stmt.execute("SET GLOBAL max_execution_time=" + serverConfiguration.getMax_execution_time());
+            // 内部执行豁免：backend 连接（初始化/启动脚本、模板导入、备份、历史、维护）永远不限时。
+            // 注意 duplicate() 会继承这里的会话值，因此内部派生的连接同样豁免；
+            // 面向客户端的 duplicate 连接（SQL REPL）会显式 RESET 回 global。
+            stmt.execute("SET SESSION max_execution_time=0");
             // 默认用后台线程来异步清除未完成的内存分配
             stmt.execute("set allocator_background_threads to true");
             // 禁用插件的自动安装机制，减少不必要的外网访问
@@ -1033,12 +1185,17 @@ public class DBInstance {
             if (serverConfiguration.getQuackAddr() != null)
             {
                 logger.info("[SERVER] Enable quack remote server on {}.", serverConfiguration.getQuackAddr());
-                ResultSet rs =
-                        stmt.executeQuery("CALL quack_serve('quack:" + serverConfiguration.getQuackAddr() + "', allow_other_hostname => true);");
+                String quackToken = serverConfiguration.getQuackToken();
+                ResultSet rs = stmt.executeQuery(
+                        buildQuackServeSql(serverConfiguration.getQuackAddr(), quackToken));
                 if (rs.next())
                 {
-                    String authToken = rs.getString("auth_token");
-                    logger.info("[SERVER] Quack auth token [{}].", authToken);
+                    quackAuthToken = rs.getString("auth_token");
+                    if (quackToken == null || quackToken.isEmpty()) {
+                        logger.info("[SERVER] Quack auth token [{}] (randomly generated).", quackAuthToken);
+                    } else {
+                        logger.info("[SERVER] Quack auth token [{}] (configured).", quackAuthToken);
+                    }
                 }
                 rs.close();
             }
@@ -1362,6 +1519,7 @@ public class DBInstance {
                 if (serverConfiguration.getQuackAddr() != null)
                 {
                     stmt.execute("CALL quack_stop('quack:" + serverConfiguration.getQuackAddr() + "')");
+                    quackAuthToken = null;
                 }
                 // 数据库强制进行检查点操作
                 stmt.execute("FORCE CHECKPOINT");
@@ -1487,8 +1645,9 @@ public class DBInstance {
 
     // 检查磁盘空间，更新状态字段
     private void checkDiskSpace() {
-        // 如果是内存数据库，无需检查
-        if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
+        // 如果是内存数据库或 DuckLake 模式，无需检查本地数据目录
+        if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")
+                || serverConfiguration.isDucklakeEnabled()) {
             diskSpaceValid = true;
             lastDiskCheckTime = System.currentTimeMillis();
             return;

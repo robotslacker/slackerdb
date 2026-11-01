@@ -45,6 +45,10 @@ public final class HelpCatalog {
                     "SELECT/INSERT/UPDATE/DELETE/CREATE/DROP/REPLACE/DECLARE/BEGIN/",
                     "PROCEDURE/COMMIT/ROLLBACK; end with ';' (or a line with '/' for blocks)",
                     "several statements may share one line: 'select 1; select 2;'")),
+            new Entry("_API <METHOD> <URL> [header='Name: Value']... "
+                    + "[body='...'|bodyfile=<file>|bodyvar=<name>] [timeout=<s>] "
+                    + "[allow=<codes>|all] [follow=true|false]", List.of(
+                    "call an HTTP API; print 'HTTP <status>' and the response body")),
             new Entry("_ASSERT <l> <op> <r> [, n]", List.of(
                     "evaluate an assertion against the last SQL result")),
             new Entry("_COMPARE <work> <ref>", List.of(
@@ -59,16 +63,32 @@ public final class HelpCatalog {
                     "close the current connection")),
             new Entry("_ECHO ... echo off", List.of(
                     "echo the following lines as data")),
+            new Entry("_ECHO @name ... echo off", List.of(
+                    "capture the following lines into a script variable (no output)")),
             new Entry("_EXIT [n] | _QUIT [n]", List.of(
                     "stop the script with exit code n")),
             new Entry("_HELP [topic]", List.of(
                     "this list, or details for one command")),
             new Entry("_HOST <command>", List.of(
                     "run a local command; its stdout/stderr lines are printed")),
+            new Entry("_IF {% <condition> %}", List.of(
+                    "start an IF block (see _HELP IF)")),
+            new Entry("_ELSEIF {% <condition> %}", List.of(
+                    "another branch of the current IF block")),
+            new Entry("_ELSE", List.of(
+                    "the otherwise branch of the current IF block")),
+            new Entry("_ENDIF", List.of(
+                    "end the current IF block")),
             new Entry("_JOB ...", List.of(
                     "concurrent jobs (see _HELP JOB)")),
             new Entry("_LOAD JDBCDRIVER <jar>", List.of(
                     "load a JDBC driver from a jar (_CONNECT can then use its URLs)")),
+            new Entry("_LOOP [<count>|WHILE {% <condition> %}|UNTIL {% <condition> %}|FOREVER]", List.of(
+                    "start a loop block (see _HELP LOOP)")),
+            new Entry("_LOOP BREAK|CONTINUE", List.of(
+                    "leave / skip to the next iteration of the innermost loop")),
+            new Entry("_ENDLOOP", List.of(
+                    "end the current loop block")),
             new Entry("_SESSION SAVE|RESTORE|RELEASE|SAVEURL|SHOW <name>", List.of()),
             new Entry("_SET @name <value>", List.of(
                     "set a script variable")),
@@ -84,6 +104,9 @@ public final class HelpCatalog {
             new Entry("_SET TIME ON|OFF", List.of(
                     "print 'Current time: yyyy-MM-dd HH:mm:ss.SSS' after each",
                     "statement (default OFF; stdout)")),
+            new Entry("_SET LOOPTRACE ON|OFF", List.of(
+                    "print one 'Loop iteration ...' progress line per loop iteration",
+                    "(default ON; _SET FEEDBACK OFF also suppresses it)")),
             new Entry("_SET OUTFORMAT table|vertical|csv", List.of(
                     "result format (default table)")),
             new Entry("_SET HEADER ON|OFF", List.of(
@@ -200,6 +223,18 @@ public final class HelpCatalog {
 
     private static Map<String, List<String>> buildTopics() {
         Map<String, List<String>> topics = new LinkedHashMap<>();
+        topics.put("API", List.of(
+                "_API <METHOD> <URL> [header='<Name>: <Value>']...",
+                "     [body='<text>' | bodyfile=<file> | bodyvar=<name>]",
+                "     [timeout=<seconds>] [allow=<codes>|all] [follow=true|false]",
+                "  sends one HTTP request and prints 'HTTP <status>' plus the body.",
+                "  header= may repeat; bodyfile is UTF-8; bodyvar names a variable captured by",
+                "  '_ECHO @name ... echo off'. GET/HEAD take no body.",
+                "  timeout defaults to 30 seconds; 0 means no limit.",
+                "  redirects are followed by default; follow=false returns the original 3xx.",
+                "  a final status outside 2xx counts as an error unless allow= lists it (or all).",
+                "  after the call, API.STATUS / API.OK / API.BODY / API.ERROR /",
+                "  API.HEADER.<name> / API.JSON.<path> are available to _ASSERT, _IF and ${...}."));
         topics.put("ASSERT", List.of(
                 "_ASSERT <selector|literal> <comparator> <literal> [, <label>]",
                 "  selectors: RESULT.ERRORCODE / RESULT.ROWCOUNT / RESULT.STATUS / RESULT.ROWS.COUNT",
@@ -238,7 +273,12 @@ public final class HelpCatalog {
                 "_ECHO <title>",
                 "  <lines to echo>",
                 "  echo off",
-                "  the lines between _ECHO and 'echo off' are printed as data (variables are resolved)."));
+                "  the lines between _ECHO and 'echo off' are printed as data (variables are resolved).",
+                "_ECHO @name",
+                "  <lines to capture>",
+                "  echo off",
+                "  the same block, but the lines are stored in script variable <name> and not printed;",
+                "  _API bodyvar=<name> uses this text as its request body."));
         topics.put("DISCONNECT", List.of(
                 "_DISCONNECT",
                 "  close the current connection (session names pointing at it expire too)."));
@@ -248,7 +288,7 @@ public final class HelpCatalog {
         topics.put("HELP", List.of(
                 "_HELP [topic]",
                 "  without a topic: this list; with one: the details of that command.",
-                "  topics: ASSERT COMPARE CONNECT DISCONNECT ECHO EXIT HELP HOST JOB LOAD SESSION SET",
+                "  topics: API ASSERT COMPARE CONNECT DISCONNECT ECHO EXIT HELP HOST IF JOB LOAD LOOP SESSION SET",
                 "          SLEEP SPOOL SSH START WHENEVER"));
         topics.put("LOAD", List.of(
                 "_LOAD JDBCDRIVER <jar>",
@@ -267,6 +307,23 @@ public final class HelpCatalog {
                 "  stdout lines become data, stderr lines become errors (both on stdout); a non-zero",
                 "  exit code is an error. A multi-line block (_HOST \"\"\" ... \"\"\") runs one command",
                 "  per line (' & ' separates them; a quoted ' & ' is data, not a separator)."));
+        topics.put("IF", List.of(
+                "_IF {% <left> <operator> <right> %}",
+                "_ELSEIF {% <left> <operator> <right> %}",
+                "_ELSE",
+                "_ENDIF",
+                "  branches are tested top-down; only the first true branch runs (ELSE runs when none",
+                "  is true); conditions use the same selectors/comparators as _ASSERT (RESULT.*, VAR.*,",
+                "  ENV.*, RUN.EXITCODE, JOB.*). A condition error aborts the whole IF and counts once.",
+                "  blocks may be nested; _ENDIF closes the innermost IF."));
+        topics.put("LOOP", List.of(
+                "_LOOP [<count> | WHILE {% <condition> %} | UNTIL {% <condition> %} | FOREVER]",
+                "_LOOP BREAK | CONTINUE",
+                "_ENDLOOP",
+                "  COUNT runs exactly <count> times; WHILE tests first; UNTIL tests after each pass;",
+                "  FOREVER (and bare _LOOP) runs until BREAK/EXIT/error or the safety limit.",
+                "  every iteration prints one 'Loop iteration <n>[ of <total>].' status line;",
+                "  _SET LOOPTRACE OFF suppresses it. BREAK/CONTINUE affect the innermost loop."));
         topics.put("JOB", List.of(
                 "_JOB JOBMANAGER ON|OFF",
                 "  start/stop accepting new jobs (jobs that are already running are not touched);",
@@ -282,7 +339,8 @@ public final class HelpCatalog {
                 "  a FAILED/TIMEOUT job or a wait timeout counts as an error (the exit code stays 0",
                 "  unless _WHENEVER ERROR EXIT is set); a job that fails and is never waited for is",
                 "  reported at the end of the script as an error, so it cannot fail silently;",
-                "_JOB SHOW <name>             state / thread / elapsed / exitCode",
+                "_JOB SHOW [<name>]           state / thread / elapsed / exitCode; without a name,",
+                "                             list every job in one table (sorted by name)",
                 "_JOB ABORT <name>            stop it now",
                 "_JOB SHUTDOWN <name>         stop it gracefully (waits briefly, then forces)",
                 "_JOB TIMER <point>           release a timer point: one barrier shared by every job",
@@ -306,6 +364,8 @@ public final class HelpCatalog {
                 "                             ('3 minutes 25 seconds 222 ms elapsed.'; default OFF)",
                 "_SET TIME ON|OFF             current system time after each statement (stdout)",
                 "                             ('Current time: 2022-01-01 03:33:33.000'; default OFF)",
+                "_SET LOOPTRACE ON|OFF        one 'Loop iteration ...' line per iteration",
+                "                             (default ON; FEEDBACK OFF suppresses it)",
                 "_SET OUTFORMAT table|vertical|csv   result format (default table)",
                 "_SET HEADER ON|OFF           print the header row (default ON)",
                 "_SET LINEWIDTH <n>           max display columns per line; longer lines wrap",

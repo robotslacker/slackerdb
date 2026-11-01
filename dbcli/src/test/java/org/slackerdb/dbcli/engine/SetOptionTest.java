@@ -20,7 +20,7 @@ class SetOptionTest {
     @Test
     @DisplayName("默认值都合法，且按声明顺序打印（_SET 表的顺序）")
     void defaultsAreValidAndOrdered() {
-        assertEquals(List.of("echo", "feedback", "termout", "timing", "time", "outformat", "header",
+        assertEquals(List.of("echo", "feedback", "termout", "timing", "time", "looptrace", "outformat", "header",
                         "linewidth", "colwidth", "diff_report_html", "autocommit", "timeout"),
                 SetOption.names(), "打印顺序是契约（_SET 无参的输出）");
 

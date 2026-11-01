@@ -19,11 +19,13 @@ import java.util.regex.Pattern;
  *   <li><b>已定义的变量</b>，按优先级先命中先用：
  *     <ol>
  *       <li>脚本内变量：{@code _SET @名称 值}；</li>
+ *       <li>运行时变量：{@code _API} 的 {@code API.*}（每轮请求后整体替换）；</li>
  *       <li>{@code --var NAME=VALUE}（可重复）；</li>
  *       <li>{@code ${ARGV1}}/{@code ${ARGV2}}…：{@code _START} 传给子脚本的参数（1 基；越界视为未定义）；</li>
  *     </ol></li>
  *   <li>否则取<b>同名环境变量</b>（{@code System.getenv(name)}）；</li>
- *   <li>都没有 = <b>不认识的变量</b> → <b>原样保留</b> {@code ${name}}（不报错、不替换成空串）。</li>
+ *   <li>都没有 = <b>不认识的变量</b> → <b>原样保留</b> {@code ${name}}（不报错、不替换成空串）。
+ *       例外：{@code API.*} 命名空间查不到时严格报错，见 {@link #resolve(String)}。</li>
  * </ol>
  *
  * <p><b>不是变量引用的形态一律按普通文本原样保留</b>（不替换、不报错、也不会去取环境变量）：
@@ -42,8 +44,8 @@ import java.util.regex.Pattern;
  * </ul>
  *
  * <h2>优先级</h2>
- * <p>命令行显式给定的值最硬，顺序是"脚本内变量（{@code _SET @x v}）> {@code --var} >
- * {@code ARGVn} > 同名环境变量"。顺序只在"同一个名字既给了 {@code --var}、环境里又有一份"
+ * <p>命令行显式给定的值最硬，顺序是"脚本内变量（{@code _SET @x v}）> 运行时变量（{@code API.*}）>
+ * {@code --var} > {@code ARGVn} > 同名环境变量"。顺序只在"同一个名字既给了 {@code --var}、环境里又有一份"
  * 时才看得出差别：定义了就用当前的值，环境变量只是兜底。</p>
  */
 public final class VariableResolver {
@@ -61,6 +63,14 @@ public final class VariableResolver {
 
     private final Map<String, String> scriptVariables = new LinkedHashMap<>();
 
+    /**
+     * 运行时变量（当前只有 {@code _API} 的 {@code API.*}）：每次请求完成后**整体替换**。
+     *
+     * <p>它不是脚本变量：优先级在脚本变量之后、命令行变量之前；这样 {@code _SET @x} 仍可覆盖，
+     * 而 {@code API.STATUS} 不会被 {@code --var API.STATUS=...} 悄悄顶掉。</p>
+     */
+    private Map<String, String> runtimeVariables = Map.of();
+
     private List<String> argv = List.of();
 
     /**
@@ -74,6 +84,49 @@ public final class VariableResolver {
     /** {@code _SET @名称 值}：登记一个脚本内变量（优先级最高）。 */
     public void setVariable(String name, String value) {
         scriptVariables.put(name, value);
+    }
+
+    /**
+     * {@code _API} 完成后整体替换运行时变量。
+     *
+     * <p>整体替换（而不是逐项 put）保证上一次响应的 {@code API.JSON.old_token} 不会残留。</p>
+     */
+    public void setRuntimeVariables(Map<String, String> variables) {
+        runtimeVariables = variables == null ? Map.of() : new LinkedHashMap<>(variables);
+    }
+
+    /**
+     * 查询一个变量（不抛异常）：脚本变量 → 运行时变量 → 命令行 → ARGVn → 环境变量。
+     *
+     * <p>{@code _API} 的 {@code bodyvar=} 用它读取 {@code _ECHO @name} 捕获的文本；
+     * 未定义返回 null。</p>
+     */
+    public String lookup(String name) {
+        if (name == null) {
+            return null;
+        }
+        String value = scriptVariables.get(name);
+        if (value != null) {
+            return value;
+        }
+        value = runtimeVariables.get(name);
+        if (value != null) {
+            return value;
+        }
+        value = commandLineVariables.get(name);
+        if (value != null) {
+            return value;
+        }
+        Matcher argvMatcher = ARGV_NAME.matcher(name);
+        if (argvMatcher.matches()) {
+            try {
+                int index = Integer.parseInt(argvMatcher.group(1));
+                return index >= 1 && index <= argv.size() ? argv.get(index - 1) : null;
+            } catch (NumberFormatException overflow) {
+                return null;
+            }
+        }
+        return System.getenv(name);
     }
 
     /** {@code _START} 进入子脚本时设置子脚本的 {@code ARGVn}。 */
@@ -92,10 +145,11 @@ public final class VariableResolver {
      * 断言要取环境变量时用 {@code ENV.<名>} 显式取。</p>
      */
     public Map<String, String> snapshot() {
-        // 顺序必须与 resolve() 的取值顺序一致：脚本变量 > --var > ARGVn。
+        // 顺序必须与 resolve() 的取值顺序一致：脚本变量 > 运行时变量 > --var > ARGVn。
         // 否则 `_set @x 1` 之后再 `_assert {% VAR.x = 1 %}` 会看到 --var 里的旧值，
         // 同一次运行里"替换"和"断言"对同一个名字给出两个答案。
         Map<String, String> snapshot = new LinkedHashMap<>(commandLineVariables);
+        snapshot.putAll(runtimeVariables);
         snapshot.putAll(scriptVariables);
         for (int index = 0; index < argv.size(); index++) {
             snapshot.putIfAbsent("ARGV" + (index + 1), argv.get(index));
@@ -119,6 +173,30 @@ public final class VariableResolver {
             return text;
         }
         return replacePlaceholders(text);
+    }
+
+    /**
+     * 把 {@code ${name}} 替换成等长的中性文本 {@code x}，**只用于块内语句的结构探测**。
+     *
+     * <p>控制流在“读取块”时还不知道变量在执行时的值；直接用原文做词法/语法探测，可能因为
+     * {@code ${...}} 里的字符（尤其 {@code _HOST} 等命令模式）被误判成没写完。探测只关心
+     * 语句边界（{@code ;}、行首 {@code /}、{@code $$} 等），变量值不影响边界，因此统一换成
+     * {@code x} 即可；真正执行时仍用原文并展开。</p>
+     */
+    public String maskForAnalysis(String text) {
+        if (text == null || text.isEmpty() || !text.contains("${")) {
+            return text;
+        }
+        Matcher matcher = DOLLAR.matcher(text);
+        StringBuilder builder = new StringBuilder();
+        int copiedUpTo = 0;
+        while (matcher.find()) {
+            builder.append(text, copiedUpTo, matcher.start());
+            builder.append('x');
+            copiedUpTo = matcher.end();
+        }
+        builder.append(text, copiedUpTo, text.length());
+        return builder.toString();
     }
 
     /**
@@ -167,6 +245,15 @@ public final class VariableResolver {
         String value = scriptVariables.get(name);
         if (value != null) {
             return value;
+        }
+        value = runtimeVariables.get(name);
+        if (value != null) {
+            return value;
+        }
+        // API 命名空间是“动态变量”：查不到时严格报错，避免把 ${API.JSON.token}
+        // 原样发给服务端（普通变量仍保持“未定义原样保留”的既有语义）。
+        if (name.startsWith("API.")) {
+            throw new VariableExpressionException("Unknown API value [" + token + "].");
         }
         value = commandLineVariables.get(name);
         if (value != null) {

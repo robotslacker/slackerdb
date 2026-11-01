@@ -50,7 +50,7 @@ SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。
     git clone ...
     # 编译
     cd slackerdb
-    mvn clean compile package -Dmaven.test.skip=true
+    mvn clean compile package -DskipTests
 
     # 所有编译结果都会放在 dist 目录中：
     #    slackerdb-dist_0.2.2.zip
@@ -66,7 +66,7 @@ SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。
 
     # 默认不构建 PDF，PDF 也不放进发布包，而是单独放在 slackerdb-docs_0.2.2.zip。
     # 需要生成时加 -Ppdf：
-    #    mvn -Ppdf clean compile package -Dmaven.test.skip=true
+    #    mvn -Ppdf clean compile package -DskipTests
     # 只想重新生成文档时，单独构建 docs 模块
     # （只产出 dist/slackerdb-docs_0.2.2.zip，不动发行包）：
     #    mvn -Ppdf -pl docs package
@@ -157,7 +157,18 @@ data=
 
 # 数据文件保存路径
 # ":memory:" 表示内存模式（重启后数据会丢失）
+# ":ducklake:" 表示 DuckLake 模式（必须配置下方的 ducklake_meta，ducklake_path 可选）
 data_dir=:memory:
+
+# DuckLake 元数据链接
+# 格式：user/password@host:port/database（也可以直接使用 DuckDB/SQLite 元数据文件路径）
+# data_dir=:ducklake: 时必填，其他模式下忽略
+ducklake_meta=
+
+# DuckLake 数据路径
+# 文件系统路径或 s3 路径（例如 s3://my-bucket/my-data/）
+# data_dir=:ducklake: 时可选（为空时使用 DuckLake 默认位置），其他模式下忽略
+ducklake_path=
 
 # 运行期间的临时文件目录
 # 磁盘模式：   未指定时默认为 data_dir
@@ -241,19 +252,19 @@ max_workers=
 business_threads=
 
 # 数据库引擎线程数
-# 默认：memory_limit (GB) / 10（最小为 1）
+# 默认：系统总内存的 80%（GB）/ 10（最小为 1）
 # 建议：根据工作负载进行调整
 threads=
 
-# 用于计算内存限制的自动工作负载阈值
-# 取值范围：>0 且 <=1，默认：0.8
-# 当未设置 memory_limit 时用于计算默认的 memory_limit
-auto_workload_threshold=
-
-# 内存使用限制（支持 K/M/G 后缀）
+# 内存使用限制：可写绝对大小（K/M/G 后缀），也可写系统总内存的百分比（如 60%）
 # 默认：系统总内存的 80%
 # -1 = 无限制（仅内存模式）
 memory_limit=
+
+# 单条查询的最长执行时间（毫秒），0 = 不限制
+# 作为 DuckDB 的 GLOBAL 设置下发；服务定义 / 请求头 maxExecutionTime 可以按查询覆盖。
+# 服务器 backend 连接、初始化/启动脚本、SQL 历史等内部执行始终豁免
+max_execution_time=
 
 # 数据库模板文件
 template=
@@ -337,6 +348,11 @@ socket=
 # 格式：IP:PORT（例如 0.0.0.0:9494）
 # 默认：无（Quack 禁用）
 quack_addr=
+
+# Quack 认证令牌
+# - 至少 4 个字符
+# - 默认：空（由 DuckDB 随机生成；生成结果会记录在日志中，并可通过 status 命令查看）
+quack_token=
 ....
 
 ==== 代理配置文件模板
@@ -1318,10 +1334,14 @@ END LOOP outer_loop;
 
 |snapshotLimit |查询结果缓存时长（可选），例如 `3 hours` / `30 minutes` / `45 seconds`；默认空（0），即不缓存
 
+|maxExecutionTime |单条查询的最长执行时间（可选，单位毫秒）。不填 = 继承服务器 `max_execution_time`；
+0 = 该服务显式不限制；负数/非整数会被拒绝
+
 |parameters |参数默认值列表（可选）：JSON **字符串**形式的数组，元素形如 `{"name":"var1","defaultValue":"..."}`；当查询 API 未提供该参数时使用这里的默认值。
 |===
 
 snapshotLimit 格式：3 hours / 30 minutes / 45 seconds
+maxExecutionTime 格式：整数毫秒（例如 30000 表示 30 秒）
 
 请求示例：
 
@@ -1453,12 +1473,18 @@ API 查询
 
 |snapshotLimit |可选。用于覆盖服务定义。0 表示
 不缓存结果
+
+|maxExecutionTime |可选。用于覆盖服务定义与服务器 GLOBAL 设置，单位毫秒；
+0 表示本次查询不限制
 |===
 
 这里的令牌信息来自调用 /login 时获得的内容。 +
 令牌是可选的，如果你的 SQL 语句中使用了上下文，
 则必须设置它。 +
-snapshotLimit 格式：3 hours / 30 minutes / 45 seconds
+snapshotLimit 格式：3 hours / 30 minutes / 45 seconds +
+maxExecutionTime 取值优先级：请求头 > 服务定义 > 服务器 `max_execution_time`。
+超时后沿用普通查询失败的响应形态（`retCode = -1`，`retMsg` 为
+`INTERRUPT Error: Query exceeded maximum execution time`）。
 
 GET 请求示例：
 
@@ -1506,6 +1532,11 @@ POST 请求示例：
 里没有默认值、也没有对应的令牌上下文变量），请求会以 `retCode = -1`、
 `retMsg = "Missing required parameters: <名称列表>"` 被拒绝——SQL 绝不会带着字面量
 `${var}` 被执行。
+
+缓存到期时不会"所有请求一起打库"：同一份内容（同一服务 + 同一参数）过期后，
+并发请求中**有且仅有一个**会去数据库刷新，其余请求等待刷新结束，再拿刷新结果返回
+（`cached` 仍为 `true`）。因此 `snapshotLimit` 到期瞬间不会对后端数据库形成突发压力。
+等待刷新超过 30 秒时，等待者会降级为自己直接查询，避免请求被无限期挂住。
 
 ===== 返回值类型
 
@@ -1573,7 +1604,8 @@ SlackerDB 在管理端口上运行一个 Model Context Protocol（模型上下�
 `run_sql`，即可让临时表、事务与会话设置在多次调用之间存活。会话空闲后过期，也可由
 `close_session` 关闭。
 |`close_session` |关闭会话并立即释放其连接。
-|`run_sql` |执行 SQL（默认返回全部行），可通过 `max_rows` 限制返回行数；结果里还带
+|`run_sql` |执行 SQL（默认返回全部行），可通过 `max_rows` 限制返回行数；可选 `maxExecutionTime`
+（毫秒，0 = 不限制）按本次调用覆盖服务器超时。结果里还带
 `read_only`、`statement_type`（`query`/`update`）与 `elapsed_ms`。
 |`list_tables` |以 `tables` 数组返回表与视图，每项为 `{schema, name, type}`，可按 schema 过滤。
 |`describe_table` |某个表或视图的列定义（名称、类型、是否可空、默认值），以 `columns` 结果网格返回，
@@ -1594,7 +1626,8 @@ SlackerDB 在管理端口上运行一个 Model Context Protocol（模型上下�
   已不再生效。
 * **返回行数。** `run_sql` 默认返回全部行；可用 `max_rows` 限制返回行数，`0` 或负数表示不限制。
   `truncated` 仅在显式设置正数上限并确实被截断时为 `true`。
-* **无语句超时。** MCP 不再施加应用层语句超时。
+* **语句超时。** 默认跟随服务器 `max_execution_time`（GLOBAL）；`run_sql` 可选
+  `maxExecutionTime`（毫秒，`0` = 不限制）按本次调用覆盖，执行结束后恢复会话原值。
 * **与其它入口同一条执行路径。** 工具调用从 dbserver 的普通连接池取连接，
   因此连接数上限与会话处理对 agent 的作用与对其它客户端完全一致。
 
@@ -2250,7 +2283,8 @@ SQL REPL 服务器提供了一个异步 WebSocket 接口，用于执行 SQL 查�
 `Field 'type' must be a string`、`Field 'data' must be an object`、`Unknown type: <type>`、
 `Field 'sessionId' must be a string`、`Field 'sql' must be a string`、
 `Field 'fetchSize' must be a number`、`Field 'maxRows' must be a number`、
-`Field 'maxRows' must be a positive number`、`Invalid session`、
+`Field 'maxRows' must be a positive number`、
+`Field 'maxExecutionTime' must be a non-negative integer (milliseconds)`、`Invalid session`、
 `Invalid taskId`、`Another SQL is already running`。
 
 `maxRows` 是 API 单次返回的行数（分页大小），不是数据库查询上限，必须为正数。
@@ -2305,7 +2339,8 @@ SQL REPL 服务器提供了一个异步 WebSocket 接口，用于执行 SQL 查�
   "data": {
     "sessionId": "session-123",
     "sql": "SELECT * FROM large_table",
-    "fetchSize": 100   // 可选，默认 100；仅用于设置底层 Statement 的 fetchSize
+    "fetchSize": 100,           // 可选，默认 100；仅用于设置底层 Statement 的 fetchSize
+    "maxExecutionTime": 30000   // 可选，本次执行的最长毫秒数；0 = 不限制；缺省 = 跟随会话/GLOBAL
   }
 }
 ....
@@ -2318,10 +2353,16 @@ SQL REPL 服务器提供了一个异步 WebSocket 接口，用于执行 SQL 查�
   "type": "exec",
   "data": {
     "taskId": "550e8400-e29b-41d4-a716-446655440000",
-    "status": "running"
+    "status": "running",
+    "maxExecutionTime": 30000   // 本次实际生效的值；未带字段时回显会话当前值
   }
 }
 ....
+
+`maxExecutionTime` 只对本次任务生效：执行前把会话值改成该值，任务结束（成功、失败、超时或取消）
+后恢复执行前的会话值，因此不会影响同一会话的后续 `exec`。优先级：`exec.data.maxExecutionTime` >
+客户端 `SET SESSION max_execution_time` > 服务器 `max_execution_time`（GLOBAL）。
+该字段必须是**非负整数毫秒**；负数、小数或非数字会被拒绝（见上面的校验错误列表）。
 
 如果 SQL 执行失败，任务状态会变成 `error`，由 `fetch` 以 `data.status = "error"` 并附带
 `data.error` 返回错误信息（提交 `exec` 的响应本身只表示任务已受理）。
@@ -2588,6 +2629,8 @@ ws.send(JSON.stringify({
 
 | SQL 客户端 | 交互式控制台 + 批处理脚本；语句以顶层 `;` 或行首 `/` 收尾，执行中可用 Ctrl-C 取消
 | 结果校验 | `--ref` 把本次输出与参考文件比对；脚本里用 `_assert` 断言、`_compare` 比对
+| HTTP 调用 | `_api` 调 REST API；状态、响应头、JSON 字段可用 `API.*` 断言/串联
+| 流程控制 | `_if`/`_elseif`/`_else`/`_endif`、`_loop`/`_endloop`、`_loop break` / `continue`；每轮输出进度行
 | 连接 | `_connect` 支持简写、`jdbc:slackerdb://` 与其它 `jdbc:<scheme>:` URL；`_load jdbcdriver` 可动态加载驱动
 | 会话保持 | `_session` 保存/切换多个连接；
 | 任务编排 | `_job` 并发作业；`_ssh`/SFTP、`_host`

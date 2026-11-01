@@ -8,6 +8,7 @@
 
 * **SQL 客户端**：交互式控制台 + 批处理脚本执行器。语句以 `;` 或单独一行 `/` 收尾，执行中可用 Ctrl-C 取消。
 * **结果校验**：`_assert` 做语句级断言，`--ref` / `_compare` 与参考文件逐行比对。
+* **HTTP 调用**：`_api` 像简化版 curl，调 REST API、取状态/响应头/JSON 字段并参与断言。
 * **可编排**：`_job` 并发跑多个脚本，`_ssh` / SFTP 操作远端，`_host` 执行本地命令。
 
 == 2. 运行环境
@@ -145,6 +146,7 @@ select version();
 
 // BEGIN GENERATED: help-catalog (source: help/HelpCatalog.java; checked by HelpCatalogReadmeTest)
 * `<SQL statement>`
+* `_API <METHOD> <URL> [header='Name: Value']... [body='...'|bodyfile=<file>|bodyvar=<name>] [timeout=<s>] [allow=<codes>|all] [follow=true|false]`
 * `_ASSERT <l> <op> <r> [, n]`
 * `_COMPARE <work> <ref>`
 * `_CONNECT <host>:<port>/<service>[?k=v]`
@@ -152,11 +154,19 @@ select version();
 * `_CONNECT [<user>[/<password>]@]jdbc:<scheme>:<url>`
 * `_DISCONNECT`
 * `_ECHO ... echo off`
+* `_ECHO @name ... echo off`
 * `_EXIT [n] | _QUIT [n]`
 * `_HELP [topic]`
 * `_HOST <command>`
+* `_IF {% <condition> %}`
+* `_ELSEIF {% <condition> %}`
+* `_ELSE`
+* `_ENDIF`
 * `_JOB ...`
 * `_LOAD JDBCDRIVER <jar>`
+* `_LOOP [<count>|WHILE {% <condition> %}|UNTIL {% <condition> %}|FOREVER]`
+* `_LOOP BREAK|CONTINUE`
+* `_ENDLOOP`
 * `_SESSION SAVE|RESTORE|RELEASE|SAVEURL|SHOW <name>`
 * `_SET @name <value>`
 * `_SET ECHO ON|OFF`
@@ -164,6 +174,7 @@ select version();
 * `_SET TERMOUT ON|OFF`
 * `_SET TIMING ON|OFF`
 * `_SET TIME ON|OFF`
+* `_SET LOOPTRACE ON|OFF`
 * `_SET OUTFORMAT table|vertical|csv`
 * `_SET HEADER ON|OFF`
 * `_SET LINEWIDTH <n>`
@@ -235,6 +246,8 @@ _assert {% 3==3 %}                                // 常量断言
 | `RESULT.HEADERS[i]` / `RESULT.COLUMNS[i]` | 列标签 / 列类型名（0 基）
 | `VAR.<名字>` / `ENV.<名字>` | 脚本变量 / 环境变量
 | `RUN.EXITCODE` / `JOB.<名字>.STATUS` | 子脚本退出码 / 作业状态
+| `API.STATUS` / `API.OK` / `API.BODY` / `API.ERROR` | 最近一次 `_api` 的状态/成功标志/响应体/请求级错误 |
+| `API.HEADER.<头名>` / `API.JSON.<路径>` | 响应头 / JSON 标量；数组下标可用 `[n]` 或 `.n` |
 |===
 
 比较符：`=`（`==`）、`<>`（`!=`）、`>`、`>=`、`<`、`<=`、`CONTAINS`、`NOTCONTAINS`、`MATCHES`（整串正则）、
@@ -275,6 +288,7 @@ _set feedback off       # 摘要与错误都不打印（默认 on）
 _set termout off        # 结果集既不显示、也不进 logfile / _SPOOL（默认 on）
 _set timing on          # 每条语句跑完后打一行耗时（默认 off）
 _set time on            # 每条语句跑完后打一行当前系统时间（默认 off）
+_set looptrace off      # 循环每轮是否打印 Loop iteration 进度行（默认 on）
 _set outformat csv      # 结果格式 table|vertical|csv（默认 table）
 _set header off         # 不打印表头（默认 on）
 _set linewidth 200      # 整行最多多少显示列，超出换行（默认 200，不作用于 csv）
@@ -285,13 +299,14 @@ _set timeout 30         # 单条语句的服务端超时秒数（默认 0 = 不�
 _set @name value        # 定义脚本变量（与 --var 同一种；未定义时取同名环境变量）
 ----
 
-`echo`、`feedback`、`termout`、`autocommit` 默认 `on`，`timing`、`time`、`diff_report_html` 默认 `off`；
+`echo`、`feedback`、`termout`、`autocommit`、`looptrace` 默认 `on`，`timing`、`time`、`diff_report_html` 默认 `off`；
 开关只接受 `on` / `off`。
 
 * `echo`：日志里记不记"跑了什么"（被执行语句的原文）。控制台的日志是整段会话的转录。
 * `feedback`：打不打摘要与错误（`N rows selected.`、`Not connected.` 这类）。关掉不影响错误计数与退出码。
 * `termout`：结果集打不打（关掉后终端、日志、`_SPOOL` 里都没有结果集）。
 * `timing` / `time`：每条语句后补一行耗时 / 当前时间。
+* `looptrace`：循环每轮是否打印一条 `Loop iteration ...` 进度行；`feedback off` 时也会一起关掉。
 
 === 7.6 `_spool` / `_echo`
 
@@ -306,6 +321,10 @@ echo off
 ----
 
 `_echo` 与 `echo off` 之间的行按数据打印（变量会被替换），`echo off` 那一行不打印。
+
+`_echo @名字` 是同一块的**捕获形态**：块内各行按数据存入脚本变量（变量仍会展开），不打印；
+`_api` 的 `bodyvar=名字` 用它作为多行请求体。空块捕获成空串；名字非法会报可读错误。
+
 `_SPOOL` 必须带文件名或 `OFF`；`OFF` 是关键字，要输出到名字真的叫 `off` 的文件请写路径（`_spool ./off`）。
 
 === 7.7 `_start`
@@ -355,6 +374,7 @@ _job create JOB2 script=child.sql mode=process  # 用独立进程跑（隔离更
 _job start JOB1                                 # 启动
 _job wait JOB1 timeout=10                       # 等它结束（timeout 单位秒；不写就一直等）
 _job show JOB1                                  # name/state/thread/elapsed/exitCode
+_job show                                       # 全部作业（按名字排序）的同一张表
 _job timer GO                                   # 放行定时点 GO
 _job wait TIMER:GO                              # 在定时点 GO 等待
 _job abort JOB1                                 # 请求停止并中断
@@ -365,6 +385,7 @@ _job jobmanager off                             # 停止接受新作业
 * `mode=thread`（默认）跑在同一 JVM 的线程里；`mode=process` 是独立的 dbcli 进程（可以硬超时、杀进程树）。
 * `timeout=` 到点只表示"这次没等到"（作业继续跑、仍是 `RUNNING`），要收掉它得显式 `abort` / `shutdown`。
 * 每个作业写一个输出文件 `<作业名>.out`（stdout + stderr），`_job wait` 返回时可以读。
+* `_job show` 不带名字时列出管理器里的**全部**作业（含已结束），按 `name` 排序；没有作业时只有表头。
 * `_job abort` / `_job shutdown` 是**请求**停止：作业正常响应时立即进入 `ABORTED` / `SHUTDOWN`；
   作业暂时没有响应时状态保持 `RUNNING`（`_job show` 如实显示），并在它真正结束后落到对应终态。
 * 作业 `FAILED` / `TIMEOUT` 算一次错误；没有被 `_job wait` 检查过的失败，脚本收尾时也会报出来
@@ -414,6 +435,109 @@ _ssh disconnect
 超时会中断远端命令，已产生的输出照常打印，并报一条 `SSH command timed out` 错误。
 没连接就用 `_ssh` 或 SFTP 动作会报 `SSH not connected.` / `SFTP not connected.`。
 
+=== 7.12 `_if` / `_loop`（流程控制）
+
+[source,sql]
+----
+_if {% RESULT.ROWS[0][0] = 0 %}
+  _echo t
+  queue is empty
+  echo off
+_elseif {% RESULT.ROWCOUNT < 10 %}
+  _echo t
+  queue is short
+  echo off
+_else
+  _echo t
+  queue is long
+  echo off
+_endif
+
+_loop 3                          # 固定 3 次
+  insert into t values (1);
+_endloop
+
+_loop while {% VAR.done = 0 %}   # 先判断
+  delete from queue where id = (select min(id) from queue);
+  _if {% RESULT.ROWCOUNT = 0 %}
+    _set @done 1
+  _endif
+_endloop
+
+_loop until {% RESULT.ROWCOUNT = 0 %}   # 先执行，后判断
+  delete from queue where id = (select min(id) from queue);
+_endloop
+
+_loop                            # 无限循环，直到 break / exit / 上限
+  select count(*) as n from queue;
+  _if {% RESULT.ROWS[0][0] = 0 %}
+    _loop break
+  _endif
+  delete from queue where id = (select min(id) from queue);
+_endloop
+----
+
+* 条件必须写成 `{% <左值> <比较符> <右值> %}`，取值器/比较符与 `_assert` 相同；条件里优先用 `VAR.<名字>`。
+* `_if` / `_elseif` / `_else` / `_endif` 与 `_loop` / `_loop break` / `_loop continue` / `_endloop` 都必须**单独一行**（可缩进）。
+* 分支自上而下判断，只执行第一个为真的分支；条件错误会放弃整个 `_if`，并计一次错误。
+* `_loop <n>` 是固定次数；`while` 先判断；`until` 至少执行一次；裸 `_loop` / `_loop forever` 无限循环。
+* 每轮默认打印一条进度状态行：`Loop iteration 1 of 3.`、`Loop iteration 2.`；嵌套时带 `(depth 2)`；
+  一次都不执行时打印 `Loop did not execute (0 iterations).`。`_set looptrace off` 可关闭。
+* `_loop break` / `_loop continue` 只影响最内层循环；循环外执行会报错。
+* 循环体在 `_endloop` 到达后才开始执行；输入回显只出现一次，结果与进度行按轮次重复。
+* `_if` / `_loop` 最多嵌套 64 层；单个循环最多 1,000,000 轮（安全上限，不是超时）。
+* 循环内需要间隔时用 `_sleep`；v1 不提供 `interval` 关键字。
+
+=== 7.13 `_api`
+
+`_api` 是简化版 curl：发一次 HTTP 请求，打印状态与响应体，并把结果放进 `API.*` 运行时变量。
+
+[source,sql]
+----
+_api GET https://api.example.com/health
+_assert {% API.STATUS = 200 %}
+_assert {% API.JSON.status = ok %}
+
+_ECHO @login_body
+{
+  "user": "demo",
+  "password": "${password}"
+}
+echo off
+
+_api POST https://api.example.com/login header='Content-Type: application/json' bodyvar=login_body
+_assert {% API.STATUS = 200 %}
+_set @token ${API.JSON.access_token}
+
+_api GET https://api.example.com/me header='Authorization: Bearer ${token}'
+_assert {% API.JSON.user.name = demo %}
+----
+
+命令写法：
+
+[cols="1,3"]
+|===
+| 选项 | 含义
+
+| `header='Name: Value'` | 追加请求头，可重复
+| `body='...'` | 单行内联请求体（JSON 建议用单引号包住）
+| `bodyfile=<文件>` | 从 UTF-8 文件读取请求体，相对脚本工作目录
+| `bodyvar=<变量>` | 使用 `_echo @变量` 捕获的多行请求体
+| `timeout=<秒>` | 单次请求总超时；0 表示不限；默认 30
+| `allow=404` / `allow=404,409` / `allow=all` | 放宽预期状态码；默认 2xx
+| `follow=true/false` | 是否跟随 3xx；默认 `true`
+|===
+
+* 方法：`GET`、`HEAD`、`POST`、`PUT`、`PATCH`、`DELETE`、`OPTIONS`；`GET`/`HEAD` 不能带体。
+* 默认先打印 `HTTP <状态码>`，再把响应体按文本逐行作为数据输出；非预期状态会打印
+  `HTTP <状态码> (unexpected status).` 并计一次错误。`_set feedback off` 可只留响应体。
+* 非预期状态、传输失败、超时、重定向循环都只计一次脚本错误；退出码仍按 §9.3。
+* `API.*` 取值：`API.STATUS`、`API.OK`、`API.BODY`、`API.ERROR`、`API.HEADER.<头名>`、
+  `API.JSON.<路径>`。JSON 数组下标写成 `items[0].id` 或 `items.0.id`。
+* `${API.*}` 未命中会报 `Unknown API value [...]`，不会把占位符原样发出去。
+* 默认跟随 3xx（JDK `Redirect.NORMAL`）；`follow=false` 时 3xx 原样返回，可用
+  `API.HEADER.Location` 手工处理。不自动保存 Cookie，不使用代理，不支持上传/二进制下载。
+
 == 8. 变量
 
 脚本里用 `${名字}` 取值，这是唯一的占位符写法：
@@ -427,10 +551,12 @@ echo off
 _start child.sql AAA 123        # 子脚本里 ${ARGV1}=AAA、${ARGV2}=123
 ----
 
-来源与优先级（先命中先用）：脚本变量 `_set @名字 值` → 命令行 `--var NAME=VALUE` →
+来源与优先级（先命中先用）：脚本变量 `_set @名字 值` → 运行时 `API.*` → 命令行 `--var NAME=VALUE` →
 子脚本参数 `${ARGV1}`、`${ARGV2}`… → 同名环境变量。
 
 * 已定义的名字不会再看环境变量；未定义且没有同名环境变量时**原样保留**（不会变成空串）。
+* `_api` 完成后，`API.*`（`API.STATUS`、`API.JSON.token` 等）作为运行时变量参与替换；
+  未命中的 `${API.*}` 会报 `Unknown API value [...]`，不会原样保留。
 * 变量名区分大小写；替换是单遍的（替换结果不会再次扫描）。
 * 要让 `${...}` 原样出现，用反斜杠转义：`\${名字}`。
 * 需要预置一批变量时，用 `--profile <脚本>` 先跑一个设置脚本。

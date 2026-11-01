@@ -63,6 +63,9 @@ public final class DataServiceClient implements AutoCloseable {
         body.put("description", definition.description());
         body.put("searchPath", definition.searchPath());
         body.put("snapshotLimit", definition.snapshotLimit());
+        if (definition.maxExecutionTime() != null && !definition.maxExecutionTime().isBlank()) {
+            body.put("maxExecutionTime", definition.maxExecutionTime().strip());
+        }
         body.put("parameters", writeJson(definition.parameters()));
         requireOk(postJson("/api/registerService", body), "error.dataService.register");
     }

@@ -17,8 +17,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * IR 契约测试：把**保留命令**的 {@code assertEqual({...}, ret_CommandSplitResult)} 形状逐条冻结成 JUnit。
  *
  * <p>切片口径：{@code test_SQLAnalyze_*} 系列中，
- * 除 6 条随命令删除而作废（IF/Loop/Script/Data/Monitor/Plugin）之外的全部保留 —— 即 **31 条**
- * （含 SSH/JOB/COMPARE）。</p>
+ * 除 4 条随命令删除而作废（Script/Data/Monitor/Plugin）之外的全部保留
+ * （含 SSH/JOB/COMPARE；IF/LOOP 已重新加入，其 IR 见 {@code FlowIrContractTest}）。</p>
  *
  * <p>期望 IR **逐字段精确相等**（字段名拼写、null、int 值都照冻结形态写死），
  * 不合并、不放宽、也不做包含匹配。</p>
@@ -781,6 +781,8 @@ class SqlIrContractTest {
                 ir("action", "wait", "jobName", "abcd", "name", "JOB", "param", ir("timeout", "10")), 0, null);
         assertAnalyze("_JOB SHOW abcd", true,
                 ir("action", "show", "jobName", "abcd", "name", "JOB"), 0, null);
+        assertAnalyze("_JOB SHOW", true,
+                ir("action", "show", "name", "JOB"), 0, null);
         assertAnalyze("_JOB ABORT abcd", true,
                 ir("action", "abort", "jobName", "abcd", "name", "JOB"), 0, null);
         assertAnalyze("_JOB SHUTDOWN abcd", true,

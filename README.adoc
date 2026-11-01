@@ -48,7 +48,7 @@ It runs either as a standalone server (`dbserver`, `dbproxy`) or **embedded dire
     git clone ...
     # compile it
     cd slackerdb
-    mvn clean compile package -Dmaven.test.skip=true
+    mvn clean compile package -DskipTests
 
     # All compiled results will be placed in the dist directory:
     #    slackerdb-dist_0.2.2.zip
@@ -66,7 +66,7 @@ It runs either as a standalone server (`dbserver`, `dbproxy`) or **embedded dire
     # PDF documentation is not built by default, and it is not packed into the
     # distribution package either: the PDFs ship in slackerdb-docs_0.2.2.zip.
     # To generate them, add -Ppdf:
-    #    mvn -Ppdf clean compile package -Dmaven.test.skip=true
+    #    mvn -Ppdf clean compile package -DskipTests
     # To rebuild only the documentation, build the docs module on its own:
     # that writes dist/slackerdb-docs_0.2.2.zip and leaves the release
     # packages untouched.
@@ -164,7 +164,19 @@ data=
 
 # Path where data files are saved
 # ":memory:" indicates in-memory mode (data will be lost after restart)
+# ":ducklake:" indicates DuckLake mode (requires ducklake_meta below, ducklake_path optional)
 data_dir=:memory:
+
+# DuckLake metadata connection
+# Format: user/password@host:port/database (a DuckDB/SQLite metadata file path also works)
+# Required when data_dir=:ducklake:, ignored otherwise
+ducklake_meta=
+
+# DuckLake data path
+# Filesystem path or s3 path (e.g., s3://my-bucket/my-data/)
+# Optional when data_dir=:ducklake: (DuckLake uses its default location when empty)
+# Ignored otherwise
+ducklake_path=
 
 # Temporary files directory during operations
 # Disk mode:   Defaults to data_dir if not specified
@@ -257,19 +269,21 @@ max_workers=
 business_threads=
 
 # Database engine threads
-# Default: memory_limit (GB) / 10 (minimum 1)
+# Default: 80% of total system memory (GB) / 10 (minimum 1)
 # Recommendation: adjust based on workload
 threads=
 
-# Auto workload threshold for memory limit calculation
-# Value range: >0 and <=1, default: 0.8
-# Used to compute default memory_limit if memory_limit is not set
-auto_workload_threshold=
-
-# Memory usage limit (K/M/G suffix)
+# Memory usage limit. Accepts an absolute size (K/M/G suffix) or a percentage
+# of total system memory, for example 60%.
 # Default: 80% of total system memory
 # -1 = unlimited (memory mode only)
 memory_limit=
+
+# Maximum execution time per query in milliseconds (0 = no limit).
+# Applied as the DuckDB GLOBAL setting; a data service definition or the
+# maxExecutionTime request header can override it per query. The server's
+# backend connection, init/startup scripts and internal maintenance are exempt.
+max_execution_time=
 
 # Database template file
 template=
@@ -349,6 +363,17 @@ mcp_llm_key=
 # Default: empty (UDS disabled, use TCP)
 # Note: Only supported on Linux/macOS. Ignored on Windows.
 socket=
+
+# Quack remote server address
+# Format: IP:PORT (e.g., 0.0.0.0:9494)
+# Default: none (Quack disabled)
+quack_addr=
+
+# Quack authentication token
+# - Minimum 4 characters
+# - Default: empty (a random token is generated; it is logged and shown by the
+#   status command)
+quack_token=
 ....
 
 ==== Proxy configuration file template
@@ -411,19 +436,21 @@ max_workers=
 business_threads=
 
 # Database engine threads
-# Default: memory_limit (GB) / 10 (minimum 1)
+# Default: 80% of total system memory (GB) / 10 (minimum 1)
 # Recommendation: adjust based on workload
 threads=
 
-# Auto workload threshold for memory limit calculation
-# Value range: >0 and <=1, default: 0.8
-# Used to compute default memory_limit if memory_limit is not set
-auto_workload_threshold=
-
-# Memory usage limit (K/M/G suffix)
+# Memory usage limit. Accepts an absolute size (K/M/G suffix) or a percentage
+# of total system memory, for example 60%.
 # Default: 80% of total system memory
 # -1 = unlimited (memory mode only)
 memory_limit=
+
+# Maximum execution time per query in milliseconds (0 = no limit).
+# Applied as the DuckDB GLOBAL setting; a data service definition or the
+# maxExecutionTime request header can override it per query. The server's
+# backend connection, init/startup scripts and internal maintenance are exempt.
+max_execution_time=
 
 # System locale
 # Default: OS setting
@@ -1169,32 +1196,6 @@ of being silently ignored.
 * A block that fails does not roll back by itself — issue `ROLLBACK` in an `EXCEPTION` handler or
   from the client, exactly as with PostgreSQL `DO`.
 
-===== How it works
-
-A block is compiled before anything runs:
-
-```
-source text
-  └─ detector          classify SQL / block / multi-statement script, unwrap DO $$ … $$
-       └─ preparer     replace embedded SQL with equal-length placeholders (line/column preserved)
-            └─ ANTLR    structure-only grammar (keywords, control flow, cursors, expressions)
-                 └─ AST   statements + expression tree
-                      └─ semantic check (unknown names, duplicates) before execution
-                           └─ interpreter (scopes, cursors, exceptions, budget, cancellation)
-```
-
-Embedded SQL is never guessed by the parser and never re-written; expressions are compiled to
-`SELECT <expr>` with bind parameters and cached per syntax node, while purely local expressions are
-evaluated in the JVM (that is why a tight loop costs about a microsecond per iteration instead of a
-database round trip).
-
-The grammars live under `src/main/antlr4` — `plsql/src/main/antlr4/org/slackerdb/plsql/block/` for
-the block structure and `dbserver/src/main/antlr4/org/slackerdb/dbserver/sql/antlr/` for `COPY`.
-Nothing has to be generated by hand: the `antlr4-maven-plugin` runs during `generate-sources` and
-writes the parsers into `target/generated-sources/antlr4`, which is registered as a compile source
-root automatically. That is ordinary build output — `mvn clean` removes it and git never sees it — so
-edit only the `.g4` files and let the next build regenerate the rest.
-
 ==== Data Service
 
 * Data service work with port_x, please make sure you have enabled it in
@@ -1390,11 +1391,16 @@ request body:
 
 |snapshotLimit |how long the query result will be cached (optional), for example `3 hours` / `30 minutes` / `45 seconds`; default empty (0), i.e. no caching
 
+|maxExecutionTime |maximum execution time for this service's queries (optional, milliseconds).
+Unset = inherit the server `max_execution_time`; 0 = explicitly unlimited; negative or
+non-integer values are rejected
+
 |parameter |parameter default value when query api not provide parameter
 value
 |===
 
 snapshotLimit format: 3 hours / 30 minutes / 45 seconds
+maxExecutionTime format: integer milliseconds (for example 30000 = 30 seconds)
 
 Request example:
 
@@ -1530,12 +1536,18 @@ headers:
 
 |snapshotLimit |Optional. used to overwrite service definition. 0 means
 no result cache
+
+|maxExecutionTime |Optional. overrides the service definition and the server GLOBAL setting,
+in milliseconds; 0 means no limit for this query
 |===
 
 The token information here is obtained when call /login. +
 The token is optional, if you use context in your sql statement, you
 must set it. +
-snapshotLimit format: 3 hours / 30 minutes / 45 seconds
+snapshotLimit format: 3 hours / 30 minutes / 45 seconds +
+maxExecutionTime precedence: request header > service definition > server `max_execution_time`.
+On timeout the response keeps the normal failure shape (`retCode = -1` with
+`retMsg = "INTERRUPT Error: Query exceeded maximum execution time"`).
 
 GET Request example:
 
@@ -1582,6 +1594,13 @@ Requesting a service that is not registered answers **HTTP 404** with
 the request is rejected with `retCode = -1` and
 `retMsg = "Missing required parameters: <names>"` - the SQL is never executed with a
 literal `${var}` left inside it.
+
+When a cached entry expires, concurrent requests do not all hit the database: for the
+same content (same service and parameters) **exactly one** request refreshes the result
+while the others wait for that refresh and then return the refreshed result (`cached`
+stays `true`). So an expiring `snapshotLimit` never turns into a burst of backend
+queries. A waiter that has waited longer than 30 seconds falls back to querying directly
+so a request is never blocked indefinitely.
 
 ===== Result value types
 
@@ -1651,7 +1670,8 @@ than being silently accepted. The `GET /sse` endpoint is gone; log level is per-
 `run_sql` to keep temporary tables, transactions and session settings across calls. Sessions expire when
 idle and are closed by `close_session`.
 |`close_session` |Closes a session and releases its connection immediately.
-|`run_sql` |Executes SQL (all rows by default) and can cap the result with `max_rows`. The result
+|`run_sql` |Executes SQL (all rows by default) and can cap the result with `max_rows`. The optional
+`maxExecutionTime` (milliseconds, 0 = no limit) overrides the server timeout for this call only. The result
 also carries `read_only`, `statement_type` (`query`/`update`) and `elapsed_ms`.
 |`list_tables` |Lists tables and views as a `tables` array of `{schema, name, type}`, optionally filtered by
 schema.
@@ -1677,7 +1697,9 @@ names "a database transaction" as the motivating case).
 * **Returned rows.** `run_sql` returns all rows by default; `max_rows` can cap the result,
   and `0` or a negative value means unlimited. `truncated` is `true` only when a positive cap
   was set and rows were actually cut off.
-* **No statement timeout.** MCP no longer applies an application-level statement timeout.
+* **Statement timeout.** Queries follow the server's `max_execution_time` (GLOBAL) by default;
+  `run_sql` accepts an optional `maxExecutionTime` (milliseconds, `0` = no limit) that overrides it for
+  this call only and restores the session value afterwards.
 * **Same execution path as everything else.** Tool calls take connections from the ordinary dbserver pool,
   so the connection cap and session handling apply to agents exactly as they do to other clients.
 
@@ -2345,6 +2367,7 @@ Validation errors you may see: `Field 'id' must be a string`, `Field 'type' must
 `Field 'data' must be an object`, `Unknown type: <type>`, `Field 'sessionId' must be a string`,
 `Field 'sql' must be a string`, `Field 'fetchSize' must be a number`,
 `Field 'maxRows' must be a number`, `Field 'maxRows' must be a positive number`,
+`Field 'maxExecutionTime' must be a non-negative integer (milliseconds)`,
 `Invalid session`, `Invalid taskId`, `Another SQL is already running`.
 
 `maxRows` is the number of rows the API returns per call (page size), not a database query limit, and must be
@@ -2404,7 +2427,8 @@ Message:
   "data": {
     "sessionId": "session-123",
     "sql": "SELECT * FROM large_table",
-    "fetchSize": 100   // optional, default 100; applied to the underlying Statement
+    "fetchSize": 100,           // optional, default 100; applied to the underlying Statement
+    "maxExecutionTime": 30000   // optional, milliseconds for this execution; 0 = no limit; omit = session/GLOBAL
   }
 }
 ....
@@ -2417,10 +2441,18 @@ Response (returned as soon as the task is accepted, while it is still running):
   "type": "exec",
   "data": {
     "taskId": "550e8400-e29b-41d4-a716-446655440000",
-    "status": "running"
+    "status": "running",
+    "maxExecutionTime": 30000   // the effective value; echoes the session value when the field is omitted
   }
 }
 ....
+
+`maxExecutionTime` applies to this task only: the server sets the session value before executing and
+restores the previous value when the task ends (success, failure, timeout or cancel), so it never leaks
+into later `exec` calls on the same session. Precedence: `exec.data.maxExecutionTime` >
+client `SET SESSION max_execution_time` > server `max_execution_time` (GLOBAL). The field must be a
+**non-negative integer number of milliseconds**; negative, fractional or non-numeric values are
+rejected (see the validation error list above).
 
 If the SQL fails while executing, the task status becomes `error` and `fetch` reports it as
 `data.status = "error"` with the message in `data.error` (the `exec` response itself only means the
@@ -2695,6 +2727,8 @@ started with `bin/dbcli.bat` / `bin/dbcli.sh`.
 
 | SQL client | interactive console plus batch scripts; statements end with `;` or with `/` alone on a line; Ctrl-C cancels a running statement
 | Result checks | `--ref` compares this run with a reference file; `_assert` and `_compare` inside a script
+| HTTP calls | `_api` calls REST APIs; status/headers/JSON values are available as `API.*` for assertions/chaining
+| Control flow | `_if`/`_elseif`/`_else`/`_endif`, `_loop`/`_endloop`, `_loop break` / `continue`; one progress line per iteration
 | Connection | `_connect` takes the short form, `jdbc:slackerdb://` and any other `jdbc:<scheme>:` URL; `_load jdbcdriver` loads a driver at runtime
 | Session persistence | `_session` keeps/switches connections
 | Task orchestration | `_job` concurrent jobs; `_ssh`/SFTP, `_host`

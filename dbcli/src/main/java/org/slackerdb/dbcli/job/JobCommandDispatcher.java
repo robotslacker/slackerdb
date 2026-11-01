@@ -23,6 +23,7 @@ import java.util.Map;
  *                             定时点："Timer point [名] released." / "… wait timed out."
  *   SHOW &lt;名&gt;             → 结果集（表头 name/state/thread/elapsed/exitCode；thread 列在两种执行层下的
  *                              取值见类注释末尾）
+ *   SHOW（无参数）          → 同样的表头，列出**全部**作业（按 name 排序）
  *   ABORT &lt;名&gt;            → "Job [名] aborted."
  *   SHUTDOWN &lt;名&gt;         → "Job [名] shutdown."
  *   TIMER &lt;点名&gt;          → "Timer point [点名] released."
@@ -96,14 +97,7 @@ public final class JobCommandDispatcher {
                     outcomes.add(status("Job [" + name + "] started."));
                 }
                 case "wait" -> wait(ir, outcomes);
-                case "show" -> {
-                    String name = requireText(ir, "jobName");
-                    Job job = manager.show(name);
-                    List<List<Object>> rows = new ArrayList<>();
-                    rows.add(new ArrayList<>(job.describe()));
-                    outcomes.add(new CommandOutcome.Table(
-                            List.of("name", "state", "thread", "elapsed", "exitCode"), rows));
-                }
+                case "show" -> show(ir, outcomes);
                 case "abort" -> {
                     String name = requireText(ir, "jobName");
                     Job job = manager.abort(name);
@@ -132,6 +126,29 @@ public final class JobCommandDispatcher {
     }
 
     // ------------------------------------------------------------------ 内部
+
+    /**
+     * {@code _JOB SHOW [<名字>]}：给了名字只显示那一个；不给名字显示**全部作业**（按名字排序）。
+     *
+     * <p>“全部”包含已经结束的作业（DONE/FAILED/ABORTED/...），因为它们的信息仍在管理器里；
+     * 空表也返回同样的表头，脚本可以据此稳定判断“当前没有作业”。</p>
+     */
+    private void show(Map<String, Object> ir, List<CommandOutcome> outcomes) {
+        Object requested = ir.get("jobName");
+        List<List<Object>> rows = new ArrayList<>();
+        if (requested != null && !String.valueOf(requested).isBlank()) {
+            Job job = manager.show(String.valueOf(requested));
+            rows.add(new ArrayList<>(job.describe()));
+        } else {
+            List<Job> jobs = new ArrayList<>(manager.jobs());
+            jobs.sort(java.util.Comparator.comparing(Job::name));
+            for (Job job : jobs) {
+                rows.add(new ArrayList<>(job.describe()));
+            }
+        }
+        outcomes.add(new CommandOutcome.Table(
+                List.of("name", "state", "thread", "elapsed", "exitCode"), rows));
+    }
 
     private void wait(Map<String, Object> ir, List<CommandOutcome> outcomes) {
         String name = requireText(ir, "jobName");

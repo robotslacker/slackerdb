@@ -1,5 +1,7 @@
 package org.slackerdb.dbcli.engine;
 
+import org.slackerdb.dbcli.engine.flow.ControlFlow;
+
 import java.nio.file.Path;
 import java.util.List;
 
@@ -45,6 +47,9 @@ public final class ScriptSession implements AutoCloseable {
 
     private final StringBuilder buffer = new StringBuilder();
 
+    /** 本会话的控制流状态（块捕获/执行）；每个会话独立，子脚本/作业不串块。 */
+    private final ControlFlow flow;
+
     /** 缓冲的词法边界状态（增量喂入；决定"要不要解析"）。 */
     private final StatementBoundary boundary = new StatementBoundary();
 
@@ -85,6 +90,7 @@ public final class ScriptSession implements AutoCloseable {
         this.runner = runner;
         this.context = context;
         this.previousArgv = context.variables().argv();
+        this.flow = new ControlFlow(runner);
         context.variables().setArgv(argv == null ? List.of() : List.copyOf(argv));
         context.enterScript(scriptName, scriptFile, scriptSession);
     }
@@ -134,12 +140,13 @@ public final class ScriptSession implements AutoCloseable {
 
     /** 缓冲里是否还有"没写完的语句"（控制台据此切换续行提示）。 */
     public boolean isIncomplete() {
-        return buffer.length() > 0;
+        return buffer.length() > 0 || flow.isOpen();
     }
 
-    /** 丢弃没写完的缓冲（控制台的 Ctrl-C：取消当前这条输入）。 */
+    /** 丢弃没写完的缓冲（控制台的 Ctrl-C：取消当前这条输入，也取消未关闭的块）。 */
     public void reset() {
         clearBuffer();
+        flow.reset();
     }
 
     /**
@@ -152,19 +159,29 @@ public final class ScriptSession implements AutoCloseable {
     public void finish() {
         if (context.exitRequested()) {
             clearBuffer();
+            flow.reset();
             return;
         }
-        if (buffer.length() == 0) {
+        if (buffer.length() == 0 && !flow.isOpen()) {
             return;
         }
         // 先把"停在收尾位置上"的都执行掉（`;`/`/`/`echo off`），再把尾巴按"补一个 `;`"试一次：
         // 这样 `select 1; select 2`（最后一句没有 ';'）仍然逐条执行，而不是被当成一条整段文本送库。
         processBuffer(true);
+        if (flow.isOpen()) {
+            // 半截块不执行：只报未关闭的 _IF/_LOOP，丢弃缓冲。
+            flow.finish();
+            clearBuffer();
+            return;
+        }
         if (buffer.length() == 0 || context.exitRequested()) {
             clearBuffer();
             return;
         }
-        runner.finishPending(buffer.toString());
+        runner.finishPending(buffer.toString(), flow);
+        if (flow.isOpen()) {
+            flow.finish();
+        }
         clearBuffer();
     }
 
@@ -215,6 +232,7 @@ public final class ScriptSession implements AutoCloseable {
             if (context.exitRequested()) {
                 // _EXIT/_QUIT（或 _WHENEVER ERROR EXIT）要求立刻收尾：同一行里剩下的语句不再执行
                 clearBuffer();
+                flow.reset();
                 return;
             }
             StatementBoundary.Kind kind = boundary.kind();
@@ -234,7 +252,7 @@ public final class ScriptSession implements AutoCloseable {
                         // 这个位置之前的前缀上一行已经判定"没写完"，文本没变，不必再解析
                         continue;
                     }
-                    if (runner.executeStatement(raw.substring(0, end))) {
+                    if (runner.executeStatement(raw.substring(0, end), flow)) {
                         consume(end);
                         consumed = true;
                         break;
@@ -252,12 +270,12 @@ public final class ScriptSession implements AutoCloseable {
                 // **不补** ';' —— 补上去会改变词法：`_HOST """…"""` 末尾的引号与 ';' 会拼成
                 // 一个残缺的字符串，整块于是被报成 `Unknown command [_HOST]`。
                 String head = raw.stripLeading();
-                finished = runner.executeStatement(head.startsWith("_") ? raw : raw + ";");
+                finished = runner.executeStatement(head.startsWith("_") ? raw : raw + ";", flow);
             } else if (kind == StatementBoundary.Kind.SEMICOLON) {
                 // 最后那个顶层 ';' 就是候选里的最后一个前缀，刚刚已经试过，不再重复解析
                 finished = false;
             } else {
-                finished = runner.executeStatement(raw);
+                finished = runner.executeStatement(raw, flow);
             }
             if (finished) {
                 clearBuffer();

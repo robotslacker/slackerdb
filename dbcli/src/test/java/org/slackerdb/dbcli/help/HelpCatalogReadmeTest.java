@@ -65,8 +65,9 @@ class HelpCatalogReadmeTest {
     @Test
     @DisplayName("每个主题都有内容；未知主题返回 null；嵌套上限由调用方注入")
     void topicsExist() {
-        for (String name : new String[] {"ASSERT", "COMPARE", "CONNECT", "DISCONNECT", "ECHO", "EXIT",
-                "HELP", "HOST", "JOB", "LOAD", "SESSION", "SET", "SLEEP", "SPOOL", "SSH", "START", "WHENEVER"}) {
+        for (String name : new String[] {"API", "ASSERT", "COMPARE", "CONNECT", "DISCONNECT", "ECHO", "EXIT",
+                "HELP", "HOST", "IF", "JOB", "LOAD", "LOOP", "SESSION", "SET", "SLEEP", "SPOOL", "SSH", "START",
+                "WHENEVER"}) {
             List<String> lines = HelpCatalog.topic(name, 16);
             assertNotNull(lines, name);
             assertFalse(lines.isEmpty(), name);

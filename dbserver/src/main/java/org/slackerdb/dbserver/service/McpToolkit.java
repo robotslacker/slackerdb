@@ -3,6 +3,7 @@ package org.slackerdb.dbserver.service;
 import ch.qos.logback.classic.Logger;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import org.slackerdb.dbserver.sql.MaxExecutionTime;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -18,8 +19,10 @@ import java.util.Map;
 /**
  * MCP 工具面的<b>实际执行体</b>。
  *
- * <p>MCP 作为内部工具，不再施加只读、行数上限或语句超时；{@code run_sql}
- * 可以执行读写语句，返回行数由调用方的 {@code max_rows} 控制（默认不限）。</p>
+ * <p>MCP 作为内部工具，不再施加只读或行数上限；{@code run_sql}
+ * 可以执行读写语句，返回行数由调用方的 {@code max_rows} 控制（默认不限）。
+ * 语句超时默认跟随服务器 {@code max_execution_time}（GLOBAL），
+ * {@code run_sql} 可用 {@code maxExecutionTime} 按次覆盖。</p>
  *
  * <h2>工具清单</h2>
  * <ul>
@@ -41,7 +44,9 @@ final class McpToolkit {
     /** 工具执行所需的运行时依赖。 */
     record Config(
             int maxRowsCeiling,
-            String defaultSchema
+            String defaultSchema,
+            /** 服务器 GLOBAL max_execution_time（毫秒），用于把单次调用覆盖恢复到"跟随 GLOBAL"。 */
+            long maxExecutionTime
     ) {
     }
 
@@ -120,7 +125,9 @@ final class McpToolkit {
                 "handle", prop("string", "Optional session handle from open_session. "
                         + "Without it the statement runs on a short-lived pooled connection."),
                 "max_rows", prop("integer", "Maximum rows to return. Default -1 = unlimited; "
-                        + "0 or any negative value also means unlimited.")
+                        + "0 or any negative value also means unlimited."),
+                "maxExecutionTime", prop("integer", "Maximum execution time for this call in milliseconds "
+                        + "(0 = no limit). Omit to use the server-wide max_execution_time setting.")
         ), List.of("sql"));
         // 声明的字段必须与 execute() 实际返回的完全一致：客户端会在 tools/list 之后
         // 用 outputSchema 校验 structuredContent，多一个未声明字段就会被判为
@@ -266,29 +273,94 @@ final class McpToolkit {
         int maxRows = McpProtocol.optionalInt(args, "max_rows", -1,
                 Integer.MIN_VALUE, Integer.MAX_VALUE);
         String handle = McpProtocol.optionalString(args, "handle");
+        Long maxExecutionTime = optionalMaxExecutionTime(args);
 
         // 有 handle 就一次取出会话（require 会刷新空闲计时），避免重复查表
         McpSessionStore.Session session = handle == null ? null : sessions.require(handle);
         boolean readOnly = false; // MCP 不再做只读判定，写语句按服务器权限执行
 
         if (session != null) {
-            return execute(session.connection, sql, maxRows, readOnly, session);
+            return execute(session.connection, sql, maxRows, readOnly, maxExecutionTime, session);
         }
         try (Connection connection = sessions.borrow()) {
-            return execute(connection, sql, maxRows, readOnly, null);
+            return execute(connection, sql, maxRows, readOnly, maxExecutionTime, null);
         }
+    }
+
+    /**
+     * 解析可选的 {@code maxExecutionTime}（单位毫秒，必须是非负整数）。
+     *
+     * <p>只对本次调用生效；执行结束后恢复执行前的会话值。缺省/JSON null 返回 {@code null}，
+     * 表示不覆盖（沿用会话/服务器 GLOBAL）。</p>
+     */
+    private static Long optionalMaxExecutionTime(JSONObject args) {
+        if (args == null || !args.containsKey("maxExecutionTime")) {
+            return null;
+        }
+        Object raw = args.get("maxExecutionTime");
+        if (raw == null) {
+            return null;
+        }
+        long value;
+        try {
+            if (raw instanceof Integer || raw instanceof Long || raw instanceof Short || raw instanceof Byte) {
+                value = ((Number) raw).longValue();
+            } else if (raw instanceof Number number) {
+                value = new java.math.BigDecimal(number.toString()).longValueExact();
+            } else if (raw instanceof String text) {
+                value = Long.parseLong(text.trim());
+            } else {
+                throw new NumberFormatException("not a number");
+            }
+        } catch (NumberFormatException | ArithmeticException e) {
+            throw new McpProtocol.McpParamException(
+                    "Field 'maxExecutionTime' must be a non-negative integer (milliseconds)");
+        }
+        if (value < 0) {
+            throw new McpProtocol.McpParamException(
+                    "Field 'maxExecutionTime' must be a non-negative integer (milliseconds)");
+        }
+        return value;
     }
 
     /**
      * 执行并物化结果。
      *
-     * <p>MCP 是内部工具，不施加语句超时；由服务器自身的 DuckDB 执行。</p>
+     * <p>默认不额外施加超时（连接跟随服务器 GLOBAL）。{@code maxExecutionTime} 非空时只覆盖
+     * 本次执行；执行结束后把连接恢复成执行前的会话值，不影响同一 handle 上的后续调用。</p>
      */
     private JSONObject execute(Connection connection,
                                String sql,
                                int maxRows,
                                boolean readOnly,
+                               Long maxExecutionTime,
                                McpSessionStore.Session session) throws Exception {
+        Long baseline = null;
+        boolean overridden = maxExecutionTime != null;
+        try {
+            if (overridden) {
+                baseline = MaxExecutionTime.read(connection);
+                MaxExecutionTime.apply(connection, maxExecutionTime);
+            }
+            return executeOnce(connection, sql, maxRows, readOnly, session);
+        } finally {
+            if (overridden && baseline != null) {
+                try {
+                    MaxExecutionTime.restore(connection, baseline, config.maxExecutionTime());
+                } catch (SQLException restoreFailure) {
+                    logger.warn("[SERVER][MCP] Failed to restore max_execution_time ({}).",
+                            restoreFailure.getMessage());
+                }
+            }
+        }
+    }
+
+    /** 单次执行并物化结果（不含超时覆盖的会话管理）。 */
+    private JSONObject executeOnce(Connection connection,
+                                   String sql,
+                                   int maxRows,
+                                   boolean readOnly,
+                                   McpSessionStore.Session session) throws Exception {
         long started = System.currentTimeMillis();
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             boolean hasResultSet = statement.execute();

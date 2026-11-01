@@ -18,7 +18,16 @@ import java.sql.Statement;
 import java.sql.SQLException;
 import java.sql.ResultSet;
 import com.alibaba.fastjson2.JSONArray;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.TimeZone;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -396,6 +405,62 @@ public class InstanceXApiTest {
         assertEquals(200, response.statusCode(), "下载接口不应返回 500");
         assertTrue(response.body().trim().startsWith("["), "响应体应是服务定义 JSON 数组");
         assertTrue(response.body().contains("getUsers"), "应包含已加载的服务定义");
+    }
+
+    /**
+     * 缓存集中过期时的并发穿透回归用例。
+     *
+     * <p>TTL 到期后，同一份内容的并发请求只允许有一个线程真正查后端数据库，其余请求等待
+     * 这次刷新结束、再从刷新结果返回；否则 N 个并发请求会同时打到数据库（缓存击穿）。
+     * 判定依据：这批请求里 {@code cached=false} 的响应必须恰好 1 个，且都拿到同一份数据
+     * （数据里的 {@code timestamp} 相同）。</p>
+     */
+    @Test
+    void testExpiredCacheRefreshesOnceUnderConcurrency() throws Exception {
+        HttpResponse<String> registered = post("/api/registerService", """
+                {"serviceName":"regStampede","serviceVersion":"1.0","serviceType":"GET",
+                 "category":"regression","searchPath":"main","snapshotLimit":"2 seconds",
+                 "sql":"SELECT count(*) AS v FROM range(50000000)"}
+                """);
+        assertEquals(0, JSONObject.parseObject(registered.body()).getIntValue("retCode"), registered.body());
+
+        // 第一次请求：缓存冷启动，必然查库
+        JSONObject cold = JSONObject.parseObject(get("/api/1.0/regStampede").body());
+        assertEquals(0, cold.getIntValue("retCode"), cold.toJSONString());
+        assertFalse(cold.getBoolean("cached"), cold.toJSONString());
+
+        // 等待 TTL（2 秒）到期，让缓存条目进入过期状态
+        Thread.sleep(2100);
+
+        int concurrency = 16;
+        ExecutorService pool = Executors.newFixedThreadPool(concurrency);
+        CountDownLatch startGate = new CountDownLatch(1);
+        List<Future<String>> futures = new ArrayList<>();
+        try {
+            for (int i = 0; i < concurrency; i++) {
+                futures.add(pool.submit(() -> {
+                    startGate.await();
+                    return get("/api/1.0/regStampede").body();
+                }));
+            }
+            startGate.countDown();
+
+            int refreshed = 0;
+            Set<Long> timestamps = new HashSet<>();
+            for (Future<String> future : futures) {
+                JSONObject body = JSONObject.parseObject(future.get(30, TimeUnit.SECONDS));
+                assertEquals(0, body.getIntValue("retCode"), body.toJSONString());
+                if (!body.getBoolean("cached")) {
+                    refreshed++;
+                }
+                timestamps.add(body.getJSONObject("data").getLongValue("timestamp"));
+            }
+            assertEquals(1, refreshed,
+                    "缓存到期后应只有一个请求真正刷新，实际有 " + refreshed + " 个请求查了库");
+            assertEquals(1, timestamps.size(), "并发请求应共享同一份刷新结果");
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     /** 类型矩阵：DATE/LIST/BLOB/JSON 等在 HTTP 面必须能正常返回。 */

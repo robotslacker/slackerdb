@@ -12,6 +12,8 @@ scripts automatically and verify their results.
   on a line; a running statement can be cancelled with Ctrl-C.
 * **Result checks**: `_assert` for statement-level assertions, `--ref` / `_compare` to compare output with a
   reference file line by line.
+* **HTTP calls**: `_api` is a small curl-like client for REST APIs; status/headers/JSON values can feed
+  assertions and later requests.
 * **Orchestration**: `_job` runs several scripts concurrently, `_ssh` / SFTP works on remote hosts, `_host`
   runs local commands.
 
@@ -162,6 +164,7 @@ sync); use `_help <command>` for the details of one command.
 
 // BEGIN GENERATED: help-catalog (source: help/HelpCatalog.java; checked by HelpCatalogReadmeTest)
 * `<SQL statement>`
+* `_API <METHOD> <URL> [header='Name: Value']... [body='...'|bodyfile=<file>|bodyvar=<name>] [timeout=<s>] [allow=<codes>|all] [follow=true|false]`
 * `_ASSERT <l> <op> <r> [, n]`
 * `_COMPARE <work> <ref>`
 * `_CONNECT <host>:<port>/<service>[?k=v]`
@@ -169,11 +172,19 @@ sync); use `_help <command>` for the details of one command.
 * `_CONNECT [<user>[/<password>]@]jdbc:<scheme>:<url>`
 * `_DISCONNECT`
 * `_ECHO ... echo off`
+* `_ECHO @name ... echo off`
 * `_EXIT [n] | _QUIT [n]`
 * `_HELP [topic]`
 * `_HOST <command>`
+* `_IF {% <condition> %}`
+* `_ELSEIF {% <condition> %}`
+* `_ELSE`
+* `_ENDIF`
 * `_JOB ...`
 * `_LOAD JDBCDRIVER <jar>`
+* `_LOOP [<count>|WHILE {% <condition> %}|UNTIL {% <condition> %}|FOREVER]`
+* `_LOOP BREAK|CONTINUE`
+* `_ENDLOOP`
 * `_SESSION SAVE|RESTORE|RELEASE|SAVEURL|SHOW <name>`
 * `_SET @name <value>`
 * `_SET ECHO ON|OFF`
@@ -181,6 +192,7 @@ sync); use `_help <command>` for the details of one command.
 * `_SET TERMOUT ON|OFF`
 * `_SET TIMING ON|OFF`
 * `_SET TIME ON|OFF`
+* `_SET LOOPTRACE ON|OFF`
 * `_SET OUTFORMAT table|vertical|csv`
 * `_SET HEADER ON|OFF`
 * `_SET LINEWIDTH <n>`
@@ -253,6 +265,8 @@ _assert {% 3==3 %}                                // constant assertion
 | `RESULT.HEADERS[i]` / `RESULT.COLUMNS[i]` | column label / column type name (0-based)
 | `VAR.<name>` / `ENV.<name>` | script variable / environment variable
 | `RUN.EXITCODE` / `JOB.<name>.STATUS` | child-script exit code / job state
+| `API.STATUS` / `API.OK` / `API.BODY` / `API.ERROR` | last `_api` status / success / body / request error |
+| `API.HEADER.<name>` / `API.JSON.<path>` | response header / JSON scalar; array indexes as `[n]` or `.n` |
 |===
 
 Comparators: `=` (`==`), `<>` (`!=`), `>`, `>=`, `<`, `<=`, `CONTAINS`, `NOTCONTAINS`, `MATCHES` (whole-string
@@ -294,6 +308,7 @@ _set feedback off       # print neither summaries nor errors (default on)
 _set termout off        # result sets go nowhere: not on screen, not into the logfile / _SPOOL (default on)
 _set timing on          # print one elapsed line after every statement (default off)
 _set time on            # print the current time after every statement (default off)
+_set looptrace off      # print one Loop iteration progress line per iteration (default on)
 _set outformat csv      # result format table|vertical|csv (default table)
 _set header off         # do not print the header row (default on)
 _set linewidth 200      # max display columns per line, longer lines wrap (default 200, not for csv)
@@ -304,8 +319,8 @@ _set timeout 30         # per-statement server timeout in seconds (default 0 = n
 _set @name value        # define a script variable (same as --var; falls back to the environment)
 ----
 
-`echo`, `feedback`, `termout` and `autocommit` default to `on`; `timing`, `time` and `diff_report_html`
-default to `off`; the switches only accept `on` / `off`.
+`echo`, `feedback`, `termout`, `autocommit` and `looptrace` default to `on`; `timing`, `time` and
+`diff_report_html` default to `off`; the switches only accept `on` / `off`.
 
 * `echo`: whether the log records "what was run" (the text of the executed statements). In the console the log
   is a transcript of the whole session.
@@ -313,6 +328,7 @@ default to `off`; the switches only accept `on` / `off`.
   off does not change the error count or the exit code.
 * `termout`: whether result sets are printed (off means they are also missing from the log and `_SPOOL`).
 * `timing` / `time`: an extra line with the elapsed time / current time after every statement.
+* `looptrace`: one `Loop iteration ...` progress line per loop iteration; `feedback off` suppresses it too.
 
 === 7.6 `_spool` / `_echo`
 
@@ -327,7 +343,13 @@ echo off
 ----
 
 The lines between `_echo` and `echo off` are printed as data (variables are resolved); the `echo off` line
-itself is not printed. `_SPOOL` needs a file name or `OFF`; `OFF` is a keyword, so to write to a file really
+itself is not printed.
+
+`_echo @name` is the **capture form** of the same block: the lines are stored in script variable `name`
+(variables are still resolved) and are not printed. `_api`'s `bodyvar=name` uses that text as a multi-line
+request body. An empty block captures an empty string; an invalid name is a readable error.
+
+`_SPOOL` needs a file name or `OFF`; `OFF` is a keyword, so to write to a file really
 named `off` give a path (`_spool ./off`).
 
 === 7.7 `_start`
@@ -381,6 +403,7 @@ _job create JOB2 script=child.sql mode=process  # run it as its own process (har
 _job start JOB1                                 # start it
 _job wait JOB1 timeout=10                       # wait for it (seconds; without a timeout it waits forever)
 _job show JOB1                                  # name/state/thread/elapsed/exitCode
+_job show                                       # the same table for every job (sorted by name)
 _job timer GO                                   # release timer point GO
 _job wait TIMER:GO                              # wait at timer point GO
 _job abort JOB1                                 # request a stop and interrupt it
@@ -393,6 +416,8 @@ _job jobmanager off                             # stop accepting new jobs
 * A `timeout=` on `_job wait` only means "this wait did not get there" (the job keeps running and stays
   `RUNNING`); use `abort` / `shutdown` to actually stop it.
 * Every job writes one output file `<job name>.out` (stdout + stderr), readable once `_job wait` returns.
+* `_job show` without a name lists **all** jobs in the manager (including finished ones) in one table,
+  sorted by `name`; with no jobs only the header row is printed.
 * `_job abort` / `_job shutdown` **request** a stop: a job that responds goes to `ABORTED` / `SHUTDOWN`
   immediately; a job that does not respond yet stays `RUNNING` (as `_job show` reports) and lands on the
   requested state once it actually ends.
@@ -446,6 +471,119 @@ Remote commands are **not** limited by default; use `_ssh set timeout = <seconds
 is still printed, and an `SSH command timed out` error is reported.
 Using `_ssh` or an SFTP action without a connection reports `SSH not connected.` / `SFTP not connected.`.
 
+=== 7.12 `_if` / `_loop` (control flow)
+
+[source,sql]
+----
+_if {% RESULT.ROWS[0][0] = 0 %}
+  _echo t
+  queue is empty
+  echo off
+_elseif {% RESULT.ROWCOUNT < 10 %}
+  _echo t
+  queue is short
+  echo off
+_else
+  _echo t
+  queue is long
+  echo off
+_endif
+
+_loop 3                          # exactly three times
+  insert into t values (1);
+_endloop
+
+_loop while {% VAR.done = 0 %}   # test first
+  delete from queue where id = (select min(id) from queue);
+  _if {% RESULT.ROWCOUNT = 0 %}
+    _set @done 1
+  _endif
+_endloop
+
+_loop until {% RESULT.ROWCOUNT = 0 %}   # run first, then test
+  delete from queue where id = (select min(id) from queue);
+_endloop
+
+_loop                            # forever, until break / exit / limit
+  select count(*) as n from queue;
+  _if {% RESULT.ROWS[0][0] = 0 %}
+    _loop break
+  _endif
+  delete from queue where id = (select min(id) from queue);
+_endloop
+----
+
+* Conditions must be written as `{% <left> <operator> <right> %}`; the selectors/comparators are the same as
+  `_assert`. Prefer `VAR.<name>` inside conditions.
+* `_if` / `_elseif` / `_else` / `_endif` and `_loop` / `_loop break` / `_loop continue` / `_endloop` each take
+  their own line (indentation is allowed).
+* Branches are tested top-down and only the first true branch runs. A condition error abandons the whole
+  `_if` and counts as one error.
+* `_loop <n>` is a fixed count; `while` tests first; `until` runs at least once; a bare `_loop` / `_loop
+  forever` loops until break/exit/error/limit.
+* By default every iteration prints a progress status line: `Loop iteration 1 of 3.`, `Loop iteration 2.`
+  (nested loops add `(depth 2)`); a loop that runs zero times prints `Loop did not execute (0 iterations).`
+  `_set looptrace off` suppresses these lines.
+* `_loop break` / `_loop continue` affect only the innermost loop; using them outside a loop is an error.
+* The body runs only after `_endloop` is read. Input is echoed once; results and progress lines repeat per
+  iteration.
+* Blocks may nest up to 64 levels; one loop may run at most 1,000,000 iterations (a safety limit, not a
+  timeout).
+* Use `_sleep` for an interval; v1 has no `interval` keyword.
+
+=== 7.13 `_api`
+
+`_api` is a small curl-like client: one HTTP request, status/body printed, and the result exposed as
+`API.*` runtime values.
+
+[source,sql]
+----
+_api GET https://api.example.com/health
+_assert {% API.STATUS = 200 %}
+_assert {% API.JSON.status = ok %}
+
+_ECHO @login_body
+{
+  "user": "demo",
+  "password": "${password}"
+}
+echo off
+
+_api POST https://api.example.com/login header='Content-Type: application/json' bodyvar=login_body
+_assert {% API.STATUS = 200 %}
+_set @token ${API.JSON.access_token}
+
+_api GET https://api.example.com/me header='Authorization: Bearer ${token}'
+_assert {% API.JSON.user.name = demo %}
+----
+
+Options:
+
+[cols="1,3"]
+|===
+| Option | Meaning
+
+| `header='Name: Value'` | add a request header; may repeat
+| `body='...'` | single-line inline body (single quotes are convenient for JSON)
+| `bodyfile=<file>` | read a UTF-8 body from a file, relative to the script working directory
+| `bodyvar=<name>` | use a multi-line body captured by `_echo @name`
+| `timeout=<seconds>` | total request timeout; 0 means no limit; default 30
+| `allow=404` / `allow=404,409` / `allow=all` | accept extra final status codes; default 2xx
+| `follow=true/false` | follow 3xx; default `true`
+|===
+
+* Methods: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`; `GET`/`HEAD` take no body.
+* By default it prints `HTTP <status>` and then the body as data. A final status outside the accepted set
+  prints `HTTP <status> (unexpected status).` and counts one error. `_set feedback off` leaves only the body.
+* Unexpected status, transport errors, timeouts and redirect loops count one script error; exit-code rules
+  are unchanged (see §9.3).
+* Values: `API.STATUS`, `API.OK`, `API.BODY`, `API.ERROR`, `API.HEADER.<name>`, `API.JSON.<path>`.
+  Array indexes may be written as `items[0].id` or `items.0.id`.
+* `${API.*}` fails with `Unknown API value [...]` when missing; it never sends the placeholder literally.
+* Redirects are followed by default (JDK `Redirect.NORMAL`). `follow=false` returns the original 3xx so
+  `API.HEADER.Location` can be handled manually. Cookies are not persisted, no proxy is used, and
+  uploads/binary downloads are not supported.
+
 == 8. Variables
 
 A script reads `${name}`; this is the only placeholder syntax:
@@ -459,12 +597,14 @@ echo off
 _start child.sql AAA 123        # inside the child ${ARGV1}=AAA, ${ARGV2}=123
 ----
 
-Sources and priority (first match wins): script variable `_set @name value` -> command line
-`--var NAME=VALUE` -> child-script arguments `${ARGV1}`, `${ARGV2}`, ... -> the same-named environment
-variable.
+Sources and priority (first match wins): script variable `_set @name value` -> runtime `API.*` ->
+command line `--var NAME=VALUE` -> child-script arguments `${ARGV1}`, `${ARGV2}`, ... -> the same-named
+environment variable.
 
 * A defined name does not look at the environment; an undefined name without an environment variable is left
   **as written** (never an empty string).
+* After `_api`, `API.*` (`API.STATUS`, `API.JSON.token`, ...) participates as runtime variables; a missing
+  `${API.*}` is reported as `Unknown API value [...]` instead of being left as written.
 * Variable names are case-sensitive; substitution happens once (the result is not scanned again).
 * To keep `${...}` literally, escape it with a backslash: `\${name}`.
 * To preset a batch of variables, run a setup script with `--profile <script>`.

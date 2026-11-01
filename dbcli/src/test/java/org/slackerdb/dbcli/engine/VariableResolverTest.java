@@ -165,6 +165,16 @@ class VariableResolverTest {
     }
 
     @Test
+    @DisplayName("maskForAnalysis：只把 ${...} 换成 x，用于块内语句的结构探测")
+    void maskForAnalysis() {
+        VariableResolver resolver = new VariableResolver(Map.of("a", "A"));
+        assertEquals("select x from t;", resolver.maskForAnalysis("select ${a} from t;"));
+        assertEquals("x x", resolver.maskForAnalysis("${a} ${missing}"));
+        assertEquals("keep ${unclosed", resolver.maskForAnalysis("keep ${unclosed"));
+        assertEquals("no placeholders", resolver.maskForAnalysis("no placeholders"));
+    }
+
+    @Test
     @DisplayName("snapshot：给 _ASSERT 的 VAR.<名> 取用（脚本变量 + --var + ARGVn）")
     void snapshotForAssertions() {
         VariableResolver resolver = new VariableResolver(Map.of("cli", "1"));
@@ -175,5 +185,25 @@ class VariableResolverTest {
         assertEquals("1", snapshot.get("cli"));
         assertEquals("2", snapshot.get("script"));
         assertEquals("first", snapshot.get("ARGV1"));
+    }
+
+    @Test
+    @DisplayName("运行时 API.* 变量：优先于 --var、可被脚本变量覆盖、未命中严格报错")
+    void runtimeApiVariables() {
+        VariableResolver resolver = new VariableResolver(Map.of("API.STATUS", "from-var"));
+        resolver.setRuntimeVariables(Map.of("API.STATUS", "200", "API.JSON.token", "abc"));
+
+        assertEquals("200", resolver.resolve("${API.STATUS}"));
+        assertEquals("abc", resolver.resolve("${API.JSON.token}"));
+        assertEquals("200", resolver.snapshot().get("API.STATUS"));
+        assertEquals("abc", resolver.lookup("API.JSON.token"));
+
+        resolver.setVariable("API.STATUS", "script");
+        assertEquals("script", resolver.resolve("${API.STATUS}"));
+
+        VariableExpressionException missing = assertThrows(VariableExpressionException.class,
+                () -> resolver.resolve("${API.JSON.missing}"));
+        assertTrue(missing.getMessage().contains("Unknown API value [${API.JSON.missing}]"),
+                missing.getMessage());
     }
 }

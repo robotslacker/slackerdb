@@ -9,7 +9,14 @@ prog: baseCommand EOF;
 baseCommand:
       assert
       | host
+      | api
       | start
+      | ifCommand
+      | elseIfCommand
+      | elseCommand
+      | endifCommand
+      | loopCommand
+      | endloopCommand
       | whenever
       | set
       | exit
@@ -44,6 +51,27 @@ assert  : ASSERT (ASSERT_BRACED | ASSERT_BODY)
 
 // 执行主机操作系统命令
 host    : HOST HOST_EXPRESSION (HOST_SEMICOLON)? CRLF?;
+
+// 调用 HTTP API：语法层只取出整行原文，选项/URL/JSON 由命令层解析。
+api     : API API_EXPRESSION? API_CRLF?;
+
+// 控制流：结构标记只占一行；块配对/嵌套由 engine.flow.ControlFlow 负责。
+ifCommand      : IF (CONDITION_BRACED | CONDITION_TEXT)? CONDITION_SEMICOLON? CRLF?;
+elseIfCommand  : ELSEIF (CONDITION_BRACED | CONDITION_TEXT)? CONDITION_SEMICOLON? CRLF?;
+elseCommand    : ELSE SEMICOLON? CRLF?;
+endifCommand   : ENDIF SEMICOLON? CRLF?;
+
+loopCommand    : LOOP
+                 (
+                   LOOP_BREAK
+                   | LOOP_CONTINUE
+                   | LOOP_FOREVER
+                   | LOOP_INT
+                   | (LOOP_WHILE (LOOP_BRACED)?)
+                   | (LOOP_UNTIL (LOOP_BRACED)?)
+                 )? LOOP_SEMICOLON? CRLF?;
+
+endloopCommand : ENDLOOP SEMICOLON? CRLF?;
 
 // 错误处理操作
 whenever:   WHENEVER WHENEVER_ERROR (WHENEVER_CONTINUE|(WHENEVER_EXIT WHENEVER_EXITCODE)) WHENEVER_SEMICOLON? CRLF?;
@@ -133,7 +161,7 @@ job      :
            (
              (JOB_MANGER (JOB_ON | JOB_OFF)) |
              (JOB_WAIT JOB_EXPRESSION (JOB_EXPRESSION JOB_EQUAL JOB_EXPRESSION)*) |
-             (JOB_SHOW JOB_EXPRESSION) |
+             (JOB_SHOW JOB_EXPRESSION?) |
              (JOB_ABORT JOB_EXPRESSION) |
              (JOB_SHUTDOWN JOB_EXPRESSION) |
              (JOB_TIMER JOB_EXPRESSION) |

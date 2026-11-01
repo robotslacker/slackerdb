@@ -25,10 +25,23 @@ public class ServerConfiguration {
      */
     public static final String MEMORY_DATABASE = "memory";
 
+    /**
+     * DuckLake 模式的 {@code data_dir} 取值。
+     *
+     * <p>该模式下实例库不再使用本地 {@code .db} 文件，而是通过
+     * {@code ATTACH 'ducklake:<ducklake_meta>' ...} 挂载数据湖；此时
+     * {@link #getDucklakeMeta()} 必填，{@link #getDucklakePath()} 可选。</p>
+     */
+    public static final String DUCKLAKE_DATA_DIR = ":ducklake:";
+
     // 默认的数据库名称
     private final String default_data = "";
     // 默认启动在内存下
     private final String default_data_dir = ":memory:";
+    // 数据湖元数据链接（仅 data_dir=:ducklake: 时使用）
+    private final String default_ducklake_meta = "";
+    // 数据湖数据路径（仅 data_dir=:ducklake: 时使用，可为空）
+    private final String default_ducklake_path = "";
     // 内存模式和文件模式的默认值不同
     // 内存模式: 系统的临时目录
     // 文件模式: 等同data_dir
@@ -66,14 +79,16 @@ public class ServerConfiguration {
     private final String default_advertise_address = "";
     // 组播使用的本机网卡（网卡名或本机 IP），留空 = 自动选一块。
     private final String default_advertise_nic = "";
-    // 默认不限制内存使用情况
-    private final String default_memory_limit;
-    // 默认线程数（在构造函数中基于内存计算）
+    // 默认内存上限取系统总内存的 80%（与移除"自动工作负载阈值"之前的默认档位一致）。
+    // 直接交给 DuckDB 按百分比解析后，memory_limit 只剩"绝对大小"和"百分比"两种写法。
+    private static final int DEFAULT_MEMORY_LIMIT_PERCENT = 80;
+    private final String default_memory_limit = DEFAULT_MEMORY_LIMIT_PERCENT + "%";
+    // 默认线程数（在构造函数中基于默认内存限制计算）
     private final int default_threads;
+    // 单条查询的最长执行时间（毫秒），0 表示不限制
+    private final long default_max_execution_time = 0L;
     // 默认数据库可读可写
     private final String default_access_mode = "READ_WRITE";
-    // 默认自动工作负载阈值（用于计算内存限制）
-    private final double default_auto_workload_threshold = 0.8;
 
     // 默认使用全部的CPU作为Netty的后台线程数
     private final int default_max_workers = Runtime.getRuntime().availableProcessors();
@@ -129,9 +144,22 @@ public class ServerConfiguration {
     // Quack remote server addr（空表示不启用Quack）
     private final String default_quack_addr = null;
 
+    /**
+     * Quack 认证令牌的最短长度。
+     *
+     * <p>DuckDB 的 {@code quack_serve} 要求显式指定的 token 至少 4 个字符；
+     * 在配置阶段就按这个规则校验，避免启动到一半才由 SQL 报错。</p>
+     */
+    public static final int QUACK_TOKEN_MIN_LENGTH = 4;
+
+    // Quack 认证令牌（空表示由DuckDB随机生成）
+    private final String default_quack_token = "";
+
     private String   data;
 
     private String   data_dir;
+    private String   ducklake_meta;
+    private String   ducklake_path;
     private String   temp_dir;
 
     private String   extension_dir;
@@ -149,7 +177,7 @@ public class ServerConfiguration {
      */
     private String   advertise_host;
     private String   memory_limit;
-    private double   auto_workload_threshold;
+    private long     max_execution_time;
     private int      threads;
     private String   access_mode;
     private int      max_workers;
@@ -175,6 +203,7 @@ public class ServerConfiguration {
     private String mcp_llm_key;
     private String socket;
     private String quack_addr;
+    private String quack_token;
 
     // 插件自定义参数，格式为 <pluginId>.<paramName>
     private final Map<String, String> pluginProperties = new HashMap<>();
@@ -185,6 +214,8 @@ public class ServerConfiguration {
         data = default_data;
 
         data_dir = default_data_dir;
+        ducklake_meta = default_ducklake_meta;
+        ducklake_path = default_ducklake_path;
         temp_dir = default_temp_dir;
         extension_dir = default_extension_dir;
 
@@ -219,9 +250,9 @@ public class ServerConfiguration {
         mcp_llm_key = default_mcp_llm_key;
         data_encrypt = default_data_encrypt;
         plugins_dir = default_plugins_dir;
-        auto_workload_threshold = default_auto_workload_threshold;
         socket = default_socket;
         quack_addr = default_quack_addr;
+        quack_token = default_quack_token;
 
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -230,13 +261,14 @@ public class ServerConfiguration {
             throw new ServerException(Utils.getMessage("SLACKERDB-00007"));
         }
 
-        // 系统默认内存为系统可用内存的auto_workload_threshold比例
+        // 默认内存上限是系统总内存的 80%（与改造前一致），直接交给 DuckDB 按百分比解析；
+        // 线程数按这个默认档位（GB）/ 10 估算。
+        memory_limit = default_memory_limit;
+        max_execution_time = default_max_execution_time;
         OperatingSystemMXBean operatingSystemMXBean = (OperatingSystemMXBean)ManagementFactory.getOperatingSystemMXBean();
         long totalMemoryBytes = operatingSystemMXBean.getTotalMemorySize();
-        int memoryLimitGB = (int) ((totalMemoryBytes * auto_workload_threshold) / 1024 / 1024 / 1024);
-        default_memory_limit = memoryLimitGB + "G";
-        memory_limit = default_memory_limit;
-        
+        int memoryLimitGB = (int) ((totalMemoryBytes * (DEFAULT_MEMORY_LIMIT_PERCENT / 100.0)) / 1024 / 1024 / 1024);
+
         // 默认线程数为内存限制（GB）除以10的整数，至少为1
         default_threads = Math.max(1, memoryLimitGB / 10);
         threads = default_threads;
@@ -288,6 +320,20 @@ public class ServerConfiguration {
                         data_dir = this.default_data_dir;
                     } else {
                         setData_dir(entry.getValue().toString().trim());
+                    }
+                }
+                case "DUCKLAKE_META" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        ducklake_meta = this.default_ducklake_meta;
+                    } else {
+                        setDucklakeMeta(entry.getValue().toString());
+                    }
+                }
+                case "DUCKLAKE_PATH" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        ducklake_path = this.default_ducklake_path;
+                    } else {
+                        setDucklakePath(entry.getValue().toString());
                     }
                 }
                 case "TEMP_DIR" -> {
@@ -402,11 +448,11 @@ public class ServerConfiguration {
                         setMemory_limit(entry.getValue().toString().trim());
                     }
                 }
-                case "AUTO_WORKLOAD_THRESHOLD" -> {
+                case "MAX_EXECUTION_TIME" -> {
                     if (entry.getValue().toString().isEmpty()) {
-                        auto_workload_threshold = this.default_auto_workload_threshold;
+                        max_execution_time = this.default_max_execution_time;
                     } else {
-                        setAuto_workload_threshold(entry.getValue().toString().trim());
+                        setMax_execution_time(entry.getValue().toString().trim());
                     }
                 }
                 case "INIT_SCRIPT" -> {
@@ -533,6 +579,13 @@ public class ServerConfiguration {
                         quack_addr = this.default_quack_addr;
                     } else {
                         setQuackAddr(entry.getValue().toString().trim());
+                    }
+                }
+                case "QUACK_TOKEN" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        quack_token = this.default_quack_token;
+                    } else {
+                        setQuackToken(entry.getValue().toString());
                     }
                 }
                 default -> {
@@ -700,9 +753,39 @@ public class ServerConfiguration {
         return data_dir;
     }
 
+    /**
+     * 是否启用了 DuckLake 模式（{@code data_dir=:ducklake:}）。
+     */
+    public boolean isDucklakeEnabled()
+    {
+        return data_dir != null && DUCKLAKE_DATA_DIR.equalsIgnoreCase(data_dir.trim());
+    }
+
+    public String getDucklakeMeta()
+    {
+        return ducklake_meta;
+    }
+
+    public String getDucklakePath()
+    {
+        return ducklake_path;
+    }
+
     public String getMemory_limit()
     {
         return memory_limit;
+    }
+
+    /**
+     * 单条查询的最长执行时间，单位毫秒，{@code 0} 表示不限制。
+     *
+     * <p>该值以 DuckDB 的 {@code GLOBAL max_execution_time} 下发，作用于所有未显式覆盖的
+     * 连接；服务定义与 API 请求头可以按查询覆盖。服务器自身的 backend 连接、初始化/启动脚本、
+     * SQL 历史等内部执行始终豁免（会话值固定为 0）。</p>
+     */
+    public long getMax_execution_time()
+    {
+        return max_execution_time;
     }
 
     public int getThreads()
@@ -772,7 +855,7 @@ public class ServerConfiguration {
     {
         if (temp_dir.isEmpty())
         {
-            if (data_dir.isEmpty() || data_dir.equalsIgnoreCase(":MEMORY:"))
+            if (data_dir.isEmpty() || data_dir.equalsIgnoreCase(":MEMORY:") || isDucklakeEnabled())
             {
                 return System.getProperty("java.io.tmpdir");
             }
@@ -1015,6 +1098,22 @@ public class ServerConfiguration {
         data_dir = pData_dir;
     }
 
+    /**
+     * 设置 DuckLake 元数据链接。空值表示未配置；只在 {@code data_dir=:ducklake:} 时使用。
+     */
+    public void setDucklakeMeta(String pDucklakeMeta)
+    {
+        ducklake_meta = pDucklakeMeta == null ? this.default_ducklake_meta : pDucklakeMeta.trim();
+    }
+
+    /**
+     * 设置 DuckLake 数据路径（文件系统或 S3）。允许为空，只在 {@code data_dir=:ducklake:} 时使用。
+     */
+    public void setDucklakePath(String pDucklakePath)
+    {
+        ducklake_path = pDucklakePath == null ? this.default_ducklake_path : pDucklakePath.trim();
+    }
+
     public void setMax_workers(String pMax_workers) throws ServerException
     {
         try {
@@ -1107,9 +1206,48 @@ public class ServerConfiguration {
         }
     }
 
+    /**
+     * 设置内存使用上限，取值原样交给 DuckDB 执行 {@code SET memory_limit}。
+     *
+     * <p>支持 DuckDB 的两种写法：</p>
+     * <ul>
+     *   <li>绝对大小，带 K/M/G 后缀，例如 {@code 4G}；</li>
+     *   <li>系统总内存的百分比，例如 {@code 60%}（由 DuckDB 在启动时按系统总内存实时解析）。</li>
+     * </ul>
+     * <p>{@code -1} 表示不限制（仅内存模式）。</p>
+     */
     public void setMemory_limit(String pMemory_limit)
     {
         memory_limit = pMemory_limit;
+    }
+
+    /**
+     * 设置单条查询的最长执行时间（毫秒），{@code 0} 表示不限制；负数/非数字被拒绝。
+     */
+    public void setMax_execution_time(String pMax_execution_time) throws ServerException
+    {
+        long parsed;
+        try {
+            parsed = Long.parseLong(pMax_execution_time.trim());
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "max_execution_time", pMax_execution_time)
+            );
+        }
+        setMax_execution_time(parsed);
+    }
+
+    public void setMax_execution_time(long pMax_execution_time) throws ServerException
+    {
+        if (pMax_execution_time < 0)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "max_execution_time", pMax_execution_time)
+            );
+        }
+        max_execution_time = pMax_execution_time;
     }
 
     public void setInit_script(String pInit_script)
@@ -1289,37 +1427,6 @@ public class ServerConfiguration {
         return this.mcp_llm_server;
     }
 
-    public double getAuto_workload_threshold()
-    {
-        return auto_workload_threshold;
-    }
-
-    public void setAuto_workload_threshold(double threshold) throws ServerException
-    {
-        if (threshold <= 0.0 || threshold > 1.0)
-        {
-            throw new ServerException(
-                Utils.getMessage("SLACKERDB-00005", "auto_workload_threshold", String.valueOf(threshold))
-            );
-        }
-        auto_workload_threshold = threshold;
-    }
-
-    public void setAuto_workload_threshold(String thresholdStr) throws ServerException
-    {
-        double threshold;
-        try {
-            threshold = Double.parseDouble(thresholdStr);
-        }
-        catch (NumberFormatException ignored)
-        {
-            throw new ServerException(
-                Utils.getMessage("SLACKERDB-00005", "auto_workload_threshold", thresholdStr)
-            );
-        }
-        setAuto_workload_threshold(threshold);
-    }
-
     public void setMcpLlmKey(String val) {
         this.mcp_llm_key = val;
     }
@@ -1342,5 +1449,35 @@ public class ServerConfiguration {
 
     public void setQuackAddr(String quack_addr) {
         this.quack_addr = quack_addr;
+    }
+
+    public String getQuackToken() {
+        return quack_token;
+    }
+
+    /**
+     * 设置 Quack 认证令牌。
+     *
+     * <p>空值（或未配置）表示不指定 token，由 DuckDB 在启动时随机生成；非空值直接
+     * 作为 {@code quack_serve} 的 {@code token} 参数，长度不足 4 个字符时在此处
+     * 直接报错，而不是等到启动 SQL 执行失败。</p>
+     */
+    public void setQuackToken(String quackToken) {
+        if (quackToken == null) {
+            quack_token = this.default_quack_token;
+            return;
+        }
+        String token = quackToken.trim();
+        if (token.isEmpty()) {
+            quack_token = this.default_quack_token;
+            return;
+        }
+        if (token.length() < QUACK_TOKEN_MIN_LENGTH) {
+            throw new ServerException(
+                    "SLACKERDB-00005",
+                    Utils.getMessage("SLACKERDB-00005", "quack_token", quackToken)
+            );
+        }
+        quack_token = token;
     }
 }
