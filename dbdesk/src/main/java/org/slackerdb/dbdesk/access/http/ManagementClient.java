@@ -68,7 +68,10 @@ public final class ManagementClient implements AutoCloseable {
                 bool(features, "definitions"),
                 bool(features, "aiChat"),
                 bool(features, "backupTasks"),
-                bool(features, "logTail"));
+                bool(features, "logTail"),
+                // 调度能力已内置：服务端按配置决定是否声明；老服务端没有这个字段（解析为 false），
+                // 此时仍靠下面 plugins[].contributes.etl 的兼容分支来识别"调度插件"。
+                bool(features, "etl"));
 
         List<Capabilities.Plugin> plugins = new ArrayList<>();
         JsonNode pluginArray = root.path("plugins");

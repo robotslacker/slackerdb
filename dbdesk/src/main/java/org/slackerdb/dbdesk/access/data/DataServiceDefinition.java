@@ -10,6 +10,9 @@ import java.util.List;
  *
  * <p>服务端列表接口历史上有两个键名：{@code parameter}（对象）和 {@code parameters}
  * （数组）。这里统一成 {@code parameters}，客户端两种都读，避免把服务端历史包袱带进 UI。</p>
+ *
+ * <p>{@code filter} 是服务级结果集过滤表达式（可选），注册时由服务端校验语法；
+ * 它属于服务定义，不是调用参数。</p>
  */
 public record DataServiceDefinition(
         String serviceName,
@@ -19,6 +22,7 @@ public record DataServiceDefinition(
         String sql,
         String description,
         String searchPath,
+        String filter,
         String snapshotLimit,
         String maxExecutionTime,
         List<Parameter> parameters) {
@@ -55,6 +59,7 @@ public record DataServiceDefinition(
                 text(node, "sql"),
                 text(node, "description"),
                 text(node, "searchPath"),
+                text(node, "filter"),
                 text(node, "snapshotLimit"),
                 text(node, "maxExecutionTime"),
                 parameters);

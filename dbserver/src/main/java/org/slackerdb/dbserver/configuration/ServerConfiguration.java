@@ -116,6 +116,8 @@ public class ServerConfiguration {
     private final String default_pid = "";
     // 系统支持的最大同时客户端连接
     private final int    default_max_connections = 256;
+    // SQL REPL 最大并发会话数（每个会话持有一条私有连接）
+    private final int    default_repl_max_connections = 64;
     // 系统的启动模板文件
     private final String default_template = "";
 
@@ -190,6 +192,7 @@ public class ServerConfiguration {
     private Locale   locale;
     private String   pid;
     private int      max_connections;
+    private int      repl_max_connections;
     private String   template;
     private boolean  daemonMode;
     private boolean  data_encrypt;
@@ -237,6 +240,7 @@ public class ServerConfiguration {
         locale = default_locale;
         pid = default_pid;
         max_connections = default_max_connections;
+        repl_max_connections = default_repl_max_connections;
         connection_pool_minimum_idle = default_connection_pool_minimum_idle;
         connection_pool_maximum_idle = default_connection_pool_maximum_idle;
         connection_pool_maximum_lifecycle_time = default_connection_pool_maximum_lifecycle_time;
@@ -418,6 +422,13 @@ public class ServerConfiguration {
                         max_connections = this.default_max_connections;
                     } else {
                         setMax_connections(entry.getValue().toString().trim());
+                    }
+                }
+                case "REPL_MAX_CONNECTIONS" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        repl_max_connections = this.default_repl_max_connections;
+                    } else {
+                        setRepl_max_connections(entry.getValue().toString().trim());
                     }
                 }
                 case "MAX_WORKERS" -> {
@@ -851,6 +862,8 @@ public class ServerConfiguration {
 
     public int getMax_connections() { return max_connections; }
 
+    public int getRepl_max_connections() { return repl_max_connections; }
+
     public String getTemp_dir()
     {
         if (temp_dir.isEmpty())
@@ -1163,6 +1176,32 @@ public class ServerConfiguration {
             );
         }
         max_connections = pMax_connections;
+    }
+
+    public void setRepl_max_connections(String pReplMaxConnections) throws ServerException
+    {
+        int tempReplMaxConnections;
+        try {
+            tempReplMaxConnections = Integer.parseInt(pReplMaxConnections);
+        }
+        catch (NumberFormatException ignored)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "repl_max_connections", pReplMaxConnections)
+            );
+        }
+        this.setRepl_max_connections(tempReplMaxConnections);
+    }
+
+    public void setRepl_max_connections(int pReplMaxConnections) throws ServerException
+    {
+        if (pReplMaxConnections <= 0)
+        {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "repl_max_connections", pReplMaxConnections)
+            );
+        }
+        repl_max_connections = pReplMaxConnections;
     }
 
     public void setMax_workers(int pMax_workers) throws ServerException

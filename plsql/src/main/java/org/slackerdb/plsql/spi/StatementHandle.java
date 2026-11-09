@@ -19,6 +19,21 @@ public interface StatementHandle extends AutoCloseable {
     /** 结果集列数；无结果集时返回 0。 */
     int columnCount() throws SQLException;
 
+    /**
+     * 当前结果集第 {@code oneBasedIndex} 列的列名。
+     *
+     * <p>只有需要把结果集交给宿主（例如数据服务 API 捕获
+     * {@code EXECUTE IMMEDIATE} 的结果）时才会用到。默认返回空串，保持旧实现可用。</p>
+     */
+    default String columnName(int oneBasedIndex) throws SQLException {
+        return "";
+    }
+
+    /** 当前结果集第 {@code oneBasedIndex} 列的类型名；默认返回空串。 */
+    default String columnType(int oneBasedIndex) throws SQLException {
+        return "";
+    }
+
     /** 受影响行数；无更新计数时返回 -1。 */
     long updateCount() throws SQLException;
 

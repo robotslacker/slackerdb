@@ -62,6 +62,9 @@ public final class DataServiceClient implements AutoCloseable {
         body.put("sql", definition.sql());
         body.put("description", definition.description());
         body.put("searchPath", definition.searchPath());
+        if (definition.filter() != null && !definition.filter().isBlank()) {
+            body.put("filter", definition.filter().strip());
+        }
         body.put("snapshotLimit", definition.snapshotLimit());
         if (definition.maxExecutionTime() != null && !definition.maxExecutionTime().isBlank()) {
             body.put("maxExecutionTime", definition.maxExecutionTime().strip());

@@ -120,8 +120,8 @@
             </excludes>
         </fileSet>
         <fileSet>
-            <directory>${project.basedir}/../plugin-scheduler</directory>
-            <outputDirectory>/plugin-scheduler</outputDirectory>
+            <directory>${project.basedir}/../dbserver-scheduler</directory>
+            <outputDirectory>/dbserver-scheduler</outputDirectory>
             <excludes>
                 <exclude>target/**</exclude>
             </excludes>

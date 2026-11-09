@@ -184,9 +184,11 @@ public final class ScriptJobExecutor implements JobExecutor {
                                 Path referenceFile, int runCode) {
         String scriptName = script.getFileName() == null ? script.toString()
                 : script.getFileName().toString();
+        // ReferenceCheck 要读 actualOutputFile，先停 tee 让它落盘
+        context.output().stopTee();
         ReferenceCheck.Outcome outcome = ReferenceCheck.finish(runCode, scriptName, actualOutputFile,
                 referenceFile, actualOutputFile == null ? null : actualOutputFile.toAbsolutePath().getParent(),
-                context.output(), context.dispatcher().compareRules(),
+                context.dispatcher().compareRules(),
                 line -> context.output().printError(line));
         return outcome.exitCode();
     }

@@ -14,7 +14,10 @@ import net.jodah.expiringmap.ExpiringMap;
 import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.server.DBDataSourcePool;
 import org.slackerdb.dbserver.server.DBInstance;
-import org.slackerdb.dbserver.sql.JsonValues;
+import org.slackerdb.dbserver.service.filter.DataFilter;
+import org.slackerdb.dbserver.service.filter.FilterException;
+import org.slackerdb.dbserver.service.filter.FilterAst.FilterProgram;
+import org.slackerdb.dbserver.sql.SqlTextExecutor;
 
 import java.io.File;
 import java.io.IOException;
@@ -40,6 +43,16 @@ public class APIService {
         public String searchPath;
         public String sql;
         public String description;
+        /**
+         * 服务级结果集过滤器：注册/加载时配置，之后每次调用自动应用。
+         * {@code null} 表示不过滤。
+         */
+        public String filter;
+        /**
+         * 注册/加载时解析好的 filter（列名在运行时才绑定）；运行时直接复用，
+         * 避免每次请求重复做语法分析。{@code null} 表示不过滤。
+         */
+        public FilterProgram filterProgram;
         public Long snapshotLimit = 0L;
         /**
          * 单条查询的最长执行时间（毫秒）；{@code null} = 未设置、继承服务器 GLOBAL，{@code 0} = 该服务显式不限制。
@@ -191,38 +204,25 @@ public class APIService {
                     stmt.execute("SET SESSION max_execution_time=" + maxExecutionTimeMs);
                 }
             }
-            try (PreparedStatement preparedStatement = conn.prepareStatement(sql)) {
-                if (!preparedStatement.execute()) {
-                    // 非SQL查询语句
-                    return new RefreshOutcome(null, preparedStatement.getUpdateCount(), true);
+            // 统一交给 SqlTextExecutor：
+            //   - 单条普通 SQL：沿用 PreparedStatement
+            //   - PL/SQL 匿名块：交给 PL/SQL 引擎
+            //   - 多语句脚本：逐条执行，只保留最后一条语句的结果集
+            // 这样 API 与 PG 协议、SQL REPL 对“一段 SQL 文本”的解释保持一致。
+            SqlTextExecutor.Result result = SqlTextExecutor.execute(conn, sql);
+            try {
+                if (result.hasData()) {
+                    // PL/SQL 中不带 INTO 的 EXECUTE IMMEDIATE 查询结果
+                    return new RefreshOutcome(result.data(), affectedRowsOf(result.data()), true);
                 }
-                try (ResultSet rs = preparedStatement.getResultSet()) {
-                    ResultSetMetaData resultSetMetaData = rs.getMetaData();
-                    List<String> columnNames = new ArrayList<>();
-                    List<String> columnTypes = new ArrayList<>();
-                    List<List<Object>> dataset = new ArrayList<>();
-                    for (int nPos = 0; nPos < resultSetMetaData.getColumnCount(); nPos++) {
-                        columnNames.add(resultSetMetaData.getColumnName(nPos + 1));
-                        columnTypes.add(resultSetMetaData.getColumnTypeName(nPos + 1));
-                    }
-                    while (rs.next()) {
-                        List<Object> row = new ArrayList<>();
-                        for (int nPos = 0; nPos < resultSetMetaData.getColumnCount(); nPos++) {
-                            // 统一转成 JSON 安全类型：DATE/TIME/TIMESTAMPTZ/BLOB/LIST/JSON
-                            // 等类型直接交给 Jackson 会失败（内部错误 500 / 类名泄漏），
-                            // 转换后 HTTP 与 SQL REPL 两个端点的取值形态保持一致。
-                            row.add(JsonValues.toJsonValue(rs.getObject(nPos + 1)));
-                        }
-                        dataset.add(row);
-                    }
-                    Map<String, Object> result = new HashMap<>();
-                    result.put("columnTypes", columnTypes);
-                    result.put("columnNames", columnNames);
-                    result.put("timestamp", System.currentTimeMillis());
-                    result.put("dataset", dataset);
-                    result.put("affectedRows", dataset.size());
-                    return new RefreshOutcome(result, dataset.size(), true);
+                if (!result.hasResultSet()) {
+                    // 非查询语句，或只有 PL/SQL 块：没有结果集
+                    return new RefreshOutcome(null, result.affectedRows(), true);
                 }
+                Map<String, Object> data = SqlTextExecutor.materialize(result.resultSet());
+                return new RefreshOutcome(data, affectedRowsOf(data), true);
+            } finally {
+                SqlTextExecutor.closeQuietly(result.resultSet(), result.statement());
             }
         } finally {
             if (conn != null) {
@@ -259,12 +259,19 @@ public class APIService {
                 sqlParameters.put(key, ctx.queryParam(key));
             }
         }
-        if (dbServiceDefinition.serviceType.equalsIgnoreCase("POST"))
+        else if (dbServiceDefinition.serviceType.equalsIgnoreCase("POST"))
         {
-            JSONObject rawPostParameters = JSONObject.parseObject(ctx.body());
-            for (String key : rawPostParameters.keySet())
+            String bodyText = ctx.body();
+            if (bodyText != null && !bodyText.isBlank())
             {
-                sqlParameters.put(key, rawPostParameters.getString(key));
+                JSONObject rawPostParameters = JSONObject.parseObject(bodyText);
+                if (rawPostParameters != null)
+                {
+                    for (String key : rawPostParameters.keySet())
+                    {
+                        sqlParameters.put(key, rawPostParameters.getString(key));
+                    }
+                }
             }
         }
         long snapshotLimit;
@@ -307,21 +314,10 @@ public class APIService {
                 ? requestMaxExecutionTime
                 : dbServiceDefinition.maxExecutionTime;
 
-        // 数据结果缓存：TTL 未到期时直接返回
+        // snapshotLimit 取服务定义与请求头中更小的值
         if (snapshotLimit > dbServiceDefinition.snapshotLimit)
         {
             snapshotLimit = dbServiceDefinition.snapshotLimit;
-        }
-        String cacheKey = null;
-        if (queryResultCache != null && snapshotLimit > 0) {
-            cacheKey = generateCacheKey(dbServiceDefinition, sql, sqlParameters);
-
-            Map<String, Object> cacheResult = queryResultCache.getFresh(cacheKey, snapshotLimit);
-            if (cacheResult != null) {
-                // 数据还没有过时，从缓存中获得
-                respondWithDataset(ctx, dbServiceDefinition, cacheResult, true);
-                return;
-            }
         }
 
         // 处理传递的SQL语句。
@@ -369,6 +365,26 @@ public class APIService {
         else
         {
             userSearchPath = dbInstanceName;
+        }
+
+        // 缓存键 = searchPath + 实际执行的 SQL。
+        //
+        // 刻意不包含服务名/版本/filter：
+        //   1) 服务名/版本不影响查询结果；
+        //   2) filter 在缓存之外按服务应用，缓存里始终保存**过滤前**的原始结果，
+        //      因此只有 filter 不同的多个服务可以共享同一份缓存快照——
+        //      这正是"同一份缓存服务更多人"的关键。
+        // searchPath 必须保留：不同 schema 上的同一条 SQL 数据不同，不能共用缓存。
+        String cacheKey = null;
+        if (queryResultCache != null && snapshotLimit > 0) {
+            cacheKey = generateCacheKey(userSearchPath, sql);
+
+            Map<String, Object> cacheResult = queryResultCache.getFresh(cacheKey, snapshotLimit);
+            if (cacheResult != null) {
+                // 缓存里是过滤前的原始结果；每个服务在返回前套用自己的 filter。
+                respondWithFilteredDataset(ctx, dbServiceDefinition, cacheResult, true);
+                return;
+            }
         }
 
         // 这里的值是 lambda 捕获的，必须显式 final
@@ -434,7 +450,7 @@ public class APIService {
         }
 
         if (outcome.data() == null) {
-            // 非SQL查询语句
+            // 非SQL查询语句（UPDATE/INSERT/DDL…）：服务级 filter 只针对结果集，忽略。
             ctx.attribute("cached", false);
             ctx.attribute("affectedRows", -1);
             ctx.json(
@@ -449,8 +465,28 @@ public class APIService {
         } else {
             // 只有真正执行了本次刷新的请求才标记 cached=false，等待刷新的请求算缓存返回
             boolean cached = !(executedByCaller && outcome.fromDatabase());
-            respondWithDataset(ctx, dbServiceDefinition, outcome.data(), cached);
+            respondWithFilteredDataset(ctx, dbServiceDefinition, outcome.data(), cached);
         }
+    }
+
+    /**
+     * 对（缓存或刚查询得到的）原始结果集应用服务级 filter，再写响应。
+     *
+     * <p>缓存里保存的永远是不带 filter 的原始数据；filter 只影响本次响应，
+     * 既不会污染缓存，也不会阻止"只有 filter 不同"的多个服务共享同一份缓存快照。</p>
+     */
+    private static void respondWithFilteredDataset(Context ctx, DBServiceDefinition service,
+                                                   Map<String, Object> data, boolean cached) {
+        Map<String, Object> responseData = data;
+        if (service.filterProgram != null) {
+            try {
+                responseData = DataFilter.apply(data, service.filterProgram);
+            } catch (FilterException filterError) {
+                respondFailure(ctx, service, "Invalid filter: " + filterError.getMessage());
+                return;
+            }
+        }
+        respondWithDataset(ctx, service, responseData, cached);
     }
 
     /**
@@ -465,30 +501,23 @@ public class APIService {
     }
 
     /**
-     * 生成稳定的缓存键。
+     * 生成缓存键：{@code searchPath + 实际执行的 SQL}。
      *
-     * <p>键里必须包含服务身份与 searchPath：只按 SQL 文本+参数做键时，
-     * 两个 SQL 文本相同但 searchPath / 定义不同的服务会共用同一个缓存条目，
-     * 结果就是"一个服务返回另一个服务的数据"（实测可复现）。</p>
+     * <p>刻意不包含服务名、版本与 filter：</p>
+     * <ul>
+     *   <li>服务身份不影响数据；</li>
+     *   <li>filter 在缓存之外按服务应用，缓存里保存的是过滤前的原始结果，
+     *       因此"只有 filter 不同"的多个服务可以共享同一份缓存快照；</li>
+     *   <li>searchPath 必须保留：不同 schema 上的同一条 SQL 数据不同，不能共用缓存。</li>
+     * </ul>
+     *
+     * <p>使用参数替换后的"实际执行的 SQL"而不是模板+参数：不同参数只要最终 SQL 相同，
+     * 就应该能命中同一份缓存。</p>
      */
-    private static String generateCacheKey(DBServiceDefinition service, String sql, Map<String, String> parameters) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(service.serviceType == null ? "" : service.serviceType.toUpperCase())
-                .append('#').append(service.serviceName)
-                .append('#').append(service.serviceVersion)
-                .append('|').append(service.searchPath == null ? "" : service.searchPath)
-                .append('|').append(sql);
-        if (parameters != null && !parameters.isEmpty()) {
-            // 按键排序以保证稳定
-            List<String> keys = new ArrayList<>(parameters.keySet());
-            Collections.sort(keys);
-            sb.append('|');
-            for (String key : keys) {
-                sb.append(key).append('=').append(parameters.get(key)).append('&');
-            }
-            sb.deleteCharAt(sb.length() - 1);
-        }
-        return sb.toString();
+    private static String generateCacheKey(String searchPath, String executedSql) {
+        // 用长度前缀 + \u0000 分隔 searchPath 与 SQL：即使文本里出现分隔符也不会产生歧义。
+        String path = searchPath == null ? "" : searchPath;
+        return path.length() + ":" + path + '\u0000' + executedSql;
     }
 
     // 估计对象的大小
@@ -585,6 +614,18 @@ public class APIService {
                 dbService.description = "NO DESCRIPTION.";
             }
             dbService.searchPath = serviceDefinitionJsonObj.getString("searchPath");
+            String filterText = serviceDefinitionJsonObj.getString("filter");
+            if (filterText != null && !filterText.isBlank()) {
+                try {
+                    dbService.filter = filterText;
+                    dbService.filterProgram = DataFilter.parse(filterText);
+                } catch (FilterException invalidFilter) {
+                    logger.warn("[SERVER][LOAD       ] Invalid filter ignored: {} (serviceName={}, serviceVersion={}) from {}",
+                            invalidFilter.getMessage(), dbService.serviceName, dbService.serviceVersion, source);
+                    // 与非法 category/maxExecutionTime 一致：跳过这一条定义
+                    continue;
+                }
+            }
             if (serviceDefinitionJsonObj.containsKey("snapshotLimit")) {
                 dbService.snapshotLimit =
                         Utils.convertDurationStrToSeconds(serviceDefinitionJsonObj.getString("snapshotLimit")) * 1000;
@@ -795,6 +836,17 @@ public class APIService {
                 dbService.description = "NO DESCRIPTION.";
             }
             dbService.searchPath = bodyObject.getString("searchPath");
+            String filterText = bodyObject.getString("filter");
+            if (filterText != null && !filterText.isBlank()) {
+                try {
+                    dbService.filter = filterText;
+                    dbService.filterProgram = DataFilter.parse(filterText);
+                } catch (FilterException invalidFilter) {
+                    ctx.json(Map.of("retCode", -1,
+                            "retMsg", "Rejected. Invalid filter: " + invalidFilter.getMessage()));
+                    return;
+                }
+            }
             if (bodyObject.containsKey("snapshotLimit")) {
                 dbService.snapshotLimit =
                         Utils.convertDurationStrToSeconds(bodyObject.getString("snapshotLimit")) * 1000;
@@ -870,6 +922,9 @@ public class APIService {
                         item.put("serviceVersion", dbServiceDefinition.serviceVersion);
                         item.put("category", dbServiceDefinition.category);
                         item.put("searchPath", dbServiceDefinition.searchPath);
+                        if (dbServiceDefinition.filter != null) {
+                            item.put("filter", dbServiceDefinition.filter);
+                        }
                         item.put("sql", dbServiceDefinition.sql);
                         item.put("description", dbServiceDefinition.description);
                         item.put("serviceType", dbServiceDefinition.serviceType);
@@ -1113,6 +1168,9 @@ public class APIService {
             } else {
                 serviceObj.put("searchPath", "");
             }
+            if (dbService.filter != null && !dbService.filter.isBlank()) {
+                serviceObj.put("filter", dbService.filter);
+            }
             // 将snapshotLimit从毫秒转换为人类可读字符串
             long seconds = dbService.snapshotLimit / 1000;
             serviceObj.put("snapshotLimit", Utils.convertSecondsToHumanTime(seconds));
@@ -1174,6 +1232,9 @@ public class APIService {
                     serviceObj.put("searchPath", dbService.searchPath);
                 } else {
                     serviceObj.put("searchPath", "");
+                }
+                if (dbService.filter != null && !dbService.filter.isBlank()) {
+                    serviceObj.put("filter", dbService.filter);
                 }
                 long seconds = dbService.snapshotLimit / 1000;
                 serviceObj.put("snapshotLimit", Utils.convertSecondsToHumanTime(seconds));

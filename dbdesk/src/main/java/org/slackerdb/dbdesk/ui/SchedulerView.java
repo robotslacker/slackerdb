@@ -134,7 +134,7 @@ public class SchedulerView extends VerticalLayout {
         taskName.setId("task-name");
         taskScript.setId("task-script");
         taskType.setId("task-type");
-        taskType.setItems("HOP", "SHELL", "COMMAND");
+        taskType.setItems("HOP", "SHELL", "DBCLI");
         taskType.setValue("HOP");
         taskPolicy.setId("task-policy");
         taskPolicy.setItems("RUN_ONCE", "CRONTAB", "INTERVAL");

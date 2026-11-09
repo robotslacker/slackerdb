@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 调度中心页面的浏览器验收：建 run → 建任务 → 登记调度 → 删任务 → 丢弃 run。
  *
- * <p>需要一个**带 plugin-scheduler 的实例**，并把控制台指过去（见 {@code m2-kickoff.md} §3）：</p>
+ * <p>需要一个**带调度能力的实例**（配置了 {@code plugin-scheduler.home/projectHome}），并把控制台指过去（见 {@code m2-kickoff.md} §3）：</p>
  * <pre>
  *   mvn -Pdbdesk -pl dbdesk test "-Ddbdesk.scheduler.ui.url=http://127.0.0.1:8091/" "-Dtest=SchedulerViewTest"
  * </pre>

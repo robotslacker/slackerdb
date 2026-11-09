@@ -33,6 +33,17 @@ public interface PlSqlHost {
      */
     void checkInterrupted() throws PlSqlCanceledException;
 
+    /**
+     * 承接一条不带 {@code INTO} 的 {@code EXECUTE IMMEDIATE} 所产生的结果集。
+     *
+     * <p>默认实现直接关闭句柄，即保持“结果集丢弃”的历史语义；数据服务 API
+     * 会覆盖本方法，把结果集物化后作为 HTTP 响应返回。调用后句柄所有权归本方法，
+     * 引擎不会再关闭它。</p>
+     */
+    default void result(StatementHandle handle) {
+        handle.close();
+    }
+
     /** 可选：向客户端发送 Notice（P7 起由 {@code RAISE NOTICE} 使用）。 */
     default void notice(String message) {
     }

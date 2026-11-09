@@ -45,7 +45,7 @@ public record Capabilities(
     public record Features(boolean dataService, boolean mcp, boolean plugins, boolean sqlRepl,
                            boolean copyOut, boolean sqlHistory, boolean apiHistory,
                            boolean definitions, boolean aiChat, boolean backupTasks,
-                           boolean logTail) {
+                           boolean logTail, boolean etl) {
     }
 
     /**
@@ -82,8 +82,15 @@ public record Capabilities(
         return apiVersion == 1;
     }
 
-    /** 有没有 ETL 插件（决定“ETL 调度”菜单是否渲染）。 */
+    /**
+     * 有没有 ETL（调度）能力（决定"ETL 调度"菜单是否渲染）。
+     *
+     * <p>调度能力已经内置到 dbserver，服务端用 {@code features.etl} 声明它是否存在
+     * （没配 home/projectHome 或只读实例上不存在）。{@code plugins[].contributes.etl}
+     * 作为兼容分支保留：连接还没有 {@code features.etl} 字段的旧服务端时，
+     * 仍能识别老的外部调度插件。</p>
+     */
     public boolean hasEtl() {
-        return plugins.stream().anyMatch(Plugin::etl);
+        return features.etl() || plugins.stream().anyMatch(Plugin::etl);
     }
 }

@@ -30,7 +30,7 @@
         <module>dbcli</module>
         <module>plugin</module>
         <module>plugin-example</module>
-        <module>plugin-scheduler</module>
+        <module>scheduler</module>
         <module>dbdesk</module>
         <module>docs</module>
         <!-- 发行物装配：排在最后，各模块 target/ 就绪后才打 dist/src 包 -->

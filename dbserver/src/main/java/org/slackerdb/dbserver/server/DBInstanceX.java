@@ -20,6 +20,8 @@ import org.slackerdb.dbserver.service.BackupService;
 import org.slackerdb.dbserver.service.PluginService;
 import org.slackerdb.dbserver.entity.APIHistoryRecord;
 import org.slackerdb.dbserver.repl.SqlReplServer;
+import org.slackerdb.dbserver.scheduler.SchedulerConfigException;
+import org.slackerdb.dbserver.scheduler.SchedulerModule;
 import org.slackerdb.dbserver.service.McpServer;
 import org.slf4j.LoggerFactory;
 
@@ -55,6 +57,13 @@ public class DBInstanceX {
     private final PluginService pluginService;
     private final McpServer mcpServer;
     private SqlReplServer sqlReplServer;
+    /**
+     * 内置调度能力（ETL）。{@code null} 表示本实例没有这个能力：
+     * 要么没配（home/projectHome 缺失），要么是只读实例。
+     */
+    private SchedulerModule schedulerModule;
+    /** 没有启用调度能力的原因，只用于日志与 /status，不参与逻辑判断。 */
+    private String schedulerDisabledReason;
     private BackupService backupService;
     public BoundedQueue<APIHistoryRecord> apiHistoryList
             = new BoundedQueue<>(DBInstance.HISTORY_QUEUE_CAPACITY);
@@ -347,10 +356,20 @@ public class DBInstanceX {
                 );
 
         // 管理口只提供 JSON API，不再返回任何 HTML 页面。
-        // 注意：/api/*、/mcp 等端点自己已经写了响应体时，error handler 不要覆盖它。
+        //
+        // 404 的 JSON 信封**只由这里产生**，不要再注册 get("/{...}*") 之类的通配兜底路由：
+        // Javalin 7 的路由匹配是"按注册顺序取第一个匹配"（PathMatcher.findFirstEntry），
+        // 兜底路由一旦注册在插件/模块路由之前，之后注册的所有 GET 路由都会被它遮蔽
+        // （历史回归 b90f7a9：加了兜底之后，plugin-scheduler 的 GET 端点全部 404）。
+        //
+        // 这里要区分两种 404：
+        //   1) 没有任何路由命中 —— Javalin 已经写了一份默认 body（随 Accept 是 text/plain 或 JSON），
+        //      必须覆盖成统一信封；
+        //   2) 路由命中、并自己写了 404 响应体（例如 /api 的 "not registered"、会话不存在）—— 保持原样。
         this.managementApp.unsafe.routes.error(404, ctx -> {
             String existing = ctx.result();
-            if (existing != null && !existing.isEmpty()) {
+            if (ctx.endpoints().matchedHttpEndpoint() != null
+                    && existing != null && !existing.isEmpty()) {
                 return;
             }
             ctx.status(404).json(Map.of(
@@ -464,6 +483,12 @@ public class DBInstanceX {
             this.logger.error("[SERVER][STARTUP    ] Management server failed. Can't init ws service. ", e);
             throw new ServerException("Management server failed. Can't init ws service. ", e);
         }
+
+        // 内置调度能力（ETL）：
+        //   缺配置（home/projectHome）= 没有这个能力，不建表、不起 Quartz、不注册路由；
+        //   配置错（有值但不可用）    = 拒绝启动；
+        //   只读实例                  = 没有这个能力，且不校验配置。
+        startSchedulerModule(serverConfiguration);
 
         // 系统数据备份
         this.managementApp.unsafe.routes.post("/backup", ctx -> {
@@ -654,9 +679,10 @@ public class DBInstanceX {
         // Plugin服务处理
         this.pluginService = new PluginService(dbInstance, this.managementApp, dbInstance.logger);
 
-        // 管理口只提供 JSON API：没有页面入口，未知 GET 路径统一返回 JSON 404。
+        // 管理口只提供 JSON API：没有页面入口，未知路径的 JSON 404 由上面的 error(404) 统一给出。
+        // 注意：**不要**在这里补 "/{...}*" 一类的通配兜底路由。它注册得比插件/模块的路由早，
+        // 会把它们之后注册的所有 GET 端点遮蔽掉（Javalin 按注册顺序匹配，见 error(404) 处的说明）。
         this.managementApp.unsafe.routes.get("/", this::notFound);
-        this.managementApp.unsafe.routes.get("/{...}*", this::notFound);
 
         // 异常处理
         this.managementApp.unsafe.routes.exception(Exception.class, (e, ctx) -> {
@@ -677,6 +703,93 @@ public class DBInstanceX {
         ctx.status(404).json(Map.of(
                 "retCode", 404,
                 "retMsg", ctx.path() + " is not found."));
+    }
+
+    /**
+     * 按配置装配内置调度能力。
+     *
+     * <ul>
+     *   <li>没有配置 {@code plugin-scheduler.home} / {@code projectHome}：能力不存在，
+     *       只记一条 INFO（带上原因，便于运维判断"为什么没有"）；</li>
+     *   <li>只读实例：同上，且**不校验**配置（只读优先于校验，建表本来就做不了）；</li>
+     *   <li>配置有值但不可用：抛 {@link ServerException}，让启动失败（拒绝启动）；</li>
+     *   <li>装配/启动过程失败（建表、Quartz、路由）：同样拒绝启动。</li>
+     * </ul>
+     */
+    private void startSchedulerModule(ServerConfiguration serverConfiguration) {
+        this.schedulerDisabledReason = SchedulerModule.disabledReason(
+                serverConfiguration.getPluginProperties(),
+                serverConfiguration.getAccess_mode().equalsIgnoreCase("READ_ONLY"));
+        if (this.schedulerDisabledReason != null) {
+            this.logger.info("[SERVER][SCHEDULER  ] Scheduler capability is not available: {}",
+                    this.schedulerDisabledReason);
+            return;
+        }
+
+        // 调度器用自己的连接（与 DBPlugin 时期一致：backendSysConnection 的 duplicate），
+        // 不与 /status、备份等共享同一个 Connection 对象。
+        Connection schedulerConnection = null;
+        SchedulerModule module = null;
+        try {
+            schedulerConnection = ((DuckDBConnection) this.backendSysConnection).duplicate();
+            module = new SchedulerModule(this.managementApp, this.logger,
+                    schedulerConnection, serverConfiguration.getPluginProperties(),
+                    resolveDbcliConnect(serverConfiguration));
+            module.start();
+            this.schedulerModule = module;
+        } catch (SchedulerConfigException e) {
+            abortSchedulerStartup(module, schedulerConnection);
+            this.logger.error("[SERVER][SCHEDULER  ] Scheduler configuration is invalid: {}", e.getMessage());
+            throw new ServerException("Scheduler configuration error: " + e.getMessage(), e);
+        } catch (Exception e) {
+            abortSchedulerStartup(module, schedulerConnection);
+            this.logger.error("[SERVER][SCHEDULER  ] Scheduler startup failed.", e);
+            throw new ServerException("Scheduler startup failed: " + e.getMessage(), e);
+        }
+    }
+
+    /** 调度器装配失败时的收尾：先让模块自己关（含连接），模块还没建成就直接关连接。 */
+    private void abortSchedulerStartup(SchedulerModule module, Connection connection) {
+        if (module != null) {
+            try {
+                module.stop();
+                return;
+            } catch (Exception e) {
+                this.logger.warn("[SERVER][SCHEDULER  ] Failed to clean up a partially started scheduler: {}",
+                        e.getMessage());
+            }
+        }
+        if (connection != null) {
+            try {
+                connection.close();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    /**
+     * DBCLI 任务连回本实例的连接串：默认按数据服务端口推导，可用
+     * {@code plugin-scheduler.dbcli.connect} 覆盖（例如端口只监听在内网地址、或要走代理）。
+     *
+     * <p>返回 {@code null} 表示本实例没有可供 DBCLI 连接的 TCP 端口（{@code port_x=-1} 或
+     * 仅 UDS）：DBCLI 任务会在执行时明确失败，而不是悄悄连到一个不存在的库。</p>
+     */
+    private String resolveDbcliConnect(ServerConfiguration configuration) {
+        String override = configuration.getPluginProperties()
+                .get(org.slackerdb.dbserver.scheduler.runner.DbcliTaskExecutor.CONNECT_KEY);
+        if (override != null && !override.isBlank()) {
+            return override.trim();
+        }
+        int port = configuration.getPort();
+        if (port <= 0) {
+            return null;
+        }
+        String host = configuration.getBindHost();
+        if (host == null || host.isBlank() || "0.0.0.0".equals(host) || "::".equals(host)) {
+            host = "127.0.0.1";
+        }
+        String database = this.dbInstance.instanceName;
+        return "jdbc:slackerdb://" + host + ":" + port + "/" + (database == null ? "" : database);
     }
 
     /**
@@ -714,6 +827,9 @@ public class DBInstanceX {
         features.put("mcp", true);
         features.put("plugins", this.dbInstance.getPluginManager() != null);
         features.put("sqlRepl", true);
+        // 调度能力是否在本实例上存在（由配置决定，见 SchedulerModule.disabledReason）。
+        // dbDesk 只认这个标志来决定是否显示 ETL 菜单。
+        features.put("etl", this.schedulerModule != null);
         features.put("copyOut", true);
         features.put("definitions", true);
         features.put("aiChat", serverConfiguration.getMcpLlmServer() != null
@@ -751,6 +867,9 @@ public class DBInstanceX {
         JSONObject contracts = new JSONObject();
         contracts.put("managementApi", MANAGEMENT_API_VERSION);
         contracts.put("mcp", org.slackerdb.common.api.ApiVersion.MCP);
+        if (this.schedulerModule != null) {
+            contracts.put("scheduler", SchedulerModule.CONTRACT_VERSION);
+        }
         capabilities.put("contracts", contracts);
 
         return capabilities;
@@ -983,6 +1102,19 @@ public class DBInstanceX {
             }
             status.put("plugins", plugins);
 
+            // 内置调度能力的状态：没有这个能力时必须给出原因，
+            // 否则"菜单里没有 ETL"会被当成故障而不是配置结果。
+            JSONObject scheduler = new JSONObject();
+            scheduler.put("active", this.schedulerModule != null);
+            if (this.schedulerModule != null) {
+                scheduler.put("state", this.schedulerModule.isStarted() ? "ACTIVE" : "STOPPED");
+                scheduler.put("hopReady", this.schedulerModule.isHopReady());
+            } else {
+                scheduler.put("state", "DISABLED");
+                scheduler.put("reason", this.schedulerDisabledReason);
+            }
+            status.put("scheduler", scheduler);
+
             // 会话列表
             JSONArray sessions = new JSONArray();
             for (Integer sessionId : this.dbInstance.dbSessions.keySet()) {
@@ -1042,6 +1174,14 @@ public class DBInstanceX {
 
     public void stop()
     {
+        // 先停调度器：Quartz 线程与任务执行可能还在用数据库连接，
+        // 必须在管理口和连接池关闭之前收尾（它也会关闭自己那条 Connection）。
+        if (this.schedulerModule != null)
+        {
+            this.schedulerModule.stop();
+            this.schedulerModule = null;
+        }
+
         // 先关闭 SQL REPL 的 WebSocket 会话与线程池，避免管理口停止后仍有非守护线程存活。
         if (this.sqlReplServer != null)
         {

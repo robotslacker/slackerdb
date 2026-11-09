@@ -9,10 +9,9 @@ import org.duckdb.DuckDBConnection;
 import org.slackerdb.dbserver.server.DBInstance;
 import org.slackerdb.dbserver.sql.JsonValues;
 import org.slackerdb.dbserver.sql.MaxExecutionTime;
-import org.slackerdb.plsql.PlSqlEngine;
+import org.slackerdb.dbserver.sql.SqlTextExecutor;
 import org.slackerdb.plsql.detect.PlSqlDetector;
 import org.slackerdb.plsql.detect.PlSqlScript;
-import org.slackerdb.plsql.detect.PlSqlStatement;
 import org.slackerdb.plsql.spi.DefaultJdbcHost;
 
 import java.sql.*;
@@ -39,6 +38,9 @@ public class SqlReplServer {
     private final AtomicBoolean heartbeatStarted = new AtomicBoolean(false);
     /** stop() 的幂等保护：管理口关闭时可能被调用多次。 */
     private final AtomicBoolean stopping = new AtomicBoolean(false);
+    /** 限制同时存活的 REPL 会话数（每个会话持有独立连接）。 */
+    private final Semaphore sessionSlots;
+    private final int maxSessions;
     private final Logger logger;
     private final Javalin managementApp;
     private final DBInstance dbInstance;
@@ -52,6 +54,8 @@ public class SqlReplServer {
         this.dbInstance = dbInstance;
         this.logger = logger;
         this.managementApp = managementApp;
+        this.maxSessions = Math.max(1, dbInstance.serverConfiguration.getRepl_max_connections());
+        this.sessionSlots = new Semaphore(this.maxSessions, true);
     }
 
     public void run() throws Exception {
@@ -183,12 +187,21 @@ public class SqlReplServer {
     }
 
     private void handleStart(WsContext ctx, String requestId) {
+        if (!sessionSlots.tryAcquire()) {
+            logger.warn("[REPL] Too much connections. limit={}.", maxSessions);
+            sendError(ctx, "Too much connections.");
+            return;
+        }
+
+        Connection localConn = null;
+        boolean sessionCreated = false;
         try {
             String sid = UUID.randomUUID().toString();
-            Connection localConn =
-                    ((DuckDBConnection) this.dbInstance.backendSysConnection).duplicate();
+            localConn = ((DuckDBConnection) this.dbInstance.backendSysConnection).duplicate();
+            // REPL 不走连接池：它复制的是 backendSysConnection（该连接被显式设为
+            // autoCommit=false），因此必须在这里切回 true；这与 DBDataSourcePoolConfig 无关。
             localConn.setAutoCommit(true);
-            // backend 连接为了内部执行豁免把会话值固定为 0，duplicate() 会继承它；
+            // backend 连接为了内部执行豁免把 max_execution_time 固定为 0，duplicate() 会继承它；
             // SQL REPL 是客户端入口，必须 RESET 回服务器 GLOBAL 超时。
             try (Statement resetStatement = localConn.createStatement()) {
                 resetStatement.execute("RESET max_execution_time");
@@ -196,6 +209,8 @@ public class SqlReplServer {
 
             SqlSession session = new SqlSession(sid, localConn);
             sessions.put(sid, session);
+            // 从这里开始连接归 session 所有；失败时不能在这里关闭它，由 remove 路径负责。
+            sessionCreated = true;
             trackSession(ctx, sid);
 
             Map<String, Object> response = new HashMap<>();
@@ -205,6 +220,16 @@ public class SqlReplServer {
             sendJson(ctx, response);
         } catch (Exception e) {
             sendError(ctx, "Failed to start session: " + e.getMessage());
+        } finally {
+            if (!sessionCreated) {
+                if (localConn != null) {
+                    try {
+                        localConn.close();
+                    } catch (Exception ignored) {
+                    }
+                }
+                sessionSlots.release();
+            }
         }
     }
 
@@ -247,6 +272,7 @@ public class SqlReplServer {
             SqlSession session = sessions.remove(id);
             if (session != null) {
                 closeSessionQuietly(session);
+                sessionSlots.release();
             }
         }
         logger.debug("[REPL] released {} session(s) of connection {}", snapshot.size(), key);
@@ -537,70 +563,43 @@ public class SqlReplServer {
     /**
      * 顺序执行脚本中的每条语句。
      *
-     * <p>语义（与简单查询协议一致）：每条语句都真的执行；
-     * 前一条语句的结果集会被立即关闭（同一连接不能同时挂多个打开的结果集），
-     * 因此最终 fetch 拿到的是**最后一条产出结果集的语句**的数据。</p>
+     * <p>执行细节统一由 {@link SqlTextExecutor} 负责；这里只把结果挂到 REPL 会话上。
+     * 语义（与简单查询协议一致）：每条语句都真的执行；前一条语句的结果集会被立即关闭，
+     * 因此最终 fetch 拿到的是最后一条语句的结果集。</p>
      */
     private void runScript(SqlSession session, PlSqlScript script) {
         DefaultJdbcHost host = new DefaultJdbcHost(session.conn);
         session.plsqlHost = host;
-        ResultSet lastResultSet = null;
-        Statement lastStatement = null;
-        long affectedRows = 0;
         try {
-            for (PlSqlStatement statement : script.statements()) {
-                if (lastResultSet != null) {
-                    try { lastResultSet.close(); } catch (Exception ignored) {}
-                    lastResultSet = null;
-                }
-                if (lastStatement != null) {
-                    try { lastStatement.close(); } catch (Exception ignored) {}
-                    lastStatement = null;
-                }
-                if (statement.isBlock()) {
-                    // 匿名块交给 PL/SQL 引擎（与 PG 路径同一个引擎）
-                    session.activeStatement = null;
-                    PlSqlEngine.execute(host, statement.body());
-                    continue;
-                }
-                Statement stmt = session.conn.createStatement();
-                session.activeStatement = stmt;
-                if (stmt.execute(statement.sql())) {
-                    lastResultSet = stmt.getResultSet();
-                    lastStatement = stmt;
-                } else {
-                    int updates = stmt.getUpdateCount();
-                    if (updates > 0) {
-                        affectedRows += updates;
-                    }
-                    stmt.close();
-                }
-            }
-            if (lastResultSet != null) {
-                session.taskResultSet = lastResultSet;
-                session.taskStatement = lastStatement;
-                session.activeStatement = lastStatement;
+            SqlTextExecutor.Result result = SqlTextExecutor.execute(
+                    session.conn, script, host,
+                    new SqlTextExecutor.Observer() {
+                        @Override
+                        public void onBlock() {
+                            session.activeStatement = null;
+                        }
+
+                        @Override
+                        public void onStatement(Statement statement) {
+                            session.activeStatement = statement;
+                        }
+                    });
+
+            if (result.hasResultSet()) {
+                session.taskResultSet = result.resultSet();
+                session.taskStatement = result.statement();
+                session.activeStatement = result.statement();
                 session.hasMore = true;
                 session.taskStatus = "COMPLETED";
             } else {
-                session.totalRows = affectedRows > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) affectedRows;
+                session.totalRows = result.affectedRows();
                 session.hasMore = false;
                 session.taskStatus = "COMPLETED";
                 session.taskStatement = null;
                 session.activeStatement = null;
             }
         } catch (Throwable t) {
-            if (lastResultSet != null) {
-                try { lastResultSet.close(); } catch (Exception ignored) {}
-            }
-            if (lastStatement != null) {
-                try { lastStatement.close(); } catch (Exception ignored) {}
-            }
-            String message = t.getMessage();
-            if (t instanceof org.slackerdb.plsql.PlSqlException plSqlException) {
-                message = plSqlException.getMessage();
-            }
-            failTask(session, Objects.toString(message, t.getClass().getSimpleName()));
+            failTask(session, Objects.toString(t.getMessage(), t.getClass().getSimpleName()));
         } finally {
             session.plsqlHost = null;
         }
@@ -858,6 +857,7 @@ public class SqlReplServer {
         if (session != null) {
             closeSessionQuietly(session);
             forgetTrackedSession(ctx, sid);
+            sessionSlots.release();
         }
 
         Map<String, Object> response = new HashMap<>();
@@ -979,6 +979,7 @@ public class SqlReplServer {
                             session.id, idle, idleTimeoutMillis);
                     closeSessionQuietly(session);
                     forgetSessionFromConnections(session.id);
+                    sessionSlots.release();
                 }
             }
         }

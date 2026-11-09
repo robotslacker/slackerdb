@@ -1,7 +1,6 @@
 package org.slackerdb.dbcli.report;
 
 import org.slackerdb.dbcli.compare.LineRules;
-import org.slackerdb.dbcli.engine.ScriptOutput;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -43,14 +42,15 @@ public final class ReferenceCheck {
      * @param actualOutputFile 本次运行的输出文件（就是那条 log）
      * @param referenceFile   golden 文件（必须已存在）
      * @param reportDirectory {@code .suc}/{@code .dif} 的目录
-     * @param output          脚本输出层（这里负责停 tee）
      * @param rules           脚本里声明的 mask/skip 规则（golden 比对继承它们）
      * @param message         报告行的去处（CLI 是 stdout，作业是 {@code <作业名>.out}）
+     *
+     * <p><b>调用方负责先停 tee</b>（{@code ScriptOutput#stopTee()}）：这里要读的
+     * {@code actualOutputFile} 必须已经落盘。</p>
      */
     public static Outcome finish(int runCode, String scriptName, Path actualOutputFile,
-                                 Path referenceFile, Path reportDirectory, ScriptOutput output,
+                                 Path referenceFile, Path reportDirectory,
                                  LineRules rules, Consumer<String> message) {
-        output.stopTee();
         if (!Files.isRegularFile(referenceFile)) {
             // 没有就是没有：不猜"这是第一次、应该放行"。要录制就自己把这次运行的 log 复制成 ref。
             message.accept("Reference file [" + referenceFile + "] does not exist.");

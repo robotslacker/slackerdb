@@ -24,7 +24,7 @@ SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。
 * *插件系统* —— 基于 PF4J 的可扩展插件框架，用于自定义功能、HTTP 端点与后台任务，支持运行时加载/启动/停止/卸载。
 * *数据加密* —— 利用 DuckDB 原生加密实现静态数据保护。
 * *命令行访问* —— 支持一个类似psql的自定义命令行客户端，不仅可以执行批处理SQL脚本，各种SQL语句，还能进行复杂的并发作业协同，SQL运行结果比对等。
-* *作业编排*  —— 利用插件能力，提供基于HOP运行的作业编排，用来定时执行基于工作流的作业调度。
+* *作业编排*  —— 内置调度能力，提供基于HOP运行的作业编排，用来定时执行基于工作流的作业调度。
 * *控制台访问*  —— 当前工作进展中。 将提供完整的，基于浏览器的图形访问工作台。
 * *数据库代理*   —— 支持通过代理管理多个数据库实例，并通过统一端口来连接到不同的实例上。
 
@@ -54,8 +54,7 @@ SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。
 
     # 所有编译结果都会放在 dist 目录中：
     #    slackerdb-dist_0.2.2.zip
-    #        发布包 —— standalone 形式的 Jar 包、插件 Jar 包、
-    #        默认配置文件以及启停脚本。
+    #        发布包 —— standalone 形式的 Jar 包、默认配置文件以及启停脚本。
     #    slackerdb-src_0.2.2.zip
     #        源码包 —— 完整的多模块 Maven 工程，内容等同于一次浅克隆
     #        （不含 git 历史，也不含任何编译产物）。解开后在该目录里
@@ -240,6 +239,11 @@ access_mode=READ_WRITE
 # 最大并发连接数
 # 默认：256
 max_connections=
+
+# SQL REPL 最大并发会话数
+# 每个会话持有一条池外私有连接；超出后新会话立即返回 "Too much connections."
+# 默认：64
+repl_max_connections=64
 
 # 最大工作线程数
 # 默认：CPU 核心数
@@ -980,7 +984,7 @@ $$;
 
 |查询 |`SELECT ... INTO v1[, v2]`（必须恰好一行）、任意 DuckDB SQL 语句、SQL 文本中的 `:name` 绑定变量
 
-|动态 SQL |`EXECUTE IMMEDIATE <SQL 文本> [INTO 目标...] [USING 值...]`：SQL 文本在运行期求值（可用 `\|\|` 拼接），占位符支持 `?` / `:1` / `:name`，`USING` 按出现顺序绑定；无 `INTO` 时结果集被丢弃，有 `INTO` 时按单行语义（`NO_DATA_FOUND` / `TOO_MANY_ROWS` / `24000`），占位符与 `USING` 个数不符报 `07001`
+|动态 SQL |`EXECUTE IMMEDIATE <SQL 文本> [INTO 目标...] [USING 值...]`：SQL 文本在运行期求值（可用 `\|\|` 拼接），占位符支持 `?` / `:1` / `:name`，`USING` 按出现顺序绑定；无 `INTO` 时结果集默认丢弃，但**数据服务 API 会捕获最后一条不带 `INTO` 的动态查询结果并作为响应返回**；有 `INTO` 时按单行语义（`NO_DATA_FOUND` / `TOO_MANY_ROWS` / `24000`），占位符与 `USING` 个数不符报 `07001`
 
 |异常 |`EXCEPTION WHEN NO_DATA_FOUND / TOO_MANY_ROWS / ZERO_DIVIDE / OTHERS / <custom> THEN`、`RAISE`、`RAISE name`、在处理器内部重新抛出、嵌套块（旧式 `EXCEPTION:` 等价于 `WHEN OTHERS`）
 
@@ -998,7 +1002,7 @@ $$;
 * **字符串字面量**中的 `:name` 不会被替换（`'Hello :name'` 是字面文本；请使用 `||`）。
 * 表达式使用**绑定参数**求值 —— 值绝不会被拼接进 SQL 文本。
 * 除以零会抛出 `ZERO_DIVIDE`，因此 `WHEN ZERO_DIVIDE` 可以正常工作。
-* 块永远不会返回结果集；请把结果写入表。
+* 块本身不返回结果集；数据服务 API 会捕获块内最后一条不带 `INTO` 的 `EXECUTE IMMEDIATE` 查询结果，PG wire / SQL REPL 仍不返回。其他场景请把结果写入表。
 * 失控循环会被语句预算（200000 条语句）中止 → `54000`。
 
 ===== 错误码
@@ -1143,6 +1147,14 @@ END LOOP outer_loop;
 * `TIMESTAMP WITH TIME ZONE` 保留后端表示形式；值不会被规范化为 UTC。
 * 失败的块不会自行回滚 —— 请在 `EXCEPTION` 处理器中或从客户端发出 `ROLLBACK`，
   这与 PostgreSQL 的 `DO` 完全一致。
+
+==== 连接池
+
+* 数据服务 API：使用主连接池。
+* MCP：使用主连接池，与数据服务 API 共享连接上限。
+* PostgreSQL 协议客户端（dbcli/psql/JDBC）：使用主连接池。
+* 管理端的定义存储（Definition）和 Portal 访问记录：使用主连接池。
+* SQL REPL：不使用连接池；每个会话复制 `backendSysConnection`，会话结束即关闭，不占用池的 `max_connections`。最多 `repl_max_connections` 个并发会话，超出立即返回 `Too much connections.`。
 
 ==== 数据服务
 
@@ -1328,6 +1340,9 @@ END LOOP outer_loop;
 
 |sql |SQL 语句，可以用 `${var1}` 这样的占位符引用上下文变量或请求参数
 
+|filter |结果集过滤表达式（可选）。在注册时配置，之后每次调用自动应用；
+语法接近 SQL 的 `WHERE` + `ORDER BY` + `LIMIT/OFFSET`。非法表达式会被拒绝注册
+
 |description |描述（可选，缺省为 `NO DESCRIPTION.`）
 
 |category |服务分类（可选，用于按分类分组保存；不能包含 `\ / : * ? " < > \|` 等字符）
@@ -1354,6 +1369,19 @@ maxExecutionTime 格式：整数毫秒（例如 30000 表示 30 秒）
   }
 ....
 
+请求示例（PL/SQL，最后一条 SELECT 的结果作为返回值）：
+
+....
+  {
+    "serviceName": "queryTest3",
+    "serviceVersion": "1.0",
+    "serviceType": "GET",
+    "sql": "DO $$ BEGIN NULL; END; $$; SELECT 1 AS ok;"
+  }
+....
+
+只有 PL/SQL 块时没有 data；最后一条是 SELECT 时才返回结果集。
+
 请求示例（带参数默认值）：
 
 ....
@@ -1366,7 +1394,19 @@ maxExecutionTime 格式：整数毫秒（例如 30000 表示 30 秒）
   }
 ....
 
-响应示例：
+请求示例（带服务级 filter）：
+
+....
+  {
+    "serviceName": "paidOrders",
+    "serviceVersion": "1.0",
+    "serviceType": "GET",
+    "sql": "SELECT * FROM orders",
+    "filter": "status IN ('paid','shipped') ORDER BY created_at DESC LIMIT 100"
+  }
+....
+
+注册响应示例：
 
 ....
 成功响应（200）
@@ -1451,6 +1491,8 @@ maxExecutionTime 格式：整数毫秒（例如 30000 表示 30 秒）
     }
   ]
 ....
+
+带 `filter` 的服务在列表/导出结果中会额外包含 `filter` 字段。
 
 ===== /api/\{apiVersion}/\{apiName}
 
@@ -1537,6 +1579,63 @@ POST 请求示例：
 并发请求中**有且仅有一个**会去数据库刷新，其余请求等待刷新结束，再拿刷新结果返回
 （`cached` 仍为 `true`）。因此 `snapshotLimit` 到期瞬间不会对后端数据库形成突发压力。
 等待刷新超过 30 秒时，等待者会降级为自己直接查询，避免请求被无限期挂住。
+
+===== filter（服务级结果集过滤）
+
+`filter` 是**服务定义的一部分**：在 `/api/registerService` 或 `.service` 文件的
+`filter` 字段里配置，之后每次调用 `/api/{apiVersion}/{apiName}` 都会自动应用。
+调用方不需要、也不应该再传任何 filter 参数。
+
+过滤发生在 SQL 执行完成之后、返回响应之前，由服务端在内存中对结果集求值：
+**不会改写 SQL，也不会产生额外的数据库查询**。它支持的子句与 SQL 类似：
+
+* 比较：`=`、`!=`（`<>`）、`>`、`>=`、`<`、`<=`
+* 集合：`IN`、`NOT IN`
+* 模糊：`LIKE`、`NOT LIKE`（`%` 任意长度、`_` 单个字符、可选 `ESCAPE`）
+* 逻辑：`AND`、`OR`、`NOT`、括号
+* 空值：`IS NULL`、`IS NOT NULL`（SQL 三值逻辑，与 NULL 比较得到 UNKNOWN）
+* 函数：`lower(s)`、`upper(s)`、`trim(s)`、`length(s|list)`，可嵌套；
+  `trim` 只去首尾 ASCII 空格，`length` 对字符串按 Unicode 码点计数、对列表返回元素个数
+* 排序：`ORDER BY col [ASC|DESC] [NULLS FIRST|LAST], ...`
+  （默认 `ASC`、`NULLS LAST`；与 DuckDB 一致，`NULLS LAST` 不随升/降序翻转）
+* 分页：`LIMIT n`、`LIMIT ALL`、`OFFSET n`（先过滤/排序，再 `OFFSET`，最后 `LIMIT`）
+
+字符串用单引号，内部单引号写成两个（例如 `'it''s'`）。
+
+注册示例：
+
+....
+  POST /api/registerService
+  {
+    "serviceName": "paidOrders",
+    "serviceVersion": "1.0",
+    "serviceType": "GET",
+    "sql": "SELECT * FROM orders",
+    "filter": "status IN ('paid','shipped') AND length(name) > 2 ORDER BY created_at DESC LIMIT 100"
+  }
+....
+
+之后直接访问 `GET /api/1.0/paidOrders` 即可得到过滤后的结果，无需任何额外参数。
+
+**注册时校验**：非法表达式会在注册时被拒绝
+（`retCode = -1`，`retMsg` 以 `Rejected. Invalid filter: ` 开头）；
+从 `.service` 文件加载时，非法定义的该条服务会被跳过并记录 warning。
+未知列、列名歧义、类型不匹配等依赖结果集列的错误在运行时返回
+`retCode = -1`，`retMsg` 以 `Invalid filter: ` 开头并带字符位置；HTTP 状态码仍是 200。
+
+**缓存**：缓存里保存的是**过滤前**的原始结果，filter 只在返回前应用。
+因此 SQL 与 `searchPath` 相同、只有 filter 不同的多个服务可以共享同一份缓存快照，
+只会查库一次（`snapshotLimit` 生效时）；`cached` 语义不变。
+修改 filter 重新注册不会让原始缓存失效。缓存键包含 `searchPath` 与参数替换后的
+实际 SQL，不包含服务名、版本与 filter。
+
+**非结果集语句**：`UPDATE`/`INSERT`/`DELETE`/`DDL` 等没有结果集可过滤，
+即使配置了 filter 也会在运行时忽略。
+
+**限制**：只支持白名单函数；不支持 `BETWEEN`、`ILIKE`、算术运算、子查询；
+过滤列必须出现在结果集中；与关键字同名的列需要用双引号引用（例如 `"limit"`）；
+没有 `ORDER BY` 时分页顺序不稳定；过滤发生在结果集物化之后，不会减少数据库侧的
+查询/物化工作量。
 
 ===== 返回值类型
 
@@ -3084,31 +3183,43 @@ public class SimplePluginRunner {
 }
 ----
 
-==== 作业调度器插件（plugin-scheduler）
+==== 作业调度器（内置能力，配置键 plugin-scheduler.*）
 
-SlackerDB 可以加载一个作业调度插件，用于**按项目模板定时执行 HOP 工作流或脚本**。
+SlackerDB 内置作业调度能力，用于**按项目模板定时执行 HOP 工作流或脚本**。
 
 典型用法：把一个 HOP 工程（`.hwf`/`.hpl`，其中包含执行 SQL 的步骤）放进"项目模板"，
-创建实例后一键上线 —— 插件先串行执行初始化类任务，成功后自动按 cron 周期运行主流程，
+创建实例后一键上线 —— 调度器先串行执行初始化类任务，成功后自动按 cron 周期运行主流程，
 并记录每次执行的日志与历史。
 
-它是**可选插件**：是否加载由服务器配置的 `plugins_dir` 决定。
+**启用规则**（能力是否"在场"完全由配置决定，不需要插件目录）：
+
+* 管理端口未启用（`port_x=-1`）：所有管理口能力（含调度器）都不存在；
+* 已启用管理端口，但没有配置 `plugin-scheduler.home` 或 `plugin-scheduler.projectHome`：
+  **没有这个能力** —— 不注册 `/scheduler/*` 路由、不建表、不启动 Quartz，
+  `/capabilities.features.etl=false`，`/status.scheduler` 会给出原因；
+* 配置齐备但不可用（目录不存在、`hop.runScript` 指向不存在的文件等）：**拒绝启动**，
+  启动失败会回滚已启动的监听器/线程池；
+* 只读实例（`access_mode=READ_ONLY`）：**没有这个能力**，且不校验配置（建表本来就做不了）；
+* `plugin-scheduler.hop.runScript` **不是启用前提**：不配置时照常启用，只是 HOP 类型任务不可执行
+  （`SHELL` 不受影响）；一旦配置了就必须有效；
+* 目录**不会被自动创建**：`home` 与 `projectHome` 必须事先存在。
 
 ===== 快速开始
 
-. *准备 HOP*：插件包内不含 HOP，需要单独准备一份 HOP 2.19+ 发行版，记下 `hop-run.bat`/`hop-run.sh` 的路径。
-  HOP 2.19 要求 JDK 21。`plugin-scheduler.hop.javaHome` 可留空；留空时使用 dbserver 当前运行的
+. *准备 HOP*：发行包内不含 HOP，需要单独准备一份 HOP 2.20+ 发行版，记下 `hop-run.bat`/`hop-run.sh` 的路径。
+  HOP 2.20 要求 JDK 21。`plugin-scheduler.hop.javaHome` 可留空；留空时使用 dbserver 当前运行的
   JDK（`java.home`），通常就是启动服务端的那个 21。需要单独指定时再填写绝对路径。
-. *部署插件*：把插件 JAR 放进插件目录，并在服务器配置文件中启用：
+. *启用调度能力*：在服务器配置文件中配齐 `home` / `projectHome` 即启用（不再需要 `plugins_dir`）：
 +
 [source,properties]
 ----
-plugins_dir=plugins
 plugin-scheduler.home=data/scheduler
 plugin-scheduler.projectHome=data/scheduler/projects
 plugin-scheduler.hop.runScript=D:/hop/hop-run.bat
 # 可选；留空（或删除本行）表示使用当前 JDK
 # plugin-scheduler.hop.javaHome=D:/jdk21
+# 可选；默认 true（HOP 2.20+）。仅 HOP 2.19 及更早版本设为 false
+# plugin-scheduler.hop.inMemoryProject=true
 ----
 . *准备模板*：在 `data/scheduler/projects/` 下建一个以模板名命名的目录（见下一节）。
 . *创建并启动实例*（`<管理端口>` 为服务器管理端口）：
@@ -3179,8 +3290,8 @@ data/scheduler/projects/                 ← 模板根（projectHome）
 |===
 | 字段 | 说明
 
-| `taskScript` | `HOP` 任务填 `.hwf`/`.hpl` 文件名；`SHELL`/`COMMAND` 任务填命令行
-| `taskScriptType` | `HOP`（默认）/ `SHELL` / `COMMAND`
+| `taskScript` | `HOP` 任务填 `.hwf`/`.hpl` 文件名；`SHELL` 任务填命令行；`DBCLI` 任务填 dbcli 脚本文件名（相对本次 run 的 `flow/<projectType>`，或绝对路径）
+| `taskScriptType` | `HOP`（默认）/ `SHELL` / `DBCLI`
 | `taskRunPolicy` | `RUN_ONCE` 只跑一次（默认）/ `CRONTAB` 按 cron / `INTERVAL` 按固定间隔
 | `taskCrontabExpr` | Quartz cron（6 或 7 段，如 `0 1/2 * * * ? *`）；可用 `describeCrontabExpr` 接口校验
 | `taskInterval` | `INTERVAL` 的间隔秒数
@@ -3197,12 +3308,27 @@ data/scheduler/projects/                 ← 模板根（projectHome）
 找不到清单不会报错，实例就是没有预置任务。任务列表也可以用创建实例接口的 `tasks` 参数直接传入。
 
 上表字段在**两种入口上通用**（模板清单与 `POST /scheduler/run/create` 的内联 `tasks[]`）。内联任务会**先校验后落地**：
-`taskScriptType` 只接受 `HOP`/`SHELL`/`COMMAND`（默认 `HOP`），策略、`taskRetryTimes`/`taskRetryInterval`、`taskMandatory`、
+`taskScriptType` 只接受 `HOP`/`SHELL`/`DBCLI`（默认 `HOP`），策略、`taskRetryTimes`/`taskRetryInterval`、`taskMandatory`、
 `variables`（只支持扁平标量值）同样校验，**字段名拼错（未知字段）也会被拒绝**；任一条不合格返回 `400` 与 `problems`
 清单，且不会创建实例目录与运行记录。模板清单里出现未知字段只记一条 warning（不阻断装载）。
 
 创建实例请求的**顶层**同理：只接受 `projectType` / `configJson` / `runId` / `tasks`，且 `tasks` 必须是数组；
 顶层未知字段（例如把 `tasks` 拼成 `task`）一律 `400`，不会静默回落到模板任务。
+
+===== DBCLI 任务
+
+`taskScriptType=DBCLI` 时，调度器在**进程内**运行一个 dbcli 脚本：与 `dbcli --execute <file>` 走同一条执行路径
+（语句切分、`_SET`/`_WHENEVER`/`_START`/`_ASSERT`、输出格式都相同），不是另起一个 dbcli 进程。
+
+* *脚本位置*：`taskScript` 相对本次 run 的 `flow/<projectType>`（项目模板被复制过去的位置），也可以写绝对路径；
+* *连接*：脚本以普通客户端身份连回**本实例的数据服务端口**（`jdbc:slackerdb://<host>:<port>/<database>`），
+  因此必须启用 `--port`；`port=-1` 时 DBCLI 任务会明确失败。需要连别的地址时用
+  `plugin-scheduler.dbcli.connect=jdbc:slackerdb://host:port/db` 覆盖；脚本里自己写的 `_connect` 会覆盖默认连接；
+* *变量*：调度器变量（框架变量 + 三层业务变量）可在脚本里用 `${NAME}` 引用；
+* *超时与中止*：到 `taskTimeout` 或被中止时，停止信号让脚本在**下一条语句**前停下，并取消正在执行的 SQL；
+* *退出码*：沿用 dbcli 语义——只有脚本里的 `_EXIT n` / `_WHENEVER ERROR EXIT n` 会改变退出码；
+  脚本内部发生过的 SQL 错误只计数（任务日志里会提示），不改变任务成败。要让 SQL 错误导致任务失败，
+  在脚本开头写 `_WHENEVER ERROR EXIT 1`。
 
 ===== 变量：给 HOP 传连接信息
 
@@ -3267,8 +3393,15 @@ DB_PASSWORD=******
 
 ===== 注意事项
 
-* 插件包内**不含 HOP**，必须单独提供 HOP 2.19+ 发行版并配置 `plugin-scheduler.hop.runScript`；
+* 发行包内**不含 HOP**，必须单独提供 HOP 2.20+ 发行版并配置 `plugin-scheduler.hop.runScript`；
   HOP 以独立进程运行，因此不需要为数据库服务器调整任何 JVM 参数；
+* 自 HOP 2.20 起，调度器在每次 `hop-run` 子进程内用 `--project-locations`、`--environments`、
+  `--in-memory` 注册项目与环境，不再依赖运行目录里的 `hop-config.json`：并行任务不会互相覆盖环境，
+  `hop-config.json` 只读也能执行，维护失败只记告警、不阻断任务。
+  仅在 HOP 2.19 及更早版本上需要设置 `plugin-scheduler.hop.inMemoryProject=false` 回退到旧行为；
+* HOP 输出按 UTF-8 解码：调度器会导出 `HOP_WINDOWS_SHELL_ENCODING=65001`，并在 `HOP_OPTIONS`
+  末尾追加 `-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8`，
+  避免 Windows 下中文任务名/变量把任务日志写成乱码；`SHELL` 仍按平台本地编码解码；
 * HOP 工程需要满足（创建实例时会自检并提示）：
   **若模板的 `project-config.json` 写了 `"parentProjectName": "default"`，则模板根下必须有 `default/` 项目，
   且它的 `project-config.json` 里 `parentProjectName` 留空**（也可以不用父项目，此时模板自己的
@@ -3276,7 +3409,7 @@ DB_PASSWORD=******
   **`metadata/workflow-run-configuration/local.json` 必须存在**（对应默认 runconfig `local`）
 * 任务是"尽力终止"：超时/中止会终止 `hop-run` 及其子进程，但 HOP 内部的长事务不保证立即回滚
 * 当前为单实例调度，不支持多节点
-* 该插件未内置鉴权，请只在受信网络暴露管理端口
+* 该调度器未内置鉴权，请只在受信网络暴露管理端口
 
 ==== 插件管理 API
 

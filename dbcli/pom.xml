@@ -121,6 +121,27 @@
 
         <plugins>
             <!--
+              驱动登记表（META-INF/services/java.sql.Driver）**只属于 standalone 拍平包**：
+              拍平时各依赖自带的同名文件只能留一份，所以由本模块集中登记、并由
+              src/main/assembly/standalone.xml 从 target/classes 里挑这一份。
+
+              普通模块 jar 里必须**不带**它：dbcli 现在也会作为依赖被宿主嵌入
+              （dbserver 的 DBCLI 任务在进程内跑脚本），而 DriverManager 会枚举
+              classpath 上所有 java.sql.Driver 登记表；多出一份写着
+              org.sqlite.JDBC / org.slackerdb.jdbc.Driver 的登记表会干扰宿主的驱动发现
+              （实测：宿主连自己的 jdbc:duckdb: 变成 "No suitable driver"）。
+              下面只从 jar 里排除；target/classes 仍有该文件，standalone 装配不受影响。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>META-INF/services/java.sql.Driver</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+            <!--
               编译期警戒线：-Xlint:all 打开 javac 的全部警告。先按"警告清零"整理过一轮
               （死代码/未用变量/过时用法都清掉了），之后新出现的警告就是真问题；
               -Werror 把"新警告"变成构建失败，防止它再悄悄长回来。
@@ -236,7 +257,7 @@
                                         <exclude>org.robotslacker:slackerdb-dbproxy</exclude>
                                         <exclude>org.robotslacker:slackerdb-plugin</exclude>
                                         <exclude>org.robotslacker:slackerdb-plugin-example</exclude>
-                                        <exclude>org.robotslacker:slackerdb-plugin-scheduler</exclude>
+                                        <exclude>org.robotslacker:slackerdb-dbserver-scheduler</exclude>
                                         <exclude>io.netty:*</exclude>
                                         <exclude>io.javalin:*</exclude>
                                         <exclude>org.duckdb:duckdb_jdbc</exclude>

@@ -26,25 +26,41 @@
     </properties>
 
     <dependencies>
-        <!-- Quartz：plugin-scheduler 把 quartz 声明成 provided（由宿主提供）。
-             不在这里带上，插件启动时会 NoClassDefFoundError，/scheduler/* 路由静默不注册。
-             版本由 Boot 4.1.1 BOM 统一管理（2.5.2），与 plugin-scheduler 编译版本一致。 -->
+        <!--
+            调度能力（ETL）：内置模块，由 DBInstanceX 按配置装配。
+            quartz 由该模块以 compile 依赖带入（版本仍由 Boot 4.1.1 BOM 管理，2.5.2）。
+        -->
         <dependency>
-            <groupId>org.quartz-scheduler</groupId>
-            <artifactId>quartz</artifactId>
-            <scope>runtime</scope>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-scheduler</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!--
+            dbcli：调度器的 DBCLI 任务类型在**进程内**运行 dbcli 脚本（见 dbserver-scheduler 的
+            DbcliTaskExecutor）。它同时把 slackerdb-dbdriver 带进运行时 classpath——DBCLI 任务用
+            jdbc:slackerdb:// 连回本实例，等价于一个普通客户端。
+        -->
+        <dependency>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-dbcli</artifactId>
+            <version>${project.version}</version>
         </dependency>
         <dependency>
             <groupId>org.robotslacker</groupId>
             <artifactId>slackerdb-common</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!-- slackerdb JDBC 驱动（test scope，用于 UDS 测试） -->
+        <!--
+            slackerdb JDBC 驱动：**运行时**需要（不再只是测试）。
+            调度器的 DBCLI 任务以普通客户端身份连回本实例（jdbc:slackerdb://），
+            靠的就是这个驱动；写成 test scope 会让 dist 的 fat jar 里没有它，
+            DBCLI 任务会报 "No suitable driver found for jdbc:slackerdb://…"。
+            UDS 等测试也继续用它。
+        -->
         <dependency>
             <groupId>org.robotslacker</groupId>
             <artifactId>slackerdb-dbdriver</artifactId>
             <version>${project.version}</version>
-            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.robotslacker</groupId>

@@ -713,26 +713,26 @@ public class DBInstance {
                 dataFilePath = dataFile.getAbsolutePath();
                 attachString = "ATTACH '" + dataFile.getAbsolutePath() + "' AS \"" + instanceName + "\"";
             }
+            // ATTACH 的选项必须全部写在同一个括号列表里。DuckDB 只解析一段选项，
+            // "ATTACH ... (COMPRESS) (ENCRYPTION_KEY '...')" 这种分两段拼接会报
+            // Parser Error: syntax error at or near "("，因此这里先收集再统一拼接。
             String attachOptions = "";
             if (!ducklakeMode) {
-                attachOptions = "(";
+                List<String> attachOptionItems = new ArrayList<>();
+                if (serverConfiguration.getData_Dir().trim().equalsIgnoreCase(":memory:")) {
+                    // 内存库同样支持压缩
+                    attachOptionItems.add("COMPRESS");
+                }
                 if (serverConfiguration.getAccess_mode().equals("READ_ONLY")) {
-                    attachOptions = attachOptions + "READ_ONLY";
+                    attachOptionItems.add("READ_ONLY");
                 }
                 if (serverConfiguration.getDataEncrypt())
                 {
-                    if (attachOptions.equalsIgnoreCase("(")) {
-                        attachOptions = attachOptions + "ENCRYPTION_KEY '" + databaseEncryptKey + "'";
-                    }
-                    else
-                    {
-                        attachOptions = attachOptions + ", ENCRYPTION_KEY '" + databaseEncryptKey + "'";
-                    }
+                    attachOptionItems.add("ENCRYPTION_KEY '" + databaseEncryptKey + "'");
                 }
-                attachOptions = attachOptions + ")";
-                if (attachOptions.equalsIgnoreCase("()"))
+                if (!attachOptionItems.isEmpty())
                 {
-                    attachOptions = "";
+                    attachOptions = "(" + String.join(", ", attachOptionItems) + ")";
                 }
             }
 
@@ -1347,7 +1347,26 @@ public class DBInstance {
                 javalinLogger.setLevel(Level.OFF);
                 jettyLogger.setLevel(Level.OFF);
             }
-            this.dbInstanceX = new DBInstanceX(this);
+            // 管理口装配失败（含内置调度能力的配置错误）必须让启动失败，并且**先回滚**：
+            // 此时 pgwire 监听器、连接池、后台线程都已经起来了，不回滚就会把端口/句柄/线程
+            // 留在同一个 JVM 里（生产上是进程退出，测试与嵌入模式下就是泄漏）。
+            try {
+                this.dbInstanceX = new DBInstanceX(this);
+            } catch (Exception managementException) {
+                logger.error("[SERVER][STARTUP    ] Management server failed, rolling back startup.",
+                        managementException);
+                try {
+                    stop();
+                } catch (Exception stopException) {
+                    logger.warn("[SERVER][STARTUP    ] Cleanup after failed management startup also failed.",
+                            stopException);
+                }
+                if (managementException instanceof ServerException serverException) {
+                    throw serverException;
+                }
+                throw new ServerException("Management server failed. " + managementException.getMessage(),
+                        managementException);
+            }
         }
         else
         {

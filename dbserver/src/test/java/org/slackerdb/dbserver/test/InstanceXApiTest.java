@@ -123,6 +123,71 @@ public class InstanceXApiTest {
     }
 
     @Test
+    void testApiPlsqlDynamicSql() throws Exception
+    {
+        // 原始需求：API 服务的 sql 是 PL/SQL；先查表取字段，再用该字段拼第二段 SQL。
+        // 第二段 EXECUTE IMMEDIATE 不带 INTO，API 直接把它查询到的结果作为响应返回。
+        try (Statement stmt = dbInstance.backendSysConnection.createStatement()) {
+            stmt.execute("DROP TABLE IF EXISTS memory.main.api_plsql_route");
+            stmt.execute("DROP TABLE IF EXISTS memory.main.api_plsql_users");
+
+            stmt.execute("CREATE TABLE memory.main.api_plsql_route(route_key VARCHAR, target_table VARCHAR)");
+            stmt.execute("INSERT INTO memory.main.api_plsql_route VALUES ('users', 'api_plsql_users')");
+
+            stmt.execute("CREATE TABLE memory.main.api_plsql_users(id INTEGER, name VARCHAR)");
+            stmt.execute("INSERT INTO memory.main.api_plsql_users VALUES (1, 'alice'), (2, 'bob'), (3, 'carol')");
+        }
+        // backendSysConnection 是 autoCommit=false；测试数据必须提交后 API 的池连接才能看到。
+        dbInstance.backendSysConnection.commit();
+
+        JSONObject service = new JSONObject();
+        service.put("serviceName", "testPlsqlDynamicSql");
+        service.put("serviceVersion", "1.0");
+        service.put("serviceType", "GET");
+        service.put("searchPath", "main");
+        service.put("sql", """
+                DO $$
+                DECLARE
+                    v_target VARCHAR;
+                BEGIN
+                    SELECT target_table INTO v_target
+                      FROM api_plsql_route
+                     WHERE route_key = '${routeKey}';
+
+                    EXECUTE IMMEDIATE 'SELECT count(*) AS cnt FROM ' || v_target;
+                END;
+                $$;
+                """);
+
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest registerRequest = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/api/registerService"))
+                .POST(HttpRequest.BodyPublishers.ofString(service.toString()))
+                .header("Content-Type", "application/json")
+                .build();
+        HttpResponse<String> registerResponse = client.send(registerRequest, HttpResponse.BodyHandlers.ofString());
+        assertEquals(0, JSONObject.parseObject(registerResponse.body()).getIntValue("retCode"),
+                "PL/SQL 服务注册失败：" + registerResponse.body());
+
+        HttpRequest queryRequest = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + dbPortX + "/api/1.0/testPlsqlDynamicSql?routeKey=users"))
+                .GET()
+                .header("Content-Type", "application/json")
+                .build();
+        HttpResponse<String> response = client.send(queryRequest, HttpResponse.BodyHandlers.ofString());
+
+        JSONObject fullResponse = JSONObject.parseObject(response.body());
+        assertEquals(0, fullResponse.getIntValue("retCode"), "PL/SQL API 调用失败：" + response.body());
+        JSONObject data = fullResponse.getJSONObject("data");
+        assertNotNull(data, "EXECUTE IMMEDIATE 的查询结果应返回 data：" + response.body());
+        data.remove("timestamp");
+        assertEquals("""
+                {"affectedRows":1,"columnNames":["cnt"],"columnTypes":["BIGINT"],"dataset":[[3]]}
+                """.trim(),
+                JSON.toJSONString(data, JSONWriter.Feature.MapSortField));
+    }
+
+    @Test
     void testApiQueryWithContext() throws Exception
     {
         JSONObject registerTestObj = new JSONObject();
@@ -361,9 +426,9 @@ public class InstanceXApiTest {
         assertTrue(supplied.body().contains("\"ok\""), "提供参数后应正常替换：" + supplied.body());
     }
 
-    /** 缓存键必须包含服务身份：SQL 文本相同的不同服务不能共用缓存。 */
+    /** 缓存键必须包含 searchPath：不同 schema 的同一条 SQL 不能共用缓存。 */
     @Test
-    void testQueryCacheIsolatedBetweenServices() throws Exception {
+    void testQueryCacheIsolatedBySearchPath() throws Exception {
         post("/api/registerService",
                 serviceJson("regCacheGood", "GET", "SELECT 1 AS v", "regression", "main"));
         HttpResponse<String> good = get("/api/1.0/regCacheGood");
@@ -374,7 +439,7 @@ public class InstanceXApiTest {
                 serviceJson("regCacheBad", "GET", "SELECT 1 AS v", "regression", "no_such_schema_xyz"));
         HttpResponse<String> bad = get("/api/1.0/regCacheBad");
         JSONObject badJson = JSONObject.parseObject(bad.body());
-        assertEquals(-1, badJson.getIntValue("retCode"), "不同服务不得共用缓存：" + bad.body());
+        assertEquals(-1, badJson.getIntValue("retCode"), "不同 searchPath 不得共用缓存：" + bad.body());
         assertFalse(bad.body().contains("\"cached\":true"), bad.body());
     }
 

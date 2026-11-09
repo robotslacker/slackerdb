@@ -103,6 +103,23 @@ public class PluginService {
             // 注意：这里无法在加载前检查，因为插件ID来自JAR文件的manifest
             // 加载插件
             String pluginId = pluginManager.loadPlugin(pluginPath);
+            // 调度能力已经内置：旧的 scheduler 插件 JAR 再装一次会重复注册 /scheduler/* 路由
+            // （Javalin 抛 "Handler with type=GET and path=... already exists"），
+            // 因此在这里显式拒绝并给出迁移提示，而不是让它以一个看不懂的异常失败。
+            if ("plugin-scheduler".equals(pluginId)) {
+                try {
+                    pluginManager.unloadPlugin(pluginId);
+                } catch (Exception ignored) {
+                    // 卸载失败不影响"拒绝加载"的结论
+                }
+                logger.warn("[PLUGIN] Refused to load legacy scheduler plugin [{}]: the capability is built in.",
+                        pluginPath);
+                ctx.json(Map.of(
+                        "retCode", -1,
+                        "retMsg", "The scheduler is now a built-in capability. Remove the plugin JAR and "
+                                + "configure plugin-scheduler.home / plugin-scheduler.projectHome instead."));
+                return;
+            }
             logger.info("[PLUGIN] Plugin {} (file: {}) loaded successfully", pluginId, filename);
             ctx.json(Map.of("retCode", 0, "retMsg", "Plugin loaded successfully", "pluginId", pluginId));
         } catch (JSONException e) {

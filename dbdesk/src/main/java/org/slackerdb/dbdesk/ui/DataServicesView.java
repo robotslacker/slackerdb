@@ -95,6 +95,8 @@ public class DataServicesView extends VerticalLayout {
                 .setHeader(I18n.t("dataService.column.snapshotLimit")).setAutoWidth(true);
         grid.addColumn(DataServiceDefinition::maxExecutionTime)
                 .setHeader(I18n.t("dataService.column.maxExecutionTime")).setAutoWidth(true);
+        grid.addColumn(DataServiceDefinition::filter)
+                .setHeader(I18n.t("dataService.column.filter")).setAutoWidth(true);
         grid.addColumn(service -> parametersText(service.parameters()))
                 .setHeader(I18n.t("dataService.column.parameters")).setAutoWidth(true);
         grid.addColumn(DataServiceDefinition::sql).setHeader("SQL").setAutoWidth(true);
@@ -162,6 +164,11 @@ public class DataServicesView extends VerticalLayout {
         sql.setId("data-service-sql");
         sql.setWidthFull();
         sql.setHeight("150px");
+        TextArea filter = new TextArea(I18n.t("dataService.field.filter"));
+        filter.setId("data-service-filter");
+        filter.setWidthFull();
+        filter.setHeight("80px");
+        filter.setPlaceholder("status IN ('paid','shipped') ORDER BY created_at DESC LIMIT 100");
         TextArea description = new TextArea(I18n.t("dataService.field.description"));
         description.setId("data-service-description");
         description.setWidthFull();
@@ -179,7 +186,7 @@ public class DataServicesView extends VerticalLayout {
                 DataServiceDefinition definition = new DataServiceDefinition(
                         name.getValue(), version.getValue(), category.getValue(), type.getValue(),
                         sql.getValue(), description.getValue(), searchPath.getValue(),
-                        snapshotLimit.getValue(), maxExecutionTime.getValue(), parsed);
+                        filter.getValue(), snapshotLimit.getValue(), maxExecutionTime.getValue(), parsed);
                 client().register(definition);
                 dialog.close();
                 status.setText(I18n.t("dataService.status.registered", definition.serviceName()));
@@ -194,8 +201,9 @@ public class DataServicesView extends VerticalLayout {
 
         dialog.add(new VerticalLayout(
                 new HorizontalLayout(name, version, type),
-                new HorizontalLayout(category, searchPath, snapshotLimit),
-                sql, description, parameters, dialogStatus,
+                new HorizontalLayout(category, searchPath),
+                new HorizontalLayout(snapshotLimit, maxExecutionTime),
+                sql, filter, description, parameters, dialogStatus,
                 new HorizontalLayout(submit, cancel)));
         dialog.open();
     }

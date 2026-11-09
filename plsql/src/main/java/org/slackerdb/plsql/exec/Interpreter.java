@@ -440,7 +440,8 @@ public final class Interpreter {
      * <p>SQL 文本在运行期求值（字面量/变量/{@code ||} 拼接），{@code USING} 的值按出现顺序绑定到
      * 文本里的占位符（{@code ?} / {@code :1} / {@code :name}）。带 {@code INTO} 时按单行语义处理
      * （0 行 {@code P0002}、多行 {@code P0003}、列数不符 {@code 24000}）；不带 {@code INTO} 时
-     * 结果集直接丢弃（语句本身已执行）。动态 SQL 自身的错误由后端给出，可被 {@code EXCEPTION} 段捕获。</p>
+     * 结果集交给 {@link PlSqlHost#result(StatementHandle)}：默认实现丢弃，数据服务 API 会捕获后
+     * 作为响应返回。动态 SQL 自身的错误由后端给出，可被 {@code EXCEPTION} 段捕获。</p>
      */
     private void executeImmediate(PlSqlAst.ExecuteImmediate dynamic, Scope scope) {
         Object raw = evaluate(dynamic.sql());
@@ -460,6 +461,11 @@ public final class Interpreter {
         try {
             handle = host.execute(bound.sql(), bound.values());
             if (dynamic.targets().isEmpty()) {
+                if (handle.hasResultSet()) {
+                    // 句柄所有权交给宿主；默认实现会关闭它，API 宿主会物化后保留
+                    host.result(handle);
+                    handle = null;
+                }
                 return;
             }
             assignSingleRow(handle, dynamic.targets(), scope, dynamic.line(), "EXECUTE IMMEDIATE INTO");

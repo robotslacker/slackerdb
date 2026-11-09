@@ -52,7 +52,7 @@ It runs either as a standalone server (`dbserver`, `dbproxy`) or **embedded dire
 
     # All compiled results will be placed in the dist directory:
     #    slackerdb-dist_0.2.2.zip
-    #        distribution package - standalone jar packages, plugin jar,
+    #        distribution package - standalone jar packages,
     #        default configuration files and start/stop scripts.
     #    slackerdb-src_0.2.2.zip
     #        source package - the complete multi-module Maven project, the same
@@ -252,6 +252,12 @@ access_mode=READ_WRITE
 # Maximum concurrent connections
 # Default: 256
 max_connections=
+
+# Maximum concurrent SQL REPL sessions
+# Each session holds one private connection outside the pool; when the limit
+# is reached, new sessions are rejected immediately with "Too much connections."
+# Default: 64
+repl_max_connections=64
 
 # Maximum worker threads
 # Default: CPU core count
@@ -1028,7 +1034,7 @@ when there is no `USING` clause).
 
 |Queries |`SELECT ... INTO v1[, v2]` (exactly one row), any DuckDB SQL statement, `:name` bind variables in SQL text
 
-|Dynamic SQL |`EXECUTE IMMEDIATE <SQL text> [INTO targets...] [USING values...]`: the SQL text is evaluated at run time (build it with `\|\|`), placeholders may be `?` / `:1` / `:name`, and `USING` binds them in order of appearance; without `INTO` a result set is discarded, with `INTO` single-row semantics apply (`NO_DATA_FOUND` / `TOO_MANY_ROWS` / `24000`), and a placeholder/`USING` count mismatch raises `07001`
+|Dynamic SQL |`EXECUTE IMMEDIATE <SQL text> [INTO targets...] [USING values...]`: the SQL text is evaluated at run time (build it with `\|\|`), placeholders may be `?` / `:1` / `:name`, and `USING` binds them in order of appearance; without `INTO` the result set is discarded by default, but the **data service API captures the last dynamic query without `INTO` and returns it as the response**; with `INTO` single-row semantics apply (`NO_DATA_FOUND` / `TOO_MANY_ROWS` / `24000`), and a placeholder/`USING` count mismatch raises `07001`
 
 |Exceptions |`EXCEPTION WHEN NO_DATA_FOUND / TOO_MANY_ROWS / ZERO_DIVIDE / OTHERS / <custom> THEN`, `RAISE`, `RAISE name`, re-raise inside a handler, nested blocks (legacy `EXCEPTION:` = `WHEN OTHERS`)
 
@@ -1046,7 +1052,7 @@ when there is no `USING` clause).
 * `:name` inside **string literals** is not substituted (`'Hello :name'` is literal text; use `||`).
 * Expressions are evaluated with **bind parameters** — values are never spliced into SQL text.
 * Division by zero raises `ZERO_DIVIDE`, so `WHEN ZERO_DIVIDE` works.
-* A block never returns a result set; write results to tables instead.
+* A block itself does not return a result set; the data service API captures the last `EXECUTE IMMEDIATE` query without `INTO`, while PG wire / SQL REPL still do not. In all other cases, write results to tables.
 * Runaway loops are stopped by a statement budget (200000 statements) → `54000`.
 
 ===== Error codes
@@ -1195,6 +1201,14 @@ of being silently ignored.
 * `TIMESTAMP WITH TIME ZONE` keeps the backend representation; values are not normalised to UTC.
 * A block that fails does not roll back by itself — issue `ROLLBACK` in an `EXCEPTION` handler or
   from the client, exactly as with PostgreSQL `DO`.
+
+==== Connection Pool
+
+* Data service API: uses the main pool.
+* MCP: uses the main pool and shares its connection limit with the data service API.
+* PostgreSQL-protocol clients (dbcli/psql/JDBC): use the main pool.
+* Management definitions and portal access records: use the main pool.
+* SQL REPL: does not use the pool. Each session duplicates `backendSysConnection` and closes it at session end, so it does not consume the pool's `max_connections`. At most `repl_max_connections` sessions may exist; excess sessions are rejected immediately with `Too much connections.`
 
 ==== Data Service
 
@@ -1387,6 +1401,10 @@ request body:
 
 |sql |SQL statement, can contain such $\{var1} variable information
 
+|filter |Optional result-set filter expression. Configured at registration time and applied
+automatically on every call; syntax is close to SQL `WHERE` + `ORDER BY` + `LIMIT/OFFSET`.
+Invalid expressions are rejected at registration
+
 |description |description
 
 |snapshotLimit |how long the query result will be cached (optional), for example `3 hours` / `30 minutes` / `45 seconds`; default empty (0), i.e. no caching
@@ -1410,6 +1428,31 @@ Request example:
     "serviceVersion": "1.0",
     "serviceType": "GET",
     "sql": "SELECT 1"
+  }
+....
+
+Request example (PL/SQL; the last SELECT provides the result):
+
+....
+  {
+    "serviceName": "queryTest3",
+    "serviceVersion": "1.0",
+    "serviceType": "GET",
+    "sql": "DO $$ BEGIN NULL; END; $$; SELECT 1 AS ok;"
+  }
+....
+
+A standalone PL/SQL block returns no `data`; only a trailing SELECT produces a result set.
+
+Request example (with a service-level filter):
+
+....
+  {
+    "serviceName": "paidOrders",
+    "serviceVersion": "1.0",
+    "serviceType": "GET",
+    "sql": "SELECT * FROM orders",
+    "filter": "status IN ('paid','shipped') ORDER BY created_at DESC LIMIT 100"
   }
 ....
 
@@ -1505,7 +1548,8 @@ Success response (200)
 
 The response is a bare JSON **array** of service definitions (no `retCode` wrapper):
 each item contains `serviceName`, `serviceVersion`, `serviceType`, `category`,
-`searchPath`, `sql`, `description`, `snapshotLimit` and `parameter`.
+`searchPath`, `sql`, `description`, `snapshotLimit` and `parameter` (plus `filter` when
+the service defines one).
 
 Related management endpoints (all POST, empty body):
 
@@ -1601,6 +1645,66 @@ while the others wait for that refresh and then return the refreshed result (`ca
 stays `true`). So an expiring `snapshotLimit` never turns into a burst of backend
 queries. A waiter that has waited longer than 30 seconds falls back to querying directly
 so a request is never blocked indefinitely.
+
+===== filter (service-level result-set filtering)
+
+`filter` is part of the **service definition**: set it in `/api/registerService` (or in a
+`.service` file) and every call to `/api/{apiVersion}/{apiName}` applies it automatically.
+Callers do not send a filter parameter.
+
+It is evaluated in memory on the server after the SQL has run and before the response is
+written: **it never rewrites the SQL and never causes another database query**. Supported
+clauses are similar to SQL:
+
+* comparisons: `=`, `!=` (`<>`), `>`, `>=`, `<`, `<=`
+* sets: `IN`, `NOT IN`
+* patterns: `LIKE`, `NOT LIKE` (`%` any length, `_` one character, optional `ESCAPE`)
+* logic: `AND`, `OR`, `NOT`, parentheses
+* NULL: `IS NULL`, `IS NOT NULL` (SQL three-valued logic; comparing with NULL yields UNKNOWN)
+* functions: `lower(s)`, `upper(s)`, `trim(s)`, `length(s|list)`, nestable;
+  `trim` removes leading/trailing ASCII spaces only, and `length` counts Unicode code
+  points for strings and elements for lists
+* sorting: `ORDER BY col [ASC|DESC] [NULLS FIRST|LAST], ...`
+  (defaults to `ASC` and `NULLS LAST`; as in DuckDB, `NULLS LAST` does not flip with direction)
+* paging: `LIMIT n`, `LIMIT ALL`, `OFFSET n` (filter/sort first, then `OFFSET`, then `LIMIT`)
+
+Strings use single quotes and an embedded quote is doubled (`'it''s'`).
+
+Registration example:
+
+....
+  POST /api/registerService
+  {
+    "serviceName": "paidOrders",
+    "serviceVersion": "1.0",
+    "serviceType": "GET",
+    "sql": "SELECT * FROM orders",
+    "filter": "status IN ('paid','shipped') AND length(name) > 2 ORDER BY created_at DESC LIMIT 100"
+  }
+....
+
+After that, `GET /api/1.0/paidOrders` returns the filtered result with no extra parameters.
+
+**Registration validation**: invalid expressions are rejected when registering
+(`retCode = -1`, `retMsg` starts with `Rejected. Invalid filter: `); definitions loaded from
+a `.service` file are skipped with a warning. Errors that depend on result columns
+(unknown/ambiguous columns, type mismatches) are returned at request time with
+`retCode = -1` and a `retMsg` starting with `Invalid filter: ` (HTTP status stays 200).
+
+**Cache**: the cache holds the **unfiltered** result; the filter is applied per response.
+Services that share the same SQL and `searchPath` but differ only in `filter` therefore
+share one cached snapshot and cause only one database query (while `snapshotLimit` is
+valid); `cached` keeps its meaning. Re-registering with a different filter does not
+invalidate the raw cache. The cache key contains `searchPath` plus the parameter-substituted
+SQL, not the service name/version or the filter.
+
+**Non-result statements**: `UPDATE`/`INSERT`/`DELETE`/DDL statements have no result set, so a
+configured filter is ignored at runtime.
+
+**Limits**: only whitelisted functions; no `BETWEEN`, `ILIKE`, arithmetic or subqueries;
+filter columns must be present in the result set; a column whose name is a keyword must be
+quoted (for example `"limit"`); paging order is unstable without `ORDER BY`; filtering
+happens after materialisation and does not reduce database work.
 
 ===== Result value types
 
@@ -3195,32 +3299,45 @@ public class SimplePluginRunner {
 }
 ----
 
-==== Job Scheduler Plugin (plugin-scheduler)
+==== Job Scheduler (built-in capability, config keys plugin-scheduler.*)
 
-SlackerDB can load a job scheduler plugin that **runs HOP workflows or scripts on a schedule, driven by project templates**.
+SlackerDB ships a built-in job scheduler that **runs HOP workflows or scripts on a schedule, driven by project templates**.
 
 Typical usage: put a HOP project (`.hwf`/`.hpl` files, including the steps that execute SQL) into a "project template",
-create an instance and bring it online with one call — the plugin first runs the one-off initialization tasks
+create an instance and bring it online with one call — the scheduler first runs the one-off initialization tasks
 in order, then automatically runs the main flow on its cron schedule, recording logs and history for every run.
 
-It is an **optional plugin**: whether it is loaded is decided by the server's `plugins_dir` setting.
+**When is it available?** Entirely configuration-driven — no plugin directory involved:
+
+* Management port disabled (`port_x=-1`): none of the management capabilities, including the scheduler, exist;
+* Management port enabled but `plugin-scheduler.home` / `plugin-scheduler.projectHome` missing:
+  **the capability does not exist** — no `/scheduler/*` routes, no tables, no Quartz,
+  `/capabilities.features.etl=false`, and `/status.scheduler` explains why;
+* Configured but unusable (directory missing, `hop.runScript` pointing nowhere, ...): **startup is refused**,
+  and a failed startup rolls back the listeners/thread pools that were already started;
+* Read-only instance (`access_mode=READ_ONLY`): **no capability**, and the configuration is not validated
+  (creating the metadata tables cannot work anyway);
+* `plugin-scheduler.hop.runScript` is **not a prerequisite**: without it the scheduler still runs, only HOP tasks
+  are unavailable (`SHELL` is unaffected). If it is set, it must be valid;
+* Directories are **never created automatically**: `home` and `projectHome` must already exist.
 
 ===== Quick Start
 
-. *Prepare HOP*: the plugin does not bundle HOP. Prepare a HOP 2.19+ distribution and note the path of `hop-run.bat`/`hop-run.sh`.
-  HOP 2.19 requires JDK 21. `plugin-scheduler.hop.javaHome` may be left empty; when empty, the JDK running
+. *Prepare HOP*: the distribution does not bundle HOP. Prepare a HOP 2.20+ distribution and note the path of `hop-run.bat`/`hop-run.sh`.
+  HOP 2.20 requires JDK 21. `plugin-scheduler.hop.javaHome` may be left empty; when empty, the JDK running
   dbserver (`java.home`) is used — usually the same JDK 21 that started the server. Set it only when a
   separate JDK is required.
-. *Deploy the plugin*: put the plugin JAR into the plugin directory and enable it in the server configuration file:
+. *Enable the capability*: set `home` / `projectHome` in the server configuration file (`plugins_dir` is no longer needed):
 +
 [source,properties]
 ----
-plugins_dir=plugins
 plugin-scheduler.home=data/scheduler
 plugin-scheduler.projectHome=data/scheduler/projects
 plugin-scheduler.hop.runScript=D:/hop/hop-run.bat
 # Optional; leave empty (or remove this line) to use the current JDK
 # plugin-scheduler.hop.javaHome=D:/jdk21
+# Optional; default true (HOP 2.20+). Set false only for HOP 2.19 or older
+# plugin-scheduler.hop.inMemoryProject=true
 ----
 . *Prepare a template*: create a directory named after the template under `data/scheduler/projects/` (see the next section).
 . *Create and start an instance* (`<management port>` is the server's management port):
@@ -3292,8 +3409,8 @@ The task list `conf/defaultSchedulerTask.json` is **keyed by task name**:
 |===
 | Field | Description
 
-| `taskScript` | For `HOP` tasks: the `.hwf`/`.hpl` file name; for `SHELL`/`COMMAND` tasks: the command line
-| `taskScriptType` | `HOP` (default) / `SHELL` / `COMMAND`
+| `taskScript` | For `HOP` tasks: the `.hwf`/`.hpl` file name; for `SHELL` tasks: the command line; for `DBCLI` tasks: the dbcli script file (relative to this run's `flow/<projectType>`, or an absolute path)
+| `taskScriptType` | `HOP` (default) / `SHELL` / `DBCLI`
 | `taskRunPolicy` | `RUN_ONCE` run once (default) / `CRONTAB` on a cron schedule / `INTERVAL` at a fixed interval
 | `taskCrontabExpr` | Quartz cron (6 or 7 fields, e.g. `0 1/2 * * * ? *`); validate it with the `describeCrontabExpr` endpoint
 | `taskInterval` | Interval in seconds for `INTERVAL`
@@ -3312,7 +3429,7 @@ supplied directly through the `tasks` parameter of the create-instance endpoint.
 
 The field set above applies to **both** entry points (template list and the inline `tasks[]` of
 `POST /scheduler/run/create`). Inline tasks are validated before anything is created: `taskScriptType` only accepts
-`HOP`/`SHELL`/`COMMAND` (default `HOP`), and policies, `taskRetryTimes`/`taskRetryInterval`, `taskMandatory` and
+`HOP`/`SHELL`/`DBCLI` (default `HOP`), and policies, `taskRetryTimes`/`taskRetryInterval`, `taskMandatory` and
 `variables` (flat scalar values only) are checked too — **unknown field names are rejected as well**. Any invalid
 entry yields `400` with a `problems` array and no instance directory or run record is created. In a template list an
 unknown field only produces a warning (loading is not blocked).
@@ -3320,6 +3437,24 @@ unknown field only produces a warning (loading is not blocked).
 The same applies to the **top level** of the create-instance request: only `projectType` / `configJson` / `runId` /
 `tasks` are accepted and `tasks` must be an array; an unknown top-level field (e.g. `task` instead of `tasks`) yields
 `400` instead of silently falling back to the template task list.
+
+===== DBCLI tasks
+
+With `taskScriptType=DBCLI` the scheduler runs a dbcli script **in-process**: exactly the same execution path as
+`dbcli --execute <file>` (same statement splitting, `_SET`/`_WHENEVER`/`_START`/`_ASSERT` semantics and output
+format) — no separate dbcli process is spawned.
+
+* *Script location*: `taskScript` is resolved against this run's `flow/<projectType>` (where the project template was
+  copied), or may be an absolute path;
+* *Connection*: the script connects back to **this instance's data service port** as an ordinary client
+  (`jdbc:slackerdb://<host>:<port>/<database>`), so `--port` must be enabled; with `port=-1` a DBCLI task fails with a
+  clear message. Override with `plugin-scheduler.dbcli.connect=jdbc:slackerdb://host:port/db` when needed; a `_connect`
+  inside the script still wins;
+* *Variables*: scheduler variables (framework + the three business layers) are available as `${NAME}`;
+* *Timeout / abort*: the stop signal makes the script stop **before the next statement** and cancels the running SQL;
+* *Exit code*: dbcli semantics — only an explicit `_EXIT n` / `_WHENEVER ERROR EXIT n` changes it; SQL errors inside the
+  script are only counted (the task log mentions them) and do not fail the task. To fail on SQL errors, put
+  `_WHENEVER ERROR EXIT 1` at the top of the script.
 
 ===== Variables: Passing Connection Information to HOP
 
@@ -3385,9 +3520,18 @@ queried through the API; expired history rows and log files are cleaned up autom
 
 ===== Notes
 
-* HOP is **not** bundled with the plugin; provide a HOP 2.19+ distribution and configure `plugin-scheduler.hop.runScript`.
+* HOP is **not** bundled with the distribution; provide a HOP 2.20+ distribution and configure `plugin-scheduler.hop.runScript`.
   HOP runs as a separate process, so no JVM parameters of the database server need to be changed.
-* The HOP project must satisfy the following (the plugin self-checks this when an instance is created and warns):
+* Since HOP 2.20 the scheduler registers its project and lifecycle environment inside each `hop-run` process
+  (`--project-locations`, `--environments`, `--in-memory`). It therefore no longer depends on the
+  `hop-config.json` it maintains in the run directory: parallel tasks cannot lose each other's environment,
+  a read-only `hop-config.json` is supported, and a failed `hop-config.json` update only logs a warning.
+  Set `plugin-scheduler.hop.inMemoryProject=false` only to fall back to the old behaviour on HOP 2.19 or older.
+* HOP output is decoded as UTF-8: the scheduler exports `HOP_WINDOWS_SHELL_ENCODING=65001` and appends
+  `-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8` to `HOP_OPTIONS`, so Chinese task
+  names/values no longer garble the task log on Windows. `SHELL` output still uses the platform
+  encoding.
+* The HOP project must satisfy the following (the scheduler self-checks this when an instance is created and warns):
   **if the template's `project-config.json` declares `"parentProjectName": "default"`, a `default/` project must exist
   under the template root and its own `parentProjectName` must be empty** (a parent project is optional — in that case
   leave `parentProjectName` empty in the template itself);
@@ -3395,7 +3539,7 @@ queried through the API; expired history rows and log files are cleaned up autom
 * Termination is best-effort: timeouts and aborts terminate `hop-run` and its child processes, but long-running
   transactions inside HOP are not guaranteed to roll back immediately
 * Single-node scheduling only; multiple nodes are not supported
-* The plugin has no built-in authentication — expose the management port only on trusted networks
+* The scheduler has no built-in authentication — expose the management port only on trusted networks
 
 ==== Plugin Management API
 

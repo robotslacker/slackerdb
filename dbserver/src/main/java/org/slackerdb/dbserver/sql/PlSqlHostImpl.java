@@ -143,6 +143,16 @@ public class PlSqlHostImpl implements PlSqlHost {
         }
 
         @Override
+        public String columnName(int oneBasedIndex) throws SQLException {
+            return resultSet == null ? "" : resultSet.getMetaData().getColumnName(oneBasedIndex);
+        }
+
+        @Override
+        public String columnType(int oneBasedIndex) throws SQLException {
+            return resultSet == null ? "" : resultSet.getMetaData().getColumnTypeName(oneBasedIndex);
+        }
+
+        @Override
         public long updateCount() throws SQLException {
             if (resultSet != null || preparedStatement == null) {
                 return -1;

@@ -4,6 +4,7 @@ import org.slackerdb.common.utils.AppDaemon;
 import org.slackerdb.dbcli.common.PathArguments;
 import org.slackerdb.dbcli.daemon.CliDaemon;
 import org.slackerdb.dbcli.daemon.PidFile;
+import org.slackerdb.dbcli.embed.DbcliRunner;
 import org.slackerdb.dbcli.engine.ScriptContext;
 import org.slackerdb.dbcli.engine.ScriptOutput;
 import org.slackerdb.dbcli.engine.ScriptRunner;
@@ -109,6 +110,24 @@ import java.util.concurrent.TimeUnit;
         sortOptions = false
 )
 public class Cli implements Callable<Integer> {
+
+    /**
+     * 显式加载 dbcli 自己的日志配置。
+     *
+     * <p>dbcli 的日志规矩是"只走 stdout、默认只出 WARN"（见 {@code logback-dbcli.xml}）。
+     * 这个文件<b>刻意不叫</b> {@code logback.xml}：dbcli 现在也会被当作依赖嵌入宿主
+     * （dbserver 的 DBCLI 任务在进程内跑脚本），而 logback 会自动加载 classpath 上任意一个
+     * {@code logback.xml} —— 那就等于把宿主的日志配置悄悄换掉。因此只在"作为 CLI 运行"
+     * （也就是 {@code Cli} 被加载）时显式指过去；嵌入场景不会碰 {@code Cli}，宿主的日志不受影响。</p>
+     */
+    static {
+        if (System.getProperty("logback.configurationFile") == null) {
+            java.net.URL config = Cli.class.getResource("/logback-dbcli.xml");
+            if (config != null) {
+                System.setProperty("logback.configurationFile", config.toExternalForm());
+            }
+        }
+    }
 
     /** 提供**默认** logon 参数的环境变量名（与 {@code --logon} 同义、同格式；命令行优先）。 */
     static final String LOGON_ENV = "SLACKERDB_LOGON";
@@ -476,6 +495,19 @@ public class Cli implements Callable<Integer> {
             }
         }
 
+        // 批处理（--execute <file> / stdin）：统一走**嵌入入口** {@link DbcliRunner}，
+        // 与 dbserver 的 DBCLI 调度任务同一条装配；交互式控制台需要"活的" runner/context，
+        // 因此只有 consoleMode 走下面的内联装配。
+        if (!consoleMode) {
+            try {
+                return runEmbeddedScripts(runPlan, scriptFile, stdinScript, logFileTarget, referenceFile,
+                        reportDirectory, actualOutputFile, workingDirectory, processDirectory,
+                        variableTable, out, err);
+            } finally {
+                cleanUpRunArtifacts(pidFileHolder, daemonCopy, daemonScriptTemp, scriptFile);
+            }
+        }
+
         try (SqlExecutor executor = new JdbcSqlExecutor();
              ScriptOutput scriptOutput = terminal.scriptOutput();
              ScriptContext context = new ScriptContext(executor, scriptOutput, resolver, workingDirectory)) {
@@ -546,16 +578,25 @@ public class Cli implements Callable<Integer> {
             return finish(runCode, scriptOutput, scriptName, actualOutputFile, referenceFile,
                     reportDirectory, context, err);
         } finally {
-            // pidfile：前台运行（含开发模式）正常/异常退出都尽力清理（被强杀时没机会走到这里，
-            // 由使用者自行处理）。**后台副本例外**：它留着这份文件，否则一份跑得很快的脚本会在
-            // 父进程两次轮询之间写完又删掉，父进程只能报"没写出 pid"（见 --daemon-copy）。
-            if (pidFileHolder != null && !daemonCopy) {
-                pidFileHolder.deleteQuietly();
-            }
-            // stdin 管道形态的临时脚本（见 --daemon-script-temp）：副本是本进程，跑完就删
-            if (daemonScriptTemp && scriptFile != null) {
-                deleteQuietly(scriptFile);
-            }
+            cleanUpRunArtifacts(pidFileHolder, daemonCopy, daemonScriptTemp, scriptFile);
+        }
+    }
+
+    /**
+     * 清理本次运行留下的临时产物（批处理与控制台两条路径共用）。
+     *
+     * <p>pidfile：前台运行（含开发模式）正常/异常退出都尽力清理（被强杀时没机会走到这里，
+     * 由使用者自行处理）。<b>后台副本例外</b>：它留着这份文件，否则一份跑得很快的脚本会在
+     * 父进程两次轮询之间写完又删掉，父进程只能报"没写出 pid"（见 {@code --daemon-copy}）。</p>
+     */
+    private void cleanUpRunArtifacts(PidFile pidFileHolder, boolean daemonCopy,
+                                     boolean daemonScriptTemp, Path scriptFile) {
+        if (pidFileHolder != null && !daemonCopy) {
+            pidFileHolder.deleteQuietly();
+        }
+        // stdin 管道形态的临时脚本（见 --daemon-script-temp）：副本是本进程，跑完就删
+        if (daemonScriptTemp && scriptFile != null) {
+            deleteQuietly(scriptFile);
         }
     }
 
@@ -759,17 +800,102 @@ public class Cli implements Callable<Integer> {
      * <p>退出码规则：脚本自己的退出码优先；脚本为 0 而比对不一致、或 ref 文件不存在时给 1
      * （与 {@code _COMPARE} 一致）。stdout 全程不受影响。</p>
      */
+    /**
+     * 批处理路径（{@code --execute <file>} 与 stdin）：把"跑脚本"交给嵌入入口
+     * {@link DbcliRunner}（dbserver 的 DBCLI 任务用的是同一个入口），CLI 自己只保留
+     * 输入解析、{@code --logon}/{@code --profile} 的取值与报错、{@code --ref} 的收尾。
+     *
+     * <p>交互式控制台不走这里：它需要"活的" {@code ScriptRunner}/{@code ScriptContext}。</p>
+     */
+    private int runEmbeddedScripts(RunPlan runPlan, Path scriptFile, String stdinScript,
+                                   Path logFileTarget, Path referenceFile, Path reportDirectory,
+                                   Path actualOutputFile, Path workingDirectory, Path processDirectory,
+                                   Map<String, String> variableTable, PrintWriter out, PrintWriter err) {
+        DbcliRunner.Request.Builder builder = DbcliRunner.Request.builder()
+                .workingDirectory(workingDirectory)
+                .variables(variableTable)
+                .out(out)
+                .err(err);
+        if (logFileTarget != null) {
+            builder.logFile(logFileTarget);
+        }
+
+        // 连接参数：命令行 --logon 优先，没给才用环境变量 SLACKERDB_LOGON；两者都没有就不自动连接
+        LogonRequest logonRequest;
+        try {
+            logonRequest = resolveLogon();
+        } catch (IllegalArgumentException e) {
+            // 配置名写错属于"命令行层面的错"：给一行可读信息，退出码 1（与 profile 文件不存在一致）
+            err.println(e.getMessage());
+            return 1;
+        }
+        if (logonRequest != null) {
+            if (logonRequest.hasLineBreak()) {
+                err.println("Invalid " + logonRequest.label() + " value: it must be a single line.");
+                err.flush();
+                return 1;
+            }
+            if (logonRequest.fromEnvironment()) {
+                // 可观测：说明这次用的是环境变量（走 stdout，dbcli 从不写 stderr）
+                err.println("[dbcli] Using " + LOGON_ENV + " for the initial connection.");
+                err.flush();
+            }
+            builder.logon(logonRequest.value());
+        }
+
+        // --profile：先校验存在性（保持原来的报错文案与"命令行层面的错 ⇒ 1"）
+        for (String profile : profiles) {
+            Path resolved;
+            try {
+                resolved = PathArguments.resolve(processDirectory, profile);
+            } catch (PathArguments.InvalidPathException invalidPath) {
+                err.println(invalidPath.getMessage());
+                err.flush();
+                return 1;
+            }
+            if (!Files.isRegularFile(resolved)) {
+                err.println("Profile script [" + profile + "] does not exist.");
+                err.flush();
+                return 1;
+            }
+            builder.profile(resolved);
+        }
+
+        if (scriptFile != null) {
+            builder.script(scriptFile);
+        } else {
+            builder.scriptText(stdinScript, "<stdin>");
+        }
+
+        DbcliRunner.Result result;
+        try {
+            result = DbcliRunner.run(builder.build());
+        } catch (DbcliRunner.DbcliException e) {
+            err.println(e.getMessage());
+            err.flush();
+            return 1;
+        }
+        if (referenceFile == null) {
+            return result.exitCode();
+        }
+        // --ref：与作业的收尾共用同一份实现（见 ReferenceCheck）；tee 已由 runner 停掉
+        ReferenceCheck.Outcome outcome = ReferenceCheck.finish(result.exitCode(),
+                runPlan.scriptName(stdinScript), actualOutputFile, referenceFile, reportDirectory,
+                result.compareRules(), err::println);
+        err.flush();
+        return outcome.exitCode();
+    }
+
     private int finish(int runCode, ScriptOutput scriptOutput, String scriptName,
                        Path actualOutputFile, Path referenceFile, Path reportDirectory,
                        ScriptContext context, PrintWriter err) {
+        scriptOutput.stopTee();
         if (referenceFile == null) {
-            scriptOutput.stopTee();
             return runCode;
         }
         // 与作业的 reference 收尾共用同一份实现（见 ReferenceCheck）：退出码规则只有一处
         ReferenceCheck.Outcome outcome = ReferenceCheck.finish(runCode, scriptName, actualOutputFile,
-                referenceFile, reportDirectory, scriptOutput,
-                context.dispatcher().compareRules(), err::println);
+                referenceFile, reportDirectory, context.dispatcher().compareRules(), err::println);
         err.flush();
         return outcome.exitCode();
     }
