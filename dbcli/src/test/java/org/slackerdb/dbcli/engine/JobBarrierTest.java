@@ -297,6 +297,58 @@ class JobBarrierTest {
         }
     }
 
+    // ------------------------------------------------------------------ 统一存储
+
+    @Test
+    @DisplayName("先放行、后定义进程作业：放行不再因为后端切换而丢失（统一存储的修复）")
+    void releaseBeforeAProcessJobIsDefinedSurvives() throws Exception {
+        writeScript("early.sql",
+                "_job wait TIMER:EARLY timeout=30",
+                "_echo t", "early-released", "echo off");
+        Result result = runParent(String.join("\n",
+                "_job jobmanager on",
+                "_job timer EARLY",
+                "_job create EARLY_JOB script=early.sql mode=process",
+                "_job start EARLY_JOB",
+                "_job wait EARLY_JOB timeout=60",
+                "_job jobmanager off"));
+
+        assertEquals(0, result.exitCode(), "stderr: " + result.stderr() + "\nstdout: " + result.stdout());
+        assertTrue(result.stdout().contains("Job [EARLY_JOB] finished with exit code 0."),
+                "先放行后定义进程作业也必须能会合: " + result.stdout());
+        String childOut = readJobOutput("EARLY_JOB", ".out");
+        assertTrue(childOut.contains("Timer point [EARLY] released."), childOut);
+        assertTrue(childOut.contains("early-released"), childOut);
+    }
+
+    @Test
+    @DisplayName("混合：线程作业与进程作业共享同一个定时点，父脚本一次放行唤醒两边")
+    void threadAndProcessJobsShareOneTimerPoint() throws Exception {
+        writeScript("mixed-thread.sql",
+                "_job wait TIMER:MIXED timeout=60",
+                "_echo t", "thread-after-mixed", "echo off");
+        writeScript("mixed-process.sql",
+                "_job wait TIMER:MIXED timeout=60",
+                "_echo t", "process-after-mixed", "echo off");
+        Result result = runParent(String.join("\n",
+                "_job jobmanager on",
+                "_job create M1 script=mixed-thread.sql",
+                "_job create M2 script=mixed-process.sql mode=process",
+                "_job start M1",
+                "_job start M2",
+                "_sleep 1",
+                "_job timer MIXED",
+                "_job wait M1 timeout=60",
+                "_job wait M2 timeout=60",
+                "_job jobmanager off"));
+
+        assertEquals(0, result.exitCode(), "stderr: " + result.stderr() + "\nstdout: " + result.stdout());
+        assertTrue(result.stdout().contains("Job [M1] finished with exit code 0."), result.stdout());
+        assertTrue(result.stdout().contains("Job [M2] finished with exit code 0."), result.stdout());
+        assertTrue(readJobOutput("M1", ".out").contains("thread-after-mixed"));
+        assertTrue(readJobOutput("M2", ".out").contains("process-after-mixed"));
+    }
+
     // ------------------------------------------------------------------ 线程卫生
 
     @Test

@@ -11,9 +11,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.net.http.HttpTimeoutException;
 import java.time.Duration;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -32,23 +30,22 @@ import java.util.Set;
  */
 public final class ManagementForwarder {
 
+    /**
+     * No response deadline on purpose: this class only forwards. Query duration is
+     * owned by the backend ({@code max_execution_time}) and by the client; only the
+     * TCP connect is bounded here.
+     */
     private static final HttpClient CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
             .followRedirects(HttpClient.Redirect.NEVER)
             .version(HttpClient.Version.HTTP_1_1)
             .build();
 
-    private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(15);
-
     /** RFC 7230 hop-by-hop 头 + 必须由本端重算的头。 */
     private static final Set<String> HOP_BY_HOP = Set.of(
             "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
             "te", "trailers", "transfer-encoding", "upgrade",
             "host", "content-length", "expect");
-
-    /** 这些路径可能是大文件/长连接，不设整体超时（只保留 5s 建连超时）。 */
-    private static final List<String> STREAMING_MARKERS = List.of(
-            "/download", "/upload", "/logfile", "/viewlog", "/backup");
 
     private ManagementForwarder() {
     }
@@ -87,8 +84,6 @@ public final class ManagementForwarder {
 
         try {
             forward(ctx, targetUrl);
-        } catch (HttpTimeoutException timeoutException) {
-            jsonError(ctx, 504, "Management request to database [" + alias + "] timed out.", null);
         } catch (IOException ioException) {
             jsonError(ctx, 502, "Management request to database [" + alias + "] failed: "
                     + ioException.getMessage(), null);
@@ -108,9 +103,6 @@ public final class ManagementForwarder {
                 continue;
             }
             builder.header(header.getKey(), header.getValue());
-        }
-        if (!isStreamingPath(targetUrl)) {
-            builder.timeout(DEFAULT_TIMEOUT);
         }
 
         HttpResponse<InputStream> response = CLIENT.send(builder.build(),
@@ -149,16 +141,6 @@ public final class ManagementForwarder {
             return HttpRequest.BodyPublishers.noBody();
         }
         return HttpRequest.BodyPublishers.ofInputStream(ctx::bodyInputStream);
-    }
-
-    private static boolean isStreamingPath(String url) {
-        String lower = url.toLowerCase(Locale.ROOT);
-        for (String marker : STREAMING_MARKERS) {
-            if (lower.contains(marker)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static void jsonError(Context ctx, int status, String message, JSONObject details) {

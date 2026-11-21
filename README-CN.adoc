@@ -83,6 +83,10 @@ SlackerDB 是一个基于 Java 的服务层，把 DuckDB 放到网络上。
 命令同时生成 `offline/javarepo.zip` 和 `offline/npmrepo.zip`，并删除未压缩的
 `javarepo/`、`npmrepo/` 目录。把这两个 zip 拷到离线机器，解压到同一目录即可。
 
+重新生成时，npm 包会优先复用本机已有的缓存（上一版 `offline/npmrepo`、`NPM_CONFIG_CACHE`、
+`npm config get cache` 指向的本机缓存），只有本地确实没有的包才访问 npm registry。需要额外指定缓存目录时加
+`-Doffline.npm.cache.dirs=<dir>`（多个用逗号或分号分隔）。
+
 `javarepo` 里不只有最终会进 classpath 的 jar，还带完整的 POM 描述符闭包：父 POM、
 import 的 BOM，以及 Maven 收集依赖时会读取的每一个候选版本（含被"就近原则"淘汰的
 版本）。因此离线构建不会再出现
@@ -388,8 +392,8 @@ daemon=
 port=0
 
 # 管理 API 端口
-#  0 = 随机分配端口
-# -1 = 禁用接口（默认）
+#  0 = 随机分配端口（默认）
+# -1 = 禁用接口
 port_x=
 
 # 网络绑定地址
@@ -405,6 +409,11 @@ listener_address=
 # 留空 = 不启用实例管理
 # 目录结构见"实例管理"一节。
 data_dir=
+
+# dbserver 运行时 jar 的文件名模式（在代理目录、jlib 等目录下按此模式查找）
+# 示例：slackerdb-dbserver-*-standalone.jar
+# 没有默认值：留空时拒绝创建实例（已有实例的启动/停止/销毁不受影响）
+dbserver_jar=
 
 # 客户端连接空闲超时（秒）
 client_timeout=600
@@ -438,6 +447,9 @@ UDP组播发现：dbserver 周期性向一个组播组报告"我在这儿"，代
 
 配置 `data_dir` 后，代理可以在本机托管多个数据库实例：**每个实例是一个独立的 dbserver 进程**。
 
+创建实例还要求配置 `dbserver_jar`（dbserver 运行时 jar 的文件名模式，例如 `slackerdb-dbserver-*-standalone.jar`）。
+它没有默认值：未配置时 `create` 返回 503，已有的实例仍可 list/stop/destroy。
+
 ....
 instances/
   sales/                     # 目录名 = 别名（连接串里的 database）
@@ -447,17 +459,44 @@ instances/
     bin/stop.sh|bat          # 优雅停止（PG 口管理帧）
     bin/status.sh|bat
     data/sales.db
-    logs/server.log          # dbserver 日志
+    logs/server.log          # dbserver 日志（默认位置，可用 log= 改到别处）
     logs/console.log         # 子进程 stdout/stderr
-    instance.pid
+    instance.pid             # 默认 pid 文件（可用 pid= 改名）
 ....
 
 别名与库名可以不同（`--name` 指定库名，缺省等于别名）；别名唯一，重复创建返回 409。
 
+`create` 支持用 `--key value` 的方式直接传入任意 dbserver 配置项：端口、日志、数据路径、pid、bind、
+组播注册地址、访问模式、插件参数等都由用户自己决定。代理只给用户没有提到的项填默认值，
+不做合理性判断——端口冲突、目录不可写、参数取值非法等会在启动时由 dbserver 自己报错。
+CLI 的取值经管理通道（PG 口的 `!` 帧）传输，不能含空格；HTTP 接口没有这个限制。
+
+....
+dbproxy create --alias sales --conf dbproxy.conf \
+    --port 15433 --port_x 15434 --log logs/sales.log --data_dir /data/sales
+....
+
+* `port` / `port_x` 传 `0`（或不传）表示"由代理挑一个空闲端口"：实际端口会写进 `instance.conf`，
+  之后可以从 `list`、`GET /admin/databases/<别名>` 或创建响应里查到真实端口。
+  `port_x=-1` 表示不启用该实例的管理口。
+* 每个实例固定占用 `<data_dir>/<别名>` 目录，`instance.conf` 就落在这里；其余配置项（`data`、`data_dir`、
+  `pid`、`log`、`bind`、`advertise_address`、`access_mode`、`max_connections`、`<pluginId>.<param>` 等）
+  都原样写入该文件。相对路径按实例目录解析（dbserver 以实例目录为工作目录启动）。
+* 用户配置的 `pid` 和 `log` 会被全程遵守：探测读取 `pid=` 指定的文件（改名、绝对路径都可以），
+  `GET /admin/databases/<别名>/logs` 读取 `log=` 指定的文件（逗号分隔的多个目标都会读，`CONSOLE` 跳过，
+  `${data}` 会替换成库名）。代理不会假定文件名一定是默认的 `instance.pid` / `logs/server.log`。
+  `logfile` 是 dbserver 对 `log` 的别名，创建时会被归一化成 `log`（两个都给时 `log` 优先），
+  避免 `instance.conf` 里同时出现两个键而"谁生效"不确定。
+* `--name` 是 `data` 的简写；同时给 `--data` 时以 `--data` 为准。
+* `create` 下 `--conf` 仍然表示"代理客户端配置"（用于定位代理），其余 `--key value` 才是新实例的配置。
+  例如 `dbproxy create --alias sales --conf dbproxy.conf --port 15433`。
+* 代理托管的进程始终以前台方式启动：即使传了 `daemon=true`，拉起时也会被 `--daemon false` 覆盖
+  （`bin/start-daemon` 仍可自行后台启动）。
+
 [cols="1,2",options="header"]
 |===
 | 命令 | 说明
-| `dbproxy create --alias sales [--name sales] [--start false]` | 创建实例并默认启动
+| `dbproxy create --alias sales [--name sales] [--start false] [--<conf_key> <value> ...]` | 创建实例并默认启动
 | `dbproxy resume --alias sales` | 启动一个已停止的实例
 | `dbproxy shutdown --alias sales` | 优雅停止（保留数据与目录）
 | `dbproxy restart --alias sales` | 停止后重新启动
@@ -466,17 +505,7 @@ instances/
 | `dbproxy status` | 代理状态 + 实例表
 |===
 
-管理口对应端点（代理自身）：
-
-* `GET /status`
-* `GET /capabilities`
-* `GET /admin/databases`
-* `GET /admin/databases/别名`
-* `POST /admin/databases/别名/start`
-* `POST /admin/databases/别名/shutdown`
-* `POST /admin/databases/别名/restart`
-* `DELETE /admin/databases/别名`
-* `GET /admin/databases/别名/logs?lines=200`
+管理口的完整 HTTP 契约（自身状态、实例管理、`/<别名>/**` 前缀转发与 WebSocket）见下一节 <<proxy-http-api>>。
 
 行为约定：
 
@@ -487,8 +516,371 @@ instances/
   已存在的同名外部条目会被立即摘除。
 * **不级联**：`dbproxy stop` 只停代理，实例会继续运行。
 * **不自动恢复**：代理重启后不会自动拉起任何实例。
+* **删除只针对实例目录**：`destroy` 只删除 `<data_dir>/<别名>`。实例的 `data_dir` 如果指向这个目录之外，
+  删除时会忽略它（数据保留，需要时请自行清理）。
 * **可绕过代理**：直接执行实例目录下的 `bin/start-daemon`、`bin/stop` 即可；
   代理每次状态查询都会重新探测（`/health` + pid + 命令行校验），所以手工启停也能被正确识别。
+
+[[proxy-http-api]]
+==== 代理 HTTP 接口
+
+代理的管理口（配置项 `port_x`，命令行 `--portX`）承载三类请求：代理自身状态、托管实例的生命周期管理，以及把 `/<别名>/**` 原样转发到该实例的管理口。
+`port_x=0`（默认）表示随机分配端口，实际值见启动日志；`port_x=-1` 关闭管理口，本节所有端点都不可用。
+管理口**只提供 API**：代理自身不再提供任何 HTML/Web 页面，界面统一由 dbdesk 负责。
+
+[cols="1,3,3",options="header"]
+|===
+| 优先级 | 路径 | 去向
+| 1 | `/status`、`/capabilities` | 代理自身
+| 2 | `/admin/databases/**` | 代理的实例管理
+| 3 | `/<别名>/**` | 该别名实例的管理口（HTTP 透传）
+| 4 | `/<别名>/aichat` | 该别名实例的 `/aichat`（WebSocket 双向管道）
+|===
+
+优先级由注册顺序决定，`/admin/**` 不会被当成别名转发。别名只取路径的第一段，其余部分（含 query string）原样拼到目标地址。
+`admin`、`status`、`capabilities`、`health` 是保留名，不能用于实例。
+
+**通用约定**
+
+* 代理自己产生的错误统一为 JSON 信封：`{"retCode": <HTTP 状态码>, "retMsg": "<原因>"}`。转发成功的响应保持实例返回的状态码、响应头与响应体，不做二次包装；只有转发失败才由代理生成信封。
+* 管理口**没有认证与鉴权**。请通过 `bind` 限制监听地址，不要把管理口直接暴露到不可信网络。
+* 管理口默认开启 CORS（允许任意来源），浏览器端可以直接调用。
+* 代理自身生成的响应为 UTF-8 JSON（逐实例日志接口例外，返回 `text/plain`）；转发响应保持实例返回的内容类型，可能是任意类型（包括二进制）。
+
+===== GET /status
+
+代理自身状态，外加当前登记的所有后端。它使用最近一次扫描快照，不强制重新探测实例，因此开销很小。
+
+[source,json]
+----
+{
+  "role": "proxy",
+  "version": "0.2.2",
+  "pid": 12345,
+  "uptimeSeconds": 3600,
+  "managementPort": 18080,
+  "pgPort": 15432,
+  "instanceManagementEnabled": true,
+  "backends": [
+    { "alias": "erp", "target": "http://10.0.0.8:18080", "state": "UNKNOWN" }
+  ],
+  "backendCount": 1,
+  "databases": [
+    {
+      "alias": "erp",
+      "source": "external",
+      "manageable": false,
+      "name": "erp",
+      "state": "RUNNING",
+      "pid": null,
+      "pgPort": 5432,
+      "mgmtPort": 18080,
+      "health": "UNKNOWN",
+      "uptimeSeconds": null,
+      "error": null,
+      "dir": null,
+      "target": "10.0.0.8:5432"
+    },
+    {
+      "alias": "sales",
+      "source": "management",
+      "manageable": true,
+      "name": "sales",
+      "state": "RUNNING",
+      "pid": 23456,
+      "pgPort": 42001,
+      "mgmtPort": 42002,
+      "health": "UP",
+      "uptimeSeconds": 1200,
+      "error": null,
+      "dir": "/data/instances/sales",
+      "target": null
+    }
+  ]
+}
+----
+
+* `backends` 只包含外部登记（组播发现）的转发映射，`state` 固定为 `UNKNOWN`（代理无法进一步探活）；`backendCount` 是它的长度。
+* `databases` 是统一视图：`management`（`data_dir` 下扫描到的实例）与 `external`（组播登记的后端）都在这里，字段含义见下面的“后端对象”。
+* 代理自身没有 `/health` 端点（`/health` 是 dbserver 的探活端点）；监控代理请用 `/status`。
+
+===== GET /capabilities
+
+声明管理 API 契约版本与本代理的能力，客户端据此决定可以调用哪些端点。
+
+[source,json]
+----
+{
+  "apiVersion": 1,
+  "proxy": { "version": "0.2.2", "pid": 12345 },
+  "ports": { "pg": 15432, "management": 18080, "managementEnabled": true },
+  "managementForwarding": { "enabled": true, "prefixMode": "alias" },
+  "provisioning": {
+    "enabled": true,
+    "mode": "process",
+    "adminBase": "/admin",
+    "features": ["list", "detail", "create", "start", "shutdown", "restart", "destroy", "logs"],
+    "backendSources": ["management", "external"]
+  },
+  "contracts": { "managementApi": 1 }
+}
+----
+
+* `apiVersion` 与 `contracts.managementApi` 是管理 API 契约版本（当前为 `1`），不是产品版本；产品版本在 `proxy.version`。
+* `provisioning.enabled` 与 `instanceManagementEnabled` 一致：未配置 `data_dir` 时为 `false`，此时针对托管实例的写操作返回 503。
+* `managementForwarding.prefixMode=alias` 表示 `/<别名>/**` 的前缀转发规则。
+
+===== /admin/databases 系列
+
+[cols="1,3,4",options="header"]
+|===
+| 方法 | 路径 | 说明
+| GET | `/admin/databases` | 列出全部后端及实例根目录
+| GET | `/admin/databases/<别名>` | 单个后端详情（托管实例附带 `conf`）
+| POST | `/admin/databases` | 创建实例
+| POST | `/admin/databases/<别名>/start` | 启动实例
+| POST | `/admin/databases/<别名>/shutdown` | 优雅停止实例
+| POST | `/admin/databases/<别名>/restart` | 停止后重新启动
+| DELETE | `/admin/databases/<别名>` | 停止并删除实例目录
+| GET | `/admin/databases/<别名>/logs` | 读取实例日志尾部（纯文本）
+|===
+
+除列表接口外，其余端点都要求别名存在，不存在时返回 404。生命周期操作失败时按原因返回 400/409/500/504，响应仍是 `retCode`/`retMsg` 信封。
+
+====== GET /admin/databases
+
+列出后端。查询参数 `probe`（可选，默认 `true`）控制是否强制重新探测：`probe=false` 使用最近一次扫描快照（最多约 5 秒旧），适合高频轮询。
+
+[source,json]
+----
+{
+  "instanceManagementEnabled": true,
+  "storage": { "dataDir": "/data/instances" },
+  "databases": [
+    {
+      "alias": "sales",
+      "source": "management",
+      "manageable": true,
+      "name": "sales",
+      "state": "RUNNING",
+      "pid": 23456,
+      "pgPort": 42001,
+      "mgmtPort": 42002,
+      "health": "UP",
+      "uptimeSeconds": 1200,
+      "error": null,
+      "dir": "/data/instances/sales",
+      "target": null
+    }
+  ]
+}
+----
+
+后端对象字段：
+
+[cols="1,1,3",options="header"]
+|===
+| 字段 | 类型 | 说明
+| `alias` | string | 别名，也是路由键
+| `source` | string | `management`（`data_dir` 下的实例）或 `external`（组播登记的后端）
+| `manageable` | boolean | 是否允许生命周期操作；只有 `management` 为 `true`
+| `name` | string | 数据库名（实例配置里的 `data`）
+| `state` | string | `RUNNING`、`DEGRADED`、`STOPPED`、`UNKNOWN`；列表中还可能出现瞬态的 `STARTING`、`STOPPING`
+| `pid` | number/null | 通过命令行校验的实例进程号；外部后端和未运行实例为 `null`
+| `pgPort` | number | 数据端口
+| `mgmtPort` | number | 管理口；实例未启用管理口时为 `-1`
+| `health` | string | `UP`、`DOWN`、`TIMEOUT`、`UNKNOWN`
+| `uptimeSeconds` | number/null | 进程运行时长；无法获取时为 `null`
+| `error` | string/null | 无法路由或无法判断状态时的原因
+| `dir` | string/null | 托管实例目录；外部后端为 `null`
+| `target` | string/null | 外部后端的 `host:port`；托管实例为 `null`
+|===
+
+`instanceManagementEnabled=false` 时 `storage.dataDir` 为 `null`，`databases` 只包含外部后端。扫描实例目录失败时返回 500 信封。
+
+====== GET /admin/databases/<别名>
+
+返回单个后端。托管实例额外带 `conf`（`instance.conf` 的小写键值视图）；外部后端只有地址信息。托管实例按最近一次扫描快照返回，不强制重探；需要最新状态时请用列表接口。
+
+[source,json]
+----
+{
+  "alias": "sales",
+  "source": "management",
+  "manageable": true,
+  "name": "sales",
+  "state": "RUNNING",
+  "pid": 23456,
+  "pgPort": 42001,
+  "mgmtPort": 42002,
+  "health": "UP",
+  "uptimeSeconds": 1200,
+  "error": null,
+  "dir": "/data/instances/sales",
+  "target": null,
+  "conf": {
+    "data": "sales",
+    "data_dir": "data",
+    "port": "42001",
+    "port_x": "42002",
+    "pid": "instance.pid",
+    "log": "logs/server.log",
+    "bind": "127.0.0.1",
+    "daemon": "false",
+    "advertise_address": "",
+    "access_mode": "READ_WRITE"
+  }
+}
+----
+
+别名不存在（既不是托管实例，也没有外部登记）时返回 404。
+
+====== POST /admin/databases
+
+创建实例目录，并默认立即启动。
+
+[source,json]
+----
+{
+  "alias": "sales",
+  "name": "sales",
+  "start": true,
+  "conf": {
+    "port": 0,
+    "port_x": 0,
+    "log": "logs/sales.log",
+    "access_mode": "READ_ONLY"
+  }
+}
+----
+
+[cols="1,1,4",options="header"]
+|===
+| 字段 | 必填 | 说明
+| `alias` | 是 | 目录名/路由键，统一转小写，规则 `[a-z][a-z0-9_-]{0,62}`；保留名或已存在的别名返回 409
+| `name` | 否 | 数据库名，默认等于 `alias`，规则 `[A-Za-z][A-Za-z0-9_-]{0,62}`
+| `start` | 否 | 创建后是否立即启动，默认 `true`
+| `conf` | 否 | 写入 `instance.conf` 的 dbserver 配置项，可覆盖任意键（端口、日志、数据路径、pid、bind、`advertise_address`、`access_mode`、插件参数等）
+|===
+
+`conf` 的键名规则：标准配置项为 `[a-z][a-z0-9_]*`；插件参数写成 `<pluginId>.<paramName>`（大小写保留）。
+取值不能含换行。代理不校验取值是否合理，写错了由 dbserver 在启动时报错。
+
+`port` / `port_x` 传 `0`（或不传）时由代理分配空闲端口，实际端口写入 `instance.conf`，并出现在响应与后续查询里。
+`port_x=-1` 表示不启用该实例的管理口。
+
+成功返回 `201` 和实例对象（含 `conf` 与真实端口）。`start=true` 且启动失败时，实例目录仍然保留，响应为启动失败的状态码，`retMsg` 会说明“已创建但启动失败”及原因。
+
+====== POST /admin/databases/<别名>/start|shutdown|restart
+
+三个端点都不接受请求体，成功返回 `200` 和实例对象（含 `conf`）。
+
+* `start`：最多等待 30 秒直到实例的 `/health` 为 `UP`；已在运行返回 409，超时返回 504。
+* `shutdown`：先通过 PG 口发停止帧，最多等 20 秒；仍不退出时对本实例进程发 SIGTERM，再等 5 秒。已经是 `STOPPED` 时直接返回 200；外部后端或端口不可用返回 409；最终仍未停止返回 500。
+* `restart`：`shutdown` + `start`；对已停止的实例等价于直接启动。
+
+====== DELETE /admin/databases/<别名>
+
+停止实例（如果正在运行）并删除整个实例目录，返回：
+
+[source,json]
+----
+{ "alias": "sales", "destroyed": true }
+----
+
+删除的只有 `<data_dir>/<别名>` 目录本身。如果实例的 `data_dir` 指向该目录之外，它会被忽略（数据保留）。
+
+外部后端返回 409（只转发、不可治理）；目录不存在返回 404；pid 仍存活但无法确认属于该实例、或实例仍在运行时返回 409。
+
+====== GET /admin/databases/<别名>/logs
+
+以 `text/plain` 返回实例日志尾部。查询参数 `lines` 默认 `200`，上限 `5000`。
+
+内容依次是 `instance.conf` 里 `log=` 指定的 dbserver 日志文件（默认 `logs/server.log`；逗号分隔的多个目标
+都会读，`CONSOLE` 与不存在的文件跳过）的最后 N 行、`logs/console.log` 的最后 `min(N, 50)` 行、
+`logs/launch.log` 的最后 4 行，每段前有 `---- <文件> (last K lines) ----` 分隔行。上述文件都不存在时返回
+`(no log file at <文件列表>)`。
+
+.示例：
+ GET /admin/databases/sales/logs?lines=100
+
+外部后端返回 409；实例不存在返回 404；`lines` 不是整数返回 400。
+
+===== 前缀转发 `/<别名>/**`
+
+除 `/status`、`/capabilities`、`/admin/**` 之外的请求，都会按第一段路径解析别名并转发到该实例的管理口；GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS 走同一套实现。
+
+* 第一段之后的路径与 query string 原样保留：`/sales/logfile?lines=50` 转发到 `http://127.0.0.1:42002/logfile?lines=50`。
+* 请求头除逐跳头（`Connection`、`Keep-Alive`、`Upgrade`、`Transfer-Encoding` 等）和 `Host`、`Content-Length`、`Expect` 外原样转发；请求体与响应体都是流式的，适合上传/下载大文件。
+* 不自动跟随 302：实例返回的重定向原样交给调用方。
+* 默认整体超时 15 秒；路径中含 `/download`、`/upload`、`/logfile`、`/viewlog`、`/backup` 的请求不设整体超时，只保留 5 秒建连超时。
+* 实例返回的状态码、响应头和响应体不做改写；HEAD、204、304 不返回响应体。
+
+失败时由代理返回 JSON 信封：
+
+[cols="1,1,4",options="header"]
+|===
+| 状态码 | 场景 | 响应体
+| 404 | 别名不存在 | `{"retCode":404,"retMsg":"Database [x] does not exist."}`
+| 503 | 实例存在但当前不可转发（如 `STOPPED`） | `{"retCode":503,"retMsg":"...","alias":"x","state":"STOPPED"}`
+| 504 | 访问实例管理口超时 | `{"retCode":504,"retMsg":"..."}`
+| 502 | 连接失败或请求被中断 | `{"retCode":502,"retMsg":"..."}`
+|===
+
+.示例：
+[source,bash]
+----
+curl http://127.0.0.1:18080/sales/status
+curl "http://127.0.0.1:18080/sales/logfile?lines=50"
+curl -X POST http://127.0.0.1:18080/sales/api/registerService \
+     -H "Content-Type: application/json" -d '{"serviceName":"demo"}'
+----
+
+实例管理口自身的端点（`/status`、`/health`、`/logfile`、`/backup`、`/api/...`、`/mcp` 等）见“HTTP 管理服务”等章节；代理只负责加别名前缀和转发。
+
+===== WebSocket `/<别名>/aichat`
+
+目前只代理 dbserver 唯一的管理口 WebSocket 端点 `/aichat`，路径固定为 `/<别名>/aichat`（可带 query string）。
+
+[source,javascript]
+----
+const ws = new WebSocket('ws://127.0.0.1:18080/sales/aichat');
+----
+
+* 别名不存在、实例未运行或未启用管理口时，握手后立即以关闭码 `1011` 关闭，reason 说明原因。
+* 文本帧与二进制帧双向转发；分片消息聚合完整后再转发。
+* 上游尚未建连时，客户端先到的消息会入队，建连后按序补发。
+* 关闭码做归一化：`1005`、`1006`、`1015` 等保留码不会原样发给对端（替换为 `1000`）。
+
+其他 WebSocket 端点（例如 SQL REPL 的 `/sql/ws`）暂不经过代理，需要直连实例的管理口。
+
+===== 其他
+
+* `GET /`：返回 404 JSON，提示使用 `/<database>/<path>` 或 `/admin/**`。
+* 未匹配到任何路由时返回 JSON 信封 `{"retCode":404,"retMsg":"Nothing is served at [...]."}`；若响应体已经由转发层写入 JSON，则保留 JSON 不覆盖。
+* 处理过程中未捕获的异常返回 `500` 和纯文本 `Internal Server Error`。
+
+.完整调用示例：
+[source,bash]
+----
+BASE=http://127.0.0.1:18080
+
+curl $BASE/status
+curl $BASE/capabilities
+curl "$BASE/admin/databases?probe=false"
+curl $BASE/admin/databases/sales
+
+curl -X POST $BASE/admin/databases \
+     -H "Content-Type: application/json" \
+     -d '{"alias":"sales"}'
+curl -X POST $BASE/admin/databases/sales/start
+curl -X POST $BASE/admin/databases/sales/restart
+curl -X POST $BASE/admin/databases/sales/shutdown
+curl "$BASE/admin/databases/sales/logs?lines=100"
+curl -X DELETE $BASE/admin/databases/sales
+
+curl "$BASE/sales/logfile?lines=20"
+----
 
 ==== JDBC 支持
 
@@ -660,6 +1052,7 @@ public class CopyDemo {
 
 ==== HTTP管理服务
 * 以下 HTTP 端点提供基础的管理功能，例如备份、文件上传/下载、日志查看和状态监控。当管理端口（port_x）启用时，这些端点可用。
+  这些端点属于 dbserver 的管理口；通过代理访问时，在路径前加 `/<别名>`（例如 `GET /sales/status`），转发规则见 <<proxy-http-api>>。
 
 ===== /backup (POST)
 
@@ -2758,7 +3151,7 @@ image::img/dbcli-select42.png[dbcli 连接成功后执行 select 42]
 
 仅支持部分 DuckDB 数据类型，主要是简单类型，例如 int、number、double、varchar…… 复杂类型要么仍在 开发中，要么无法在 PG 协议中表示（blob、list、map……），它们会以显式错误被拒绝，而不是被静默转换。
 
-上游限制（基于 `duckdb_jdbc` 2.0.0.0；DuckDB 预计近期会升级，我们也会跟随调整）：
+上游限制（基于 `duckdb_jdbc` 2.0.0.1；DuckDB 预计近期会升级，我们也会跟随调整）：
 
 * `COPY ... FROM STDIN` 写入 `BIGNUM`：DuckDB JDBC appender 没有 BIGNUM 的 C API 类型（`unsupported C API type: 35`），SlackerDB 当前无法支持。
 * `COPY ... FROM STDIN` 写入 `BIT`、`INTERVAL`、`TIME_NS`、`VARIANT`：同样缺少 appender 类型，只能拒绝。
@@ -3410,6 +3803,27 @@ DB_PASSWORD=******
 * 任务是"尽力终止"：超时/中止会终止 `hop-run` 及其子进程，但 HOP 内部的长事务不保证立即回滚
 * 当前为单实例调度，不支持多节点
 * 该调度器未内置鉴权，请只在受信网络暴露管理端口
+
+==== CDC 数据同步（PG/MySQL → DuckDB）
+
+内置 `slackerdb-dbsyncer`：把 PostgreSQL 逻辑复制或 MySQL ROW binlog 的增量变更同步到
+当前实例的内嵌 DuckDB。缺配置时能力完全不存在。
+
+启用（`dbserver.conf`）：
+
+[source,properties]
+----
+plugin-dbsyncer.config=conf/dbsyncer.example.yml
+# 可选：autoStart / maxJobs / stopTimeoutMs / queryTimeoutMs（未列出的 plugin-dbsyncer.* 键会被拒绝）
+----
+
+* 一个作业一个目标，`targets.<name>.schema` 必填；
+* 默认 `mvn test` 不连接外部 PG/MySQL，live 验收非默认回归：
+  `mvn -o -pl dbsyncer test -Ddbsyncer.it.excludedGroups=none`；
+* 管理口无鉴权，只应暴露在内网。
+
+详细说明、YAML 字段、API、源库准备、排障与 live 验收：
+link:dbsyncer/README.md[dbsyncer/README.md]。
 
 ==== 插件管理 API
 

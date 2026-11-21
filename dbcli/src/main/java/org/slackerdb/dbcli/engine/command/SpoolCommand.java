@@ -1,6 +1,5 @@
 package org.slackerdb.dbcli.engine.command;
 
-import org.slackerdb.dbcli.common.PathArguments;
 import org.slackerdb.dbcli.engine.ScriptOutput;
 
 import java.io.IOException;
@@ -11,7 +10,8 @@ import java.util.Set;
 /**
  * {@code _SPOOL <文件>} 开始 tee，{@code _SPOOL OFF} 停止 tee。
  *
- * <p>没有"无参"形态：光写 {@code _SPOOL} 是一条可读错误（以前它被当成"停止"，那是多余的第二种写法）。
+ * <p>相对路径按 <b>WORK</b> 解析；绝对路径原样使用（按项目决定，不做越界校验）。
+ * 没有"无参"形态：光写 {@code _SPOOL} 是一条可读错误（以前它被当成"停止"，那是多余的第二种写法）。
  * {@code OFF} 是词法层关键字，因此没法把 {@code off} 当文件名——要输出到名为 {@code off} 的文件，
  * 写路径即可（{@code _SPOOL ./off}）。</p>
  */
@@ -47,8 +47,8 @@ public final class SpoolCommand implements ScriptCommand {
         }
         Path target;
         try {
-            target = call.resolvePath(file);
-        } catch (PathArguments.InvalidPathException invalidPath) {
+            target = call.context().paths().workFile(file);
+        } catch (IllegalArgumentException invalidPath) {
             call.reportError(invalidPath.getMessage());
             return;
         }

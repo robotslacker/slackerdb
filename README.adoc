@@ -87,6 +87,12 @@ The command also writes `offline/javarepo.zip` and `offline/npmrepo.zip`, and re
 uncompressed `javarepo/` and `npmrepo/` directories. Copy those two zips to the offline
 machine and unzip them into the same directory.
 
+When regenerating, npm packages are taken from existing local caches first (the previous
+`offline/npmrepo`, `NPM_CONFIG_CACHE`, and the machine-wide cache reported by
+`npm config get cache`). Only packages that no local cache contains are fetched from the npm
+registry. Add `-Doffline.npm.cache.dirs=<dir>` (comma or semicolon separated) for extra cache
+directories.
+
 `javarepo` does not only contain the jars that end up on the classpath: it carries the complete
 POM descriptor closure (parent POMs, imported BOMs, and every candidate dependency version Maven
 reads while collecting, including the ones dropped by nearest-wins mediation). An offline build
@@ -407,12 +413,12 @@ daemon=
 # Main service port
 # 0 = random port assignment
 # -1 = disable network interface
-# Default: 0 (disabled)
+# Default: 0 (random port)
 port=0
 
 # Management API port
-# 0 = random port assignment
-# -1 = disable interface (default)
+# 0 = random port assignment (default)
+# -1 = disable interface
 port_x=0
 
 # Network binding address
@@ -428,6 +434,11 @@ listener_address=
 # Empty = instance management disabled
 # See the "Multi-instance management" section below.
 data_dir=
+
+# File-name pattern of the dbserver runtime jar, searched in the proxy directory, jlib, etc.
+# Example: slackerdb-dbserver-*-standalone.jar
+# No default: when empty, creating new instances is refused (existing instances still work).
+dbserver_jar=
 
 # Client connection idle timeout (seconds)
 client_timeout=600
@@ -483,6 +494,10 @@ UDP multicast discovery: dbserver periodically announces "I am here" to a multic
 
 With `data_dir` configured, the proxy can manage multiple database instances on the local machine: **each instance is a separate dbserver process**.
 
+Creating an instance also requires `dbserver_jar` (the file-name pattern of the dbserver runtime jar,
+for example `slackerdb-dbserver-*-standalone.jar`). It has no default: without it `create` returns 503,
+while existing instances can still be listed, stopped and destroyed.
+
 ....
 instances/
   sales/                     # directory name = alias (database in the connection string)
@@ -492,17 +507,46 @@ instances/
     bin/stop.sh|bat          # graceful stop (PG port management frame)
     bin/status.sh|bat
     data/sales.db
-    logs/server.log          # dbserver log
+    logs/server.log          # dbserver log (default; log= may point elsewhere)
     logs/console.log         # child process stdout/stderr
-    instance.pid
+    instance.pid             # default pid file (pid= may use another name)
 ....
 
 An alias and a database name may differ (`--name` sets the database name; it defaults to the alias). Aliases are unique; creating a duplicate returns 409.
 
+`create` accepts any dbserver setting as a `--key value` pair: ports, log, data path, pid, bind, multicast
+registration, access mode, plugin parameters, and so on are all owned by the user. The proxy only fills in the
+settings the user did not mention and does not judge the values — a port conflict, an unwritable directory or an
+invalid value shows up as a dbserver startup error. CLI values travel over the admin channel (the `!` frame on the
+PG port) and therefore cannot contain spaces; the HTTP API has no such restriction.
+
+....
+dbproxy create --alias sales --conf dbproxy.conf \
+    --port 15433 --port_x 15434 --log logs/sales.log --data_dir /data/sales
+....
+
+* `port` / `port_x` set to `0` (or omitted) means "let the proxy pick a free port": the real port is written into
+  `instance.conf` and is available afterwards from `list`, `GET /admin/databases/<alias>` or the create response.
+  `port_x=-1` disables the management port of that instance.
+* An instance always lives in `<data_dir>/<alias>` and `instance.conf` is written there; every other setting
+  (`data`, `data_dir`, `pid`, `log`, `bind`, `advertise_address`, `access_mode`, `max_connections`,
+  `<pluginId>.<param>`, ...) is copied into that file verbatim. Relative paths resolve against the instance
+  directory, because the dbserver is started with it as its working directory.
+* The configured `pid` and `log` are followed everywhere: probing reads the pid file named by `pid=`
+  (renamed or absolute paths are fine), and `GET /admin/databases/<alias>/logs` tails the file(s) named by
+  `log=` (`CONSOLE` entries are skipped, `${data}` is substituted with the database name). Nothing assumes the
+  default `instance.pid` / `logs/server.log`. `logfile` is dbserver's alias for `log`; it is normalized to
+  `log` on create (an explicit `log` wins), so `instance.conf` never contains both keys with an ambiguous winner.
+* `--name` is shorthand for `data`; when both are given, `--data` wins.
+* For `create`, `--conf` still means the proxy client config (used to locate the proxy); every other `--key value`
+  describes the new instance, e.g. `dbproxy create --alias sales --conf dbproxy.conf --port 15433`.
+* Proxy-managed processes always run in the foreground: even if `daemon=true` is passed, the launch overrides it
+  with `--daemon false` (`bin/start-daemon` can still be used for a manual background start).
+
 [cols="1,2",options="header"]
 |===
 | Command | Description
-| `dbproxy create --alias sales [--name sales] [--start false]` | Create an instance and start it by default
+| `dbproxy create --alias sales [--name sales] [--start false] [--<conf_key> <value> ...]` | Create an instance and start it by default
 | `dbproxy resume --alias sales` | Start a stopped instance
 | `dbproxy shutdown --alias sales` | Graceful stop (data and directory are kept)
 | `dbproxy restart --alias sales` | Stop, then start again
@@ -511,17 +555,7 @@ An alias and a database name may differ (`--name` sets the database name; it def
 | `dbproxy status` | Proxy status plus the instance table
 |===
 
-Management endpoints on the proxy itself:
-
-* `GET /status`
-* `GET /capabilities`
-* `GET /admin/databases`
-* `GET /admin/databases/<alias>`
-* `POST /admin/databases/<alias>/start`
-* `POST /admin/databases/<alias>/shutdown`
-* `POST /admin/databases/<alias>/restart`
-* `DELETE /admin/databases/<alias>`
-* `GET /admin/databases/<alias>/logs?lines=200`
+The full HTTP contract of the management port (proxy status, instance management, `/<alias>/**` prefix forwarding and WebSocket) is described in the next section, <<proxy-http-api>>.
 
 Behavior:
 
@@ -529,7 +563,372 @@ Behavior:
 * **Internal aliases win conflicts**: when an instance with the same name exists under `data_dir`, external announcements are discarded and an existing external entry with the same name is removed immediately.
 * **No cascade**: `dbproxy stop` stops only the proxy; instances keep running.
 * **No automatic recovery**: restarting the proxy does not start any instance.
+* **Destroy only removes the instance directory**: `destroy` deletes `<data_dir>/<alias>`. If the instance's
+  `data_dir` points outside that directory, it is ignored (the data is kept; clean it up yourself if needed).
 * **Proxy bypass is allowed**: run `bin/start-daemon` / `bin/stop` in the instance directory directly; every status query re-probes the instance (`/health` + pid + command-line validation), so manual starts and stops are recognized correctly.
+
+[[proxy-http-api]]
+==== Proxy HTTP API
+
+The proxy management port (config `port_x`, CLI `--portX`) serves three kinds of requests: the proxy's own status, lifecycle management for managed instances, and transparent forwarding of `/<alias>/**` to that instance's management port.
+`port_x=0` (the default) assigns a random port; the actual value is in the startup log. `port_x=-1` disables the management port, and every endpoint in this section becomes unavailable.
+The management port is **API-only**: the proxy serves no HTML/Web UI of its own (dbdesk is the UI).
+
+[cols="1,3,3",options="header"]
+|===
+| Priority | Path | Target
+| 1 | `/status`, `/capabilities` | The proxy itself
+| 2 | `/admin/databases/**` | The proxy's instance management
+| 3 | `/<alias>/**` | The management port of that alias (HTTP passthrough)
+| 4 | `/<alias>/aichat` | `/aichat` of that alias (WebSocket pipe)
+|===
+
+Priority follows registration order, so `/admin/**` is never treated as an alias. Only the first path segment is the alias; the rest of the path (including the query string) is appended to the target URL unchanged.
+`admin`, `status`, `capabilities` and `health` are reserved names and cannot be used for instances.
+
+**General conventions**
+
+* Errors produced by the proxy itself use a JSON envelope: `{"retCode": <HTTP status>, "retMsg": "<reason>"}`. A successfully forwarded response keeps the instance's status code, headers and body without rewrapping; the envelope is only generated when forwarding fails.
+* The management port has **no authentication or authorization**. Restrict it with `bind` and never expose it to an untrusted network.
+* CORS is enabled by default (any origin), so browser consoles can call it directly.
+* Responses generated by the proxy are UTF-8 JSON (except the per-instance log endpoint, which returns `text/plain`); forwarded responses keep the instance's content type, which may be anything, including binary.
+
+===== GET /status
+
+The proxy's own status plus every currently registered backend. It uses the latest scan snapshot and does not force a re-probe, so it is cheap.
+
+[source,json]
+----
+{
+  "role": "proxy",
+  "version": "0.2.2",
+  "pid": 12345,
+  "uptimeSeconds": 3600,
+  "managementPort": 18080,
+  "pgPort": 15432,
+  "instanceManagementEnabled": true,
+  "backends": [
+    { "alias": "erp", "target": "http://10.0.0.8:18080", "state": "UNKNOWN" }
+  ],
+  "backendCount": 1,
+  "databases": [
+    {
+      "alias": "erp",
+      "source": "external",
+      "manageable": false,
+      "name": "erp",
+      "state": "RUNNING",
+      "pid": null,
+      "pgPort": 5432,
+      "mgmtPort": 18080,
+      "health": "UNKNOWN",
+      "uptimeSeconds": null,
+      "error": null,
+      "dir": null,
+      "target": "10.0.0.8:5432"
+    },
+    {
+      "alias": "sales",
+      "source": "management",
+      "manageable": true,
+      "name": "sales",
+      "state": "RUNNING",
+      "pid": 23456,
+      "pgPort": 42001,
+      "mgmtPort": 42002,
+      "health": "UP",
+      "uptimeSeconds": 1200,
+      "error": null,
+      "dir": "/data/instances/sales",
+      "target": null
+    }
+  ]
+}
+----
+
+* `backends` contains only externally registered (multicast-discovered) forward mappings; `state` is always `UNKNOWN` because the proxy cannot probe them further. `backendCount` is its length.
+* `databases` is the unified view: both `management` (instances scanned under `data_dir`) and `external` (multicast-registered backends) appear here. Field meanings are in "Backend object" below.
+* The proxy itself has no `/health` endpoint (`/health` is the dbserver liveness probe); monitor the proxy through `/status`.
+
+===== GET /capabilities
+
+Declares the management API contract version and the proxy's capabilities so clients can discover which endpoints to call.
+
+[source,json]
+----
+{
+  "apiVersion": 1,
+  "proxy": { "version": "0.2.2", "pid": 12345 },
+  "ports": { "pg": 15432, "management": 18080, "managementEnabled": true },
+  "managementForwarding": { "enabled": true, "prefixMode": "alias" },
+  "provisioning": {
+    "enabled": true,
+    "mode": "process",
+    "adminBase": "/admin",
+    "features": ["list", "detail", "create", "start", "shutdown", "restart", "destroy", "logs"],
+    "backendSources": ["management", "external"]
+  },
+  "contracts": { "managementApi": 1 }
+}
+----
+
+* `apiVersion` and `contracts.managementApi` are the management API contract version (currently `1`), not the product version; the product version is in `proxy.version`.
+* `provisioning.enabled` mirrors `instanceManagementEnabled`: it is `false` when `data_dir` is not configured, and write operations against managed instances then return 503.
+* `managementForwarding.prefixMode=alias` describes the `/<alias>/**` forwarding rule.
+
+===== The /admin/databases family
+
+[cols="1,3,4",options="header"]
+|===
+| Method | Path | Description
+| GET | `/admin/databases` | List every backend plus the instance root
+| GET | `/admin/databases/<alias>` | One backend (managed instances include `conf`)
+| POST | `/admin/databases` | Create an instance
+| POST | `/admin/databases/<alias>/start` | Start an instance
+| POST | `/admin/databases/<alias>/shutdown` | Gracefully stop an instance
+| POST | `/admin/databases/<alias>/restart` | Stop, then start again
+| DELETE | `/admin/databases/<alias>` | Stop and delete the instance directory
+| GET | `/admin/databases/<alias>/logs` | Tail the instance log (plain text)
+|===
+
+Every endpoint except the list requires the alias to exist; otherwise it returns 404. Lifecycle failures return 400/409/500/504 depending on the cause, still using the `retCode`/`retMsg` envelope.
+
+====== GET /admin/databases
+
+Lists backends. The optional query parameter `probe` (default `true`) controls forced re-probing: `probe=false` uses the latest scan snapshot (at most about 5 seconds old), which suits frequent polling.
+
+[source,json]
+----
+{
+  "instanceManagementEnabled": true,
+  "storage": { "dataDir": "/data/instances" },
+  "databases": [
+    {
+      "alias": "sales",
+      "source": "management",
+      "manageable": true,
+      "name": "sales",
+      "state": "RUNNING",
+      "pid": 23456,
+      "pgPort": 42001,
+      "mgmtPort": 42002,
+      "health": "UP",
+      "uptimeSeconds": 1200,
+      "error": null,
+      "dir": "/data/instances/sales",
+      "target": null
+    }
+  ]
+}
+----
+
+Backend object:
+
+[cols="1,1,3",options="header"]
+|===
+| Field | Type | Description
+| `alias` | string | Alias, also the routing key
+| `source` | string | `management` (an instance under `data_dir`) or `external` (a multicast-registered backend)
+| `manageable` | boolean | Whether lifecycle operations are allowed; only `management` is `true`
+| `name` | string | Database name (the `data` value of the instance configuration)
+| `state` | string | `RUNNING`, `DEGRADED`, `STOPPED` or `UNKNOWN`; transient `STARTING` / `STOPPING` may also appear in lists
+| `pid` | number/null | Instance process id verified through its command line; `null` for external backends and stopped instances
+| `pgPort` | number | Data port
+| `mgmtPort` | number | Management port; `-1` when the instance has no management port
+| `health` | string | `UP`, `DOWN`, `TIMEOUT` or `UNKNOWN`
+| `uptimeSeconds` | number/null | Process uptime; `null` when it cannot be determined
+| `error` | string/null | Why the backend cannot be routed or its state cannot be determined
+| `dir` | string/null | Managed instance directory; `null` for external backends
+| `target` | string/null | `host:port` of an external backend; `null` for managed instances
+|===
+
+When `instanceManagementEnabled=false`, `storage.dataDir` is `null` and `databases` contains only external backends. A failure to scan the instance directory returns a 500 envelope.
+
+====== GET /admin/databases/<alias>
+
+Returns one backend. Managed instances additionally carry `conf` (the lowercase key/value view of `instance.conf`); external backends only have address information. Managed instances are returned from the latest scan snapshot without a forced re-probe; use the list endpoint when the freshest state matters.
+
+[source,json]
+----
+{
+  "alias": "sales",
+  "source": "management",
+  "manageable": true,
+  "name": "sales",
+  "state": "RUNNING",
+  "pid": 23456,
+  "pgPort": 42001,
+  "mgmtPort": 42002,
+  "health": "UP",
+  "uptimeSeconds": 1200,
+  "error": null,
+  "dir": "/data/instances/sales",
+  "target": null,
+  "conf": {
+    "data": "sales",
+    "data_dir": "data",
+    "port": "42001",
+    "port_x": "42002",
+    "pid": "instance.pid",
+    "log": "logs/server.log",
+    "bind": "127.0.0.1",
+    "daemon": "false",
+    "advertise_address": "",
+    "access_mode": "READ_WRITE"
+  }
+}
+----
+
+If the alias is neither a managed instance nor an external registration, the endpoint returns 404.
+
+====== POST /admin/databases
+
+Creates an instance directory and, by default, starts it immediately.
+
+[source,json]
+----
+{
+  "alias": "sales",
+  "name": "sales",
+  "start": true,
+  "conf": {
+    "port": 0,
+    "port_x": 0,
+    "log": "logs/sales.log",
+    "access_mode": "READ_ONLY"
+  }
+}
+----
+
+[cols="1,1,4",options="header"]
+|===
+| Field | Required | Description
+| `alias` | yes | Directory name / routing key, lowercased, pattern `[a-z][a-z0-9_-]{0,62}`; a reserved or existing alias returns 409
+| `name` | no | Database name, defaults to `alias`, pattern `[A-Za-z][A-Za-z0-9_-]{0,62}`
+| `start` | no | Whether to start right after creation, default `true`
+| `conf` | no | dbserver settings written into `instance.conf`; every key can be overridden (ports, log, data path, pid, bind, `advertise_address`, `access_mode`, plugin parameters, ...)
+|===
+
+`conf` key rules: standard keys match `[a-z][a-z0-9_]*`; plugin parameters use `<pluginId>.<paramName>` (case is
+preserved). Values must be single-line. The proxy does not validate the values; a bad setting fails at dbserver startup.
+
+`port` / `port_x` set to `0` (or omitted) makes the proxy allocate a free port; the real port is written into
+`instance.conf` and returned by the response and by later queries. `port_x=-1` disables that instance's management port.
+
+Success returns `201` with the instance object (including `conf` and the real ports). If `start=true` and the start fails, the instance directory is kept and the response carries the start failure status; `retMsg` explains that it was created but failed to start, and why.
+
+====== POST /admin/databases/<alias>/start|shutdown|restart
+
+None of the three endpoints accepts a request body. Success returns `200` with the instance object (including `conf`).
+
+* `start`: waits up to 30 seconds for the instance `/health` to report `UP`; 409 if already running, 504 on timeout.
+* `shutdown`: sends the PG-port stop frame and waits up to 20 seconds; if the process is still alive it sends SIGTERM to this instance's process and waits 5 more seconds. An already `STOPPED` instance returns 200 directly; an external backend or an unusable port returns 409; a process that still will not stop returns 500.
+* `restart`: `shutdown` + `start`; for a stopped instance this is equivalent to a plain start.
+
+====== DELETE /admin/databases/<alias>
+
+Stops the instance if it is running and deletes the whole instance directory, returning:
+
+[source,json]
+----
+{ "alias": "sales", "destroyed": true }
+----
+
+Only `<data_dir>/<alias>` itself is deleted. If the instance's `data_dir` points outside that directory, it is
+ignored (the data is kept).
+
+An external backend returns 409 (forward only, not manageable); a missing directory returns 404; a pid that is still alive but cannot be verified as this instance, or an instance that is still running, returns 409.
+
+====== GET /admin/databases/<alias>/logs
+
+Returns the tail of the instance log as `text/plain`. The query parameter `lines` defaults to `200` and is capped at `5000`.
+
+The body contains the last N lines of the dbserver log file(s) named by `log=` in `instance.conf` (default
+`logs/server.log`; comma-separated targets are all included, `CONSOLE` entries and missing files are skipped),
+then the last `min(N, 50)` lines of `logs/console.log`, then the last 4 lines of `logs/launch.log`; each section
+starts with a `---- <file> (last K lines) ----` separator. When none of the files exists, the body is
+`(no log file at <files>)`.
+
+.Example:
+ GET /admin/databases/sales/logs?lines=100
+
+An external backend returns 409; a missing instance returns 404; a non-integer `lines` returns 400.
+
+===== Prefix forwarding `/<alias>/**`
+
+Every request outside `/status`, `/capabilities` and `/admin/**` is resolved by its first path segment and forwarded to that instance's management port. GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS share one implementation.
+
+* The path after the first segment and the query string are preserved verbatim: `/sales/logfile?lines=50` is forwarded to `http://127.0.0.1:42002/logfile?lines=50`.
+* Request headers are forwarded as-is except hop-by-hop headers (`Connection`, `Keep-Alive`, `Upgrade`, `Transfer-Encoding`, ...) and `Host`, `Content-Length`, `Expect`; request and response bodies are streamed, so large uploads and downloads work.
+* Redirects are not followed: a 302 from the instance is returned to the caller unchanged.
+* The overall timeout is 15 seconds. Requests whose path contains `/download`, `/upload`, `/logfile`, `/viewlog` or `/backup` have no overall timeout, only the 5-second connect timeout.
+* The instance's status code, headers and body are passed through unchanged; HEAD, 204 and 304 have no body.
+
+On failure the proxy returns a JSON envelope:
+
+[cols="1,1,4",options="header"]
+|===
+| Status | Situation | Body
+| 404 | Unknown alias | `{"retCode":404,"retMsg":"Database [x] does not exist."}`
+| 503 | The instance exists but cannot be forwarded to (e.g. `STOPPED`) | `{"retCode":503,"retMsg":"...","alias":"x","state":"STOPPED"}`
+| 504 | The instance management port timed out | `{"retCode":504,"retMsg":"..."}`
+| 502 | Connection failure or interrupted request | `{"retCode":502,"retMsg":"..."}`
+|===
+
+.Example:
+[source,bash]
+----
+curl http://127.0.0.1:18080/sales/status
+curl "http://127.0.0.1:18080/sales/logfile?lines=50"
+curl -X POST http://127.0.0.1:18080/sales/api/registerService \
+     -H "Content-Type: application/json" -d '{"serviceName":"demo"}'
+----
+
+The endpoints of the instance management port itself (`/status`, `/health`, `/logfile`, `/backup`, `/api/...`, `/mcp`, ...) are described in "HTTP Management Services" and related sections; the proxy only adds the alias prefix and forwards.
+
+===== WebSocket `/<alias>/aichat`
+
+Only the single management WebSocket endpoint of dbserver is proxied today, at the fixed path `/<alias>/aichat` (a query string may follow).
+
+[source,javascript]
+----
+const ws = new WebSocket('ws://127.0.0.1:18080/sales/aichat');
+----
+
+* If the alias does not exist, the instance is not running, or its management port is disabled, the socket is closed immediately after the handshake with code `1011` and a reason.
+* Text and binary frames are forwarded in both directions; fragmented messages are aggregated before forwarding.
+* Messages that arrive before the upstream connection is ready are queued and flushed in order once it connects.
+* Close codes are normalized: reserved codes such as `1005`, `1006` and `1015` are never sent to the peer as-is (they become `1000`).
+
+Other WebSocket endpoints (for example `/sql/ws` of the SQL REPL) are not proxied yet; connect to the instance management port directly.
+
+===== Misc
+
+* `GET /`: returns a 404 JSON body suggesting `/<database>/<path>` or `/admin/**`.
+* An unmatched route returns the JSON envelope `{"retCode":404,"retMsg":"Nothing is served at [...]."}`; a body already written by the forwarding layer is preserved.
+* An uncaught exception returns `500` with the plain text `Internal Server Error`.
+
+.Complete example:
+[source,bash]
+----
+BASE=http://127.0.0.1:18080
+
+curl $BASE/status
+curl $BASE/capabilities
+curl "$BASE/admin/databases?probe=false"
+curl $BASE/admin/databases/sales
+
+curl -X POST $BASE/admin/databases \
+     -H "Content-Type: application/json" \
+     -d '{"alias":"sales"}'
+curl -X POST $BASE/admin/databases/sales/start
+curl -X POST $BASE/admin/databases/sales/restart
+curl -X POST $BASE/admin/databases/sales/shutdown
+curl "$BASE/admin/databases/sales/logs?lines=100"
+curl -X DELETE $BASE/admin/databases/sales
+
+curl "$BASE/sales/logfile?lines=20"
+----
 
 ==== JDBC Support
 
@@ -708,6 +1107,7 @@ public class CopyDemo {
 ==== HTTP Management Services
 
 * The following HTTP endpoints provide basic management functions such as backup, file upload/download, log viewing, and status monitoring. They are available when the management port (`port_x`) is enabled.
+  These endpoints belong to the dbserver management port; when going through the proxy, prefix the path with `/<alias>` (for example `GET /sales/status`); see <<proxy-http-api>> for the forwarding rules.
 
 ===== /backup (POST)
 
@@ -2845,6 +3245,7 @@ started with `bin/dbcli.bat` / `bin/dbcli.sh`.
 dbcli                                           # interactive console
 dbcli --execute script.sql                      # run a script
 dbcli --execute script.sql --logfile run.log --ref golden.ref   # run and compare with a reference
+dbcli --home_dir code --work_dir /tmp/work --output_dir out --execute script.sql  # explicit dirs
 ....
 
 Full usage: xref:dbcli/README.adoc[dbcli/README.adoc].
@@ -2862,7 +3263,7 @@ You can fill in anything; they have no effect.
 
 Only some DuckDB data types are supported, mainly simple types such as int, number, double, varchar, … Complex types are either still under development or cannot be represented in the PG protocol (blob, list, map…); they are rejected with an explicit error rather than silently converted.
 
-Upstream blockers as of `duckdb_jdbc` 2.0.0.0 (DuckDB is expected to be upgraded soon; we will follow):
+Upstream blockers as of `duckdb_jdbc` 2.0.0.1 (DuckDB is expected to be upgraded soon; we will follow):
 
 * `COPY ... FROM STDIN` into `BIGNUM`: DuckDB's JDBC appender has no BIGNUM C API type (`unsupported C API type: 35`), so SlackerDB cannot support it yet.
 * `COPY ... FROM STDIN` into `BIT`, `INTERVAL`, `TIME_NS`, or `VARIANT`: same missing appender type, so they are rejected too.

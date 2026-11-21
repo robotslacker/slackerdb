@@ -45,7 +45,15 @@ class CliRefWorkflowTest {
         CommandLine commandLine = new CommandLine(cli);
         commandLine.setOut(new PrintWriter(out, true));
         commandLine.setErr(new PrintWriter(out, true)); // dbcli 从不写 stderr：参数错误也在 stdout
-        int exitCode = commandLine.execute(args);
+        String[] withDirs = new String[args.length + 6];
+        withDirs[0] = "--home_dir";
+        withDirs[1] = tempDir.toString();
+        withDirs[2] = "--work_dir";
+        withDirs[3] = tempDir.resolve("work").toString();
+        withDirs[4] = "--output_dir";
+        withDirs[5] = tempDir.resolve("output").toString();
+        System.arraycopy(args, 0, withDirs, 6, args.length);
+        int exitCode = commandLine.execute(withDirs);
         return new Result(out.toString(), err.toString(), exitCode);
     }
 
@@ -67,7 +75,7 @@ class CliRefWorkflowTest {
     private Path runLog(Path script) {
         String fileName = script.getFileName().toString();
         String base = fileName.substring(0, fileName.lastIndexOf('.'));
-        return script.getParent().resolve(base + ".log");
+        return tempDir.resolve("output").resolve("logs").resolve(base + ".log");
     }
 
     /** 录制 ref：不带 --ref 跑一次、把数据输出直接写成 ref（比"先跑一次再看提示复制"少一步）。 */
@@ -183,7 +191,8 @@ class CliRefWorkflowTest {
         assertTrue(Files.readString(runLog(script)).startsWith("BETA\n"));
         
         assertTrue(Files.readString(ref).startsWith("alpha\n"), "ref 不被覆盖");
-        assertTrue(Files.exists(tempDir.resolve("changed.dif")), "差异报告应当写出来");
+        assertTrue(Files.exists(tempDir.resolve("output").resolve("ref").resolve("changed.dif")),
+                "差异报告应当写出来");
     }
 
     @Test

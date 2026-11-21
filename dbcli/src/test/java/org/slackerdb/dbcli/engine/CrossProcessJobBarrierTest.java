@@ -3,7 +3,6 @@ package org.slackerdb.dbcli.engine;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.slackerdb.dbcli.rendezvous.SqliteRendezvous;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -21,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 它们各自卡在 {@code TIMER:GO} 上，父脚本 {@code _job timer GO} 放行后一起继续。
  *
  * <p>与 {@link JobBarrierTest}（线程模式，进程内闸门）互补：这里父脚本与作业**不在同一个进程**，
- * 定时点因此只能经 SQLite 同步库传递——正是 {@code mode=process} 要补上的那块能力。</p>
+ * 定时点因此只能经 SQLite 作业库传递——这是 {@code mode=process} 必须保留的能力。</p>
  *
  * <p>脚本里没有 SQL，所以不需要数据库；作业体走生产路径（{@code ModeJobExecutor} →
  * {@code ProcessJobExecutor} → 再起一个 dbcli 子进程）。</p>
@@ -101,9 +100,11 @@ class CrossProcessJobBarrierTest {
         for (int job = 1; job <= 3; job++) {
             assertFalse(result.stdout().contains("C" + job + "-before-barrier"), result.stdout);
         }
-        // 父脚本自己用的是同步库：作业进程读的是同一份（收尾时被建库者清理）
-        assertFalse(Files.exists(tempDir.resolve(SqliteRendezvous.SYNC_DB_FILE_NAME)),
-                "管理器收尾后不该留下同步库");
+        // 运行库固定为 WORK/dbcli_log.db；不再有按 runId 的 .dbcli/jobs 文件
+        assertTrue(Files.isRegularFile(tempDir.resolve("dbcli_log.db")),
+                "工作目录里应当有固定的 dbcli_log.db");
+        assertFalse(Files.exists(tempDir.resolve(".dbcli").resolve("jobs")),
+                "工作目录里不该再有 .dbcli/jobs");
     }
 
     @Test
@@ -159,7 +160,9 @@ class CrossProcessJobBarrierTest {
                 "子进程应当回显自己写的 Go（前缀 Timer: 不算名字），实际:\n" + c2);
         assertTrue(c1.contains("C1-after-barrier"), c1);
         assertTrue(c2.contains("C2-after-barrier"), c2);
-        assertFalse(Files.exists(tempDir.resolve(SqliteRendezvous.SYNC_DB_FILE_NAME)),
-                "管理器收尾后不该留下同步库");
+        assertTrue(Files.isRegularFile(tempDir.resolve("dbcli_log.db")),
+                "固定运行库应当存在");
+        assertFalse(Files.exists(tempDir.resolve(".dbcli").resolve("jobs")),
+                "工作目录里不该再有 .dbcli/jobs");
     }
 }

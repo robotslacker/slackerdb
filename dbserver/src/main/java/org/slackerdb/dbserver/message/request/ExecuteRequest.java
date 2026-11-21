@@ -395,7 +395,7 @@ public class ExecuteRequest extends PostgresRequest {
                 // 列级元数据只解析一次，行循环里不再重复做类型判断与格式化器构造。
                 // 结果格式必须与之前 Describe('P') 回报的一致 —— 都取自本门户的 Bind 请求。
                 RowEncoder encoder = new RowEncoder(rs.getMetaData(), parsedStatement.resultFormats,
-                        this.dbInstance.logger);
+                        this.dbInstance.logger, executeSession.timeZone);
 
                 int rowsReturned = 0;
                 // 累计尚未刷出的数据行字节数，达到阈值后再 flush
@@ -452,6 +452,7 @@ public class ExecuteRequest extends PostgresRequest {
                 boolean isResultSet = false;
                 try {
                     isResultSet = parsedStatement.preparedStatement.execute();
+                    executeSession.refreshTimeZoneIfSet(executeSQL);
                 }
                 catch (SQLException e) {
                     if (!e.getMessage().contains("no transaction is active"))
@@ -474,7 +475,7 @@ public class ExecuteRequest extends PostgresRequest {
                     // 结果格式按本门户 Bind 时客户端请求的格式（Describe('P') 已按同一份回报）。
                     ResultSetMetaData rsmd = rs.getMetaData();
                     RowEncoder encoder = new RowEncoder(rsmd, parsedStatement.resultFormats,
-                            this.dbInstance.logger);
+                            this.dbInstance.logger, executeSession.timeZone);
 
                     // 注意：这里**不**发 RowDescription —— 描述信息已经由 Describe 报文
                     // 即时应答（见 DescribeHandler）。改造前把 RowDescription 推迟到这里发，
@@ -669,6 +670,7 @@ public class ExecuteRequest extends PostgresRequest {
                     boolean hasResultSet;
                     try {
                         hasResultSet = scriptStatement.execute();
+                        session.refreshTimeZoneIfSet(statementSql);
                     }
                     catch (SQLException e) {
                         if (!e.getMessage().contains("no transaction is active")) {

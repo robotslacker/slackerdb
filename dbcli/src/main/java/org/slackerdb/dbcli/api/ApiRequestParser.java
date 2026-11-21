@@ -1,5 +1,6 @@
 package org.slackerdb.dbcli.api;
 
+import org.slackerdb.dbcli.common.DbcliPaths;
 import org.slackerdb.dbcli.common.PathArguments;
 
 import java.io.IOException;
@@ -55,6 +56,35 @@ public final class ApiRequestParser {
      */
     public static ApiRequest parse(String arguments, Path workingDirectory, VariableLookup variables)
             throws ApiParseException {
+        return parse(arguments, value -> {
+            try {
+                return PathArguments.resolve(workingDirectory, value);
+            } catch (PathArguments.InvalidPathException invalidPath) {
+                throw new ApiParseException(invalidPath.getMessage());
+            }
+        }, variables);
+    }
+
+    /** 生产入口：bodyfile 相对路径按 WORK → 当前脚本目录 → HOME（绝对原样）。 */
+    public static ApiRequest parse(String arguments, DbcliPaths paths, Path scriptDirectory,
+                                   VariableLookup variables) throws ApiParseException {
+        return parse(arguments, value -> {
+            try {
+                return paths.findInput(value, scriptDirectory);
+            } catch (IllegalArgumentException invalidPath) {
+                throw new ApiParseException(invalidPath.getMessage());
+            }
+        }, variables);
+    }
+
+    /** bodyfile 的相对路径解析（允许抛可读的解析错误）。 */
+    @FunctionalInterface
+    private interface BodyFileResolver {
+        Path resolve(String value) throws ApiParseException;
+    }
+
+    private static ApiRequest parse(String arguments, BodyFileResolver bodyFile,
+                                    VariableLookup variables) throws ApiParseException {
         String text = stripTrailingSemicolon(arguments == null ? "" : arguments.strip());
         List<String> tokens = tokenize(text);
         if (tokens.size() < 2) {
@@ -100,7 +130,7 @@ public final class ApiRequestParser {
                 }
                 case "bodyfile" -> {
                     ensureNoBody(hasBody, name);
-                    body = readBodyFile(value, workingDirectory);
+                    body = readBodyFile(bodyFile, value);
                     hasBody = true;
                 }
                 case "bodyvar" -> {
@@ -228,11 +258,14 @@ public final class ApiRequestParser {
         return uri;
     }
 
-    private static byte[] readBodyFile(String value, Path workingDirectory) throws ApiParseException {
+    private static byte[] readBodyFile(BodyFileResolver bodyFile, String value)
+            throws ApiParseException {
         Path path;
         try {
-            path = PathArguments.resolve(workingDirectory, value);
-        } catch (PathArguments.InvalidPathException invalidPath) {
+            path = bodyFile.resolve(value);
+        } catch (ApiParseException invalidPath) {
+            throw invalidPath;
+        } catch (RuntimeException invalidPath) {
             throw new ApiParseException(invalidPath.getMessage());
         }
         byte[] raw;

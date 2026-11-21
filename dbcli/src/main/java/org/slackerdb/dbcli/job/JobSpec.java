@@ -22,14 +22,28 @@ import java.util.Map;
  * （"父进程怎么管这个作业"），既不是子脚本的变量，也不透传给子进程的命令行。</p>
  *
  * @param name             作业名（脚本里引用它）
- * @param script           要跑的脚本（相对路径按 {@link #workingDirectory()} 解析）
+ * @param script           要跑的脚本（相对路径按 {@link #definitionDirectory()} → WORK → HOME 解析）
  * @param variables        子脚本可见的变量（保持插入顺序）
  * @param options          运行选项（保持插入顺序；含 {@code mode} 与 {@code timeout}）
- * @param workingDirectory 作业定义的基准目录（相对 {@code script} 与相对选项路径按它解析；
- *                         null 表示"进程当前目录"）
+ * @param workingDirectory 运行时 cwd（= WORK）；{@code _HOST}/相对写以它为准
+ * @param definitionDirectory 定义作业的脚本所在目录（`_JOB CREATE/SET` 时捕获；用于相对脚本/输入解析）
+ * @param sessionVariables fork 时从父 job 继承的 SESSION 快照（子 job 的修改不回传父/并行 job）
  */
-public record JobSpec(String name, String script, Map<String, String> variables, Map<String, String> options,
-                      Path workingDirectory) {
+public record JobSpec(String name, String script, Map<String, String> variables,
+                      Map<String, String> options, Path workingDirectory, Path definitionDirectory,
+                      Map<String, String> sessionVariables) {
+
+    /** 兼容旧构造器：无 SESSION 快照。 */
+    public JobSpec(String name, String script, Map<String, String> variables, Map<String, String> options,
+                   Path workingDirectory, Path definitionDirectory) {
+        this(name, script, variables, options, workingDirectory, definitionDirectory, Map.of());
+    }
+
+    /** 兼容旧构造器：定义目录 = 运行时目录。 */
+    public JobSpec(String name, String script, Map<String, String> variables, Map<String, String> options,
+                   Path workingDirectory) {
+        this(name, script, variables, options, workingDirectory, workingDirectory, Map.of());
+    }
 
     /** 作业运行时限的选项名（**秒**，允许小数；缺省表示不限时）。 */
     public static final String OPTION_TIMEOUT = "timeout";
@@ -43,6 +57,7 @@ public record JobSpec(String name, String script, Map<String, String> variables,
         }
         variables = ordered(variables);
         options = ordered(options);
+        sessionVariables = ordered(sessionVariables);
     }
 
     /** 执行层（{@code mode=thread} 默认 / {@code mode=process}）。 */
@@ -67,9 +82,22 @@ public record JobSpec(String name, String script, Map<String, String> variables,
         return UserNumber.positiveSeconds("job [" + name + "] timeout", value);
     }
 
-    /** 换一个基准目录（{@code _JOB CREATE/SET} 时由管理器补上它自己的工作目录）。 */
+    /** 换运行时 cwd（{@code _JOB CREATE/SET} 时由管理器补上 WORK）。 */
     public JobSpec withWorkingDirectory(Path directory) {
-        return new JobSpec(name, script, variables, options, directory);
+        return new JobSpec(name, script, variables, options, directory, definitionDirectory,
+                sessionVariables);
+    }
+
+    /** 换定义目录（`_JOB CREATE/SET` 时的当前脚本目录）。 */
+    public JobSpec withDefinitionDirectory(Path directory) {
+        return new JobSpec(name, script, variables, options, workingDirectory, directory,
+                sessionVariables);
+    }
+
+    /** 换 SESSION 快照（{@code _JOB START} 时由父 job 的当前作用域补上）。 */
+    public JobSpec withSessionVariables(Map<String, String> values) {
+        return new JobSpec(name, script, variables, options, workingDirectory, definitionDirectory,
+                values == null ? Map.of() : values);
     }
 
     /** 只读、定序的副本：{@code Map.copyOf} 不保证迭代顺序，而参数顺序是给人看的。 */

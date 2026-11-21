@@ -47,10 +47,26 @@ public final class WebSocketForwarder {
         this.logger = proxy.logger;
     }
 
+    /**
+     * Endpoints forwarded to the backend management port.
+     *
+     * <p>{@code /aichat} is the AI chat channel; {@code /sql/ws} is the SQL REPL. Both are
+     * upgrade requests, so they cannot travel through the HTTP wildcard and need their own
+     * bidirectional pipe. The upstream path is the same as the endpoint name.</p>
+     */
+    private static final String[] ENDPOINTS = {"/aichat", "/sql/ws"};
+
     public static void register(ProxyInstance proxy, Javalin app) {
         WebSocketForwarder forwarder = new WebSocketForwarder(proxy);
-        app.unsafe.routes.ws("/{alias}/aichat", ws -> {
-            ws.onConnect(forwarder::onConnect);
+        for (String endpoint : ENDPOINTS) {
+            register(proxy, app, forwarder, endpoint);
+        }
+    }
+
+    private static void register(ProxyInstance proxy, Javalin app,
+                                 WebSocketForwarder forwarder, String endpoint) {
+        app.unsafe.routes.ws("/{alias}" + endpoint, ws -> {
+            ws.onConnect(ctx -> forwarder.onConnect(ctx, endpoint));
             ws.onMessage(ctx -> {
                 Session session = session(ctx);
                 if (session != null) {
@@ -85,7 +101,7 @@ public final class WebSocketForwarder {
         return ctx.attribute(ATTRIBUTE);
     }
 
-    private void onConnect(WsConnectContext ctx) {
+    private void onConnect(WsConnectContext ctx, String endpoint) {
         String alias = ctx.pathParam("alias");
         ProxyInstance.ManagementTarget target = proxy.resolveManagementTarget(alias);
         if (target == null || target.baseUrl() == null) {
@@ -95,7 +111,7 @@ public final class WebSocketForwarder {
             return;
         }
 
-        String wsUrl = toWebSocketUrl(target.baseUrl()) + "/aichat";
+        String wsUrl = toWebSocketUrl(target.baseUrl()) + endpoint;
         String query = ctx.queryString();
         if (query != null && !query.isEmpty()) {
             wsUrl = wsUrl + "?" + query;

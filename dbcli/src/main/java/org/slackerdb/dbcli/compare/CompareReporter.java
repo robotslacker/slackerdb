@@ -97,6 +97,8 @@ public final class CompareReporter {
 
     private final CompareResult result;
     private final List<String> reportLines;
+    /** 产物基路径（不含 .suc/.dif/.html）；默认由目标文件派生。 */
+    private final Path reportBase;
 
 
     /**
@@ -112,8 +114,17 @@ public final class CompareReporter {
 
     /** 用给定的"工作文件原始行"构造（测试或"比对后文件已被改写"的场景）。 */
     public CompareReporter(CompareResult result, List<String> workLines) {
+        this(result, workLines, artifactBase(result.targetPath()));
+    }
+
+    /**
+     * 显式指定产物基路径（不含扩展名）。生产环境由 {@code DbcliPaths} 给出
+     * {@code OUTPUT/compare/<目标基名>}，不再把产物写到输入文件旁边。
+     */
+    public CompareReporter(CompareResult result, List<String> workLines, Path reportBase) {
         this.result = result;
         this.reportLines = reassemble(algorithmRows(result), List.copyOf(workLines));
+        this.reportBase = reportBase;
     }
 
     public CompareResult result() {
@@ -362,20 +373,32 @@ public final class CompareReporter {
 
     /** {@code os.path.splitext} 的等价物：只认最后一个点，且前导点不算扩展名（{@code .hidden} → {@code .hidden.dif}）。 */
     private Path reportPath(String extension) {
-        return artifactPath(Path.of(result.targetPath()), extension);
+        return Path.of(reportBase.toString() + extension);
     }
 
     /**
-     * 产物路径（{@code .suc}/{@code .dif}/{@code .html}）的**唯一**派生规则：与目标文件同目录、同基名。
+     * 产物路径的**默认**派生规则：与目标文件同目录、同基名。
      *
-     * <p>公开是因为调用方要在写之前判断"这个产物路径是不是撞上了某个输入文件"（见
-     * {@code CompareCommandDispatcher.ensureArtifactsDoNotClobberInputs}）。</p>
+     * <p>生产环境不再使用它：{@code _COMPARE} 的产物统一落
+     * {@code OUTPUT/compare/<目标基名>}（由 {@link #CompareReporter(CompareResult, List, Path)} 显式传入基路径）。
+     * 保留它给测试/旧调用。</p>
      */
     public static Path artifactPath(Path target, String extension) {
-        String name = target.getFileName().toString();
+        return Path.of(artifactBase(target).toString() + extension);
+    }
+
+    /** 目标文件的产物基路径（去扩展名、同目录）。 */
+    public static Path artifactBase(Path target) {
+        Path absolute = target.toAbsolutePath().normalize();
+        String name = absolute.getFileName() == null ? absolute.toString() : absolute.getFileName().toString();
         int dot = name.lastIndexOf('.');
         String base = dot > 0 ? name.substring(0, dot) : name;
-        return target.resolveSibling(base + extension);
+        return absolute.resolveSibling(base);
+    }
+
+    /** 目标字符串形态的产物基路径。 */
+    private static Path artifactBase(String target) {
+        return artifactBase(Path.of(target));
     }
 
     private static void writeWithCrlf(Path file, List<String> lines) throws IOException {

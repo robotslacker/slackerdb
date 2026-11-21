@@ -35,6 +35,24 @@
             <artifactId>slackerdb-scheduler</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- PG/MySQL → DuckDB CDC 同步能力（内置模块） -->
+        <dependency>
+            <groupId>org.robotslacker</groupId>
+            <artifactId>slackerdb-dbsyncer</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!--
+            dbsyncer 的 PG 复制流需要 PostgreSQL JDBC 驱动。
+            根 POM 把 postgresql 声明为 test scope（供测试使用）；这里显式声明 compile，
+            否则 dbserver 的直接 test 依赖会覆盖 dbsyncer 的传递 compile 依赖，
+            standalone fat jar 里就没有 org.postgresql.Driver。
+        -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${postgres.version}</version>
+            <scope>compile</scope>
+        </dependency>
         <!--
             dbcli：调度器的 DBCLI 任务类型在**进程内**运行 dbcli 脚本（见 dbserver-scheduler 的
             DbcliTaskExecutor）。它同时把 slackerdb-dbdriver 带进运行时 classpath——DBCLI 任务用
@@ -76,7 +94,7 @@
         <dependency>
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
-            <version>2.0.0.0</version>
+            <version>2.0.0.1</version>
         </dependency>
         <!-- PF4J 插件 -->
         <dependency>

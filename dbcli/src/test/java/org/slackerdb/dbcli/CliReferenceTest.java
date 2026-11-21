@@ -49,7 +49,15 @@ class CliReferenceTest {
         CommandLine commandLine = new CommandLine(cli);
         commandLine.setOut(new PrintWriter(out, true));
         commandLine.setErr(new PrintWriter(out, true)); // dbcli 从不写 stderr：参数错误也在 stdout
-        int exitCode = commandLine.execute(args);
+        String[] withDirs = new String[args.length + 6];
+        withDirs[0] = "--home_dir";
+        withDirs[1] = tempDir.toString();
+        withDirs[2] = "--work_dir";
+        withDirs[3] = tempDir.resolve("work").toString();
+        withDirs[4] = "--output_dir";
+        withDirs[5] = tempDir.resolve("output").toString();
+        System.arraycopy(args, 0, withDirs, 6, args.length);
+        int exitCode = commandLine.execute(withDirs);
         return new Result(out.toString(), err.toString(), exitCode);
     }
 
@@ -66,9 +74,9 @@ class CliReferenceTest {
         return reference;
     }
 
-    /** 产物名跟着**工作文件**走（脚本是 {@code case.sql}、log 是 {@code case.log}），所以固定是 {@code case*}。 */
+    /** 产物名跟着**工作文件**走（脚本是 {@code case.sql}），落在 OUTPUT/ref 下。 */
     private Path sibling(String referenceName, String extension) {
-        return tempDir.resolve("case" + extension);
+        return tempDir.resolve("output").resolve("ref").resolve("case" + extension);
     }
     @Test
     @DisplayName("一致：stdout 不变、退出 0、写 .suc、不写 .dif，也不写 .rpt")
@@ -152,13 +160,16 @@ class CliReferenceTest {
         assertEquals(1, result.exitCode, "没有 ref 文件就是失败: " + result.out);
         assertTrue(result.out.startsWith("alpha\nbeta\n"), "脚本照常执行，消息追加在后面: " + result.out);
         assertTrue(result.out.contains("Reference file [" + missing + "] does not exist."), result.out);
-        // --ref 隐含的 log：<脚本名去扩展名>.log，与脚本同目录
-        assertTrue(Files.exists(tempDir.resolve("case.log")), "应当写出这次运行的 log");
+        // --ref 隐含的 log：OUTPUT/logs/<脚本基名>.log
+        Path log = tempDir.resolve("output").resolve("logs").resolve("case.log");
+        assertTrue(Files.exists(log), "应当写出这次运行的 log");
         
-        assertTrue(Files.readString(tempDir.resolve("case.log")).startsWith("alpha\nbeta\n"), "log 与 stdout 同字节");
-        assertFalse(Files.exists(tempDir.resolve("nope.suc")), "没比对就不写任何产物");
+        assertTrue(Files.readString(log).startsWith("alpha\nbeta\n"), "log 与 stdout 同字节");
+        assertFalse(Files.exists(tempDir.resolve("output").resolve("ref").resolve("case.suc")),
+                "没比对就不写任何产物");
         assertFalse(Files.exists(missing), "ref 必须已经存在：客户端从不创建它");
-        assertFalse(Files.exists(tempDir.resolve("nope.dif")), "不写 .dif");
+        assertFalse(Files.exists(tempDir.resolve("output").resolve("ref").resolve("case.dif")),
+                "不写 .dif");
     }
 
     @Test
@@ -217,9 +228,10 @@ class CliReferenceTest {
         assertEquals(0, withLog.exitCode, withLog.out);
         assertEquals("from-stdin\n", withLog.out);
         assertEquals("from-stdin\n", Files.readString(runLog), "log 就是这次运行的数据输出");
-        // 产物名跟着**工作文件**走：这里 log 是 stdin.log，所以产物是 stdin.suc
+        // 产物名跟着**工作文件**走：这里 log 是 stdin.log，所以产物是 OUTPUT/ref/stdin.suc
         assertEquals("SUCCESS\t<stdin>\t" + reference + "\n",
-                Files.readString(tempDir.resolve("stdin.suc"), StandardCharsets.UTF_8));
+                Files.readString(tempDir.resolve("output").resolve("ref").resolve("stdin.suc"),
+                        StandardCharsets.UTF_8));
     }
 
     /** 跑一次 stdin 形态（脚本来自 stdin）。 */
@@ -232,7 +244,15 @@ class CliReferenceTest {
         CommandLine commandLine = new CommandLine(cli);
         commandLine.setOut(new PrintWriter(out, true));
         commandLine.setErr(new PrintWriter(out, true)); // dbcli 从不写 stderr：参数错误也在 stdout
-        int exitCode = commandLine.execute(args);
+        String[] withDirs = new String[args.length + 6];
+        withDirs[0] = "--home_dir";
+        withDirs[1] = tempDir.toString();
+        withDirs[2] = "--work_dir";
+        withDirs[3] = tempDir.resolve("work").toString();
+        withDirs[4] = "--output_dir";
+        withDirs[5] = tempDir.resolve("output").toString();
+        System.arraycopy(args, 0, withDirs, 6, args.length);
+        int exitCode = commandLine.execute(withDirs);
         return new Result(out.toString(), err.toString(), exitCode);
     }
 }

@@ -62,34 +62,44 @@ public final class ScriptJobExecutor implements JobExecutor {
     @SuppressWarnings("try")
     public int execute(JobContext job) throws Exception {
         JobSpec spec = job.spec();
-        Path base = spec.workingDirectory() == null ? Path.of("").toAbsolutePath() : spec.workingDirectory();
-        Path script = resolve(base, spec.script());
-        // 与命令行一致：--execute <文件> 的工作目录是**脚本所在目录**（脚本里的相对路径以它为准）
-        Path workingDirectory = script.getParent() == null ? base : script.getParent();
+        org.slackerdb.dbcli.common.DbcliPaths paths = job.manager().paths();
+        Path script;
+        try {
+            script = paths.findScript(spec.script(), spec.definitionDirectory());
+        } catch (IllegalArgumentException invalidPath) {
+            throw new IllegalArgumentException(invalidPath.getMessage(), invalidPath);
+        }
+        if (script == null) {
+            throw new IllegalArgumentException("Script file [" + spec.script() + "] does not exist.");
+        }
+        Path workingDirectory = paths.work();
         Map<String, String> options = spec.options();
 
-        VariableResolver variables = new VariableResolver(spec.variables());
+        VariableResolver variables = new VariableResolver(Map.of(), spec.sessionVariables(),
+                spec.variables(), paths.globalVariables());
         try (JdbcSqlExecutor sqlExecutor = new JdbcSqlExecutor();
              ScriptOutput output = new ScriptOutput(job.output().stdout(), job.output().stderr());
-             CommandDispatcher dispatcher = new CommandDispatcher(sqlExecutor, workingDirectory, job.manager());
+             CommandDispatcher dispatcher = new CommandDispatcher(sqlExecutor, paths, job.manager());
              // 作业会话**不**负责作业失败传播：它共享父脚本的作业管理器，如果在这里补报/认领
              // "失败的兄弟作业"，失败信息会落进别的作业的 .err，而且父脚本收尾时不再报它
-             ScriptContext context = new ScriptContext(sqlExecutor, output, variables, workingDirectory,
+             ScriptContext context = new ScriptContext(sqlExecutor, output, variables, paths,
                      dispatcher, false);
              AutoCloseable cancelStatements = job.control().onStop(sqlExecutor::cancelCurrentStatement);
              AutoCloseable cancelSsh = job.control().onStop(dispatcher::closeSshSessions)) {
-            return runScript(job, context, script, workingDirectory, options);
+            return runScript(job, context, script, options);
         } catch (ScriptStoppedException stopped) {
-            // 被 abort/shutdown/管理器关闭停掉：终态由请求方落地（见 JobManager），这里只给一个非 0 退出码
+            // 被 abort/shutdown/管理器关闭停掉：终态由监督者按已写入库的停止意图落地，
+            // 这里只给一个非 0 退出码
             return 1;
         }
     }
 
     // ------------------------------------------------------------------ 主体
 
-    private int runScript(JobContext job, ScriptContext context, Path script, Path workingDirectory,
+    private int runScript(JobContext job, ScriptContext context, Path script,
                           Map<String, String> options) {
         ScriptRunner runner = new ScriptRunner(context, job.control()::stopRequested);
+        org.slackerdb.dbcli.common.DbcliPaths paths = context.paths();
 
         // 数据输出文件：与命令行同一个语义（内容与作业 stdout 相同）。
         // 给了 reference 时它同时是"实际输出文件"，比对的就是它。
@@ -99,13 +109,13 @@ public final class ScriptJobExecutor implements JobExecutor {
         Path referenceFile = null;
         Path tempOutputFile = null;
         if (reference != null) {
-            referenceFile = resolve(workingDirectory, reference);
+            referenceFile = paths.findInput(reference, job.spec().definitionDirectory());
             if (!Files.isRegularFile(referenceFile)) {
                 context.output().printError("Reference file [" + reference + "] does not exist.");
                 return 1;
             }
         }
-        Path logFileTarget = logTarget == null ? null : resolve(workingDirectory, logTarget);
+        Path logFileTarget = logTarget == null ? null : paths.outputFile(logTarget);
         if (logFileTarget != null) {
             try {
                 context.output().startTee(logFileTarget);
@@ -117,7 +127,7 @@ public final class ScriptJobExecutor implements JobExecutor {
         }
         if (referenceFile != null && logFileTarget == null) {
             try {
-                tempOutputFile = Files.createTempFile(REFERENCE_TEMP_PREFIX, ".out");
+                tempOutputFile = paths.referenceTempFile(job.spec().name());
                 context.output().addTee(tempOutputFile);
             } catch (IOException teeFailed) {
                 context.output().printError("Cannot write the reference output file: "
@@ -144,8 +154,8 @@ public final class ScriptJobExecutor implements JobExecutor {
             }
             String profile = options.get("profile");
             if (profile != null) {
-                Path profileFile = resolve(workingDirectory, profile);
-                if (!Files.isRegularFile(profileFile)) {
+                Path profileFile = context.paths().findScript(profile, job.spec().definitionDirectory());
+                if (profileFile == null || !Files.isRegularFile(profileFile)) {
                     context.output().printError("Profile script [" + profile + "] does not exist.");
                     return 1;
                 }
@@ -186,18 +196,17 @@ public final class ScriptJobExecutor implements JobExecutor {
                 : script.getFileName().toString();
         // ReferenceCheck 要读 actualOutputFile，先停 tee 让它落盘
         context.output().stopTee();
+        Path reportDirectory = context.paths().legacy()
+                ? (actualOutputFile == null ? null : actualOutputFile.toAbsolutePath().getParent())
+                : context.paths().refReportDir();
         ReferenceCheck.Outcome outcome = ReferenceCheck.finish(runCode, scriptName, actualOutputFile,
-                referenceFile, actualOutputFile == null ? null : actualOutputFile.toAbsolutePath().getParent(),
+                referenceFile, reportDirectory,
                 context.dispatcher().compareRules(),
                 line -> context.output().printError(line));
         return outcome.exitCode();
     }
 
     // ------------------------------------------------------------------ 小工具
-
-    private static Path resolve(Path base, String name) {
-        return PathArguments.resolve(base, name);
-    }
 
     private static void deleteQuietly(Path file) {
         if (file == null) {

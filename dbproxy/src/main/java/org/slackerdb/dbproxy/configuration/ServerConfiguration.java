@@ -44,6 +44,9 @@ public class ServerConfiguration extends Throwable {
     private final boolean defaultDaemonMode = false;
     // 实例根目录。留空 = 不启用实例管理（行为与旧版本一致）。
     private final String default_data_dir = "";
+    // dbserver 运行时 jar 的文件名模式（例如 slackerdb-dbserver-*-standalone.jar）。
+    // 刻意没有默认值：缺失时不接受创建实例，避免"探测到哪个 jar 就用哪个"的不确定性。
+    private final String default_dbserver_jar = "";
 
     private String   log;
     private Level    log_level;
@@ -57,6 +60,7 @@ public class ServerConfiguration extends Throwable {
     private String   pid;
     private boolean  daemonMode;
     private String   data_dir;
+    private String   dbserver_jar;
 
     public ServerConfiguration() throws ServerException
     {
@@ -72,6 +76,7 @@ public class ServerConfiguration extends Throwable {
         pid = default_pid;
         daemonMode = defaultDaemonMode;
         data_dir = default_data_dir;
+        dbserver_jar = default_dbserver_jar;
         // 初始化默认一个系统的临时端口
         try (ServerSocket socket = new ServerSocket(0)) {
             port = socket.getLocalPort();
@@ -189,6 +194,13 @@ public class ServerConfiguration extends Throwable {
                         setData_Dir(entry.getValue().toString().trim());
                     }
                 }
+                case "DBSERVER_JAR" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        dbserver_jar = this.default_dbserver_jar;
+                    } else {
+                        setDbserver_Jar(entry.getValue().toString().trim());
+                    }
+                }
                 default ->
                         throw new ServerException(Utils.getMessage("SLACKERDB-00004", entry.getKey().toString(), configurationFileName));
             }
@@ -265,6 +277,48 @@ public class ServerConfiguration extends Throwable {
             return;
         }
         data_dir = pDataDir.trim();
+    }
+
+    /**
+     * dbserver 运行时 jar 的文件名模式（配置原文）。空字符串表示未配置。
+     *
+     * <p>只描述文件名，不是路径：代理会在已知的几个目录里用这个模式查找 jar。</p>
+     */
+    public String getDbserver_Jar()
+    {
+        return this.dbserver_jar;
+    }
+
+    /**
+     * 是否配置了 {@code dbserver_jar}。
+     *
+     * <p>没有默认值：未配置时代理拒绝创建实例（已有的实例仍可 list/stop/destroy）。</p>
+     */
+    public boolean isDbserverJarConfigured()
+    {
+        return this.dbserver_jar != null && !this.dbserver_jar.trim().isEmpty();
+    }
+
+    /**
+     * 设置 dbserver 运行时 jar 的文件名模式，例如 {@code slackerdb-dbserver-*-standalone.jar}。
+     *
+     * <p>模式在配置加载期就校验语法，避免等到 create 时才发现写成非法 glob。</p>
+     */
+    public void setDbserver_Jar(String pDbserverJar) throws ServerException
+    {
+        if (pDbserverJar == null || pDbserverJar.trim().isEmpty()) {
+            dbserver_jar = this.default_dbserver_jar;
+            return;
+        }
+        String pattern = pDbserverJar.trim();
+        try {
+            java.nio.file.FileSystems.getDefault().getPathMatcher("glob:" + pattern);
+        } catch (java.util.regex.PatternSyntaxException pse) {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "dbserver_jar", pDbserverJar)
+            );
+        }
+        dbserver_jar = pattern;
     }
 
     /**

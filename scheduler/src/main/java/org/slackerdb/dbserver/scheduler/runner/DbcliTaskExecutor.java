@@ -1,5 +1,6 @@
 package org.slackerdb.dbserver.scheduler.runner;
 
+import org.slackerdb.dbcli.common.DbcliPaths;
 import org.slackerdb.dbcli.embed.DbcliRunner;
 import org.slf4j.Logger;
 
@@ -117,6 +118,19 @@ public final class DbcliTaskExecutor {
         }
     }
 
+    /**
+     * 调度器宿主的三目录映射：HOME=脚本父目录，WORK=任务工作区（不与 OUTPUT 嵌套），
+     * OUTPUT=runHome/output；宿主自己管并发，因此嵌入运行不清空目录。
+     */
+    private static DbcliPaths resolvePaths(TaskRequest request, Path script) throws Exception {
+        Path base = request.runHome != null ? request.runHome : script.getParent();
+        Path work = request.workDir != null && !request.workDir.equals(base)
+                ? request.workDir : base.resolve("work");
+        Path output = base.resolve("output");
+        Path home = script.getParent() != null ? script.getParent() : base;
+        return DbcliPaths.resolve(home.toString(), work.toString(), output.toString(), false);
+    }
+
     private TaskResult run(TaskRequest request, Path script, PrintWriter log, long start, String logPath)
             throws Exception {
         Map<String, String> variables = request.variables == null ? Map.of() : request.variables.asMap();
@@ -126,17 +140,24 @@ public final class DbcliTaskExecutor {
 
         Thread worker = new Thread(() -> {
             try {
-                DbcliRunner.Result result = DbcliRunner.run(DbcliRunner.Request.builder()
-                        .script(script)
-                        .workingDirectory(script.getParent())
-                        .logon(request.dbcliConnect)
-                        .abortOnLogonFailure(true)
-                        .variables(variables)
-                        .out(log)
-                        .err(log)
-                        .stopRequested(stopRequested::get)
-                        .onCancelReady(cancelAction::set)
-                        .build());
+                DbcliPaths paths = resolvePaths(request, script);
+                DbcliRunner.Result result;
+                try {
+                    result = DbcliRunner.run(DbcliRunner.Request.builder()
+                            .script(script)
+                            .workingDirectory(paths.work())
+                            .paths(paths)
+                            .logon(request.dbcliConnect)
+                            .abortOnLogonFailure(true)
+                            .variables(variables)
+                            .out(log)
+                            .err(log)
+                            .stopRequested(stopRequested::get)
+                            .onCancelReady(cancelAction::set)
+                            .build());
+                } finally {
+                    paths.close();
+                }
                 if (result.logonFailed()) {
                     failure.set("DBCLI 无法连接数据库: " + request.dbcliConnect
                             + "（数据服务端口是否可达？）");

@@ -79,6 +79,19 @@ class InstanceConfTest {
     }
 
     @Test
+    @DisplayName("render: backslashes in values survive a parse round-trip (Windows paths)")
+    void renderEscapesBackslashes() throws Exception {
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("data_dir", "D:\\data\\sales");
+        values.put("log", "logs\\server.log");
+
+        InstanceConf parsed = InstanceConf.parse(InstanceConf.render(values));
+
+        assertEquals("D:\\data\\sales", parsed.get("data_dir"));
+        assertEquals("logs\\server.log", parsed.get("log"));
+    }
+
+    @Test
     @DisplayName("load: a missing file fails loudly (the scanner turns it into a skipped directory)")
     void missingFileIsAnError() {
         boolean failed = false;

@@ -1,6 +1,7 @@
 package org.slackerdb.dbcli.engine;
 
 import org.slackerdb.dbcli.common.CommandOutcome;
+import org.slackerdb.dbcli.common.DbcliPaths;
 import org.slackerdb.dbcli.compare.CompareCommandDispatcher;
 import org.slackerdb.dbcli.compare.LineRules;
 import org.slackerdb.dbcli.job.DbcliJobSpecFactory;
@@ -46,6 +47,7 @@ public final class CommandDispatcher implements AutoCloseable {
             "CONNECT", "DISCONNECT", "SESSION", "COMPARE", "JOB", "SSH");
 
     private final SqlExecutor sqlExecutor;
+    private final DbcliPaths paths;
     private final Path workingDirectory;
 
     /** 外部传入的作业管理器（作业线程复用父脚本的那一个）；null 表示"由本分派器自建并自己关闭"。 */
@@ -61,16 +63,29 @@ public final class CommandDispatcher implements AutoCloseable {
     private JobCommandDispatcher job;
 
     public CommandDispatcher(SqlExecutor sqlExecutor, Path workingDirectory) {
-        this(sqlExecutor, workingDirectory, null);
+        this(sqlExecutor, DbcliPaths.forDirectory(workingDirectory), null);
     }
 
     /**
      * @param sharedJobManager 复用的作业管理器（{@code null} 表示本分派器自建一个，并在 {@link #close()} 时关掉它）
      */
     public CommandDispatcher(SqlExecutor sqlExecutor, Path workingDirectory, JobManager sharedJobManager) {
+        this(sqlExecutor, DbcliPaths.forDirectory(workingDirectory), sharedJobManager);
+    }
+
+    public CommandDispatcher(SqlExecutor sqlExecutor, DbcliPaths paths) {
+        this(sqlExecutor, paths, null);
+    }
+
+    public CommandDispatcher(SqlExecutor sqlExecutor, DbcliPaths paths, JobManager sharedJobManager) {
         this.sqlExecutor = sqlExecutor;
-        this.workingDirectory = workingDirectory;
+        this.paths = paths;
+        this.workingDirectory = paths.work();
         this.sharedJobManager = sharedJobManager;
+    }
+
+    public DbcliPaths paths() {
+        return paths;
     }
 
     /** 这条 IR 是否由本分派器处理。 */
@@ -84,6 +99,22 @@ public final class CommandDispatcher implements AutoCloseable {
      * @param ir {@code SqlAnalyzer} 给出的 IR（必须有 {@code name}）
      */
     public List<CommandOutcome> dispatch(Map<String, Object> ir) {
+        return dispatch(ir, null, null);
+    }
+
+    public List<CommandOutcome> dispatch(Map<String, Object> ir, Path currentScriptDirectory) {
+        return dispatch(ir, currentScriptDirectory, null);
+    }
+
+    /**
+     * 执行一条命令。
+     *
+     * @param ir {@code SqlAnalyzer} 给出的 IR（必须有 {@code name}）
+     * @param currentScriptDirectory 当前脚本所在目录（{@code _JOB} 定义/`_COMPARE`/`_SSH` 的相对解析用）
+     * @param variables 当前 job 的变量作用域（{@code _JOB} fork 时给子 job 拍 SESSION 快照）
+     */
+    public List<CommandOutcome> dispatch(Map<String, Object> ir, Path currentScriptDirectory,
+                                         VariableResolver variables) {
         String name = ir.get("name") == null ? "" : String.valueOf(ir.get("name")).toUpperCase(Locale.ROOT);
         List<CommandOutcome> outcomes = new ArrayList<>();
         try {
@@ -103,9 +134,9 @@ public final class CommandDispatcher implements AutoCloseable {
                 case "SESSION" -> outcomes.addAll(sqlExecutor.session(
                         ir.get("action") == null ? null : String.valueOf(ir.get("action")),
                         ir.get("sessionName") == null ? null : String.valueOf(ir.get("sessionName"))));
-                case "COMPARE" -> outcomes.addAll(compare().execute(ir));
-                case "JOB" -> outcomes.addAll(job().execute(ir));
-                case "SSH" -> outcomes.addAll(ssh().execute(ir));
+                case "COMPARE" -> outcomes.addAll(compare().execute(ir, currentScriptDirectory));
+                case "JOB" -> outcomes.addAll(job().execute(ir, currentScriptDirectory, variables));
+                case "SSH" -> outcomes.addAll(ssh().execute(ir, currentScriptDirectory));
                 default -> outcomes.add(new CommandOutcome.Error("Unsupported command [" + name + "]"));
             }
         } catch (RuntimeException failure) {
@@ -131,7 +162,7 @@ public final class CommandDispatcher implements AutoCloseable {
 
     private CompareCommandDispatcher compare() {
         if (compare == null) {
-            compare = new CompareCommandDispatcher(workingDirectory);
+            compare = new CompareCommandDispatcher(paths);
             compare.setDiffReportHtml(diffReportHtml);
         }
         return compare;
@@ -152,7 +183,7 @@ public final class CommandDispatcher implements AutoCloseable {
     private SshCommandDispatcher ssh() {
         if (ssh == null) {
             sshRegistry = new SshSessionRegistry();
-            ssh = new SshCommandDispatcher(sshRegistry, SshClient::new);
+            ssh = new SshCommandDispatcher(sshRegistry, SshClient::new, paths);
         }
         return ssh;
     }
@@ -164,7 +195,7 @@ public final class CommandDispatcher implements AutoCloseable {
             jobManager = sharedJobManager != null ? sharedJobManager
                     : new JobManager(new DbcliJobSpecFactory(),
                             new ModeJobExecutor(new ScriptJobExecutor(), new ProcessJobExecutor()),
-                            workingDirectory, workingDirectory);
+                            paths);
             job = new JobCommandDispatcher(jobManager);
         }
         return job;
@@ -180,6 +211,20 @@ public final class CommandDispatcher implements AutoCloseable {
             return sharedJobManager;
         }
         return jobManager;
+    }
+
+    /**
+     * 等待所有作业**自然结束**（不发出停止请求）。
+     *
+     * <p>供最外层脚本退出前调用：脚本可能因为 {@code _EXIT}/{@code _WHENEVER ERROR EXIT}
+     * 提前收尾，此时仍在跑的作业由这里等完，避免留下"父进程已退出、作业还在工作"的窗口。
+     * 没有用过 {@code _JOB} 时无操作。作业自身的 {@code timeout=} 仍由看门狗负责收掉。</p>
+     */
+    public void awaitAllJobs() {
+        JobManager manager = jobManager();
+        if (manager != null) {
+            manager.awaitAll();
+        }
     }
 
     /**

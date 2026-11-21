@@ -18,32 +18,34 @@
 
 ## 2. 目录与包
 
-| 包                     | 内容                                   |
-|-----------------------|--------------------------------------|
-| `org.slackerdb.dbcli` | 进程入口、命令行参数、运行形态、收尾（退出码与比对）           |
-| `engine`              | 脚本引擎：逐行累积 → 分析 → 分派 → 输出             |
-| `engine.flow`         | 控制流：`_IF`/`_LOOP` 的块捕获、控制树与解释执行       |
-| `engine.command`      | 一条命令一个类（`_SET`/`_ASSERT`/`_SPOOL`/…） |
-| `api`                 | `_API` 的请求解析、HTTP 客户端、响应与 JSON 变量          |
-| `script`              | 本模块使用的 SQL/命令语法与 IR                  |
-| `sql`                 | 数据库执行层与结果渲染                          |
-| `assertion`           | `_ASSERT` 的求值与结果模型                   |
-| `job`                 | 作业的定义、启动、等待、停止与超时                    |
-| `rendezvous`          | 作业之间的同步点（同进程 / 跨进程）                  |
-| `compare`             | `_COMPARE` 的文件比对与报告                  |
-| `report`              | `--reference` 的收尾比对                  |
-| `ssh`                 | SSH 远端命令与 SFTP                       |
-| `repl`                | 交互式控制台的取行与循环                         |
-| `daemon`              | 后台运行（`--daemon`）与 pid 文件             |
-| `help`                | `_HELP` 文案（与 README 同源）              |
-| `common`              | 多个包共用的小类型（路径/数值解析、命令结果项）             |
+| 包                     | 内容                                          |
+|-----------------------|---------------------------------------------|
+| `org.slackerdb.dbcli` | 进程入口、命令行参数、运行形态、收尾（退出码与比对）                  |
+| `engine`              | 脚本引擎：逐行累积 → 分析 → 分派 → 输出                    |
+| `engine.flow`         | 控制流：`_IF`/`_LOOP` 的块捕获、控制树与解释执行             |
+| `engine.command`      | 一条命令一个类（`_SET`/`_ASSERT`/`_SPOOL`/…）        |
+| `api`                 | `_API` 的请求解析、HTTP 客户端、响应与 JSON 变量           |
+| `script`              | 本模块使用的 SQL/命令语法与 IR                         |
+| `sql`                 | 数据库执行层与结果渲染                                 |
+| `assertion`           | `_ASSERT` 的求值与结果模型                          |
+| `job`                 | 作业的定义、启动、等待、停止、超时与统一状态库                     |
+| `compare`             | `_COMPARE` 的文件比对与报告                         |
+| `report`              | `--reference` 的收尾比对                         |
+| `ssh`                 | SSH 远端命令与 SFTP                              |
+| `repl`                | 交互式控制台的取行与循环                                |
+| `daemon`              | 后台运行（`--daemon`）与 pid 文件                    |
+| `help`                | `_HELP` 文案（与 README 同源）                     |
+| `common`              | 多个包共用的小类型（三目录模型 `DbcliPaths`、路径/数值解析、命令结果项） |
 
 每个包都有 `package-info.java`，说明该包的职责、阅读顺序与关键约定，建议从那里开始读。
 
 ## 3. 一次运行的过程
 
 1. **参数**：`Main` 构造命令树，`Cli` 解析参数并决定运行形态（控制台 / 脚本 / 标准输入 / 后台）。
-2. **基准目录**：脚本里的相对路径以**脚本所在目录**为基准；命令行选项按**进程当前目录**解析。
+2. **三目录**：`HOME`（只读代码）、`WORK`（运行工作区）、`OUTPUT`（产物）；默认
+   `cwd`、`<tmp>/dbcli-<pid>`、`<HOME>/output`。root 启动时抢 `.dbcli/lock` 并清空 WORK/OUTPUT；
+   作业/daemon 子进程带标记，只校验 lock、不清空。相对脚本按 WORK → 调用脚本目录 → HOME，
+   相对输入同一规则；相对写路径按角色根（见 `DbcliPaths`）。
 3. **执行**：脚本按行进入引擎；引擎把"能收尾的一段"交给分析器：
    - 还没写完 → 继续读下一行（控制台给出续行提示）；
    - 是 SQL → 交给执行层；
@@ -72,6 +74,15 @@
 
 > 要让"脚本里出现过错误"变成失败，请在脚本里写 `_WHENEVER ERROR EXIT 1` 或结尾 `_EXIT 1`。
 
+### 变量作用域
+
+- `_SET @x v` / `_SET LOCAL @x v`：LOCAL，只当前 job/脚本（`_START` 子脚本共享）。
+- `_SET SESSION @x v`：当前 job 及 fork/派生 job；fork 时快照，子 job 修改不回传父/并行 job。
+- `_SET GLOBAL @x v`：同一 WORK 内所有 job/进程共享，存 `WORK/.dbcli/global-vars.db`；
+  子进程写 GLOBAL 父进程下一次查询可见。跨 WORK 不共享。
+- 优先级 LOCAL > SESSION > GLOBAL > `--var` > `ARGVn` > 环境变量；`_ASSERT VAR.x` 用同一顺序。
+- 作用域只适用于变量；`_SET GLOBAL ECHO OFF` 是用法错误。
+
 ### 会话与连接
 
 - `_SET` 的选项（含 `AUTOCOMMIT`、`TIMEOUT`、`LOOPTRACE`）在**重连后继续生效**。
@@ -87,6 +98,14 @@
 ### 作业
 
 - 作业默认在线程里运行；`mode=process` 时在独立进程里运行，可硬超时并结束整棵进程树。
+- 两种模式共用**同一个 SQLite 运行库**：作业注册表、状态、停止意图、超时、失败认领与定时点
+  都在库里，线程/进程只差执行层。库固定为 `WORK/dbcli_log.db`，每次运行启动时都创建（即使不用
+  `_JOB`），正常关闭不删除，由下一次 root 清空 WORK 时回收；进程作业的子进程通过内部子进程变量
+  加入同一次运行。
+- 作业按 scope 隔离（根进程 `root`，进程作业的子进程 `root/<作业名>`）；定时点不分 scope，
+  因此“父放行、任意深度的作业等待”在两种模式下都成立。
+- 审计：每次作业执行结束（含启动失败）写一行 `job_audit`：PID、脚本名、开始/结束毫秒、终态与
+  退出码；进程作业记子进程 PID，线程作业记当前 dbcli PID。重复运行追加多行，不覆盖。
 - `_JOB WAIT` 不写 `timeout=` 会一直等；等待超时只是"这次没等到"，作业仍在运行。
 - `_JOB SHOW` 不带名字时把管理器里的全部作业（含已结束）按名字排序列成一张表；没有作业时只有表头。
 - `_JOB ABORT` / `_JOB SHUTDOWN` 是**请求**停止。作业正常响应时立即进入 `ABORTED` / `SHUTDOWN`；

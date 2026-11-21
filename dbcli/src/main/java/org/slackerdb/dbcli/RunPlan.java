@@ -1,26 +1,19 @@
 package org.slackerdb.dbcli;
 
-import org.slackerdb.dbcli.common.PathArguments;
+import org.slackerdb.dbcli.common.DbcliPaths;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * 这次运行"在哪儿跑"：脚本文件、脚本工作目录、命令行选项的基准目录。
+ * 这次运行"跑哪个脚本"：解析后的脚本文件 + 三个运行目录。
  *
- * <p>从 {@link Cli} 里抽出来的原因：{@code call()} 以前把参数解析、路径推导、连接、profile、
- * 控制台、参照比对全写在一个方法里，{@code --execute} 的路径规则（脚本里的相对路径跟脚本、
- * 命令行选项跟进程当前目录）散落在几十行中间，改一处很难看清影响。</p>
+ * <p>脚本的相对名按 {@link DbcliPaths#findScript(String, Path)}（入口脚本为 WORK → HOME）；
+ * 运行时工作目录是 {@link DbcliPaths#work()}（见 {@code ScriptContext}）。</p>
  *
- * <p>不变的规则：<b>脚本里</b>的相对路径以 {@link #workingDirectory()} 为基准；
- * <b>命令行选项</b>（{@code --profile}/{@code --logfile}/{@code --reference}/{@code --report-dir}/
- * {@code --pidfile}）以 {@link #processDirectory()} 为基准。</p>
- *
- * @param scriptFile       {@code --execute <文件>} 解析后的绝对路径；stdin/控制台为 null
- * @param workingDirectory 脚本所在目录（脚本里的相对路径基准）；stdin/控制台是进程当前目录
- * @param processDirectory 进程当前目录（命令行选项的基准）
+ * @param scriptFile {@code --execute <文件>} 解析后的绝对路径；stdin/控制台为 null
+ * @param paths      本次运行的 HOME/WORK/OUTPUT
  */
-public record RunPlan(Path scriptFile, Path workingDirectory, Path processDirectory) {
+public record RunPlan(Path scriptFile, DbcliPaths paths) {
 
     /** 脚本文件不存在（命令行层面的错误：打印一行、退出 1）。 */
     public static final class MissingScriptException extends Exception {
@@ -34,27 +27,28 @@ public record RunPlan(Path scriptFile, Path workingDirectory, Path processDirect
     /**
      * 解析 {@code --execute}（{@code -} 与 null 都表示"没有脚本文件"）。
      *
-     * @throws MissingScriptException 给了脚本名但文件不存在
+     * @throws MissingScriptException 给了脚本名但 WORK/HOME 都找不到
      */
-    public static RunPlan resolve(String execute) throws MissingScriptException {
-        Path scriptFile;
-        if (execute == null || "-".equals(execute)) {
-            scriptFile = null;
-        } else {
+    public static RunPlan resolve(String execute, DbcliPaths paths) throws MissingScriptException {
+        Path scriptFile = null;
+        if (execute != null && !"-".equals(execute)) {
             try {
-                scriptFile = PathArguments.resolve(Path.of("").toAbsolutePath(), execute);
-            } catch (PathArguments.InvalidPathException invalidPath) {
-                // 路径写错是命令行层面的错误：一行可读消息，与"文件不存在"同一个返回码（1）
+                scriptFile = paths.findScript(execute, null);
+            } catch (IllegalArgumentException invalidPath) {
                 throw new MissingScriptException(invalidPath.getMessage());
             }
+            if (scriptFile == null) {
+                throw new MissingScriptException("Script file [" + execute + "] does not exist (searched ["
+                        + paths.work().resolve(execute).normalize() + "], ["
+                        + paths.home().resolve(execute).normalize() + "]).");
+            }
         }
-        if (scriptFile != null && !Files.isRegularFile(scriptFile)) {
-            throw new MissingScriptException("Script file [" + execute + "] does not exist.");
-        }
-        Path processDirectory = Path.of("").toAbsolutePath();
-        Path workingDirectory = scriptFile == null || scriptFile.getParent() == null
-                ? processDirectory : scriptFile.getParent();
-        return new RunPlan(scriptFile, workingDirectory, processDirectory);
+        return new RunPlan(scriptFile, paths);
+    }
+
+    /** 运行时工作目录（脚本里的相对写/`_HOST` cwd）。 */
+    public Path workingDirectory() {
+        return paths.work();
     }
 
     /**
@@ -67,5 +61,13 @@ public record RunPlan(Path scriptFile, Path workingDirectory, Path processDirect
                     : scriptFile.getFileName().toString();
         }
         return stdinScript != null ? "<stdin>" : "<console>";
+    }
+
+    /** 入口脚本所在目录（没有脚本时为 WORK）；用于“调用脚本目录”的相对解析。 */
+    public Path scriptDirectory() {
+        if (scriptFile == null || scriptFile.getParent() == null) {
+            return paths.work();
+        }
+        return scriptFile.getParent();
     }
 }

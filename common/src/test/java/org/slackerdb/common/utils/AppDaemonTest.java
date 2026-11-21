@@ -316,7 +316,7 @@ class AppDaemonTest {
         Console console = captureConsole(() -> started[0] = AppDaemon.startInBackground(
                 AppDaemonTest.class, "start",
                 AppDaemon.parse(new String[]{"--daemon", "true", "start"}).options(),
-                null, "log", null));
+                "log", null));
         assertFalse(started[0],
                 "startInBackground must report false in dev mode so the caller does not exit");
 
@@ -585,4 +585,17 @@ class AppDaemonTest {
             // 同上：清理是尽力而为
         }
     }
+
+    @Test
+    @DisplayName("daemon child inherits JVM flags such as -Xmx")
+    void childInheritsJvmFlags() throws Exception {
+        List<String> flags = List.of("-Xmx8g", "-XX:+UseG1GC");
+        List<String> child = AppDaemon.buildForegroundCommand(
+                fakeJar(), "start", AppDaemon.parse(new String[]{"start"}).options(), flags);
+        assertNotNull(child);
+        assertEquals(flags, child.subList(1, 1 + flags.size()),
+                "JVM flags must reach the child JVM, otherwise -Xmx is silently lost: " + child);
+        assertEquals("-jar", child.get(1 + flags.size()));
+    }
+
 }

@@ -458,6 +458,7 @@ public class QueryRequest  extends PostgresRequest {
             try {
                 try {
                     isResultSet = preparedStatement.execute();
+                    simpleQuerySession.refreshTimeZoneIfSet(sql);
                 }
                 catch (SQLException e) {
                     if (!e.getMessage().contains("no transaction is active"))
@@ -470,7 +471,8 @@ public class QueryRequest  extends PostgresRequest {
                     ResultSet rs = preparedStatement.getResultSet();
 
                     // 列级元数据只解析一次；simple query 路径一律文本返回
-                    RowEncoder encoder = new RowEncoder(rs.getMetaData(), RowEncoder.ALL_TEXT, this.dbInstance.logger);
+                    RowEncoder encoder = new RowEncoder(rs.getMetaData(), RowEncoder.ALL_TEXT,
+                            this.dbInstance.logger, simpleQuerySession.timeZone);
 
                     RowDescription rowDescription = new RowDescription(this.dbInstance);
                     rowDescription.setFields(encoder.describe());
@@ -739,6 +741,7 @@ public class QueryRequest  extends PostgresRequest {
                     boolean hasResultSet;
                     try {
                         hasResultSet = preparedStatement.execute();
+                        session.refreshTimeZoneIfSet(statementSql);
                     }
                     catch (SQLException e) {
                         if (!e.getMessage().contains("no transaction is active")) {
@@ -750,7 +753,8 @@ public class QueryRequest  extends PostgresRequest {
                     if (hasResultSet) {
                         returnedRows = true;
                         ResultSet resultSet = preparedStatement.getResultSet();
-                        RowEncoder encoder = new RowEncoder(resultSet.getMetaData(), RowEncoder.ALL_TEXT, this.dbInstance.logger);
+                        RowEncoder encoder = new RowEncoder(resultSet.getMetaData(), RowEncoder.ALL_TEXT,
+                                this.dbInstance.logger, session.timeZone);
 
                         RowDescription rowDescription = new RowDescription(this.dbInstance);
                         rowDescription.setFields(encoder.describe());

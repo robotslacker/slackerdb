@@ -115,13 +115,15 @@ public final class ManifestWriter {
         Files.writeString(staging.resolve("README-offline.md"), readme(), StandardCharsets.UTF_8);
         List<Path> checksumTargets = new ArrayList<>();
         checksumTargets.add(Files.isRegularFile(javarepoZip) ? javarepoZip : javarepo);
-        checksumTargets.add(Files.isRegularFile(npmrepoZip) ? npmrepoZip : npmrepo);
+        if (Files.isRegularFile(npmrepoZip) || Files.isDirectory(npmrepo)) {
+            checksumTargets.add(Files.isRegularFile(npmrepoZip) ? npmrepoZip : npmrepo);
+        }
         writeChecksums(staging, checksumTargets);
     }
 
     private String textManifest(ObjectNode root, List<Platform> platforms) {
         StringBuilder sb = new StringBuilder();
-        sb.append("SlackerDB Offline Package\n");
+        sb.append("Offline Package\n");
         sb.append("========================\n\n");
         sb.append("Generated: ").append(root.path("generatedAt").asText()).append('\n');
         sb.append("Maven    : ").append(root.path("mavenVersion").asText()).append('\n');

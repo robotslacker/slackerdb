@@ -150,6 +150,21 @@ public class StartupSearchPathTest {
                     "不带库名时 search_path 应同时含 fake catalog 与客户端要求，实际 = " + searchPath);
         }
     }
+    @Test
+    void clientRequestedTimeZoneIsApplied() throws Exception {
+        try (PgWireClient client = new PgWireClient("127.0.0.1", dbPort, "sppath",
+                Map.of("TimeZone", "Asia/Shanghai"), 10_000)) {
+            String timeZone = queryFirstText(client, "SHOW timezone");
+            assertTrue("Asia/Shanghai".equalsIgnoreCase(timeZone),
+                    "Startup 的 TimeZone 必须落到 DuckDB 会话，实际 = " + timeZone);
+
+            String cast = queryFirstText(client,
+                    "SELECT CAST(TIMESTAMPTZ '2026-11-10 12:00:00' AS VARCHAR)");
+            assertTrue(cast.startsWith("2026-11-10 12:00:00+08"),
+                    "无偏移 TIMESTAMPTZ 必须按客户端时区解释，实际 = " + cast);
+        }
+    }
+
     /** 发一条简单查询，返回第一行第一列的文本；出错时返回 {@code ERROR: ...} 便于断言里看清楚。 */
     private static String queryFirstText(PgWireClient client, String sql) throws Exception {
         client.sendQuery(sql);

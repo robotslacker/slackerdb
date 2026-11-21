@@ -14,6 +14,7 @@ import net.jodah.expiringmap.ExpiringMap;
 import org.slackerdb.common.utils.Utils;
 import org.slackerdb.dbserver.server.DBDataSourcePool;
 import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.dbserver.server.QueryConcurrencyGate;
 import org.slackerdb.dbserver.service.filter.DataFilter;
 import org.slackerdb.dbserver.service.filter.FilterException;
 import org.slackerdb.dbserver.service.filter.FilterAst.FilterProgram;
@@ -59,6 +60,10 @@ public class APIService {
          */
         public Long maxExecutionTime = null;
         public Map<String, String> parameter = new ConcurrentHashMap<>();
+        /** description as a JSON literal (quotes included), built once at registration. */
+        public String descriptionJson = "\"\"";
+        /** True when the SQL template contains ${...} placeholders; skips a full regex scan per request otherwise. */
+        public boolean hasParameters = false;
     }
     private final Logger logger;
     private final DBInstance dbInstance;
@@ -86,13 +91,34 @@ public class APIService {
     /**
      * 一次数据库执行的结果。
      *
-     * @param data         结果集（含 columnNames/columnTypes/dataset/timestamp/affectedRows）；
+     * @param entry        结果集（含 columnNames/columnTypes/dataset/timestamp/affectedRows）；
      *                     非结果集语句（UPDATE/INSERT 等）为 {@code null}，这类语句本来就不进缓存
      * @param affectedRows 非结果集语句的更新行数；有结果集时等于结果行数
      * @param fromDatabase 该结果是否由本次调用真正查询数据库得到；{@code false} 表示复用了同一
      *                     刷新窗口内已经落地的缓存条目
      */
-    private record RefreshOutcome(Map<String, Object> data, int affectedRows, boolean fromDatabase) {
+    private record RefreshOutcome(CachedEntry entry, int affectedRows, boolean fromDatabase) {
+    }
+
+    /**
+     * One cached query result.
+     *
+     * <p>Both the Java map and the serialized {@code data} bytes are kept. The map is only
+     * needed when a service-level filter has to be applied; the bytes let an unfiltered
+     * service write the response without running Jackson over the whole dataset again.
+     * With 45 concurrent clients and 10k-row results that repeated serialization is the
+     * dominant cost of the cache-hit path.</p>
+     */
+    record CachedEntry(Map<String, Object> data, byte[] dataJson, long queriedAt, String timestampText) {
+        static CachedEntry of(Map<String, Object> data) {
+            Object ts = data.get("timestamp");
+            long queriedAt = ts instanceof Number number ? number.longValue() : System.currentTimeMillis();
+            return new CachedEntry(
+                    data,
+                    JSON.toJSONBytes(data, com.alibaba.fastjson2.JSONWriter.Feature.WriteMapNullValue),
+                    queriedAt,
+                    formatTimestamp(queriedAt));
+        }
     }
 
     /**
@@ -106,28 +132,22 @@ public class APIService {
      * </ol>
      */
     static final class QueryResultCache {
-        private final Cache<String, Map<String, Object>> entries;
+        private final Cache<String, CachedEntry> entries;
         private final SingleFlight<String, RefreshOutcome> refreshes = new SingleFlight<>();
 
-        QueryResultCache(Cache<String, Map<String, Object>> entries) {
+        QueryResultCache(Cache<String, CachedEntry> entries) {
             this.entries = entries;
         }
 
-        /** 返回仍在 TTL 内的缓存条目；过期、缺失或数据格式异常时返回 {@code null}。 */
-        Map<String, Object> getFresh(String key, long snapshotLimitMs) {
-            Map<String, Object> entry = entries.getIfPresent(key);
+        CachedEntry getFresh(String key, long snapshotLimitMs) {
+            CachedEntry entry = entries.getIfPresent(key);
             if (entry == null) {
                 return null;
             }
-            Object timestamp = entry.get("timestamp");
-            if (!(timestamp instanceof Number)) {
-                return null;
-            }
-            return System.currentTimeMillis() - ((Number) timestamp).longValue() <= snapshotLimitMs
-                    ? entry : null;
+            return System.currentTimeMillis() - entry.queriedAt() <= snapshotLimitMs ? entry : null;
         }
 
-        void put(String key, Map<String, Object> value) {
+        void put(String key, CachedEntry value) {
             entries.put(key, value);
         }
 
@@ -165,6 +185,34 @@ public class APIService {
         );
     }
 
+    /**
+     * Response for a service without a result filter: the cached {@code data} bytes are
+     * copied straight into the body instead of being re-serialized by Jackson on every
+     * request. The envelope around it only contains constant/cheap fields.
+     */
+    private static void respondWithCachedEntry(Context ctx, DBServiceDefinition service,
+                                               CachedEntry entry, boolean cached) {
+        ctx.attribute("cached", cached);
+        ctx.attribute("affectedRows", entry.data().get("affectedRows"));
+        byte[] prefix = ("{\"retCode\":0,\"retMsg\":\"Successful\",\"description\":"
+                + service.descriptionJson
+                + ",\"timestamp\":\"" + entry.timestampText() + "\",\"cached\":" + cached + ",\"data\":")
+                .getBytes(StandardCharsets.UTF_8);
+        byte[] payload = entry.dataJson();
+        byte[] body = new byte[prefix.length + payload.length + 1];
+        System.arraycopy(prefix, 0, body, 0, prefix.length);
+        System.arraycopy(payload, 0, body, prefix.length, payload.length);
+        body[body.length - 1] = '}';
+        ctx.contentType("application/json; charset=utf-8").result(body);
+    }
+
+    /** Thrown when the global admission gate has no free slot within the wait budget. */
+    static final class QueryBusyException extends SQLException {
+        QueryBusyException(String message) {
+            super(message, "53300");
+        }
+    }
+
     private static void respondFailure(Context ctx, DBServiceDefinition service, String message) {
         ctx.attribute("cached", false);
         ctx.attribute("affectedRows", -1);
@@ -187,11 +235,20 @@ public class APIService {
      * @param maxExecutionTimeMs 本次查询的显式超时（毫秒）；{@code null} 表示没有显式设置，
      *                           不下发 {@code SET SESSION}，连接跟随服务器 GLOBAL 设置
      */
-    private static RefreshOutcome executeQuery(DBDataSourcePool dbDataSourcePool, String userSearchPath, String sql,
+    private static RefreshOutcome executeQuery(DBDataSourcePool dbDataSourcePool,
+                                               QueryConcurrencyGate gate, long gateWaitMs,
+                                               String userSearchPath, String sql,
                                                Long maxExecutionTimeMs)
-            throws SQLException {
+            throws SQLException, InterruptedException {
+        boolean gateHeld = false;
         Connection conn = null;
         try {
+            long gateStart = System.nanoTime();
+            gateHeld = gate != null && gate.tryAcquire(gateWaitMs);
+            if (!gateHeld) {
+                throw new QueryBusyException("Server busy: too many concurrent queries, retry later.");
+            }
+            long waitedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - gateStart);
             conn = dbDataSourcePool.getConnection();
             // 把查询路径指向默认数据库
             try (Statement stmt = conn.createStatement()) {
@@ -199,9 +256,15 @@ public class APIService {
             }
             // 只有用户显式设置了（服务定义或请求头）才下发会话级覆盖：
             // 连接归还时连接池会 RESET，因此未显式设置时它自然跟随 GLOBAL。
+            // 排队时间计入请求预算：客户端拿到的是"端到端 maxExecutionTime"，不是"执行 60s + 排队 30s"。
             if (maxExecutionTimeMs != null) {
+                long remainingMs = QueryConcurrencyGate.remainingBudgetMs(maxExecutionTimeMs, waitedMs);
+                if (remainingMs <= 0) {
+                    throw new QueryBusyException(
+                            "Server busy: request budget exhausted while queued, retry later.");
+                }
                 try (Statement stmt = conn.createStatement()) {
-                    stmt.execute("SET SESSION max_execution_time=" + maxExecutionTimeMs);
+                    stmt.execute("SET SESSION max_execution_time=" + remainingMs);
                 }
             }
             // 统一交给 SqlTextExecutor：
@@ -213,20 +276,23 @@ public class APIService {
             try {
                 if (result.hasData()) {
                     // PL/SQL 中不带 INTO 的 EXECUTE IMMEDIATE 查询结果
-                    return new RefreshOutcome(result.data(), affectedRowsOf(result.data()), true);
+                    return new RefreshOutcome(CachedEntry.of(result.data()), affectedRowsOf(result.data()), true);
                 }
                 if (!result.hasResultSet()) {
                     // 非查询语句，或只有 PL/SQL 块：没有结果集
                     return new RefreshOutcome(null, result.affectedRows(), true);
                 }
                 Map<String, Object> data = SqlTextExecutor.materialize(result.resultSet());
-                return new RefreshOutcome(data, affectedRowsOf(data), true);
+                return new RefreshOutcome(CachedEntry.of(data), affectedRowsOf(data), true);
             } finally {
                 SqlTextExecutor.closeQuietly(result.resultSet(), result.statement());
             }
         } finally {
             if (conn != null) {
                 dbDataSourcePool.releaseConnection(conn);
+            }
+            if (gateHeld && gate != null) {
+                gate.release();
             }
         }
     }
@@ -235,6 +301,7 @@ public class APIService {
             Context ctx,
             DBServiceDefinition dbServiceDefinition,
             DBDataSourcePool dbDataSourcePool,
+            QueryConcurrencyGate apiQueryGate,
             String dbInstanceName,
             QueryResultCache queryResultCache,
             ExpiringMap<String, HashMap<String, String>> expiringMap,
@@ -324,7 +391,7 @@ public class APIService {
         // 注意：扫描/替换必须**无条件执行**，不能只在"已经有参数"时才做：
         // 否则服务未声明 parameters、请求又没带参数时，SQL 会带着 ${var} 原样执行，
         // DuckDB 把 '${var}' 当作字符串字面量，于是"缺参数"被静默变成"返回占位符文本"。
-        {
+        if (dbServiceDefinition.hasParameters) {
             Matcher matcher = SQL_PARAMETER_PATTERN.matcher(sql);
             // 首先检查所有变量是否都有值
             Set<String> missingKeys = new LinkedHashSet<>();
@@ -379,10 +446,14 @@ public class APIService {
         if (queryResultCache != null && snapshotLimit > 0) {
             cacheKey = generateCacheKey(userSearchPath, sql);
 
-            Map<String, Object> cacheResult = queryResultCache.getFresh(cacheKey, snapshotLimit);
+            CachedEntry cacheResult = queryResultCache.getFresh(cacheKey, snapshotLimit);
             if (cacheResult != null) {
                 // 缓存里是过滤前的原始结果；每个服务在返回前套用自己的 filter。
-                respondWithFilteredDataset(ctx, dbServiceDefinition, cacheResult, true);
+                if (dbServiceDefinition.filterProgram != null) {
+                    respondWithFilteredDataset(ctx, dbServiceDefinition, cacheResult.data(), true);
+                } else {
+                    respondWithCachedEntry(ctx, dbServiceDefinition, cacheResult, true);
+                }
                 return;
             }
         }
@@ -392,6 +463,10 @@ public class APIService {
         final String searchPath = userSearchPath;
         final String key = cacheKey;
         final long ttlMs = snapshotLimit;
+        final QueryConcurrencyGate gate = apiQueryGate;
+        final long gateWaitMs = effectiveMaxExecutionTime != null && effectiveMaxExecutionTime > 0
+                ? Math.min(gate.getWaitMs(), effectiveMaxExecutionTime)
+                : gate.getWaitMs();
 
         // 执行数据库查询。
         //
@@ -403,7 +478,7 @@ public class APIService {
         try {
             if (key == null) {
                 // 未开启缓存：每个请求各自查询
-                outcome = executeQuery(dbDataSourcePool, searchPath, executedSql, effectiveMaxExecutionTime);
+                outcome = executeQuery(dbDataSourcePool, gate, gateWaitMs, searchPath, executedSql, effectiveMaxExecutionTime);
                 executedByCaller = true;
             } else {
                 SingleFlight.Result<RefreshOutcome> refreshed = queryResultCache.refresh(
@@ -412,31 +487,40 @@ public class APIService {
                         () -> {
                             // 成为 leader 后再确认一次：极小概率下别的线程已经在上面的缓存检查
                             // 与本步之间完成刷新，这时直接复用，不再多打一次库。
-                            Map<String, Object> landed = queryResultCache.getFresh(key, ttlMs);
+                            CachedEntry landed = queryResultCache.getFresh(key, ttlMs);
                             if (landed != null) {
-                                return new RefreshOutcome(landed, affectedRowsOf(landed), false);
+                                return new RefreshOutcome(landed, affectedRowsOf(landed.data()), false);
                             }
-                            RefreshOutcome loaded = executeQuery(dbDataSourcePool, searchPath, executedSql, effectiveMaxExecutionTime);
-                            if (loaded.data() != null) {
-                                queryResultCache.put(key, loaded.data());
+                            RefreshOutcome loaded = executeQuery(dbDataSourcePool, gate, gateWaitMs, searchPath, executedSql, effectiveMaxExecutionTime);
+                            if (loaded.entry() != null) {
+                                queryResultCache.put(key, loaded.entry());
                             }
                             return loaded;
                         });
                 outcome = refreshed.value();
                 executedByCaller = refreshed.loadedByCaller();
-                if (outcome.data() == null && !executedByCaller) {
+                if (outcome.entry() == null && !executedByCaller) {
                     // 非结果集语句（UPDATE/INSERT 等）本来就不进缓存：等待者不能拿 leader 的
                     // 更新行数当作自己的结果，自己执行一次。
-                    outcome = executeQuery(dbDataSourcePool, searchPath, executedSql, effectiveMaxExecutionTime);
+                    outcome = executeQuery(dbDataSourcePool, gate, gateWaitMs, searchPath, executedSql, effectiveMaxExecutionTime);
                     executedByCaller = true;
                 }
             }
+        } catch (QueryBusyException busy) {
+            logger.warn("[SERVER-API] Rejected by admission gate: {}", busy.getMessage());
+            ctx.status(503).json(
+                    Map.of(
+                            "retCode", -1,
+                            "retMsg", busy.getMessage(),
+                            "description", dbServiceDefinition.description,
+                            "cached", false));
+            return;
         } catch (TimeoutException timeout) {
             // 刷新者迟迟不结束：降级为自己直接查询，宁可多打一次库，也不能把请求永久挂住
             logger.warn("[SERVER-API] Timed out after {} ms waiting for cache refresh, querying directly. key={}",
                     CACHE_REFRESH_WAIT_TIMEOUT_MS, key);
             try {
-                outcome = executeQuery(dbDataSourcePool, searchPath, executedSql, effectiveMaxExecutionTime);
+                outcome = executeQuery(dbDataSourcePool, gate, gateWaitMs, searchPath, executedSql, effectiveMaxExecutionTime);
                 executedByCaller = true;
             } catch (Exception e) {
                 logger.trace("[SERVER-API] Query failed: ", e);
@@ -449,7 +533,7 @@ public class APIService {
             return;
         }
 
-        if (outcome.data() == null) {
+        if (outcome.entry() == null) {
             // 非SQL查询语句（UPDATE/INSERT/DDL…）：服务级 filter 只针对结果集，忽略。
             ctx.attribute("cached", false);
             ctx.attribute("affectedRows", -1);
@@ -465,7 +549,11 @@ public class APIService {
         } else {
             // 只有真正执行了本次刷新的请求才标记 cached=false，等待刷新的请求算缓存返回
             boolean cached = !(executedByCaller && outcome.fromDatabase());
-            respondWithFilteredDataset(ctx, dbServiceDefinition, outcome.data(), cached);
+            if (dbServiceDefinition.filterProgram != null) {
+                respondWithFilteredDataset(ctx, dbServiceDefinition, outcome.entry().data(), cached);
+            } else {
+                respondWithCachedEntry(ctx, dbServiceDefinition, outcome.entry(), cached);
+            }
         }
     }
 
@@ -521,12 +609,8 @@ public class APIService {
     }
 
     // 估计对象的大小
-    private static int estimateSize(Map<String, Object> result) {
-        try {
-            return JSON.toJSONBytes(result).length;
-        } catch (Exception e) {
-            return 1024;
-        }
+    private static int estimateSize(CachedEntry entry) {
+        return entry.dataJson().length;
     }
 
     /**
@@ -613,6 +697,8 @@ public class APIService {
             if (dbService.description == null) {
                 dbService.description = "NO DESCRIPTION.";
             }
+            dbService.descriptionJson = JSON.toJSONString(dbService.description);
+            dbService.hasParameters = dbService.sql != null && dbService.sql.contains("${");
             dbService.searchPath = serviceDefinitionJsonObj.getString("searchPath");
             String filterText = serviceDefinitionJsonObj.getString("filter");
             if (filterText != null && !filterText.isBlank()) {
@@ -681,9 +767,9 @@ public class APIService {
 
         // 初始化查询结果缓存
         if (this.dbInstance.serverConfiguration.getQuery_result_cache_size() > 0) {
-            Cache<String, Map<String, Object>> caffeineCache = Caffeine.newBuilder()
+            Cache<String, CachedEntry> caffeineCache = Caffeine.newBuilder()
                     .maximumWeight(this.dbInstance.serverConfiguration.getQuery_result_cache_size())
-                    .weigher((String key, Map<String, Object> value) -> estimateSize(value))
+                    .weigher((String key, CachedEntry value) -> estimateSize(value))
                     .recordStats()
                     .build();
             queryResultCache = new QueryResultCache(caffeineCache);
@@ -835,6 +921,8 @@ public class APIService {
             {
                 dbService.description = "NO DESCRIPTION.";
             }
+            dbService.descriptionJson = JSON.toJSONString(dbService.description);
+            dbService.hasParameters = dbService.sql != null && dbService.sql.contains("${");
             dbService.searchPath = bodyObject.getString("searchPath");
             String filterText = bodyObject.getString("filter");
             if (filterText != null && !filterText.isBlank()) {
@@ -1063,6 +1151,7 @@ public class APIService {
                         ctx,
                         dbServiceDefinition,
                         this.dbInstance.dbDataSourcePool,
+                        this.dbInstance.getApiQueryGate(),
                         this.dbInstance.instanceName,
                         queryResultCache,
                         sessionContextMap,
@@ -1088,6 +1177,7 @@ public class APIService {
                         ctx,
                         dbServiceDefinition,
                         this.dbInstance.dbDataSourcePool,
+                        this.dbInstance.getApiQueryGate(),
                         this.dbInstance.instanceName,
                         queryResultCache,
                         sessionContextMap,

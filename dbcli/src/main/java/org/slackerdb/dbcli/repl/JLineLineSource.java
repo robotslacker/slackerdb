@@ -21,8 +21,9 @@ import java.nio.file.StandardOpenOption;
  * <p>够用即可：上下键翻历史、行编辑与 Ctrl-C 中断；不做补全、语法高亮与 bottom toolbar。</p>
  *
  * <h2>历史是跨会话的</h2>
- * <p>翻的是 {@code ~/.slackerdb/dbcli.history}（见 {@link #defaultHistoryFile()}）：启动时读进来，
- * 退出时写回去，所以"上次敲过的语句"下一次还能上下键翻到。目录建不出来或不可写时**安静放弃**——
+ * <p>翻的是 {@code ~/.dbcli/history}（见 {@link #defaultHistoryFile()}）：启动时读进来，
+ * 退出时写回去，所以"上次敲过的语句"下一次还能上下键翻到。只有交互控制台会创建它；
+ * 脚本/批处理不初始化 JLine，也不产生历史。目录建不出来或不可写时**安静放弃**——
  * 历史只是顺手的事，不能因为它让控制台起不来，也不该为此打警告。</p>
  *
  * <p><b>Ctrl-C 与 Ctrl-D</b>：JLine 分别抛 {@link UserInterruptException} 与
@@ -111,9 +112,9 @@ public final class JLineLineSource implements LineSource {
             if (home == null || home.isBlank()) {
                 return null;
             }
-            Path directory = Path.of(home, ".slackerdb");
+            Path directory = Path.of(home, ".dbcli");
             Files.createDirectories(directory);
-            Path historyFile = directory.resolve("dbcli.history");
+            Path historyFile = directory.resolve("history");
             try (OutputStream probe = Files.newOutputStream(historyFile,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
                 probe.flush();

@@ -118,6 +118,8 @@ public class ServerConfiguration {
     private final int    default_max_connections = 256;
     // SQL REPL 最大并发会话数（每个会话持有一条私有连接）
     private final int    default_repl_max_connections = 64;
+    private final int    default_max_api_concurrent_queries = 0;
+    private final int    default_max_repl_concurrent_queries = 0;
     // 系统的启动模板文件
     private final String default_template = "";
 
@@ -193,6 +195,8 @@ public class ServerConfiguration {
     private String   pid;
     private int      max_connections;
     private int      repl_max_connections;
+    private int      max_api_concurrent_queries;
+    private int      max_repl_concurrent_queries;
     private String   template;
     private boolean  daemonMode;
     private boolean  data_encrypt;
@@ -241,6 +245,8 @@ public class ServerConfiguration {
         pid = default_pid;
         max_connections = default_max_connections;
         repl_max_connections = default_repl_max_connections;
+        max_api_concurrent_queries = default_max_api_concurrent_queries;
+        max_repl_concurrent_queries = default_max_repl_concurrent_queries;
         connection_pool_minimum_idle = default_connection_pool_minimum_idle;
         connection_pool_maximum_idle = default_connection_pool_maximum_idle;
         connection_pool_maximum_lifecycle_time = default_connection_pool_maximum_lifecycle_time;
@@ -429,6 +435,20 @@ public class ServerConfiguration {
                         repl_max_connections = this.default_repl_max_connections;
                     } else {
                         setRepl_max_connections(entry.getValue().toString().trim());
+                    }
+                }
+                case "MAX_API_CONCURRENT_QUERIES" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        max_api_concurrent_queries = this.default_max_api_concurrent_queries;
+                    } else {
+                        setMax_api_concurrent_queries(entry.getValue().toString().trim());
+                    }
+                }
+                case "MAX_REPL_CONCURRENT_QUERIES" -> {
+                    if (entry.getValue().toString().isEmpty()) {
+                        max_repl_concurrent_queries = this.default_max_repl_concurrent_queries;
+                    } else {
+                        setMax_repl_concurrent_queries(entry.getValue().toString().trim());
                     }
                 }
                 case "MAX_WORKERS" -> {
@@ -863,6 +883,60 @@ public class ServerConfiguration {
     public int getMax_connections() { return max_connections; }
 
     public int getRepl_max_connections() { return repl_max_connections; }
+
+    /** 鍚屾椂鎵ц鏌ヨ鏁颁笂闄愶紱0 琛ㄧず涓嶉檺鍒躲€?*/
+
+    // Cap on simultaneously executing SQL statements; 0 = unlimited.
+    public int getMax_api_concurrent_queries() { return max_api_concurrent_queries; }
+
+    public void setMax_api_concurrent_queries(String pMaxConcurrentQueries) throws ServerException
+    {
+        int parsed;
+        try {
+            parsed = Integer.parseInt(pMaxConcurrentQueries.trim());
+        } catch (NumberFormatException ignored) {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "max_api_concurrent_queries", pMaxConcurrentQueries)
+            );
+        }
+        setMax_api_concurrent_queries(parsed);
+    }
+
+    public void setMax_api_concurrent_queries(int pMaxConcurrentQueries) throws ServerException
+    {
+        if (pMaxConcurrentQueries < 0) {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "max_api_concurrent_queries", pMaxConcurrentQueries)
+            );
+        }
+        max_api_concurrent_queries = pMaxConcurrentQueries;
+    }
+
+    // Cap on simultaneously executing SQL REPL statements; 0 = unlimited.
+    public int getMax_repl_concurrent_queries() { return max_repl_concurrent_queries; }
+
+    public void setMax_repl_concurrent_queries(String pMaxReplConcurrentQueries) throws ServerException
+    {
+        int parsed;
+        try {
+            parsed = Integer.parseInt(pMaxReplConcurrentQueries.trim());
+        } catch (NumberFormatException ignored) {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "max_repl_concurrent_queries", pMaxReplConcurrentQueries)
+            );
+        }
+        setMax_repl_concurrent_queries(parsed);
+    }
+
+    public void setMax_repl_concurrent_queries(int pMaxReplConcurrentQueries) throws ServerException
+    {
+        if (pMaxReplConcurrentQueries < 0) {
+            throw new ServerException(
+                    Utils.getMessage("SLACKERDB-00005", "max_repl_concurrent_queries", pMaxReplConcurrentQueries)
+            );
+        }
+        max_repl_concurrent_queries = pMaxReplConcurrentQueries;
+    }
 
     public String getTemp_dir()
     {

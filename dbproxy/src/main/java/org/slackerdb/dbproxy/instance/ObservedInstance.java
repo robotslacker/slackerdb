@@ -38,30 +38,6 @@ public record ObservedInstance(
         return state == InstanceState.RUNNING;
     }
 
-    public String healthText() {
-        return health == null || health.isEmpty() ? "-" : health;
-    }
-
-    public String uptimeText() {
-        if (uptimeSeconds == null || uptimeSeconds < 0) {
-            return "-";
-        }
-        long total = uptimeSeconds;
-        long days = total / 86400;
-        long hours = (total % 86400) / 3600;
-        long minutes = (total % 3600) / 60;
-        if (days > 0) {
-            return days + "d" + hours + "h";
-        }
-        if (hours > 0) {
-            return hours + "h" + minutes + "m";
-        }
-        if (minutes > 0) {
-            return minutes + "m";
-        }
-        return total + "s";
-    }
-
     public String pidText() {
         return pid == null ? "-" : String.valueOf(pid);
     }

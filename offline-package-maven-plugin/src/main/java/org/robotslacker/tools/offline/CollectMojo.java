@@ -55,6 +55,27 @@ public class CollectMojo extends AbstractMojo {
     @Parameter(property = "offline.npm.executable", defaultValue = "")
     private String npmExecutable;
 
+    /**
+     * Extra local npm caches to consult before falling back to the network. Each entry may be an
+     * npm cache root (containing {@code _cacache/}), an npmrepo produced by this plugin, or a
+     * directory holding tarballs (either directly or under {@code tarballs/}).
+     */
+    @Parameter(property = "offline.npm.cache.dirs", defaultValue = "")
+    private String npmCacheDirs;
+
+    /** Also consult npm's own machine-wide cache (the directory printed by `npm config get cache`). */
+    @Parameter(property = "offline.npm.cache.global", defaultValue = "true")
+    private boolean npmGlobalCache;
+
+    /**
+     * Keep an empty npm repository instead of failing. The npm side can only collect what a
+     * {@code package-lock.json} describes; when no module has one, the package would advertise a
+     * successful build with zero frontend dependencies. A pure Java reactor has no npm
+     * dependencies at all and can set this to {@code true}.
+     */
+    @Parameter(property = "offline.npm.allow.empty", defaultValue = "false")
+    private boolean npmAllowEmpty;
+
     @Parameter(property = "offline.zip", defaultValue = "true")
     private boolean zip;
 
@@ -90,6 +111,13 @@ public class CollectMojo extends AbstractMojo {
         }
 
         List<Platform> platforms = parsePlatforms();
+        List<Path> npmCacheDirectories = skipNpm || !npmTarballs
+                ? List.of() : parseNpmCacheDirs();
+        for (Path directory : npmCacheDirectories) {
+            if (!Files.isDirectory(directory)) {
+                getLog().warn("npm cache directory does not exist: " + directory);
+            }
+        }
         Path output = outputDirectory.toPath().toAbsolutePath().normalize();
         if (Files.exists(output) && !clean) {
             throw new MojoFailureException("Offline directory already exists: " + output
@@ -124,7 +152,16 @@ public class CollectMojo extends AbstractMojo {
 
             NpmCollector.NpmSummary npmResult = null;
             if (!skipNpm) {
-                NpmCollector npm = new NpmCollector(log, npmExecutable);
+                // The previous package in the same output directory is a good cache source
+                // even when NPM_CONFIG_CACHE is not set; it is replaced only after staging
+                // succeeds.
+                List<Path> npmSeeds = new ArrayList<>();
+                Path previousNpmRepo = output.resolve("npmrepo");
+                if (Files.isDirectory(previousNpmRepo)) {
+                    npmSeeds.add(previousNpmRepo);
+                }
+                NpmCollector npm = new NpmCollector(log, npmExecutable, npmSeeds,
+                        npmCacheDirectories, npmGlobalCache, !npmAllowEmpty);
                 npmResult = npm.collect(staging.resolve("npmrepo"),
                         session.getProjects(), platforms, npmTarballs);
             }
@@ -133,9 +170,11 @@ public class CollectMojo extends AbstractMojo {
                 getLog().info("Packing javarepo.zip ...");
                 new ZipPackager().zip(staging.resolve("javarepo"),
                         staging.resolve("javarepo.zip"));
-                getLog().info("Packing npmrepo.zip ...");
-                new ZipPackager().zip(staging.resolve("npmrepo"),
-                        staging.resolve("npmrepo.zip"));
+                if (!skipNpm) {
+                    getLog().info("Packing npmrepo.zip ...");
+                    new ZipPackager().zip(staging.resolve("npmrepo"),
+                            staging.resolve("npmrepo.zip"));
+                }
             }
 
             String mavenVersion = session.getSystemProperties()
@@ -183,6 +222,26 @@ public class CollectMojo extends AbstractMojo {
         }
         if (result.isEmpty()) {
             throw new MojoFailureException("No offline platform configured");
+        }
+        return result;
+    }
+
+    private List<Path> parseNpmCacheDirs() throws MojoFailureException {
+        List<Path> result = new ArrayList<>();
+        if (npmCacheDirs == null || npmCacheDirs.isBlank()) {
+            return result;
+        }
+        for (String raw : npmCacheDirs.split("[,;]")) {
+            String value = raw.trim();
+            if (value.isEmpty()) {
+                continue;
+            }
+            try {
+                result.add(Path.of(value));
+            } catch (RuntimeException invalid) {
+                throw new MojoFailureException(
+                        "Invalid offline.npm.cache.dirs entry: " + value);
+            }
         }
         return result;
     }

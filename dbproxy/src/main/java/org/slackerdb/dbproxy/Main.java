@@ -60,6 +60,12 @@ public class Main {
                 + " is one instance and its name is the alias. Default: empty (instance management disabled).");
         System.out.println("  --alias             Alias (directory name) for create/resume/shutdown/restart/destroy.");
         System.out.println("  --name              Database name for create. Default: same as --alias.");
+        System.out.println("  --<conf_key>        With 'create', every other --key value becomes a dbserver configuration"
+                + " item in instance.conf (for example --port 15433 --port_x 15434 --log logs/sales.log)."
+                + " Ports that are not given (or given as 0) are allocated automatically; the values themselves"
+                + " are not validated by the proxy.");
+        System.out.println("                      For 'create', use --conf <proxy.conf> to locate the proxy; the remaining"
+                + " options describe the new instance, not the client.");
     }
 
     // 主程序
@@ -125,7 +131,7 @@ public class Main {
             Logger daemonLogger = AppLogger.createLogger("SLACKER-PROXY", "INFO", logTarget);
             try {
                 if (AppDaemon.startInBackground(Main.class, subCommand, orderedOptions,
-                        logTarget, "log", daemonLogger)) {
+                        "log", daemonLogger)) {
                     System.exit(0);
                 }
             } catch (Exception se) {
@@ -156,50 +162,56 @@ public class Main {
         // 处理应用程序参数
         try {
             ServerConfiguration serverConfiguration = new ServerConfiguration();
-            // 如果有配置文件，用配置文件中数据进行更新
+            // 配置文件对所有命令都有效：create 用它定位/配置代理客户端。
             if (appOptions.containsKey("conf"))
             {
                 serverConfiguration.loadConfigurationFile(appOptions.get("conf"));
             }
-            if (appOptions.containsKey("locale"))
-            {
-                serverConfiguration.setLocale(appOptions.get("locale"));
-            }
-            if (appOptions.containsKey("log_level"))
-            {
-                serverConfiguration.setLog_level(appOptions.get("log_level"));
-            }
-            if (appOptions.containsKey("log"))
-            {
-                serverConfiguration.setLog(appOptions.get("log"));
-            }
-            if (appOptions.containsKey("bind"))
-            {
-                serverConfiguration.setBindHost(appOptions.get("bind"));
-            }
-            if (appOptions.containsKey("host"))
-            {
-                serverConfiguration.setBindHost(appOptions.get("host"));
-            }
-            if (appOptions.containsKey("port"))
-            {
-                serverConfiguration.setPort(appOptions.get("port"));
-            }
-            if (appOptions.containsKey("portx"))
-            {
-                serverConfiguration.setPortX(appOptions.get("portx"));
-            }
-            if (appOptions.containsKey("listener_address"))
-            {
-                serverConfiguration.setListenerAddress(appOptions.get("listener_address"));
-            }
-            if (appOptions.containsKey("pid"))
-            {
-                serverConfiguration.setPid(appOptions.get("pid"));
-            }
-            if (appOptions.containsKey("data_dir"))
-            {
-                serverConfiguration.setData_Dir(appOptions.get("data_dir"));
+
+            // create 的其它 --key value 属于"新实例的配置"（端口、日志、数据路径、pid……），
+            // 不能再拿来改代理客户端，否则 --port/--bind/--log 这些 dbserver 参数会把客户端连到错误地址。
+            boolean createCommand = "create".equalsIgnoreCase(subCommand);
+            if (!createCommand) {
+                if (appOptions.containsKey("locale"))
+                {
+                    serverConfiguration.setLocale(appOptions.get("locale"));
+                }
+                if (appOptions.containsKey("log_level"))
+                {
+                    serverConfiguration.setLog_level(appOptions.get("log_level"));
+                }
+                if (appOptions.containsKey("log"))
+                {
+                    serverConfiguration.setLog(appOptions.get("log"));
+                }
+                if (appOptions.containsKey("bind"))
+                {
+                    serverConfiguration.setBindHost(appOptions.get("bind"));
+                }
+                if (appOptions.containsKey("host"))
+                {
+                    serverConfiguration.setBindHost(appOptions.get("host"));
+                }
+                if (appOptions.containsKey("port"))
+                {
+                    serverConfiguration.setPort(appOptions.get("port"));
+                }
+                if (appOptions.containsKey("portx"))
+                {
+                    serverConfiguration.setPortX(appOptions.get("portx"));
+                }
+                if (appOptions.containsKey("listener_address"))
+                {
+                    serverConfiguration.setListenerAddress(appOptions.get("listener_address"));
+                }
+                if (appOptions.containsKey("pid"))
+                {
+                    serverConfiguration.setPid(appOptions.get("pid"));
+                }
+                if (appOptions.containsKey("data_dir"))
+                {
+                    serverConfiguration.setData_Dir(appOptions.get("data_dir"));
+                }
             }
 
             // 初始化日志服务

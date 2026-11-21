@@ -367,4 +367,25 @@ public class RowEncoderTest {
             }
         }
     }
+
+    @Test
+    void timestamptzUsesSessionTimeZone() throws Exception {
+        try (Connection conn = connect()) {
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE OR REPLACE TABLE tz_encoder(v TIMESTAMPTZ)");
+                stmt.execute("INSERT INTO tz_encoder VALUES "
+                        + "(TIMESTAMPTZ '2026-11-10 12:00:00+00')");
+                stmt.execute("SET TimeZone='Asia/Shanghai'");
+            }
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery("SELECT v FROM tz_encoder")) {
+                assertTrue(rs.next());
+                assertEquals("2026-11-10 20:00:00.000+08", rs.getString(1),
+                        "TIMESTAMPTZ 文本必须按会话时区输出，而不是 JVM 默认时区");
+            }
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("DROP TABLE tz_encoder");
+            }
+        }
+    }
 }

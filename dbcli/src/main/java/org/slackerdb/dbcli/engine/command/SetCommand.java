@@ -16,6 +16,9 @@ import java.util.Set;
  */
 public final class SetCommand implements ScriptCommand {
 
+    /** 变量作用域关键字（大小写不敏感）。不带作用域的 {@code _SET @x v} 等价 LOCAL。 */
+    private static final Set<String> SCOPES = Set.of("GLOBAL", "SESSION", "LOCAL");
+
     @Override
     public Set<String> names() {
         return Set.of("SET");
@@ -31,6 +34,11 @@ public final class SetCommand implements ScriptCommand {
         }
         String optionName = String.valueOf(rawOptionName);
         Object rawOptionValue = ir.get("optionValue");
+        String scope = optionName.toUpperCase(java.util.Locale.ROOT);
+        if (SCOPES.contains(scope)) {
+            assignScopedVariable(call, scope, rawOptionValue);
+            return;
+        }
         if (optionName.startsWith("@")) {
             String variableName = optionName.substring(1);
             if (variableName.isEmpty()) {
@@ -62,6 +70,51 @@ public final class SetCommand implements ScriptCommand {
             option.apply(context);
         } catch (RuntimeException applyFailed) {
             call.reportError(messageOf(applyFailed));
+        }
+    }
+
+    /**
+     * {@code _SET GLOBAL|SESSION|LOCAL @name value}：作用域只对变量有意义。
+     *
+     * <p>IR 把第一个 token 放进 {@code optionName}、其余用空格拼进 {@code optionValue}，
+     * 因此这里再把赋值拆成“变量名 + 值”；值里允许空格，首尾成对引号会被去掉。</p>
+     */
+    private static void assignScopedVariable(CommandCall call, String scope, Object rawValue) {
+        String assignment = rawValue == null ? "" : String.valueOf(rawValue).strip();
+        if (assignment.isEmpty()) {
+            call.reportError("Scope " + scope
+                    + " requires a variable assignment: _SET " + scope + " @name value.");
+            return;
+        }
+        int split = 0;
+        while (split < assignment.length() && !Character.isWhitespace(assignment.charAt(split))) {
+            split++;
+        }
+        String variableToken = assignment.substring(0, split);
+        if (!variableToken.startsWith("@") || variableToken.length() == 1) {
+            call.reportError("Scope " + scope
+                    + " is only supported for variables (@name), not [" + variableToken + "].");
+            return;
+        }
+        String variableName = variableToken.substring(1);
+        String value = assignment.substring(split).strip();
+        if (value.isEmpty()) {
+            call.reportError("Missing value for variable [" + variableName + "].");
+            return;
+        }
+        if (value.length() >= 2
+                && ((value.startsWith("\"") && value.endsWith("\""))
+                || (value.startsWith("'") && value.endsWith("'")))) {
+            value = value.substring(1, value.length() - 1);
+        }
+        try {
+            switch (scope) {
+                case "GLOBAL" -> call.context().variables().setGlobalVariable(variableName, value);
+                case "SESSION" -> call.context().variables().setSessionVariable(variableName, value);
+                default -> call.context().variables().setVariable(variableName, value);
+            }
+        } catch (RuntimeException cannotSet) {
+            call.reportError(messageOf(cannotSet));
         }
     }
 

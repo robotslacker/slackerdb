@@ -58,7 +58,15 @@ class CliLogfileTest {
         commandLine.setOut(new PrintWriter(out, true));
         commandLine.setErr(new PrintWriter(out, true)); // dbcli 从不写 stderr：参数错误也在 stdout
         // 先执行再取字符串：否则拿到的是执行前的空流
-        int exitCode = commandLine.execute(args);
+        String[] withDirs = new String[args.length + 6];
+        withDirs[0] = "--home_dir";
+        withDirs[1] = tempDir.toString();
+        withDirs[2] = "--work_dir";
+        withDirs[3] = tempDir.resolve("work").toString();
+        withDirs[4] = "--output_dir";
+        withDirs[5] = tempDir.resolve("output").toString();
+        System.arraycopy(args, 0, withDirs, 6, args.length);
+        int exitCode = commandLine.execute(withDirs);
         return new Result(out.toString(), err.toString(), exitCode);
     }
 
@@ -102,8 +110,9 @@ class CliLogfileTest {
         assertEquals(0, result.exitCode, "stderr: " + result.out);
         assertTrue(result.out.startsWith("alpha\nbeta\n"), "脚本输出照常: " + result.out);
         assertEquals(result.out, Files.readString(log, StandardCharsets.UTF_8), "log 与 stdout 同字节");
-        // 产物名跟着**工作文件**（这里 log 是 actual.out）走
-        assertTrue(Files.exists(tempDir.resolve("actual.suc")), "一致时写 .suc");
+        // 产物名跟着**工作文件**（这里 log 是 actual.out）走，落在 OUTPUT/ref
+        assertTrue(Files.exists(tempDir.resolve("output").resolve("ref").resolve("actual.suc")),
+                "一致时写 .suc");
     }
 
     @Test
@@ -122,10 +131,12 @@ class CliLogfileTest {
         String logText = Files.readString(log, StandardCharsets.UTF_8);
         assertTrue(logText.contains("alpha\nbeta\n"), "log 记的是这次运行: " + logText);
         assertTrue(result.out.contains("Compare failed: "), "比对结论在 stdout（tee 已关，不进 log）: " + result.out);
-        assertFalse(Files.exists(tempDir.resolve("actual2.suc")), "不一致时不写 .suc");
-        // 产物名跟着**工作文件**（这里 log 是 actual2.out）走
+        assertFalse(Files.exists(tempDir.resolve("output").resolve("ref").resolve("actual2.suc")),
+                "不一致时不写 .suc");
+        // 产物名跟着**工作文件**（这里 log 是 actual2.out）走，落在 OUTPUT/ref
         assertEquals("      1 alpha\r\n-     2 beta\r\n+     2 gamma\r\n",
-                Files.readString(tempDir.resolve("actual2.dif"), StandardCharsets.UTF_8));
+                Files.readString(tempDir.resolve("output").resolve("ref").resolve("actual2.dif"),
+                        StandardCharsets.UTF_8));
     }
 
     @Test
@@ -229,7 +240,7 @@ class CliLogfileTest {
         Result result = run("--execute", script.toString(), "--logfile", log.toString());
 
         assertEquals(0, result.exitCode, result.out);
-        String spooled = Files.readString(tempDir.resolve("run.txt"), StandardCharsets.UTF_8);
+        String spooled = Files.readString(tempDir.resolve("work").resolve("run.txt"), StandardCharsets.UTF_8);
         assertTrue(spooled.contains("hello"), "数据进 spool: " + spooled);
         assertTrue(spooled.contains("_assert 1 = 2, bad"), "回显的语句进 spool: " + spooled);
         assertTrue(spooled.contains("Assert [bad] fail."), "错误进 spool: " + spooled);
@@ -240,17 +251,17 @@ class CliLogfileTest {
     }
 
     @Test
-    @DisplayName("--logfile 的相对路径按**进程当前目录**解析（脚本里的路径才跟脚本所在目录）")
-    void relativeLogFileIsResolvedAgainstTheProcessDirectory() throws Exception {
+    @DisplayName("--logfile 的相对路径按 OUTPUT 解析（绝对路径原样）")
+    void relativeLogFileIsResolvedAgainstOutput() throws Exception {
         Path script = script("relative.sql", "_echo t\nrelative-log\necho off\n");
-        Path processDir = Path.of("").toAbsolutePath();
-        Path written = processDir.resolve("dbcli-relative-log-test.out");
+        Path outputDir = tempDir.resolve("output");
+        Path written = outputDir.resolve("dbcli-relative-log-test.out");
 
         try {
             Result result = run("--execute", script.toString(), "--logfile", written.getFileName().toString());
 
             assertEquals(0, result.exitCode, "stderr: " + result.out);
-            assertTrue(Files.exists(written), "相对 --logfile 应落在进程当前目录: " + written);
+            assertTrue(Files.exists(written), "相对 --logfile 应落在 OUTPUT: " + written);
             assertEquals(result.out, Files.readString(written, StandardCharsets.UTF_8));
         } finally {
             Files.deleteIfExists(written);

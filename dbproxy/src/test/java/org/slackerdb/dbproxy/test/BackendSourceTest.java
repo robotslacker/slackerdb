@@ -59,6 +59,7 @@ class BackendSourceTest {
         configuration.setPort(0);
         configuration.setPortX(0);
         configuration.setData_Dir(root.toString());
+        configuration.setDbserver_Jar("slackerdb-dbserver-*-standalone.jar");
 
         proxy = new ProxyInstance(configuration);
         proxy.start();

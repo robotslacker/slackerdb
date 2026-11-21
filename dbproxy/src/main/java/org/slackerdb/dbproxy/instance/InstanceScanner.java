@@ -89,7 +89,7 @@ public final class InstanceScanner {
                             InstanceProbe.HEALTH_UNKNOWN, null, message, original.conf()));
                 }
             } else {
-                String alias = aliases.get(0);
+                String alias = aliases.getFirst();
                 result.put(alias, probed.get(alias));
             }
         }

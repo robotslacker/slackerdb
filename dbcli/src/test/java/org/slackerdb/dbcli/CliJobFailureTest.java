@@ -44,7 +44,15 @@ class CliJobFailureTest {
         CommandLine commandLine = new CommandLine(cli);
         commandLine.setOut(new PrintWriter(out, true));
         commandLine.setErr(new PrintWriter(out, true)); // dbcli 从不写 stderr：参数错误也在 stdout
-        int exitCode = commandLine.execute(args);
+        String[] withDirs = new String[args.length + 6];
+        withDirs[0] = "--home_dir";
+        withDirs[1] = tempDir.toString();
+        withDirs[2] = "--work_dir";
+        withDirs[3] = tempDir.resolve("work").toString();
+        withDirs[4] = "--output_dir";
+        withDirs[5] = tempDir.resolve("output").toString();
+        System.arraycopy(args, 0, withDirs, 6, args.length);
+        int exitCode = commandLine.execute(withDirs);
         return new Result(out.toString(), err.toString(), exitCode);
     }
 
@@ -138,7 +146,9 @@ class CliJobFailureTest {
         // BAD 没人 WAIT（也不该静默通过），但这里先只验"GOOD 的 WAIT 只报它自己的 0"
         assertEquals(0, result.exitCode, "没被检查的 BAD 仍要让整次运行失败; stderr: " + result.out);
         assertTrue(result.out.contains("Job [GOOD] finished with exit code 0."), result.out);
-        String goodOut = Files.readString(tempDir.resolve("GOOD.out"), StandardCharsets.UTF_8);
+        String goodOut = Files.readString(
+                tempDir.resolve("output").resolve("jobs").resolve("GOOD.out"),
+                StandardCharsets.UTF_8);
         assertFalse(goodOut.contains("Job [BAD]"), "兄弟作业的失败不该写进 GOOD.out: " + goodOut);
         assertFalse(goodOut.contains("never checked"), goodOut);
     }

@@ -1,6 +1,7 @@
 package org.slackerdb.dbcli.engine.command;
 
 import org.slackerdb.common.utils.OSUtil;
+import org.slackerdb.dbcli.common.DbcliPaths;
 import org.slackerdb.dbcli.job.ProcessTree;
 
 import java.io.BufferedReader;
@@ -112,6 +113,12 @@ public final class HostCommand implements ScriptCommand {
                 : List.of("/bin/sh", "-c", command);
         ProcessBuilder builder = new ProcessBuilder(argv);
         builder.directory(call.context().workingDirectory().toFile());
+        builder.environment().put(DbcliPaths.ENV_HOME,
+                call.context().paths().home().toString());
+        builder.environment().put(DbcliPaths.ENV_WORK,
+                call.context().paths().work().toString());
+        builder.environment().put(DbcliPaths.ENV_OUTPUT,
+                call.context().paths().output().toString());
         builder.redirectErrorStream(false);
         Process process = null;
         try {

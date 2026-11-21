@@ -50,9 +50,6 @@ public final class CliDaemon {
      */
     public static final long PID_WAIT_MILLIS = 30_000L;
 
-    /** {@code --logfile} 的选项名（拉起后台副本时只用于提示信息）。 */
-    private static final String LOG_OPTION_NAME = "logfile";
-
     // ------------------------------------------------------------------ 文案
 
     /** {@code --daemon} 只允许配合脚本执行（控制台模式不行）。 */
@@ -148,7 +145,7 @@ public final class CliDaemon {
                     + "]; remove it or choose another --pidfile.");
         }
         // 没有子命令：命令行由 AppDaemon 按**原始顺序**拼装，并显式带 --daemon false（否则无限 fork）
-        if (!AppDaemon.startInBackground(anchor, null, options, logTarget, LOG_OPTION_NAME, null)) {
+        if (!AppDaemon.startInBackground(anchor, null, options, logTarget, null)) {
             return new StartResult(false, null);
         }
         if (target == null) {

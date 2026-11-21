@@ -22,6 +22,9 @@ import org.slackerdb.dbserver.entity.APIHistoryRecord;
 import org.slackerdb.dbserver.repl.SqlReplServer;
 import org.slackerdb.dbserver.scheduler.SchedulerConfigException;
 import org.slackerdb.dbserver.scheduler.SchedulerModule;
+import org.slackerdb.dbsyncer.DbSyncerConfigException;
+import org.slackerdb.dbsyncer.DbSyncerModule;
+import org.slackerdb.dbsyncer.target.DuckDbHost;
 import org.slackerdb.dbserver.service.McpServer;
 import org.slf4j.LoggerFactory;
 
@@ -64,6 +67,10 @@ public class DBInstanceX {
     private SchedulerModule schedulerModule;
     /** 没有启用调度能力的原因，只用于日志与 /status，不参与逻辑判断。 */
     private String schedulerDisabledReason;
+    /** 内置 CDC 同步能力（PG/MySQL → DuckDB）。 */
+    private DbSyncerModule dbSyncerModule;
+    /** 没有启用 dbsyncer 的原因，只用于日志与 /status。 */
+    private String dbSyncerDisabledReason;
     private BackupService backupService;
     public BoundedQueue<APIHistoryRecord> apiHistoryList
             = new BoundedQueue<>(DBInstance.HISTORY_QUEUE_CAPACITY);
@@ -490,6 +497,10 @@ public class DBInstanceX {
         //   只读实例                  = 没有这个能力，且不校验配置。
         startSchedulerModule(serverConfiguration);
 
+        // 内置 CDC 同步能力（PG/MySQL → 内嵌 DuckDB）：
+        // 缺配置/只读/管理口关闭 = 没有这个能力；配置错 = 拒绝启动。
+        startDbSyncerModule(serverConfiguration);
+
         // 系统数据备份
         this.managementApp.unsafe.routes.post("/backup", ctx -> {
             JSONObject bodyObject;
@@ -768,6 +779,65 @@ public class DBInstanceX {
     }
 
     /**
+     * 装配内置 CDC 同步能力。
+     *
+     * <ul>
+     *   <li>未配置 {@code plugin-dbsyncer.config}、只读实例、管理口关闭：能力不存在；</li>
+     *   <li>配置有值但不可用：拒绝启动（与 scheduler 一致）；</li>
+     *   <li>运行期源库不可用只影响作业，不影响服务器启动。</li>
+     * </ul>
+     */
+    private void startDbSyncerModule(ServerConfiguration serverConfiguration) {
+        this.dbSyncerDisabledReason = DbSyncerModule.disabledReason(
+                serverConfiguration.getPluginProperties(),
+                serverConfiguration.getAccess_mode().equalsIgnoreCase("READ_ONLY"),
+                serverConfiguration.getPortX() >= 0);
+        if (this.dbSyncerDisabledReason != null) {
+            this.logger.info("[SERVER][DBSYNCER   ] dbsyncer capability is not available: {}",
+                    this.dbSyncerDisabledReason);
+            return;
+        }
+
+        DbSyncerModule module = null;
+        try {
+            DuckDbHost host = new DuckDbHost() {
+                @Override
+                public Connection duplicate() throws SQLException {
+                    return ((DuckDBConnection) backendSysConnection).duplicate();
+                }
+
+                @Override
+                public String catalog() {
+                    return dbInstance.instanceName;
+                }
+            };
+            module = new DbSyncerModule(this.managementApp, this.logger, host,
+                    serverConfiguration.getPluginProperties());
+            module.start();
+            this.dbSyncerModule = module;
+        } catch (DbSyncerConfigException e) {
+            abortDbSyncerStartup(module);
+            this.logger.error("[SERVER][DBSYNCER   ] dbsyncer configuration is invalid: {}", e.getMessage());
+            throw new ServerException("dbsyncer configuration error: " + e.getMessage(), e);
+        } catch (Exception e) {
+            abortDbSyncerStartup(module);
+            this.logger.error("[SERVER][DBSYNCER   ] dbsyncer startup failed.", e);
+            throw new ServerException("dbsyncer startup failed: " + e.getMessage(), e);
+        }
+    }
+
+    private void abortDbSyncerStartup(DbSyncerModule module) {
+        if (module != null) {
+            try {
+                module.stop();
+            } catch (Exception e) {
+                this.logger.warn("[SERVER][DBSYNCER   ] Failed to clean up a partially started dbsyncer: {}",
+                        e.getMessage());
+            }
+        }
+    }
+
+    /**
      * DBCLI 任务连回本实例的连接串：默认按数据服务端口推导，可用
      * {@code plugin-scheduler.dbcli.connect} 覆盖（例如端口只监听在内网地址、或要走代理）。
      *
@@ -830,6 +900,8 @@ public class DBInstanceX {
         // 调度能力是否在本实例上存在（由配置决定，见 SchedulerModule.disabledReason）。
         // dbDesk 只认这个标志来决定是否显示 ETL 菜单。
         features.put("etl", this.schedulerModule != null);
+        // CDC 同步能力是否在本实例上存在（由配置决定，见 DbSyncerModule.disabledReason）。
+        features.put("dbsyncer", this.dbSyncerModule != null);
         features.put("copyOut", true);
         features.put("definitions", true);
         features.put("aiChat", serverConfiguration.getMcpLlmServer() != null
@@ -869,6 +941,9 @@ public class DBInstanceX {
         contracts.put("mcp", org.slackerdb.common.api.ApiVersion.MCP);
         if (this.schedulerModule != null) {
             contracts.put("scheduler", SchedulerModule.CONTRACT_VERSION);
+        }
+        if (this.dbSyncerModule != null) {
+            contracts.put("dbsyncer", DbSyncerModule.CONTRACT_VERSION);
         }
         capabilities.put("contracts", contracts);
 
@@ -1024,6 +1099,8 @@ public class DBInstanceX {
             parameters.put("memoryLimit", config.getMemory_limit());
             parameters.put("maxExecutionTime", config.getMax_execution_time());
             parameters.put("maxWorkers", config.getMax_Workers());
+            parameters.put("maxApiConcurrentQueries", config.getMax_api_concurrent_queries());
+            parameters.put("maxReplConcurrentQueries", config.getMax_repl_concurrent_queries());
             parameters.put("accessMode", config.getAccess_mode());
             parameters.put("log", config.getLog());
             parameters.put("logLevel", config.getLog_level().levelStr);
@@ -1040,6 +1117,14 @@ public class DBInstanceX {
             usage.put("maxConnections", this.dbInstance.dbDataSourcePool.getHighWaterMark());
             usage.put("currentConnections", this.dbInstance.dbDataSourcePool.getUsedConnectionPoolSize());
             usage.put("idleConnections", this.dbInstance.dbDataSourcePool.getIdleConnectionPoolSize());
+            QueryConcurrencyGate apiQueryGate = this.dbInstance.getApiQueryGate();
+            usage.put("maxApiConcurrentQueries", apiQueryGate.getMax());
+            usage.put("activeApiQueries", apiQueryGate.getActive());
+            usage.put("waitingApiQueries", apiQueryGate.getWaiting());
+            QueryConcurrencyGate replQueryGate = this.dbInstance.getReplQueryGate();
+            usage.put("maxReplConcurrentQueries", replQueryGate.getMax());
+            usage.put("activeReplQueries", replQueryGate.getActive());
+            usage.put("waitingReplQueries", replQueryGate.getWaiting());
             usage.put("activeSessions", this.dbInstance.activeSessions);
             usage.put("activeChannels", this.dbInstance.getRegisteredConnectionsCount());
             // 历史落库的可观测性：
@@ -1115,6 +1200,20 @@ public class DBInstanceX {
             }
             status.put("scheduler", scheduler);
 
+            // 内置 CDC 同步能力状态：与 scheduler 一样，没有能力时给出原因。
+            JSONObject dbsyncer = new JSONObject();
+            dbsyncer.put("active", this.dbSyncerModule != null);
+            if (this.dbSyncerModule != null) {
+                dbsyncer.put("state", this.dbSyncerModule.isStarted() ? "ACTIVE" : "STOPPED");
+                dbsyncer.put("configPath", this.dbSyncerModule.configPath().toString());
+                dbsyncer.put("configHash", this.dbSyncerModule.configHash());
+                dbsyncer.put("jobCount", this.dbSyncerModule.jobs().size());
+            } else {
+                dbsyncer.put("state", "DISABLED");
+                dbsyncer.put("reason", this.dbSyncerDisabledReason);
+            }
+            status.put("dbsyncer", dbsyncer);
+
             // 会话列表
             JSONArray sessions = new JSONArray();
             for (Integer sessionId : this.dbInstance.dbSessions.keySet()) {
@@ -1174,7 +1273,15 @@ public class DBInstanceX {
 
     public void stop()
     {
-        // 先停调度器：Quartz 线程与任务执行可能还在用数据库连接，
+        // 先停 CDC 同步：它要 flush 检查点、关闭自己 duplicate 出来的 DuckDB 连接，
+        // 必须在管理口和连接池关闭之前收尾。
+        if (this.dbSyncerModule != null)
+        {
+            this.dbSyncerModule.stop();
+            this.dbSyncerModule = null;
+        }
+
+        // 再停调度器：Quartz 线程与任务执行可能还在用数据库连接，
         // 必须在管理口和连接池关闭之前收尾（它也会关闭自己那条 Connection）。
         if (this.schedulerModule != null)
         {

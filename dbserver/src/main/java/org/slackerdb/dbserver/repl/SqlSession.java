@@ -11,7 +11,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class SqlSession {
     public final String id;
-    public final Connection conn;
+    /** Owning connection. Not final: it can be replaced when a statement cannot be cleaned up. */
+    public volatile Connection conn;
     public volatile Statement activeStatement;  // 用于 cancel()
     public volatile Future<?> activeFuture;    // 用于取消任务
     /** 正在执行的 PL/SQL 宿主（仅脚本/匿名块任务期间非空，用于把取消信号转给引擎）。 */
@@ -53,15 +54,22 @@ public class SqlSession {
         this.pendingRow = null;
     }
 
+    /**
+     * True when closing the previous task's result set / statement failed. A connection in
+     * that state can still report "open result" on the next execute, so the REPL replaces
+     * it before running anything else.
+     */
+    public volatile boolean taskResourcesDirty;
+
     public void resetTask() {
         this.taskId = null;
         this.taskStatus = "IDLE";
         if (this.taskResultSet != null) {
-            try { this.taskResultSet.close(); } catch (Exception ignored) {}
+            try { this.taskResultSet.close(); } catch (Exception e) { this.taskResourcesDirty = true; }
             this.taskResultSet = null;
         }
         if (this.taskStatement != null) {
-            try { this.taskStatement.close(); } catch (Exception ignored) {}
+            try { this.taskStatement.close(); } catch (Exception e) { this.taskResourcesDirty = true; }
             this.taskStatement = null;
         }
         // 语句句柄与任务句柄必须一起清空：否则取消之后 activeStatement 仍指向已关闭的

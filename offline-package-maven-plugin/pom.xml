@@ -14,8 +14,8 @@
     <version>1.0.0</version>
     <packaging>maven-plugin</packaging>
 
-    <name>SlackerDB Offline Package Maven Plugin</name>
-    <description>Collect a clean Maven repository and npm cache for offline development.</description>
+    <name>Offline Package Maven Plugin</name>
+    <description>Collect a clean Maven repository for offline builds.</description>
 
     <prerequisites>
         <maven>3.9.16</maven>

@@ -71,7 +71,7 @@ public final class InstanceProbe {
                     conf.port(), conf.portX(), HEALTH_UNKNOWN, null, String.join("; ", problems), conf);
         }
 
-        Integer pidFromFile = readPid(paths.pid());
+        Integer pidFromFile = readPid(paths.pid(conf));
         ProcessHandle handle = pidFromFile == null ? null : ProcessHandle.of(pidFromFile).orElse(null);
         boolean alive = handle != null && handle.isAlive();
         boolean verified = alive && isOwnProcess(paths, handle);

@@ -1,6 +1,7 @@
 package org.slackerdb.dbcli.ssh;
 
 import org.slackerdb.dbcli.common.CommandOutcome;
+import org.slackerdb.dbcli.common.DbcliPaths;
 import org.slackerdb.dbcli.common.PathArguments;
 import org.slackerdb.dbcli.common.UserNumber;
 
@@ -55,6 +56,9 @@ public final class SshCommandDispatcher {
 
     private final SshSessionRegistry registry;
     private final SshOperationsFactory factory;
+    private final DbcliPaths paths;
+    /** 当前 `_SSH` 所在的脚本目录（相对 put/keyfile 的查找基座之一）。 */
+    private Path currentScriptDirectory;
 
     /**
      * 单条远端命令的时限（毫秒；{@link SshOperations#NO_COMMAND_TIMEOUT} = 不限，默认）。
@@ -65,8 +69,14 @@ public final class SshCommandDispatcher {
     private volatile long commandTimeoutMillis = SshOperations.NO_COMMAND_TIMEOUT;
 
     public SshCommandDispatcher(SshSessionRegistry registry, SshOperationsFactory factory) {
+        this(registry, factory, DbcliPaths.forDirectory(Path.of("").toAbsolutePath()));
+    }
+
+    public SshCommandDispatcher(SshSessionRegistry registry, SshOperationsFactory factory,
+                                DbcliPaths paths) {
         this.registry = registry;
         this.factory = factory;
+        this.paths = paths;
     }
 
     public SshSessionRegistry registry() {
@@ -79,6 +89,17 @@ public final class SshCommandDispatcher {
      * @param ir {@code visitSsh} 产出的 IR（必须有 {@code action} 键）
      */
     public List<CommandOutcome> execute(Map<String, Object> ir) {
+        return execute(ir, null);
+    }
+
+    /**
+     * 执行一条 {@code _SSH} 命令。
+     *
+     * @param ir {@code visitSsh} 产出的 IR（必须有 {@code action} 键）
+     * @param scriptDirectory 当前脚本目录（相对 put/keyfile 解析用）
+     */
+    public List<CommandOutcome> execute(Map<String, Object> ir, Path scriptDirectory) {
+        this.currentScriptDirectory = scriptDirectory;
         String action = String.valueOf(ir.get("action"));
         List<CommandOutcome> outcomes = new ArrayList<>();
         try {
@@ -118,11 +139,12 @@ public final class SshCommandDispatcher {
                     return noOutput();
                 });
                 case "sftp_get" -> withSftp(outcomes, "get", operations -> {
-                    operations.sftpGet(text(ir, "remoteFile"), localPath(ir, "localFile"));
+                    operations.sftpGet(text(ir, "remoteFile"),
+                            localWritePath(text(ir, "localFile")));
                     return noOutput();
                 });
                 case "sftp_put" -> withSftp(outcomes, "put", operations -> {
-                    operations.sftpPut(localPath(ir, "localFile"), text(ir, "remoteFile"));
+                    operations.sftpPut(localReadPath(text(ir, "localFile")), text(ir, "remoteFile"));
                     return noOutput();
                 });
                 case "sftp_remove" -> withSftp(outcomes, "remove", operations -> {
@@ -150,12 +172,12 @@ public final class SshCommandDispatcher {
             }
         } catch (SftpFailure failure) {
             outcomes.add(new CommandOutcome.Error(failure.getMessage()));
-        } catch (PathArguments.InvalidPathException invalidPath) {
-            // 路径参数写错：给 PathArguments 的可读文案（与数值参数同一风格）
-            outcomes.add(new CommandOutcome.Error(invalidPath.getMessage()));
         } catch (UserNumber.InvalidNumberException invalidNumber) {
             // 数值参数写错：直接给 UserNumber 的可读文案（与 _SET/_JOB/_SLEEP 同一句式）
             outcomes.add(new CommandOutcome.Error(invalidNumber.getMessage()));
+        } catch (IllegalArgumentException invalidPath) {
+            // 路径参数写错：给可读文案（与数值参数同一风格）
+            outcomes.add(new CommandOutcome.Error(invalidPath.getMessage()));
         } catch (Exception unexpected) {
             // 任何未预期的异常都收敛成一条错误输出："SSH Exception :" + 异常的可读表示
             outcomes.add(new CommandOutcome.Error("SSH Exception :" + errorRepr(unexpected)));
@@ -182,7 +204,7 @@ public final class SshCommandDispatcher {
                 port,
                 text(ir, "user"),
                 ir.get("password") == null ? null : String.valueOf(ir.get("password")),
-                ir.get("keyFile") == null ? null : String.valueOf(ir.get("keyFile")));
+                ir.get("keyFile") == null ? null : localReadPath(String.valueOf(ir.get("keyFile"))).toString());
         try {
             operations.connect(options);
             // connect 时就打开 SFTP 并 chdir('.')：
@@ -319,12 +341,12 @@ public final class SshCommandDispatcher {
         }
         try {
             outcomes.add(action.run(registry.current()));
-        } catch (PathArguments.InvalidPathException invalidPath) {
-            // 路径参数写错不是"SFTP 动作失败"：交给命令层直接给 PathArguments 的可读文案
-            throw invalidPath;
         } catch (UserNumber.InvalidNumberException invalidNumber) {
             // 数值参数写错不是"SFTP 动作失败"：交给命令层直接给 UserNumber 的可读文案
             throw invalidNumber;
+        } catch (IllegalArgumentException invalidPath) {
+            // 路径参数写错不是"SFTP 动作失败"：交给命令层直接给可读文案
+            throw invalidPath;
         } catch (Exception error) {
             // mkdir 的文案在数字前多一个空格（冻结形态），其余动作没有
             String separator = "mkdir".equals(actionLabel) ? " (" : "(";
@@ -351,9 +373,14 @@ public final class SshCommandDispatcher {
         return value == null ? null : String.valueOf(value);
     }
 
-    /** 本地文件路径（sftp get/put）：相对路径按进程当前目录解析，非法字符给可读错误。 */
-    private static Path localPath(Map<String, Object> ir, String key) {
-        return PathArguments.parse(text(ir, key));
+    /** 本地读路径（put/keyfile）：相对 WORK → 调用脚本目录 → HOME；绝对原样。 */
+    private Path localReadPath(String name) {
+        return paths.findInput(name, currentScriptDirectory);
+    }
+
+    /** 本地写路径（get）：相对 WORK；绝对原样。 */
+    private Path localWritePath(String name) {
+        return paths.workFile(name);
     }
 
     /** IR 里的数值字段（uid/gid/fileSize…）→ int；解析与文案都走 {@link UserNumber}。 */

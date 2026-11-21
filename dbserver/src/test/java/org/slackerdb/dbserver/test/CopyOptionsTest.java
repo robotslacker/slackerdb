@@ -448,6 +448,23 @@ public class CopyOptionsTest {
         }
     }
 
+    @Test
+    void copyTimestamptzWithoutOffsetUsesSessionTimeZone() throws Exception {
+        try (Connection conn = connect()) {
+            exec(conn, "CREATE OR REPLACE TABLE copy_tz(v TIMESTAMPTZ)");
+            exec(conn, "SET TimeZone='Asia/Shanghai'");
+            copyIn(conn, "COPY copy_tz FROM STDIN WITH (FORMAT csv)", "2026-11-10 12:00:00\n");
+
+            try (Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT CAST(v AS VARCHAR) FROM copy_tz")) {
+                assert rs.next();
+                assert "2026-11-10 12:00:00+08".equals(rs.getString(1))
+                        : "COPY bare TIMESTAMPTZ must use session timezone, actual=" + rs.getString(1);
+            }
+            exec(conn, "DROP TABLE copy_tz");
+        }
+    }
+
     /** text 方言的转义序列跨分片时也必须续解（反斜杠可能正好落在切片边界上）。 */
     @Test
     void textDialectIsIncrementalAcrossChunkBoundaries() {

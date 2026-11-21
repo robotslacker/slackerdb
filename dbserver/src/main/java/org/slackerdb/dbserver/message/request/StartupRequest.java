@@ -10,7 +10,9 @@ import org.slackerdb.common.utils.Utils;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.sql.*;
+import java.time.DateTimeException;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.*;
 
 public class StartupRequest  extends PostgresRequest {
@@ -66,6 +68,8 @@ public class StartupRequest  extends PostgresRequest {
         // 否则连接池的槽位只增不减（上限 256 用尽后整台服务器再也建不起连接）。
         // 交给会话（session.dbConnection）之后本方法不再持有它，故把局部变量置空。
         Connection conn = null;
+        // 本会话实际生效的时区；Startup 的 TimeZone 参数优先，缺省用服务端 JVM 时区。
+        String effectiveTimeZone = TimeZone.getDefault().getID();
         // 握手期的语句同样要先"记账"：失败路径（例如库名拼出的坏 SQL）也要负责关闭。
         // 否则连接池会判定"归还时仍有未关闭语句"、把整条连接退役——
         // 一个反复用坏库名重连的客户端就能一直逼着池重建物理连接。
@@ -174,9 +178,17 @@ public class StartupRequest  extends PostgresRequest {
                 stmt.close();
             }
 
+            // PG 的 Startup 参数 TimeZone 是会话级默认值；DuckDB 的会话 TimeZone 必须显式设置。
+            // 不能只依赖 JVM 默认：DuckDB 原生层可能跟随 OS，而 JVM 可能由 -Duser.timezone 单独指定，
+            // 两者不一致时 TIMESTAMPTZ 的字面量/显示会差一个时区偏移。DBeaver 还会在 Startup 中
+            // 发送客户端时区，这里一并落到 DuckDB 会话，保证 RETURNING/COPY/SHOW timezone 一致。
+            ZoneId effectiveZone = applySessionTimeZone(conn, startupOptions.get("TimeZone"));
+            effectiveTimeZone = effectiveZone.getId();
+
             // 记录会话信息
             int sessionId = getCurrentSessionId(ctx);
             this.dbInstance.getSession(sessionId).dbConnection = conn;
+            this.dbInstance.getSession(sessionId).timeZone = effectiveZone;
             this.dbInstance.getSession(sessionId).dbConnectedTime = LocalDateTime.now();
             this.dbInstance.getSession(sessionId).startupOptions = startupOptions;
             this.dbInstance.getSession(sessionId).status = "DB-CONNECTED";
@@ -236,7 +248,7 @@ public class StartupRequest  extends PostgresRequest {
         parameterStatus.setKeyValue("DateStyle", "ISO, YMD");
         parameterStatus.process(ctx, request, out);
 
-        parameterStatus.setKeyValue("TimeZone", TimeZone.getDefault().getID());
+        parameterStatus.setKeyValue("TimeZone", effectiveTimeZone);
         parameterStatus.process(ctx, request, out);
 
         parameterStatus.setKeyValue("is_superuser", "on");
@@ -290,5 +302,40 @@ public class StartupRequest  extends PostgresRequest {
      */
     private void applyRequestedSearchPath(Statement stmt, String userSearchPath) throws SQLException {
         stmt.execute("set search_path = '" + userSearchPath + "'");
+    }
+
+    /**
+     * 把客户端 Startup 的 {@code TimeZone}（缺省为服务端 JVM 时区）落到 DuckDB 会话。
+     *
+     * <p>仅下发参数不够：DuckDB 的会话时区可能来自 OS，而 JVM 可能由 {@code -Duser.timezone}
+     * 单独指定；两者不一致时 {@code TIMESTAMPTZ '...'}、{@code SHOW timezone}、CAST 和
+     * RowEncoder 的偏移会互相矛盾。显式 SET 后，会话内所有路径看到同一个时区。</p>
+     *
+     * @return 实际生效的 IANA/offset 时区 ID（也用于回给客户端的 ParameterStatus）
+     */
+    private ZoneId applySessionTimeZone(Connection conn, String requested) throws SQLException {
+        ZoneId zone = resolveSessionZone(requested);
+        String id = zone.getId();
+        try (Statement timezoneStatement = conn.createStatement()) {
+            // ZoneId 已做合法性校验，这里不可能出现注入；单引号仍做一次转义以保持写法一致
+            timezoneStatement.execute("SET TimeZone = '" + id.replace("'", "''") + "'");
+        }
+        return zone;
+    }
+
+    private static ZoneId resolveSessionZone(String requested) throws SQLException {
+        if (requested == null || requested.isBlank()) {
+            return ZoneId.systemDefault();
+        }
+        try {
+            return ZoneId.of(requested.strip());
+        } catch (DateTimeException notIana) {
+            try {
+                // PG 客户端/驱动也可能发送 EST、GMT 这类缩写；SHORT_IDS 只接受已知名称
+                return ZoneId.of(requested.strip(), ZoneId.SHORT_IDS);
+            } catch (DateTimeException unsupported) {
+                throw new SQLException("Invalid TimeZone startup parameter [" + requested + "]", "22023");
+            }
+        }
     }
 }

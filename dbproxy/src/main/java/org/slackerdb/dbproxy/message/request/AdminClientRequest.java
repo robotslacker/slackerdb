@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 public class AdminClientRequest extends PostgresRequest {
     public static final byte[] AdminClientRequestHeader = {0x00, 0x00, 0x00, 0x08, 0x01, 0x01, 0x01, 0x01};
@@ -280,13 +281,21 @@ public class AdminClientRequest extends PostgresRequest {
         }
         boolean start = !"false".equalsIgnoreCase(options.getOrDefault("start", "true"));
         String name = options.get("name");
+        // 除了 create 自己用的参数，其余 --key value 全部作为 instance.conf 的配置项：
+        // 端口、日志、数据路径、pid、bind、advertise_address、插件参数……都可以由用户指定。
+        // 代理不判断这些值是否合理，配置写坏了会在启动时由 dbserver 报错。
+        Map<String, String> overrides = collectConfOptions();
         try {
-            ObservedInstance created = controller.create(new InstanceSpec(alias, name, start, Map.of()));
+            ObservedInstance created = controller.create(new InstanceSpec(alias, name, start, overrides));
             // 内部实例优先：同名外部注册立刻让位
             this.proxyInstance.pruneShadowedExternal(created.alias());
             feedBackMsg.append("Instance [").append(created.alias()).append("] created: state=")
                     .append(created.state()).append(", pg=").append(created.pgPort())
-                    .append(", mgmt=").append(created.mgmtPort()).append("\n");
+                    .append(", mgmt=").append(created.mgmtPort());
+            if (created.error() != null) {
+                feedBackMsg.append(", detail=").append(created.error());
+            }
+            feedBackMsg.append("\n");
             if (!start) {
                 feedBackMsg.append("  (created without starting; use 'resume --alias ")
                         .append(created.alias()).append("' to start it)\n");
@@ -294,6 +303,34 @@ public class AdminClientRequest extends PostgresRequest {
         } catch (InstanceException instanceException) {
             feedBackMsg.append("Create failed: ").append(instanceException.getMessage()).append("\n");
         }
+    }
+
+    /** create 自己消费、或只属于代理客户端、不能写进实例配置的参数。 */
+    private static final Set<String> CREATE_RESERVED_OPTIONS =
+            Set.of("alias", "name", "start", "conf", "host", "dbserver_jar", "listener_address");
+
+    /**
+     * 把 CREATE 的 {@code --key value} 参数转换成 {@code instance.conf} 的配置项。
+     *
+     * <p>键名在这里已经由 {@link #parseOptions} 统一小写；{@code portx} 是命令行风格的写法，
+     * dbserver 的键名是 {@code port_x}，两者都给时以 {@code port_x} 为准。</p>
+     */
+    private Map<String, String> collectConfOptions() {
+        Map<String, String> overrides = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : options.entrySet()) {
+            String key = entry.getKey();
+            if (key == null || key.isBlank() || CREATE_RESERVED_OPTIONS.contains(key)) {
+                continue;
+            }
+            if ("portx".equals(key)) {
+                if (!options.containsKey("port_x")) {
+                    overrides.put("port_x", entry.getValue());
+                }
+                continue;
+            }
+            overrides.put(key, entry.getValue());
+        }
+        return overrides;
     }
 
     private void lifecycle(StringBuilder feedBackMsg, String action) {

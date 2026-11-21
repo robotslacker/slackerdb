@@ -12,6 +12,28 @@ fi
 APP_NAME=jlib/slackerdb-dbserver-0.2.2-standalone.jar
 PID_FILE=pid/slackerdb-dbserver.pid
 
+# ---------------------------------------------------------------------------
+# JVM 参数：这里只放 JVM 自身的参数，不做内存探测、不推算 heap。
+# 数据库运行参数（memory_limit / threads / 端口 / 闸门等）由 conf/dbserver.conf
+# 与程序默认值决定，脚本不覆盖。
+#
+# 默认值面向 >=32G、结果集有界（LIMIT 10000）的常规部署：堆 8g、Direct 2g。
+# 需要调整时用环境变量覆盖，例如：
+#   export SLACKERDB_JAVA_OPTS="-Xms16g -Xmx16g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:MaxDirectMemorySize=4g"
+# 或直接修改下面这一行。注意堆 + memory_limit 要留出 OS/页缓存余量（见 conf 注释）。
+# ---------------------------------------------------------------------------
+if [ -z "$SLACKERDB_JAVA_OPTS" ]; then
+    SLACKERDB_JAVA_OPTS="-Xms8g -Xmx8g \
+-XX:+UseG1GC -XX:MaxGCPauseMillis=200 \
+-XX:MaxDirectMemorySize=2g \
+-Xlog:gc*:file=logs/gc-%p.log:time,uptime,level,tags:filecount=5,filesize=20M \
+-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=logs"
+fi
+JAVA_OPTS="$SLACKERDB_JAVA_OPTS"
+
+# 控制命令（stop/status）只需要很小的堆，避免白白占住大内存
+CTRL_OPTS="-Xms64m -Xmx256m"
+
 usage(){
   echo ""
   echo "*********************************************************"
@@ -60,7 +82,8 @@ start(){
     else
         mkdir -p pid
         mkdir -p logs
-        ${_SLACKERDB_JAVA} -Xms4096m -Xmx4096m -jar $APP_NAME \
+        echo "JVM options: ${JAVA_OPTS}"
+        ${_SLACKERDB_JAVA} ${JAVA_OPTS} -jar $APP_NAME \
             --daemon true \
             --conf conf/dbserver.conf \
             --pid  ${PID_FILE} \
@@ -88,7 +111,7 @@ stop(){
     pid=$(getPid)
     if [ ${pid} -ne 0 ]; then
         timeout 30 \
-            ${_SLACKERDB_JAVA} -jar $APP_NAME \
+            ${_SLACKERDB_JAVA} ${CTRL_OPTS} -jar $APP_NAME \
                  --conf conf/dbserver.conf \
                  stop > /dev/null
     fi
@@ -113,7 +136,7 @@ stop(){
 status(){
     pid=$(getPid)
     if [ ${pid} -ne 0 ]; then
-        ${_SLACKERDB_JAVA} -jar $APP_NAME \
+        ${_SLACKERDB_JAVA} ${CTRL_OPTS} -jar $APP_NAME \
             --conf conf/dbserver.conf \
             status
         echo ""

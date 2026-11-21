@@ -302,7 +302,14 @@ public final class MavenCollector {
         } catch (Exception e) {
             throw new IllegalStateException("Cannot resolve plugin " + key, e);
         }
-        add(descriptor.getPluginArtifact(), source);
+        ArtifactRecord pluginArtifact = add(descriptor.getPluginArtifact(), source);
+        if (pluginArtifact == null) {
+            // Some Maven/plugin combinations return a descriptor whose pluginArtifact
+            // has no resolved file. Resolve the plugin GAV explicitly so its jar/POM
+            // cannot be missing from the offline repository.
+            collectRootArtifact(plugin.getGroupId() + ":" + plugin.getArtifactId()
+                    + ":" + plugin.getVersion(), "plugin-runtime", rs);
+        }
         if (descriptor.getArtifacts() != null) {
             for (Artifact artifact : descriptor.getArtifacts()) {
                 add(artifact, "plugin-dependency");
@@ -333,6 +340,17 @@ public final class MavenCollector {
             String gav = "org.apache.maven.surefire:surefire-junit-platform:" + version;
             collectWithTransitives(gav, "surefire-provider", rs);
         }
+    }
+
+    private void collectRootArtifact(String gav, String source, RepositorySystemSession rs)
+            throws Exception {
+        List<RemoteRepository> repositories =
+                session.getTopLevelProject().getRemoteProjectRepositories();
+        ArtifactRequest request = new ArtifactRequest();
+        request.setArtifact(new DefaultArtifact(gav));
+        request.setRepositories(repositories);
+        ArtifactResult result = repositorySystem.resolveArtifact(rs, request);
+        add(result.getArtifact(), source);
     }
 
     private void collectWithTransitives(String gav, String source, RepositorySystemSession rs)

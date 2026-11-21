@@ -6,6 +6,9 @@
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <postgres.version>42.7.2</postgres.version>
+        <mysql-connector.version>8.3.0</mysql-connector.version>
+        <mysql-binlog-connector.version>0.30.1</mysql-binlog-connector.version>
+        <snakeyaml.version>2.5</snakeyaml.version>
         <spring-boot.version>4.1.1</spring-boot.version>
 
         <!-- JDK21 关键运行时组件：版本在这里统一仲裁，模块里不再各写各的 -->
@@ -31,6 +34,8 @@
         <module>plugin</module>
         <module>plugin-example</module>
         <module>scheduler</module>
+        <!-- PG/MySQL → DuckDB CDC 同步能力：dbserver 依赖它 -->
+        <module>dbsyncer</module>
         <module>dbdesk</module>
         <module>docs</module>
         <!-- 发行物装配：排在最后，各模块 target/ 就绪后才打 dist/src 包 -->
@@ -95,6 +100,23 @@
                 <groupId>com.github.waffle</groupId>
                 <artifactId>waffle-jna</artifactId>
                 <version>${waffle.version}</version>
+            </dependency>
+
+            <!-- dbsyncer：CDC 源库与 YAML 解析（版本在此统一仲裁） -->
+            <dependency>
+                <groupId>com.mysql</groupId>
+                <artifactId>mysql-connector-j</artifactId>
+                <version>${mysql-connector.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zendesk</groupId>
+                <artifactId>mysql-binlog-connector-java</artifactId>
+                <version>${mysql-binlog-connector.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.yaml</groupId>
+                <artifactId>snakeyaml</artifactId>
+                <version>${snakeyaml.version}</version>
             </dependency>
 
             <!-- dbcli：命令行客户端专用依赖（版本在此统一仲裁） -->

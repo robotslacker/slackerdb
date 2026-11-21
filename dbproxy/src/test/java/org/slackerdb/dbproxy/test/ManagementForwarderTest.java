@@ -167,6 +167,30 @@ class ManagementForwarderTest {
     }
 
     @Test
+    @DisplayName("web: the proxy is API-only, so /web/** is not served as static content")
+    void webPageIsGone() throws Exception {
+        HttpResponse<String> response = get("/web/index.html");
+
+        assertEquals(404, response.statusCode());
+        assertTrue(response.headers().firstValue("Content-Type").orElse("").contains("application/json"),
+                "the management port must not answer with HTML any more");
+        JSONObject body = JSON.parseObject(response.body());
+        assertEquals(404, body.getIntValue("retCode"));
+        assertTrue(body.getString("retMsg").contains("web"), body.toJSONString());
+    }
+
+    @Test
+    @DisplayName("root: / returns a JSON hint instead of an HTML page")
+    void rootIsJsonHint() throws Exception {
+        HttpResponse<String> response = get("/");
+
+        assertEquals(404, response.statusCode());
+        JSONObject body = JSON.parseObject(response.body());
+        assertEquals(404, body.getIntValue("retCode"));
+        assertTrue(body.getString("retMsg").contains("/<database>/<path>"), body.toJSONString());
+    }
+
+    @Test
     @DisplayName("forward: a stopped instance is a JSON 503 that names its state")
     void stoppedInstanceIsUnavailable() throws Exception {
         HttpResponse<String> response = get("/stopped/status");

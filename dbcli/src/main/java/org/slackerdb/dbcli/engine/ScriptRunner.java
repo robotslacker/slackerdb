@@ -220,6 +220,24 @@ public final class ScriptRunner implements CommandHost, FlowHost {
         return new ScriptSession(this, context, scriptName, scriptFile, argv, scriptSession);
     }
 
+    /**
+     * 最外层运行的收尾：先按设置把所有仍在跑的作业等完，再补报没有被检查过的失败，最后返回退出码。
+     *
+     * <p>为什么"等作业"必须在"补报失败"之前：{@code _JOB WAIT} 可能根本没被执行到
+     * （脚本在更早的 {@code _WHENEVER ERROR EXIT} 处收尾），此时作业的终态与失败只有在它真正
+     * 结束后才能确定；先等完再补报，才不会把一次迟到的失败算漏。</p>
+     *
+     * <p>等待只在 {@link ScriptContext#waitForJobsOnExit()} 为 true 时发生（主脚本）；
+     * profile、{@code --logon} 与作业线程不等待。</p>
+     */
+    public int finishTopLevel() {
+        if (context.waitForJobsOnExit()) {
+            context.dispatcher().awaitAllJobs();
+        }
+        reportUnacknowledgedJobFailures();
+        return context.finalExitCode();
+    }
+
     private int runScript(String text, String scriptName, Path scriptFile, List<String> argv) {
         checkStopRequested();
         boolean topLevel = context.depth() == 0;
@@ -236,8 +254,7 @@ public final class ScriptRunner implements CommandHost, FlowHost {
         }
         if (topLevel) {
             // 只在整个运行的**最外层**收尾：_START 子脚本返回时作业可能还要被父脚本 WAIT
-            reportUnacknowledgedJobFailures();
-            return context.finalExitCode();
+            return finishTopLevel();
         }
         // 子脚本（_START）：返回**它自己的**有效退出码——显式 _EXIT 优先，否则"这个子脚本里出过错就是 1"。
         // 父脚本的错误计数是共享的（子脚本报错同样让整次运行失败），但 RUN.EXITCODE 需要的是"子脚本的"。
@@ -494,7 +511,8 @@ public final class ScriptRunner implements CommandHost, FlowHost {
             Object statement = ir.get("statement");
             executeSqlText(statement == null ? "" : String.valueOf(statement));
         } else if (CommandDispatcher.supports(name)) {
-            List<CommandOutcome> outcomes = context.dispatcher().dispatch(ir);
+            List<CommandOutcome> outcomes = context.dispatcher()
+                    .dispatch(ir, context.currentScriptDirectory(), context.variables());
             this.outcomes.render(outcomes);
         } else {
             // 命令实现登记在 CommandCatalog（一命令一类）；这里只做"找人/报不认识"

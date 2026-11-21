@@ -82,8 +82,9 @@ dbcli>
 
 === 3.2 Command line history
 
-The console history is kept across sessions in `~/.slackerdb/dbcli.history`: it is read at start-up (the
-up/down keys reach statements from earlier sessions) and written back on exit.
+The console history is kept across sessions in `~/.dbcli/history`: it is read at start-up (the
+up/down keys reach statements from earlier sessions) and written back on exit. Script/batch runs do not
+create or read history.
 
 == 4. Command line options
 
@@ -96,18 +97,52 @@ up/down keys reach statements from earlier sessions) and written back on exit.
 | `--var NAME=VALUE` | define a script variable, repeatable; used by `${name}`
 | `--profile <script>` | run this script **before** the main script / console, repeatable, in the given order
 | `--silent` | completely silent: nothing on the terminal, only the exit code is left (log files are still written)
-| `--logfile <file>` | write this run to the file: the executed statements plus the same data/status output as the terminal
+| `--home_dir <dir>`, `--home-dir <dir>` | code directory (read-only); default: current directory; env `DBCLI_HOME`
+| `--work_dir <dir>`, `--work-dir <dir>` | writable working directory, **cleared at startup**; default: `<java.io.tmpdir>/dbcli-<pid>`; env `DBCLI_WORK`
+| `--output_dir <dir>`, `--output-dir <dir>` | writable output directory, **created only when the run writes there** and cleared at startup if it already exists; default: `<HOME>/output`; env `DBCLI_OUTPUT`
+| `--logfile <file>` | write this run to the file: the executed statements plus the same data/status output as the terminal (relative to OUTPUT)
 | `--reference <file>`, `--ref <file>` | compare this run's data output with the reference file line by line (**the ref must already exist**)
-| `--report-dir <dir>` | write the `--ref` products into this directory (by default next to the work file)
+| `--report-dir <dir>` | write the `--ref` products into this directory (default `OUTPUT/ref`; relative to OUTPUT)
 | `--daemon <bool>` | run the script in the background; a bare `--daemon` means `true`
-| `--pidfile <file>` | the process that runs the script writes its pid into this file. A **background copy keeps the file** after it exits (the parent reads it to report the pid); use the pid it holds to tell whether that copy is still alive. A foreground run removes it on exit
+| `--pidfile <file>` | the process that runs the script writes its pid into this file (relative to WORK). A **background copy keeps the file** after it exits (the parent reads it to report the pid); use the pid it holds to tell whether that copy is still alive. A foreground run removes it on exit
 | `-h`, `--help` | list the options and exit
 | `-V`, `--version` | print version and build time and exit
 |===
 
-**Inside a script** relative paths resolve against the directory of the `--execute <file>` file (stdin and the
-console use the process working directory); command line options always resolve against the process working
-directory.
+**Path rules.** `HOME` is the read-only code directory; `WORK` and `OUTPUT` are one-run scratch/output
+directories. `WORK` is created and cleared at the start of every root run (job/daemon child processes do not
+clear it). `OUTPUT` is **created on demand**: a run that never writes there (`--logfile`, `--ref`,
+`_compare`, `_job`) leaves no `output/`, `output/ref/` or similar directories behind; if it already exists
+when a root starts, it is locked and cleared then.
+Relative script names: entry/`--profile` are **WORK → HOME**; `_start` and job `script=`/`profile=` are
+**WORK → the calling script's directory → HOME**. Relative inputs use the same lookup. Relative writes go
+to the role root (`--logfile`/`--report-dir` → OUTPUT; `_spool`/`--pidfile`/SFTP get → WORK); absolute write
+paths are used verbatim. `_compare` products are `OUTPUT/<target-base>.dif|.suc|.html`.
+
+=== 4.1 Public environment variables
+
+[cols="1,3",options="header"]
+|===
+| Variable | Meaning
+
+| `DBCLI_HOME` | code directory; CLI `--home_dir` wins. Default: the current directory.
+| `DBCLI_WORK` | working directory, cleared at root startup; CLI `--work_dir` wins. Default: `<java.io.tmpdir>/dbcli-<pid>`.
+| `DBCLI_OUTPUT` | output directory, created on demand and cleared at root startup if it exists; CLI `--output_dir` wins. Default: `<DBCLI_HOME>/output`.
+| `SLACKERDB_LOGON` | default `--logon` value when the option is absent.
+|===
+
+**Launcher environment variables** (read by `bin/dbcli.sh` / `bin/dbcli.bat`, not by the dbcli process):
+`SLACKERDB_JAVA_HOME` (JDK home, wins over `JAVA_HOME`), `JAVA_HOME` (fallback JDK home),
+`DBCLI_JAVA_OPTS` (extra JVM options), `PATH` (locate `java`; also inherited by `_host`).
+
+**JVM/OS-provided variables** (not dbcli-owned): `SHELL` (POSIX daemon shell), `HOME` / `USERPROFILE`
+(JVM `user.home`, used by `~/.dbcli/history` and the read-only legacy profiles path), and
+`TMPDIR` / `TEMP` / `TMP` (JVM `java.io.tmpdir`, the default WORK parent).
+
+In addition, `${name}` falls back to **any same-named environment variable** (and `_ASSERT ENV.name`
+reads it explicitly); `_host` inherits the whole environment. Those names are user-defined, not
+dbcli-owned, so they are not listed above. Internal child-process markers are a private implementation
+detail and are not part of the public interface.
 
 == 5. Connecting to the database
 
@@ -186,7 +221,7 @@ sync); use `_help <command>` for the details of one command.
 * `_LOOP BREAK|CONTINUE`
 * `_ENDLOOP`
 * `_SESSION SAVE|RESTORE|RELEASE|SAVEURL|SHOW <name>`
-* `_SET @name <value>`
+* `_SET [LOCAL|SESSION|GLOBAL] @name <value>`
 * `_SET ECHO ON|OFF`
 * `_SET FEEDBACK ON|OFF`
 * `_SET TERMOUT ON|OFF`
@@ -292,7 +327,8 @@ _compare RESET                   # back to the defaults, drop every rule
 * Options: `CASE` / `NOCASE` (case-sensitive by default), `TRIM` / `NOTRIM` (whitespace is significant by
   default), `MASK` / `NOMASK` (off by default; when on, a reference line is a regex matched against the whole
   work line), `IGBLANK` / `NOIGBLANK` (off by default; when on, blank lines are not compared).
-* Differences write `<work file without extension>.dif`; a match writes `<work file without extension>.suc`.
+* Differences write `OUTPUT/<work file without extension>.dif`; a match writes
+  `OUTPUT/<work file without extension>.suc`.
   Example: `_compare work.txt ref.txt` writes `work.dif`, or `work.suc` when they match.
 * `_set diff_report_html on` (default off) also writes a `.html` report when there are differences.
 * Line rules apply as soon as they are declared: `MASKLINE "<regex>" => "<replacement>"` replaces the matched
@@ -316,11 +352,21 @@ _set colwidth 40        # max display columns per cell, longer cells end with ..
 _set diff_report_html on  # also write HTML when a _compare differs (default off)
 _set autocommit off     # switch JDBC autocommit (default on)
 _set timeout 30         # per-statement server timeout in seconds (default 0 = none)
-_set @name value        # define a script variable (same as --var; falls back to the environment)
+_set @name value        # LOCAL variable (default; visible in this job/script only)
+_set LOCAL @name value  # same as _set @name
+_set SESSION @name value # this job + jobs forked from it; not the parent/parallel jobs
+_set GLOBAL @name value  # all jobs and processes sharing this WORK (SQLite-backed)
 ----
 
 `echo`, `feedback`, `termout`, `autocommit` and `looptrace` default to `on`; `timing`, `time` and
 `diff_report_html` default to `off`; the switches only accept `on` / `off`.
+
+Variable scopes have the priority **LOCAL > SESSION > GLOBAL > `--var`**. `_set @name` and
+`_set LOCAL @name` affect only the current job and are not inherited by forked jobs. `_set SESSION`
+is snapshotted when a job is forked (`_JOB CREATE`/`_JOB START`); a child's changes do not flow back to
+the parent or parallel jobs. `_set GLOBAL` writes `WORK/.dbcli/global-vars.db`, so all thread/process
+jobs in the same WORK (including parent/child) see it; a child's global write is visible to the parent
+on its next variable lookup. Scope prefixes apply to variables only; `_set GLOBAL ECHO OFF` is an error.
 
 * `echo`: whether the log records "what was run" (the text of the executed statements). In the console the log
   is a transcript of the whole session.
@@ -349,8 +395,8 @@ itself is not printed.
 (variables are still resolved) and are not printed. `_api`'s `bodyvar=name` uses that text as a multi-line
 request body. An empty block captures an empty string; an invalid name is a readable error.
 
-`_SPOOL` needs a file name or `OFF`; `OFF` is a keyword, so to write to a file really
-named `off` give a path (`_spool ./off`).
+`_SPOOL` needs a file name or `OFF`; a relative name is written under **WORK** (absolute paths are used
+verbatim). `OFF` is a keyword, so to write to a file really named `off` give a path (`_spool ./off`).
 
 === 7.7 `_start`
 
@@ -361,7 +407,7 @@ _start child.sql arg1 arg2    # pass arguments: ${ARGV1}, ${ARGV2}, ...
 ----
 
 The child script shares the session state (connections, variables, `_set` options, spool). A relative script
-name is looked up in the working directory first, then next to the current script; nesting is limited to 16
+name is looked up in **WORK**, then next to the current script, then **HOME**; nesting is limited to 16
 levels.
 
 === 7.8 `_whenever`
@@ -416,6 +462,12 @@ _job jobmanager off                             # stop accepting new jobs
 * A `timeout=` on `_job wait` only means "this wait did not get there" (the job keeps running and stays
   `RUNNING`); use `abort` / `shutdown` to actually stop it.
 * Every job writes one output file `<job name>.out` (stdout + stderr), readable once `_job wait` returns.
+* The shared coordination database is `WORK/dbcli_log.db`; it is created on every run even when `_job` is
+  never used, is **not** removed on normal close, and is recycled by the next root run's WORK clear.
+* Audit: every completed job execution appends one row to `job_audit` in that database:
+  `pid`, `script_name`, `started_at_ms`, `finished_at_ms`, `state`, `exit_code` (plus scope/job name/mode/
+  failure). A `mode=process` row uses the child process PID; thread jobs use the current dbcli PID.
+  Repeated runs append new rows.
 * `_job show` without a name lists **all** jobs in the manager (including finished ones) in one table,
   sorted by `name`; with no jobs only the header row is printed.
 * `_job abort` / `_job shutdown` **request** a stop: a job that responds goes to `ABORTED` / `SHUTDOWN`
@@ -642,8 +694,9 @@ reference file line by line; the products are:
 | `<work file without extension>.dif` | it differs | the same format as `_compare`'s `.dif`
 |===
 
-`--report-dir <dir>` sets the directory for those two products (by default next to the work file). Recording a
-reference for the first time:
+`--report-dir <dir>` sets the directory for those two products (default `OUTPUT/ref`; relative paths are
+resolved against OUTPUT). Without `--logfile`, `--ref` writes `OUTPUT/logs/<script-base>.log` as the run
+record. Recording a reference for the first time:
 
 [source,bash]
 ----

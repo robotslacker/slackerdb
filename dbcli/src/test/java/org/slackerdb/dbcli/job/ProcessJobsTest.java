@@ -5,7 +5,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slackerdb.dbcli.engine.ScriptJobExecutor;
-import org.slackerdb.dbcli.rendezvous.SqliteRendezvous;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -160,26 +159,26 @@ class ProcessJobsTest {
     }
 
     @Test
-    @DisplayName("进程模式：管理器 close() 收掉仍在跑的作业，并清理自己建的同步库")
-    void closeStopsTheProcessAndCleansTheSyncDatabase() throws Exception {
+    @DisplayName("进程模式：管理器 close() 收掉仍在跑的作业，运行库保留不删")
+    void closeStopsTheProcessAndKeepsTheJobDatabase() throws Exception {
         writeScript("sleepy3.sql", "_sleep 60");
         manager.create("P6", params("script", "sleepy3.sql", "mode", "process"));
         Job job = manager.start("P6");
         long pid = awaitProcessId(job);
 
-        Path syncDatabase = manager.syncDatabase();
-        assertNotNull(syncDatabase, "出现 mode=process 作业之后应当有同步库");
-        assertTrue(Files.isRegularFile(syncDatabase), "同步库应当已经建出来: " + syncDatabase);
+        Path jobDatabase = manager.jobDatabase();
+        assertNotNull(jobDatabase, "作业管理器应当有自己的库");
+        assertTrue(Files.isRegularFile(jobDatabase), "作业库应当已经建出来: " + jobDatabase);
 
         manager.close();
 
         assertEquals(JobState.SHUTDOWN, job.state());
         assertFalse(isAlive(pid), "close() 之后不得留下子进程");
-        assertFalse(Files.exists(syncDatabase), "建库者收尾时应当清理同步库");
+        assertTrue(Files.exists(jobDatabase), "正常关闭不删除运行库");
     }
 
     @Test
-    @DisplayName("线程模式不受影响：同一管理器里 thread 作业仍然显示线程名，且不建同步库")
+    @DisplayName("线程模式不受影响：同一管理器里 thread 作业仍然显示线程名，且与进程作业共用同一个库")
     void threadModeIsUnchanged() throws Exception {
         writeScript("thread.sql", "_echo t", "from-a-thread", "echo off");
         manager.create("T1", params("script", "thread.sql"));
@@ -188,9 +187,10 @@ class ProcessJobsTest {
 
         assertEquals(JobState.DONE, result.job().state());
         assertEquals("dbcli-job-T1", result.job().runtimeIdentity(), "线程模式仍显示线程名");
-        assertTrue(manager.syncDatabase() == null, "没有进程模式作业时不该建同步库");
-        assertFalse(Files.exists(tempDir.resolve(SqliteRendezvous.SYNC_DB_FILE_NAME)),
-                "工作目录里不该出现同步库");
+        assertNotNull(manager.jobDatabase(), "线程作业也走同一个作业库");
+        assertTrue(Files.isRegularFile(manager.jobDatabase()), "作业库应当已经建出来");
+        assertFalse(Files.exists(tempDir.resolve(".dbcli-sync.db")),
+                "工作目录里不该出现旧的同步库");
     }
 
     @Test

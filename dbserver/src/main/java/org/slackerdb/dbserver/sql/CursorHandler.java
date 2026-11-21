@@ -105,7 +105,7 @@ public final class CursorHandler {
 
         if (declare.withHold()) {
             // WITH HOLD 要跨 COMMIT 存活：JDBC 结果集做不到，声明时就物化（文本编码）
-            List<byte[][]> rows = materialize(dbInstance, resultSet, metaData);
+            List<byte[][]> rows = materialize(dbInstance, resultSet, metaData, session.timeZone);
             resultSet.close();
             prepared.close();
             session.addCursor(new ServerCursor(declare.name(), true, rewritten, metaData, null, null, rows));
@@ -118,8 +118,9 @@ public final class CursorHandler {
 
     /** 把结果集全部取出并按文本编码存成 {@code byte[][]}（物化模式）。 */
     private static List<byte[][]> materialize(DBInstance dbInstance, ResultSet resultSet,
-                                              ResultSetMetaData metaData) throws SQLException {
-        RowEncoder encoder = new RowEncoder(metaData, RowEncoder.ALL_TEXT, dbInstance.logger);
+                                              ResultSetMetaData metaData, java.time.ZoneId sessionZone)
+            throws SQLException {
+        RowEncoder encoder = new RowEncoder(metaData, RowEncoder.ALL_TEXT, dbInstance.logger, sessionZone);
         List<byte[][]> rows = new ArrayList<>();
         while (resultSet.next()) {
             List<Column> encoded = encoder.encode(resultSet);
@@ -152,7 +153,8 @@ public final class CursorHandler {
         // 简单查询路径每次 FETCH 都要发 RowDescription；扩展协议路径不发
         // （客户端已经从 Describe('P') 拿到行描述，重复发是协议违规）。
         // 两条路径的格式码都必须与下面 DataRow 的字节一致。
-        RowEncoder encoder = new RowEncoder(cursor.metaData, resultFormats, dbInstance.logger);
+        RowEncoder encoder = new RowEncoder(cursor.metaData, resultFormats, dbInstance.logger,
+                session.timeZone);
         if (withRowDescription) {
             RowDescription rowDescription = new RowDescription(dbInstance);
             rowDescription.setFields(encoder.describe());

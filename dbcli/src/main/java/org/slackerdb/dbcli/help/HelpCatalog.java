@@ -90,8 +90,9 @@ public final class HelpCatalog {
             new Entry("_ENDLOOP", List.of(
                     "end the current loop block")),
             new Entry("_SESSION SAVE|RESTORE|RELEASE|SAVEURL|SHOW <name>", List.of()),
-            new Entry("_SET @name <value>", List.of(
-                    "set a script variable")),
+            new Entry("_SET [LOCAL|SESSION|GLOBAL] @name <value>", List.of(
+                    "set a variable; default/local = this job only, session = this job +",
+                    "forked jobs, global = all jobs in this WORK (SQLite-backed)")),
             new Entry("_SET ECHO ON|OFF", List.of(
                     "echo each statement/command as it runs (default ON)")),
             new Entry("_SET FEEDBACK ON|OFF", List.of(
@@ -135,7 +136,7 @@ public final class HelpCatalog {
 
     /** 总览末尾的变量说明（不是命令，因此不参与 README 速查表）。 */
     private static final List<String> TRAILER = List.of(
-            "Variables: ${name}; sources = _SET @name, --var, ${ARGVn}, environment;",
+            "Variables: ${name}; sources = _SET [LOCAL|SESSION|GLOBAL] @name, --var, ${ARGVn}, environment;",
             "  an undefined name falls back to the same-named environment variable, else it is",
             "  left as written (no error, no empty string).");
 

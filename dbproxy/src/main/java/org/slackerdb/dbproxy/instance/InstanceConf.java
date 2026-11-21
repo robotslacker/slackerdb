@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 一个实例的 dbserver 配置（{@code instance.conf}）。
@@ -24,9 +26,12 @@ import java.util.Properties;
  */
 public final class InstanceConf {
 
-    /** 由代理强制管理、不允许 create 请求覆盖的键。 */
-    public static final List<String> MANAGED_KEYS = List.of(
-            "data", "data_dir", "port", "port_x", "pid", "log", "bind", "daemon", "advertise_address");
+    /** 匹配 {@code port=...} 行（行首只允许空白，不匹配 {@code port_x} 或注释行）。 */
+    private static final Pattern PORT_LINE =
+            Pattern.compile("(?im)^(\\s*)port(\\s*[=:]\\s*|\\s+)[^\\r\\n]*$");
+    /** 匹配 {@code port_x=...} 行。 */
+    private static final Pattern PORT_X_LINE =
+            Pattern.compile("(?im)^(\\s*)port_x(\\s*[=:]\\s*|\\s+)[^\\r\\n]*$");
 
     private final Map<String, String> values;   // key 统一大写
 
@@ -102,21 +107,12 @@ public final class InstanceConf {
         return get("PID", "instance.pid");
     }
 
-    public String logFile() {
-        return get("LOG", "logs/server.log");
-    }
-
     public String bind() {
         return get("BIND", "127.0.0.1");
     }
 
     public String accessMode() {
         return get("ACCESS_MODE", "READ_WRITE");
-    }
-
-    /** 只读视图（键大写）。 */
-    public Map<String, String> asMap() {
-        return Map.copyOf(values);
     }
 
     /** 给 JSON 用的只读视图（键小写，便于阅读）。 */
@@ -151,9 +147,51 @@ public final class InstanceConf {
     }
 
     /**
+     * 把 {@code port=} / {@code port_x=} 改写成实际分配的端口，文件其它内容（注释、顺序、
+     * 插件参数大小写）原样保留。
+     *
+     * <p>用于"用户传 0 表示自动分配"：create 时直接写实际端口；start 时如果旧配置里仍是 0，
+     * 就在这里补上，之后通过管理 API 查到的就是真实端口。</p>
+     *
+     * @param port  新的 PG 端口；{@code null} 表示不改
+     * @param portX 新的管理口端口；{@code null} 表示不改
+     * @return 是否写入了文件
+     */
+    public static boolean rewritePorts(Path file, Integer port, Integer portX) throws IOException {
+        if (port == null && portX == null) {
+            return false;
+        }
+        String text = Files.readString(file, StandardCharsets.UTF_8);
+        if (port != null) {
+            String replaced = replaceLine(text, PORT_LINE, "port", port);
+            text = replaced != null ? replaced : appendLine(text, "port=" + port);
+        }
+        if (portX != null) {
+            String replaced = replaceLine(text, PORT_X_LINE, "port_x", portX);
+            text = replaced != null ? replaced : appendLine(text, "port_x=" + portX);
+        }
+        Files.writeString(file, text, StandardCharsets.UTF_8);
+        return true;
+    }
+
+    private static String replaceLine(String text, Pattern pattern, String key, int value) {
+        Matcher matcher = pattern.matcher(text);
+        if (!matcher.find()) {
+            return null;
+        }
+        String replacement = matcher.group(1) + key + "=" + value;
+        return matcher.replaceFirst(Matcher.quoteReplacement(replacement));
+    }
+
+    private static String appendLine(String text, String line) {
+        String separator = text.isEmpty() || text.endsWith("\n") || text.endsWith("\r") ? "" : "\n";
+        return text + separator + line + "\n";
+    }
+
+    /**
      * 生成配置文件正文。
      *
-     * @param ordered 需要写入的键值（按迭代顺序输出，键统一小写）
+     * @param ordered 需要写入的键值（按迭代顺序输出；键原样保留，插件参数的大小写有意义）
      */
     public static String render(Map<String, String> ordered) {
         StringBuilder sb = new StringBuilder();
@@ -164,10 +202,34 @@ public final class InstanceConf {
         sb.append("# Manual maintenance is supported: edit and restart the instance, the proxy\n");
         sb.append("# will follow the new values without being restarted.\n");
         sb.append('\n');
-        ordered.forEach((key, value) -> sb.append(key.toLowerCase(Locale.ROOT))
+        ordered.forEach((key, value) -> sb.append(key)
                 .append('=')
-                .append(value == null ? "" : value)
+                .append(escapeValue(value))
                 .append('\n'));
         return sb.toString();
+    }
+
+    /**
+     * 按 {@link Properties} 的规则转义取值。
+     *
+     * <p>只处理会破坏"一行一个键值"的字符：反斜杠（Windows 路径里到处都是）、换行、制表符。
+     * 这样用户用 {@code --data_dir D:\data\sales} 传进来的路径，dbserver 读到的仍是原样路径。</p>
+     */
+    private static String escapeValue(String value) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        StringBuilder escaped = new StringBuilder(value.length() + 8);
+        for (int index = 0; index < value.length(); index++) {
+            char ch = value.charAt(index);
+            switch (ch) {
+                case '\\' -> escaped.append("\\\\");
+                case '\n' -> escaped.append("\\n");
+                case '\r' -> escaped.append("\\r");
+                case '\t' -> escaped.append("\\t");
+                default -> escaped.append(ch);
+            }
+        }
+        return escaped.toString();
     }
 }

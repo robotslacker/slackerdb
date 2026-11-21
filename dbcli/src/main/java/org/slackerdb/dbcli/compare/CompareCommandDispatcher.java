@@ -2,6 +2,7 @@ package org.slackerdb.dbcli.compare;
 
 import org.slackerdb.dbcli.common.Artifacts;
 import org.slackerdb.dbcli.common.CommandOutcome;
+import org.slackerdb.dbcli.common.DbcliPaths;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -64,6 +65,7 @@ public final class CompareCommandDispatcher {
     /** 选项默认值（用于 {@code _COMPARE SET} 的 "Default value" 列）。 */
     private static final CompareOptions DEFAULTS = new CompareOptions();
 
+    private final DbcliPaths paths;
     private final Path workingDirectory;
     private final CompareOptions options = new CompareOptions();
     /** {@code _SET DIFF_REPORT_HTML} 的当前值（默认 off）。 */
@@ -71,7 +73,12 @@ public final class CompareCommandDispatcher {
     private final LineRules rules = new LineRules();
 
     public CompareCommandDispatcher(Path workingDirectory) {
-        this.workingDirectory = workingDirectory;
+        this(DbcliPaths.forDirectory(workingDirectory));
+    }
+
+    public CompareCommandDispatcher(DbcliPaths paths) {
+        this.paths = paths;
+        this.workingDirectory = paths.work();
     }
 
     /** 当前累积的选项（引擎/测试可读，例如日志）。 */
@@ -95,6 +102,11 @@ public final class CompareCommandDispatcher {
 
     /** 执行一条 {@code _COMPARE} 命令。 */
     public List<CommandOutcome> execute(Map<String, Object> ir) {
+        return execute(ir, null);
+    }
+
+    /** 执行一条 {@code _COMPARE} 命令；{@code scriptDirectory} 用于相对输入解析。 */
+    public List<CommandOutcome> execute(Map<String, Object> ir, Path scriptDirectory) {
         Object rawAction = ir.get("action");
         String action = rawAction == null ? "" : String.valueOf(rawAction);
         List<CommandOutcome> outcomes = new ArrayList<>();
@@ -109,7 +121,7 @@ public final class CompareCommandDispatcher {
             case "noskip" -> removeSkipRule(ir, outcomes);
             case "mask" -> addMaskRule(ir, outcomes);
             case "nomask" -> removeMaskRule(ir, outcomes);
-            case "compare" -> compare(ir, outcomes);
+            case "compare" -> compare(ir, outcomes, scriptDirectory);
             // 未知 action：明确报错（与 _SSH 分派器一致），不静默 yield 0 条
             default -> outcomes.add(new CommandOutcome.Error("Unsupported compare action [" + action + "]"));
         }
@@ -277,7 +289,7 @@ public final class CompareCommandDispatcher {
 
     // ------------------------------------------------------------------ compare
 
-    private void compare(Map<String, Object> ir, List<CommandOutcome> outcomes) {
+    private void compare(Map<String, Object> ir, List<CommandOutcome> outcomes, Path scriptDirectory) {
         String targetName = text(ir, "targetFile");
         String referenceName = text(ir, "referenceFile");
 
@@ -294,25 +306,37 @@ public final class CompareCommandDispatcher {
 
         // 检查顺序已冻结：先文件存在性，再（没有别的检查了）；错误文案用**原始路径字符串**
         //（不做引号剥离，报错里就是脚本里写的那一串）
-        Path target = resolveQuietly(targetName);
-        Path reference = resolveQuietly(referenceName);
-        if (targetName == null || !exists(workingDirectory, targetName)) {
+        Path target = resolveQuietly(targetName, scriptDirectory);
+        Path reference = resolveQuietly(referenceName, scriptDirectory);
+        if (target == null || !Files.isRegularFile(target)) {
             // "没比成"不能留下上一轮的结论：旧的 .suc 会让按产物判断结果的 CI 读成成功
-            deleteStaleArtifacts(target, reference);
+            deleteStaleArtifacts(artifactBaseOf(target), reference);
             outcomes.add(new CommandOutcome.Error("ERROR: File " + targetName + " does not exist!"));
             return;
         }
-        if (referenceName == null || !exists(workingDirectory, referenceName)) {
-            deleteStaleArtifacts(target, reference);
+        if (reference == null || !Files.isRegularFile(reference)) {
+            deleteStaleArtifacts(artifactBaseOf(target), reference);
             outcomes.add(new CommandOutcome.Error("ERROR: File " + referenceName + " does not exist!"));
             return;
         }
+        Path artifactBase = paths.legacy()
+                ? CompareReporter.artifactBase(target)
+                : paths.compareReportPath(target, "");
+        // 产物落 OUTPUT 根：只有真的要写时才发现/创建它（普通脚本运行不该多出 output/）
+        if (!paths.legacy()) {
+            try {
+                paths.ensureOutput();
+            } catch (RuntimeException cannotPrepare) {
+                outcomes.add(new CommandOutcome.Error(messageOf(cannotPrepare)));
+                return;
+            }
+        }
         try {
             CompareResult result = FileComparer.compare(reference, target, request, rules);
-            CompareReporter reporter = new CompareReporter(result);
-            // 产物路径从目标文件派生：它可能正好等于某个**输入**文件（例如上一轮的 .dif 被当成参考再比一次）。
+            CompareReporter reporter = new CompareReporter(result, result.targetFileLines(), artifactBase);
+            // 产物可能正好等于某个**输入**文件（例如上一轮的 .dif 被当成参考再比一次）。
             // 写/删之前先挡掉，否则会静默覆盖或删除使用者的输入。
-            ensureArtifactsDoNotClobberInputs(target, reference);
+            ensureArtifactsDoNotClobberInputs(artifactBase, target, reference);
             if (result.identical()) {
                 // 一致：写 work.suc（一行 TSV），控制台只给状态行、没有表格
                 reporter.writeSuccessFile();
@@ -323,7 +347,7 @@ public final class CompareCommandDispatcher {
                 outcomes.add(new CommandOutcome.Status(CompareReporter.STATUS_SUCCESSFUL));
                 return;
             }
-            // 不一致：固定写 work.dif（与目标文件同目录、名字由目标文件派生）；
+            // 不一致：固定写 work.dif（OUTPUT/compare/<目标基名>.dif）；
             // HTML 只在 _SET DIFF_REPORT_HTML ON 时另写一份。
             // 控制台**不打印差异表**：差异看文件（stdout 保持"只有状态行"）
             reporter.writeDiffFile();
@@ -338,40 +362,48 @@ public final class CompareCommandDispatcher {
             outcomes.add(new CommandOutcome.Failure(CompareReporter.STATUS_FAILED));
         } catch (IOException | IllegalArgumentException | CompareReporter.CompareReportException failure) {
             outcomes.clear();
-            deleteStaleArtifacts(target, reference);
+            deleteStaleArtifacts(artifactBase, reference);
             outcomes.add(new CommandOutcome.Error(messageOf(failure)));
         }
     }
 
     /** 目标路径解析失败（非法字符）时返回 null：调用方只是用它清理旧产物，不值得因此报错。 */
-    private Path resolveQuietly(String name) {
+    private Path resolveQuietly(String name, Path scriptDirectory) {
         if (name == null) {
             return null;
         }
         try {
-            return workingDirectory.resolve(name);
-        } catch (java.nio.file.InvalidPathException invalidPath) {
+            return paths.findInput(name, scriptDirectory);
+        } catch (IllegalArgumentException invalidPath) {
             return null;
         }
     }
 
+    private Path artifactBaseOf(Path target) {
+        if (target == null) {
+            return null;
+        }
+        return paths.legacy() ? CompareReporter.artifactBase(target)
+                : paths.compareReportPath(target, "");
+    }
+
     /**
-     * 删掉目标文件旁边的三种比对产物（{@code .suc}/{@code .dif}/{@code .html}）。
+     * 删掉 {@code OUTPUT/compare/<目标基名>} 的三种比对产物（{@code .suc}/{@code .dif}/{@code .html}）。
      *
      * <p>用于"这次没有得出任何结论"的路径（输入文件不存在、比对抛异常）：不留旧结论，
      * 否则按产物判断结果的 CI 会把一次没比成的运行读成成功。</p>
      *
-     * @param reference 参考文件（可为 null）：它绝不参与删除——产物名可能正好撞上它
+     * @param artifactBase 产物基路径（不含扩展名；null 表示无可清理）
+     * @param reference    参考文件（可为 null）：它绝不参与删除
      */
-    private static void deleteStaleArtifacts(Path target, Path reference) {
-        if (target == null) {
+    private static void deleteStaleArtifacts(Path artifactBase, Path reference) {
+        if (artifactBase == null) {
             return;
         }
-        java.util.Set<Path> inputs = reference == null ? java.util.Set.of()
-                : java.util.Set.of(reference.toAbsolutePath().normalize());
+        Path referenceAbsolute = reference == null ? null : reference.toAbsolutePath().normalize();
         for (String extension : List.of(".suc", ".dif", ".html")) {
-            Path artifact = CompareReporter.artifactPath(target, extension).toAbsolutePath().normalize();
-            if (inputs.contains(artifact)) {
+            Path artifact = Path.of(artifactBase + extension).toAbsolutePath().normalize();
+            if (artifact.equals(referenceAbsolute)) {
                 continue;
             }
             Artifacts.deleteStale(artifact);
@@ -381,15 +413,15 @@ public final class CompareCommandDispatcher {
     /**
      * 产物路径不得与任一输入文件重合。
      *
-     * <p>产物名恒定由目标文件派生，而两个输入都是使用者给的任意路径：{@code _COMPARE a.txt a.suc}
+     * <p>产物名按目标基名派生，而两个输入都是使用者给的任意路径：{@code _COMPARE a.txt a.suc}
      * 会把参考文件本身当成"上一次的产物"删掉；{@code _COMPARE a.txt a.dif} 会把参考文件改写成本次差异。
      * 两者都是静默数据丢失，因此在写/删之前先报一条可读错误。</p>
      */
-    private static void ensureArtifactsDoNotClobberInputs(Path target, Path reference) {
+    private static void ensureArtifactsDoNotClobberInputs(Path artifactBase, Path target, Path reference) {
         java.util.Set<Path> inputs = java.util.Set.of(
                 target.toAbsolutePath().normalize(), reference.toAbsolutePath().normalize());
         for (String extension : List.of(".suc", ".dif", ".html")) {
-            Path artifact = CompareReporter.artifactPath(target, extension).toAbsolutePath().normalize();
+            Path artifact = Path.of(artifactBase + extension).toAbsolutePath().normalize();
             if (inputs.contains(artifact)) {
                 throw new CompareReporter.CompareReportException("Compare artifact [" + artifact
                         + "] would overwrite an input file; choose another work file name.");
@@ -402,20 +434,6 @@ public final class CompareCommandDispatcher {
 
     private static CommandOutcome noOutput() {
         return new CommandOutcome.Status(null);
-    }
-
-    /**
-     * "这个相对路径指向的文件存在吗"。
-     *
-     * <p>路径串非法时（Windows 上 {@code _COMPARE "a.txt" "b.txt"} 的引号就是非法字符）按"文件不存在"
-     * 处理 —— 引号不剥离，因此它在两边都是"文件不存在"（契约 §8）。</p>
-     */
-    private static boolean exists(Path workingDirectory, String name) {
-        try {
-            return Files.isRegularFile(workingDirectory.resolve(name));
-        } catch (java.nio.file.InvalidPathException invalidPath) {
-            return false;
-        }
     }
 
     private static String messageOf(Exception error) {

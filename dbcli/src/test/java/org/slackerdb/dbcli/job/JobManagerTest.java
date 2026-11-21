@@ -365,8 +365,12 @@ class JobManagerTest {
     @DisplayName("管理器未启动 / 重名 / 运行中改参数 / 缺 script 都要报可读错误")
     void errorPaths() {
         JobManager stopped = new JobManager(this::spec, this::execute, tempDir.resolve("logs2"), tempDir);
-        JobException notStarted = assertThrows(JobException.class, () -> stopped.create("X", params()));
-        assertTrue(notStarted.getMessage().contains("not started"), notStarted.getMessage());
+        try {
+            JobException notStarted = assertThrows(JobException.class, () -> stopped.create("X", params()));
+            assertTrue(notStarted.getMessage().contains("not started"), notStarted.getMessage());
+        } finally {
+            stopped.close();
+        }
 
         manager.create("DUP", params());
         JobException duplicate = assertThrows(JobException.class, () -> manager.create("DUP", params()));

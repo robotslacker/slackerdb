@@ -14,8 +14,10 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -32,6 +34,42 @@ public class DBSession {
     public LocalDateTime dbConnectedTime;
     // 客户端连接时候的选项
     public Map<String, String> startupOptions;
+    /**
+     * 会话时区：Startup 的 TimeZone（或服务端默认）在握手时落到 DuckDB，并在这里保留一份，
+     * 供结果编码把绝对时刻格式化成与 {@code SHOW timezone} 一致的偏移。
+     */
+    public volatile ZoneId timeZone = ZoneId.systemDefault();
+
+    /**
+     * {@code SET/RESET timezone} 之后同步会话时区（这些语句由 DuckDB 执行，DBSession 不会自动知道）。
+     * 普通语句不触发额外查询。
+     */
+    public void refreshTimeZoneIfSet(String sql) {
+        if (sql == null) {
+            return;
+        }
+        String upper = sql.stripLeading().toUpperCase(Locale.ROOT);
+        if (!(upper.startsWith("SET") || upper.startsWith("RESET"))
+                || (!upper.contains("TIMEZONE") && !upper.contains("TIME ZONE"))) {
+            return;
+        }
+        refreshTimeZone();
+    }
+
+    /** 从当前 DuckDB 会话读取 TimeZone；失败时保留原值（不让显示问题升级成查询失败）。 */
+    public void refreshTimeZone() {
+        if (dbConnection == null) {
+            return;
+        }
+        try (Statement statement = dbConnection.createStatement();
+             ResultSet row = statement.executeQuery("select current_setting('TimeZone')")) {
+            if (row.next()) {
+                timeZone = ZoneId.of(row.getString(1));
+            }
+        } catch (SQLException | RuntimeException ignored) {
+            // 保持旧值；下一条 SET 还会再尝试
+        }
+    }
 
     /**
      * 会话的事务状态，对应 PG 协议 ReadyForQuery 的三种状态字节。

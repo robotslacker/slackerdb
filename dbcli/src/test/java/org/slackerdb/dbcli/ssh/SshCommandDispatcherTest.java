@@ -438,7 +438,9 @@ class SshCommandDispatcherTest {
                 "640 必须按八进制解析，实际调用: " + fake.calls);
         org.junit.jupiter.api.Assertions.assertTrue(fake.calls.contains("sftpMkdir /root/d 755"));
         org.junit.jupiter.api.Assertions.assertTrue(fake.calls.contains("sftpChown /root/f 0 0"));
-        org.junit.jupiter.api.Assertions.assertTrue(fake.calls.contains("sftpPut a.txt -> /root/a.txt"));
+        org.junit.jupiter.api.Assertions.assertTrue(fake.calls.contains(
+                        "sftpPut " + Path.of("a.txt").toAbsolutePath() + " -> /root/a.txt"),
+                "实际调用: " + fake.calls);
         org.junit.jupiter.api.Assertions.assertTrue(fake.calls.contains("sftpRename /root/a.txt -> /root/b.txt"));
         org.junit.jupiter.api.Assertions.assertTrue(fake.calls.contains("sftpTruncate /root/a.txt 12"));
     }

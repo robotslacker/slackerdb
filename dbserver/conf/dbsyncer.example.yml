@@ -1,0 +1,84 @@
+# dbsyncer 示例：PostgreSQL/MySQL CDC → 内嵌 DuckDB
+# 启用：在 dbserver.conf 中设置 plugin-dbsyncer.config=conf/dbsyncer.example.yml
+# 注意：目标 schema 必须显式配置；目标固定为内嵌 DuckDB，不再写 type；一个作业只能有一个 target。
+
+version: 1
+
+defaults:
+  batch:
+    maxRows: 2000
+    flushIntervalMs: 10000
+    maxBufferedEvents: 100000
+    maxBufferedBytes: 67108864
+    # 单批写入失败后的重试；仍失败则不推进检查点并暂停作业
+    maxAttempts: 3
+    retryIntervalMs: 1000
+  reconnect:
+    maxAttempts: 10
+    intervalMs: 3000
+  snapshot:
+    mode: replace
+    fetchSize: 10000
+
+connections:
+  pg_app:
+    type: postgres
+    url: jdbc:postgresql://127.0.0.1:5432/appdb
+    username: app_user
+    password: change_me
+    properties:
+      sslmode: prefer
+    replication:
+      statusIntervalMs: 10000
+  mysql_app:
+    type: mysql
+    url: jdbc:mysql://127.0.0.1:3306/appdb?useCursorFetch=true&useServerPrepStmts=true&characterEncoding=UTF-8&serverTimezone=UTC&tinyInt1isBit=false
+    username: app_user
+    password: change_me
+
+targets:
+  duck_local:
+    schema: sync
+
+jobs:
+  - name: pg_orders
+    description: "PostgreSQL 订单表实时同步"
+    source: pg_app
+    target: duck_local
+    mode: snapshot+cdc
+    autoStart: true
+    replication:
+      publication: sdb_pub_pg_orders
+      slot: sdb_slot_pg_orders
+    tables:
+      include:
+        - match: "public.orders"
+          target: "orders"
+          primaryKey: [id]
+          columns:
+            exclude: [internal_note]
+            rename:
+              order_no: order_number
+            constants:
+              _source: pg_app
+        - match: "public.order_items"
+          target: "order_items"
+          primaryKey: [order_id, line_no]
+      exclude:
+        - "public.orders_archive_*"
+
+  - name: mysql_customers
+    description: "MySQL 客户表实时同步"
+    source: mysql_app
+    target: duck_local
+    mode: snapshot+cdc
+    autoStart: false
+    tables:
+      include:
+        - match: "appdb.customers"
+          target: "customers"
+          primaryKey: [id]
+        # 动态表：CREATE/RENAME TABLE 时按同一规则建/改目标表
+        - match: "appdb.orders{.*}"
+          target: "orders{$1}"
+          primaryKey: [id]

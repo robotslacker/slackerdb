@@ -2,7 +2,10 @@ package org.slackerdb.dbcli.engine;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.slackerdb.dbcli.common.GlobalVariableStore;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -47,6 +50,70 @@ class VariableResolverTest {
         VariableResolver resolver = new VariableResolver(Map.of());
 
         assertEquals("${ARGV99999999999999}", resolver.resolve("${ARGV99999999999999}"));
+    }
+
+    @Test
+    @DisplayName("作用域优先级：LOCAL > SESSION > GLOBAL > --var")
+    void scopePriority(@TempDir Path dir) {
+        try (GlobalVariableStore global = new GlobalVariableStore(dir.resolve("global.db"))) {
+            VariableResolver resolver = new VariableResolver(Map.of("who", "from-var"),
+                    Map.of("who", "from-session"), global);
+            resolver.setGlobalVariable("who", "from-global");
+            assertEquals("from-session", resolver.resolve("${who}"));
+
+            resolver.setVariable("who", "from-local");
+            assertEquals("from-local", resolver.resolve("${who}"));
+            assertEquals("from-local", resolver.lookup("who"));
+            assertEquals("from-local", resolver.snapshot().get("who"));
+        }
+    }
+
+    @Test
+    @DisplayName("SESSION 快照隔离：子 job 的修改不回传父/并行 job")
+    void sessionSnapshotIsIsolated(@TempDir Path dir) {
+        try (GlobalVariableStore global = new GlobalVariableStore(dir.resolve("global.db"))) {
+            VariableResolver parent = new VariableResolver(Map.of(), Map.of(), global);
+            parent.setSessionVariable("inherited", "parent");
+            Map<String, String> snapshot = parent.sessionSnapshot();
+
+            VariableResolver child = new VariableResolver(Map.of(), snapshot, global);
+            assertEquals("parent", child.resolve("${inherited}"));
+
+            child.setSessionVariable("inherited", "child");
+            child.setSessionVariable("onlyChild", "yes");
+            assertEquals("parent", parent.resolve("${inherited}"));
+            assertEquals("${onlyChild}", parent.resolve("${onlyChild}"));
+            assertEquals("child", child.resolve("${inherited}"));
+        }
+    }
+
+    @Test
+    @DisplayName("GLOBAL 通过 SQLite 文件在父子/并行 resolver 之间共享")
+    void globalVariablesAreSharedThroughSqlite(@TempDir Path dir) throws Exception {
+        Path database = dir.resolve("global.db");
+        try (GlobalVariableStore parentStore = new GlobalVariableStore(database);
+             GlobalVariableStore childStore = new GlobalVariableStore(database)) {
+            VariableResolver parent = new VariableResolver(Map.of(), Map.of(), parentStore);
+            VariableResolver child = new VariableResolver(Map.of(), Map.of(), childStore);
+
+            child.setGlobalVariable("shared", "from-child");
+            assertEquals("from-child", parent.resolve("${shared}"));
+            assertEquals("from-child", parent.snapshot().get("shared"));
+
+            parent.setGlobalVariable("shared", "from-parent");
+            assertEquals("from-parent", child.resolve("${shared}"));
+            assertEquals("from-parent", child.lookup("shared"));
+        }
+    }
+
+    @Test
+    @DisplayName("无 global store 时 _SET GLOBAL 明确失败，不影响 LOCAL/SESSION")
+    void globalWithoutStoreFails() {
+        VariableResolver resolver = new VariableResolver(Map.of());
+        assertThrows(IllegalStateException.class,
+                () -> resolver.setGlobalVariable("x", "1"));
+        resolver.setVariable("x", "local");
+        assertEquals("local", resolver.resolve("${x}"));
     }
 
     @Test

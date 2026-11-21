@@ -37,12 +37,6 @@ public final class MulticastListener implements AutoCloseable {
     /** 接收循环的轮询间隔：同时也是失效判定的最小精度。 */
     private static final int POLL_TIMEOUT_MILLIS = 1_000;
 
-    /** 启动后多久没收到任何报文就打第一条"可能配错了"的告警。 */
-    private static final long SILENCE_WARN_AFTER_MILLIS = 60_000L;
-
-    /** 同一条"一直没收到报文"的告警的最小重复间隔，避免每 60 秒刷一条。 */
-    private static final long SILENCE_WARN_REPEAT_MILLIS = 5 * 60_000L;
-
     /** 版本不一致告警的最小重复间隔。 */
     private static final long VERSION_WARN_REPEAT_MILLIS = 60_000L;
 
@@ -77,8 +71,6 @@ public final class MulticastListener implements AutoCloseable {
     private MulticastSocket socket;
     private Thread receiveThread;
 
-    private long lastPacketAt = 0;
-    private long lastSilenceWarnAt = 0;
     private long lastVersionWarnAt = 0;
 
     public MulticastListener(Logger logger, MulticastAddress multicastAddress,
@@ -149,7 +141,6 @@ public final class MulticastListener implements AutoCloseable {
 
             socket = newSocket;
             running = true;
-            lastPacketAt = System.currentTimeMillis();
 
             receiveThread = new Thread(this::receiveLoop, "Discovery-Listen");
             receiveThread.setDaemon(true);
@@ -171,8 +162,6 @@ public final class MulticastListener implements AutoCloseable {
                 socket.receive(packet);
                 handleDatagram(Arrays.copyOf(packet.getData(), packet.getLength()), packet.getAddress());
             } catch (SocketTimeoutException timeout) {
-                // 空转：正好用来做失效扫描与"一直没收到报文"的诊断
-                warnIfSilent();
                 try {
                     handler.onIdle();
                 } catch (RuntimeException e) {
@@ -213,7 +202,6 @@ public final class MulticastListener implements AutoCloseable {
             return;
         }
 
-        lastPacketAt = System.currentTimeMillis();
         receivedCount.incrementAndGet();
 
         try {
@@ -227,27 +215,6 @@ public final class MulticastListener implements AutoCloseable {
             // 处理回调出错不能把接收线程带走；否则一次坏消息就永久失去发现能力
             logger.warn("[DISCOVERY] Failed to apply announcement from {}: {}", sourceAddress, e.getMessage());
         }
-    }
-
-    /**
-     * 长时间一个报文都没收到时给一条告警。
-     *
-     * <p>组播配错（两端组地址不一致、防火墙拦了 UDP、交换机没开 IGMP snooping）的表现就是
-     * "什么都没有发生"。没有这条日志，运维只能靠抓包。</p>
-     */
-    private void warnIfSilent() {
-        long now = System.currentTimeMillis();
-        if (now - lastPacketAt < SILENCE_WARN_AFTER_MILLIS) {
-            return;
-        }
-        if (lastSilenceWarnAt != 0 && now - lastSilenceWarnAt < SILENCE_WARN_REPEAT_MILLIS) {
-            return;
-        }
-        lastSilenceWarnAt = now;
-        logger.warn("[DISCOVERY] No announcement received on {} for {} seconds. "
-                        + "Check that the dbserver uses the same group in advertise_address, that inbound UDP port {} "
-                        + "is allowed by the firewall, and that the switches forward multicast (IGMP snooping).",
-                multicastAddress, (now - lastPacketAt) / 1000, multicastAddress.getPort());
     }
 
     /** 关闭接收器：离开组播组、关 socket、停线程。 */

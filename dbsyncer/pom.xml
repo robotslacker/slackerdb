@@ -1,0 +1,140 @@
+<?xml version="1.0"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.robotslacker</groupId>
+        <artifactId>slackerdb</artifactId>
+        <version>0.2.2</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>slackerdb-dbsyncer</artifactId>
+    <packaging>jar</packaging>
+
+    <name>slackerdb-dbsyncer</name>
+    <description>PostgreSQL/MySQL CDC to embedded DuckDB synchronization module</description>
+
+    <properties>
+        <!--
+          端到端测试（@Tag("integration")）需要外部 PostgreSQL / MySQL，默认不进回归。
+          显式运行：mvn -o -pl dbsyncer test -Ddbsyncer.it.excludedGroups=none
+        -->
+        <dbsyncer.it.excludedGroups>integration</dbsyncer.it.excludedGroups>
+    </properties>
+
+    <dependencies>
+        <!-- Management API: host provides the running Javalin instance. -->
+        <dependency>
+            <groupId>io.javalin</groupId>
+            <artifactId>javalin-bundle</artifactId>
+            <version>7.2.3</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.aayushatharva.brotli4j</groupId>
+                    <artifactId>brotli4j</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- Target: host provides the DuckDB JDBC driver at runtime. -->
+        <dependency>
+            <groupId>org.duckdb</groupId>
+            <artifactId>duckdb_jdbc</artifactId>
+            <version>2.0.0.1</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- PostgreSQL logical replication + metadata/snapshot. -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${postgres.version}</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <!-- MySQL metadata/snapshot + binlog. -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zendesk</groupId>
+            <artifactId>mysql-binlog-connector-java</artifactId>
+        </dependency>
+
+        <!-- Strict YAML parsing. -->
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.17</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-core</artifactId>
+            <version>1.5.32</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>1.5.32</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>${project.artifactId}-${project.version}</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <encoding>UTF-8</encoding>
+                    <compilerArgs>
+                        <arg>-Xlint:all</arg>
+                    </compilerArgs>
+                    <showWarnings>true</showWarnings>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <configuration>
+                    <encoding>UTF-8</encoding>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <excludedGroups>${dbsyncer.it.excludedGroups}</excludedGroups>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>sources-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>${project.basedir}/../release/src/main/assembly/sources-assembly.xml</descriptor>
+                            </descriptors>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

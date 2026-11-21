@@ -14,11 +14,11 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Time;
-import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -114,6 +114,8 @@ public final class RowEncoder {
     private final List<Field> fields;
     private final Column[] columns;
     private final List<Column> columnList;
+    /** 本会话时区；TIMESTAMPTZ 的绝对时刻按它输出偏移，必须与 DuckDB 的 SHOW timezone 一致。 */
+    private final ZoneId sessionZone;
 
     /** 全部列使用文本格式：简单查询路径（simple query 一律文本）与语句级 Describe 使用。 */
     public static final short[] ALL_TEXT = new short[0];
@@ -127,6 +129,12 @@ public final class RowEncoder {
      * @param logger        用于对未识别类型告警（每个列一次）
      */
     public RowEncoder(ResultSetMetaData metaData, short[] resultFormats, Logger logger) throws SQLException {
+        this(metaData, resultFormats, logger, ZoneId.systemDefault());
+    }
+
+    public RowEncoder(ResultSetMetaData metaData, short[] resultFormats, Logger logger,
+                      ZoneId sessionZone) throws SQLException {
+        this.sessionZone = sessionZone == null ? ZoneId.systemDefault() : sessionZone;
         this.logger = logger;
         int columnCount = metaData.getColumnCount();
         this.typeCodes = new int[columnCount];
@@ -306,12 +314,12 @@ public final class RowEncoder {
                 }
             }
             case T_TIMESTAMP -> {
-                Timestamp value = rs.getTimestamp(columnIndex);
+                LocalDateTime value = rs.getObject(columnIndex, LocalDateTime.class);
                 if (value == null) {
                     setNull(column);
                 } else {
                     setValue(column, TIMESTAMP_FORMATTER
-                            .format(value.toLocalDateTime())
+                            .format(value)
                             .getBytes(StandardCharsets.UTF_8));
                 }
             }
@@ -333,13 +341,19 @@ public final class RowEncoder {
                 }
             }
             case T_TIMESTAMP_TZ -> {
-                Timestamp value = rs.getTimestamp(columnIndex);
+                // DuckDB 返回的 OffsetDateTime 已经带会话 TimeZone 的偏移；不能再用
+                // ZoneId.systemDefault() 重算，否则服务端 JVM 时区与 DuckDB 会话时区不一致时
+                // 文本偏移会错（典型：JVM 为 UTC，而会话/SHOW timezone 为 Asia/Shanghai）。
+                OffsetDateTime value = rs.getObject(columnIndex, OffsetDateTime.class);
                 if (value == null) {
                     setNull(column);
                 } else {
-                    ZonedDateTime zonedDateTime = value.toInstant().atZone(ZoneId.systemDefault());
+                    // duckdb_jdbc 的 OffsetDateTime 按 JVM 默认时区表示同一个瞬间；这里显式换到
+                    // 会话时区，文本偏移才会和 SHOW timezone / CAST(... AS VARCHAR) 一致。
+                    OffsetDateTime sessionValue = value.atZoneSameInstant(sessionZone)
+                            .toOffsetDateTime();
                     setValue(column, TIMESTAMP_TZ_FORMATTER
-                            .format(zonedDateTime)
+                            .format(sessionValue)
                             .getBytes(StandardCharsets.US_ASCII));
                 }
             }

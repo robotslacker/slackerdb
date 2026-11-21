@@ -153,7 +153,7 @@ public class Main {
             logger = AppLogger.createLogger(subCommand, "INFO", logTarget);
             try {
                 if (AppDaemon.startInBackground(Main.class, subCommand, orderedOptions,
-                        logTarget, "log", logger)) {
+                        "log", logger)) {
                     System.exit(0);
                 }
             } catch (Exception se) {

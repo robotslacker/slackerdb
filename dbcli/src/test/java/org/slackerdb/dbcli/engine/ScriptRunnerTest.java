@@ -600,7 +600,9 @@ class ScriptRunnerTest {
     @Test
     @DisplayName("_SPOOL 打开失败：可读错误而不是异常")
     void spoolOpenFailure() {
-        int code = harness.run("_spool no-such-dir/x.txt\n");
+        // 绝对路径不自动建父目录（相对路径才在 WORK 内建）；父目录不存在时给可读错误
+        String missingParent = tempDir.resolve("no-such-dir").resolve("x.txt").toString();
+        int code = harness.run("_spool " + missingParent + "\n");
 
         assertEquals(0, code);
         assertTrue(harness.stderr().contains("Cannot open spool file ["), harness.stderr());

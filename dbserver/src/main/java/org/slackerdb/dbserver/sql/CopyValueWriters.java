@@ -6,12 +6,13 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.OffsetTime;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.DateTimeParseException;
@@ -87,6 +88,15 @@ public final class CopyValueWriters {
      * @throws SQLException 类型名无法识别（例如需要扩展的类型），错误信息面向客户端
      */
     public static ColumnWriter writer(String duckDbTypeName) throws SQLException {
+        return writer(duckDbTypeName, ZoneId.systemDefault());
+    }
+
+    /**
+     * @param sessionZone 当前 DuckDB 会话时区；用于没有显式偏移的 TIMESTAMPTZ/TIMETZ 文本
+     *                    （PG 语义是会话时区，不是 UTC）
+     */
+    public static ColumnWriter writer(String duckDbTypeName, ZoneId sessionZone) throws SQLException {
+        ZoneId effectiveZone = sessionZone == null ? ZoneId.systemDefault() : sessionZone;
         String typeName = duckDbTypeName == null ? "" : duckDbTypeName.trim();
         String upper = typeName.toUpperCase(Locale.ROOT);
 
@@ -96,22 +106,23 @@ public final class CopyValueWriters {
             if (open <= 0) {
                 throw unsupported(typeName);
             }
-            return new ListWriter(writer(typeName.substring(0, open).trim()));
+            return new ListWriter(writer(typeName.substring(0, open).trim(), effectiveZone));
         }
         if (upper.startsWith("STRUCT(") && typeName.endsWith(")")) {
-            return structWriter(typeName);
+            return structWriter(typeName, effectiveZone);
         }
         if (upper.startsWith("MAP(") && typeName.endsWith(")")) {
             List<String> args = splitTopLevel(inner(typeName), ',');
             if (args.size() != 2) {
                 throw unsupported(typeName);
             }
-            return new MapWriter(writer(args.get(0)), writer(args.get(1)));
+            return new MapWriter(writer(args.get(0), effectiveZone),
+                    writer(args.get(1), effectiveZone));
         }
         if (upper.startsWith("UNION(") && typeName.endsWith(")")) {
-            return unionWriter(typeName);
+            return unionWriter(typeName, effectiveZone);
         }
-        return scalarWriter(typeName, upper);
+        return scalarWriter(typeName, upper, effectiveZone);
     }
 
     // ------------------------------------------------------------------ 类型名解析
@@ -137,7 +148,7 @@ public final class CopyValueWriters {
         return typeName.substring(typeName.indexOf('(') + 1, typeName.length() - 1);
     }
 
-    private static ColumnWriter structWriter(String typeName) throws SQLException {
+    private static ColumnWriter structWriter(String typeName, ZoneId sessionZone) throws SQLException {
         List<FieldWriter> fields = new ArrayList<>();
         for (String rawField : splitTopLevel(inner(typeName), ',')) {
             String field = rawField.trim();
@@ -146,12 +157,13 @@ public final class CopyValueWriters {
                 throw unsupported(typeName);
             }
             String fieldName = unquoteIdentifier(field.substring(0, split).trim());
-            fields.add(new FieldWriter(fieldName, writer(field.substring(split + 1).trim())));
+            fields.add(new FieldWriter(fieldName,
+                    writer(field.substring(split + 1).trim(), sessionZone)));
         }
         return new StructWriter(fields);
     }
 
-    private static ColumnWriter unionWriter(String typeName) throws SQLException {
+    private static ColumnWriter unionWriter(String typeName, ZoneId sessionZone) throws SQLException {
         List<FieldWriter> members = new ArrayList<>();
         for (String rawMember : splitTopLevel(inner(typeName), ',')) {
             String member = rawMember.trim();
@@ -160,7 +172,7 @@ public final class CopyValueWriters {
                 throw unsupported(typeName);
             }
             members.add(new FieldWriter(unquoteIdentifier(member.substring(0, split).trim()),
-                    writer(member.substring(split + 1).trim())));
+                    writer(member.substring(split + 1).trim(), sessionZone)));
         }
         return new UnionWriter(members);
     }
@@ -241,10 +253,12 @@ public final class CopyValueWriters {
     private static final class ScalarWriter implements ColumnWriter {
         private final String typeName;
         private final ScalarKind kind;
+        private final ZoneId sessionZone;
 
-        ScalarWriter(String typeName, ScalarKind kind) {
+        ScalarWriter(String typeName, ScalarKind kind, ZoneId sessionZone) {
             this.typeName = typeName;
             this.kind = kind;
+            this.sessionZone = sessionZone;
         }
 
         @Override
@@ -311,9 +325,9 @@ public final class CopyValueWriters {
                     case UUID -> UUID.fromString(text);
                     case DATE -> LocalDate.parse(text);
                     case TIME -> LocalTime.parse(text, TIME_FORMATTER);
-                    case TIMETZ -> parseOffsetTime(text);
+                    case TIMETZ -> parseOffsetTime(text, sessionZone);
                     case TIMESTAMP -> LocalDateTime.parse(normalizeTimestampText(text), TIMESTAMP_FORMATTER);
-                    case TIMESTAMPTZ -> parseOffsetDateTime(text);
+                    case TIMESTAMPTZ -> parseOffsetDateTime(text, sessionZone);
                 };
             }
             catch (RuntimeException e) {
@@ -346,14 +360,15 @@ public final class CopyValueWriters {
         DATE, TIME, TIMETZ, TIMESTAMP, TIMESTAMPTZ
     }
 
-    private static ColumnWriter scalarWriter(String typeName, String upper) throws SQLException {
+    private static ColumnWriter scalarWriter(String typeName, String upper, ZoneId sessionZone)
+            throws SQLException {
         if (upper.startsWith("DECIMAL") || upper.startsWith("NUMERIC(")) {
-            return new ScalarWriter(typeName, ScalarKind.DECIMAL);
+            return new ScalarWriter(typeName, ScalarKind.DECIMAL, sessionZone);
         }
         // VARCHAR(20) / CHAR(10) 这类带长度的写法（DuckDB 的 JDBC 元数据一般只给 VARCHAR，这里兜底）
         if (upper.startsWith("VARCHAR(") || upper.startsWith("CHAR(") || upper.startsWith("BPCHAR(")
                 || upper.startsWith("STRING(") || upper.startsWith("TEXT(")) {
-            return new ScalarWriter(typeName, ScalarKind.VARCHAR);
+            return new ScalarWriter(typeName, ScalarKind.VARCHAR, sessionZone);
         }
         ScalarKind kind = switch (upper) {
             case "BOOLEAN", "BOOL", "LOGICAL" -> ScalarKind.BOOLEAN;
@@ -384,7 +399,7 @@ public final class CopyValueWriters {
         if (kind == null) {
             throw unsupported(typeName);
         }
-        return new ScalarWriter(typeName, kind);
+        return new ScalarWriter(typeName, kind, sessionZone);
     }
 
     /** LIST / ARRAY：元素必须是与元素类型精确匹配的 Java 值。 */
@@ -740,7 +755,8 @@ public final class CopyValueWriters {
         };
     }
 
-    private static OffsetDateTime parseOffsetDateTime(String text) throws SQLException {
+    private static OffsetDateTime parseOffsetDateTime(String text, ZoneId sessionZone)
+            throws SQLException {
         String normalized = normalizeTimestampText(text);
         for (DateTimeFormatter formatter : OFFSET_TIMESTAMP_FORMATTERS) {
             try {
@@ -750,16 +766,19 @@ public final class CopyValueWriters {
                 // 换下一种形态
             }
         }
-        // 不带偏移：按 UTC 解释（与 DuckDB 把裸时间戳当会话时区不同，这里显式约定为 UTC）
+        // 不带偏移：PG 语义是按会话时区解释（不是 UTC）。Startup 的 TimeZone / SET timezone
+        // 已经落到 DuckDB 会话，这里使用同一个 ZoneId，避免 COPY 与 INSERT/SELECT 差一个偏移。
         try {
-            return LocalDateTime.parse(normalized, TIMESTAMP_FORMATTER).atOffset(ZoneOffset.UTC);
+            return LocalDateTime.parse(normalized, TIMESTAMP_FORMATTER)
+                    .atZone(sessionZone)
+                    .toOffsetDateTime();
         }
         catch (DateTimeParseException e) {
             throw new SQLException("Invalid TIMESTAMPTZ value [" + text + "]");
         }
     }
 
-    private static OffsetTime parseOffsetTime(String text) throws SQLException {
+    private static OffsetTime parseOffsetTime(String text, ZoneId sessionZone) throws SQLException {
         for (DateTimeFormatter formatter : OFFSET_TIME_FORMATTERS) {
             try {
                 return OffsetTime.parse(text, formatter);
@@ -769,7 +788,9 @@ public final class CopyValueWriters {
             }
         }
         try {
-            return LocalTime.parse(text, TIME_FORMATTER).atOffset(ZoneOffset.UTC);
+            // timetz 没有日期；用会话时区当前偏移解释裸时间（PG 的 timetz 同样依赖会话时区）
+            return LocalTime.parse(text, TIME_FORMATTER)
+                    .atOffset(sessionZone.getRules().getOffset(Instant.now()));
         }
         catch (DateTimeParseException e) {
             throw new SQLException("Invalid TIMETZ value [" + text + "]");

@@ -1,7 +1,8 @@
 package org.slackerdb.dbcli;
 
 import org.slackerdb.common.utils.AppDaemon;
-import org.slackerdb.dbcli.common.PathArguments;
+import org.slackerdb.dbcli.common.DbcliPaths;
+import org.slackerdb.dbcli.common.VariableScopeCodec;
 import org.slackerdb.dbcli.daemon.CliDaemon;
 import org.slackerdb.dbcli.daemon.PidFile;
 import org.slackerdb.dbcli.embed.DbcliRunner;
@@ -9,6 +10,7 @@ import org.slackerdb.dbcli.engine.ScriptContext;
 import org.slackerdb.dbcli.engine.ScriptOutput;
 import org.slackerdb.dbcli.engine.ScriptRunner;
 import org.slackerdb.dbcli.engine.VariableResolver;
+import org.slackerdb.dbcli.job.JobDatabase;
 import org.slackerdb.dbcli.repl.InteractiveConsole;
 import org.slackerdb.dbcli.repl.JLineLineSource;
 import org.slackerdb.dbcli.repl.LineSource;
@@ -68,10 +70,9 @@ import java.util.concurrent.TimeUnit;
  *       交互式形态下记的就是<b>当前会话</b>的操作结果；它同时是 {@code --reference} 的
  *       "实际输出文件"（两者一起用时比对的就是它）；</li>
  *   <li>无参数但 stdin 不是终端且没有内容时：打印用法帮助并退出 0（{@code --help} 也走这条）；</li>
- *   <li>工作目录：{@code --execute <file>} 时是该脚本所在目录（**脚本里**的相对路径都以它为基准），
- *       stdin 与控制台形态下是进程当前目录。<b>命令行选项一律按进程当前目录解析</b>
- *       （{@code --profile}/{@code --logfile}/{@code --reference}/{@code --report-dir}/{@code --pidfile}），
- *       与脚本放在哪里无关。</li>
+ *   <li>工作目录：运行时 cwd 是 <b>WORK</b>；相对输入按 WORK → 调用脚本目录 → HOME，
+ *       命令行选项的相对写路径按角色根（--logfile/--report-dir → OUTPUT；--pidfile → WORK），
+ *       绝对写路径原样使用（不校验）。</li>
  *   <li>连接参数：{@code --logon} 优先；没给它时才用环境变量 {@code SLACKERDB_LOGON}
  *       （同义、同格式，三种 {@code _connect} 写法都认）；两者都没有就不自动连接。</li>
  * </ul>
@@ -164,7 +165,7 @@ public class Cli implements Callable<Integer> {
     )
     private String logon;
     /**
-     * 连接配置名（契约 C-4 的 {@code ~/.slackerdb/profiles.json}）。
+     * 连接配置名（契约 C-4：优先 {@code HOME/.slackerdb/profiles.json}，兼容 {@code ~/.slackerdb/profiles.json}，只读）。
      *
      * <p><b>为什么不叫 {@code --profile}</b>：dbcli 的 {@code --profile} 已经是"启动前执行的
      * profile 脚本"（可重复）；同名会破坏既有用法，所以连接配置用 {@code --connect-profile}，
@@ -173,7 +174,8 @@ public class Cli implements Callable<Integer> {
     @Option(
             names = "--connect-profile",
             paramLabel = "<name>",
-            description = "Use a saved connection profile from ~/.slackerdb/profiles.json (contract C-4). "
+            description = "Use a saved connection profile: HOME/.slackerdb/profiles.json first, then "
+                    + "~/.slackerdb/profiles.json (read-only; contract C-4). "
                     + "Ignored when --logon is given."
     )
     private String connectProfile;
@@ -224,7 +226,7 @@ public class Cli implements Callable<Integer> {
      * 以及作为 {@code --reference} 的"实际输出文件"（两者同时给出时，比对的对象就是这个文件）。
      * 交互式形态下它记的是**当前会话**的操作结果（控制台里敲的输入不回显）。</p>
      *
-     * <p>相对路径按**进程当前目录**解析（命令行选项一律如此，与脚本放在哪里无关）。</p>
+     * <p>相对路径按 <b>OUTPUT</b> 解析；绝对路径原样使用。</p>
      */
     @Option(
             names = "--logfile",
@@ -245,7 +247,8 @@ public class Cli implements Callable<Integer> {
      */
     /**
      * golden 比对（{@code --reference} / {@code --ref}）：给了它才进入"一条龙"——
-     * 这次运行的数据输出会写到 {@code <脚本>.log}（除非另给 {@code --logfile}），收尾再与这份 ref 比对。
+     * 这次运行的数据输出会写到 {@code OUTPUT/logs/<脚本基名>.log}（除非另给 {@code --logfile}），
+     * 收尾再与这份 ref 比对。
      *
      * <p>ref 文件不存在时**直接报错**（{@code Reference file [<path>] does not exist.}，退出 1）：
  * 没有"待录制"这种默认放行的形态——要录制就把这次运行的 log 复制成 ref。
@@ -255,23 +258,24 @@ public class Cli implements Callable<Integer> {
     @Option(
             names = {"--reference", "--ref"},
             paramLabel = "<file>",
-            description = "Compare this run's data output with this golden file; the run log is "
-                    + "written next to the script. The reference file must already exist (the client never "
-                    + "creates it): a missing one exits with 1, a mismatch exits with 1."
+            description = "Compare this run's data output with this golden file; without --logfile the run "
+                    + "log is OUTPUT/logs/<script-base>.log, and .suc/.dif go to OUTPUT/ref. The reference file "
+                    + "must already exist (the client never creates it): a missing one exits with 1, a mismatch "
+                    + "exits with 1."
     )
     private String reference;
 
     /**
      * {@code --reference} 产物的目录（{@code --report-dir <dir>}）。
      *
-     * <p>默认写在参考文件旁边。参考文件通常位于只读夹具或受版本控制的目录，往里写
-     * {@code .suc/.dif} 会污染工作区；给一个目录之后 CI 也能集中收集报告。</p>
+     * <p>默认写在 {@code OUTPUT/ref}。参考文件通常位于只读夹具或受版本控制的目录，默认不往
+     * 参考文件旁边写；相对路径按 OUTPUT 解析，绝对路径原样。</p>
      */
     @Option(
             names = "--report-dir",
             paramLabel = "<dir>",
-            description = "Write the --reference artifacts (.suc/.dif) into this directory instead "
-                    + "of next to the golden file. Requires --reference."
+            description = "Write the --reference artifacts (.suc/.dif) into this directory (relative to "
+                    + "OUTPUT; default OUTPUT/ref). Requires --reference."
     )
     private String reportDir;
 
@@ -309,14 +313,13 @@ public class Cli implements Callable<Integer> {
     /**
      * pidfile（可选）：后台副本把自己的 pid 写进去。
      *
-     * <p>相对路径按**进程当前目录**解析（与其它命令行选项同一条规则：
-     * pidfile 是控制面文件，不该随脚本位置变化）。</p>
+     * <p>相对路径按 <b>WORK</b> 解析（控制面文件，不跟脚本位置走）；绝对路径原样使用。</p>
      */
     @Option(
             names = "--pidfile",
             paramLabel = "<file>",
             description = "PID file: the background copy writes its own pid into it. Relative paths are "
-                    + "resolved against the process working directory."
+                    + "resolved against WORK."
     )
     private String pidFile;
 
@@ -344,6 +347,36 @@ public class Cli implements Callable<Integer> {
      */
     @Option(names = "--daemon-copy", hidden = true)
     private boolean daemonCopy;
+
+    /** 代码目录（只读）；默认当前目录。 */
+    @Option(
+            names = {"--home_dir", "--home-dir"},
+            paramLabel = "<dir>",
+            description = "Code directory (read-only). Default: the current directory; env DBCLI_HOME."
+    )
+    private String homeDir;
+
+    /** 工作目录（可写、启动清空）；默认 <tmp>/dbcli-<pid>。 */
+    @Option(
+            names = {"--work_dir", "--work-dir"},
+            paramLabel = "<dir>",
+            description = "Writable working directory, cleared at startup. Default: "
+                    + "<java.io.tmpdir>/dbcli-<pid>; env DBCLI_WORK."
+    )
+    private String workDir;
+
+    /** 输出目录（可写、按需创建；启动时已存在则清空）；默认 <HOME>/output。 */
+    @Option(
+            names = {"--output_dir", "--output-dir"},
+            paramLabel = "<dir>",
+            description = "Writable output directory: created only when this run writes there and cleared at "
+                    + "startup if it already exists. Default: <HOME>/output; env DBCLI_OUTPUT."
+    )
+    private String outputDir;
+
+    /** 内部：作业/daemon 子进程，跳过清空/抢锁。 */
+    @Option(names = "--run-child", hidden = true)
+    private boolean runChild;
 
     @Spec
     private CommandSpec spec;
@@ -435,9 +468,19 @@ public class Cli implements Callable<Integer> {
             out.flush();
             return 0;
         }
+        DbcliPaths paths;
+        try {
+            paths = DbcliPaths.resolve(homeDir, workDir, outputDir, runChild);
+        } catch (DbcliPaths.DirectoryException badDirectories) {
+            err.println(badDirectories.getMessage());
+            err.flush();
+            return CliDaemon.EXIT_USAGE;
+        }
+
+        try {
         RunPlan runPlan;
         try {
-            runPlan = RunPlan.resolve(execute);
+            runPlan = RunPlan.resolve(execute, paths);
         } catch (RunPlan.MissingScriptException missingScript) {
             err.println(missingScript.getMessage());
             err.flush();
@@ -445,26 +488,11 @@ public class Cli implements Callable<Integer> {
         }
         Path scriptFile = runPlan.scriptFile();
 
-        if (daemonMode) {
-            // 先在本进程把"脚本在不在"这类能立刻判断的事判掉，再 fork：否则错误只能落在后台副本的
-            // 输出里（POSIX 上那份输出是 /dev/null），使用者看到的是"父进程等 pidfile 等到超时"。
-            Integer daemonExitCode = startDaemon(stdinScript, out, err);
-            if (daemonExitCode != null) {
-                return daemonExitCode;
-            }
-            // 返回 null = 开发模式（不是从 jar 启动）：脱离不了当前进程，继续**前台**跑，
-            // --pidfile 照旧会写，这样"起不来后台"时使用者仍然拿得到那个 pid
-        }
-
-        // 工作目录/命令行基准目录的规则见 RunPlan（脚本里的相对路径跟脚本，命令行选项跟进程当前目录）
-        Path workingDirectory = runPlan.workingDirectory();
-        Path processDirectory = runPlan.processDirectory();
-
         ReportPlan reportPlan;
         try {
             // --ref（--reference 的别名）：**给了它才进入"一条龙"**——隐含 log + 收尾比对；
             // 不给就是普通客户端（不落 log、不读 ref、不比对）。路径与校验规则见 ReportPlan。
-            reportPlan = ReportPlan.resolve(reference, logFile, reportDir, processDirectory, scriptFile);
+            reportPlan = ReportPlan.resolve(reference, logFile, reportDir, paths, scriptFile);
         } catch (ReportPlan.InvalidUsageException invalidUsage) {
             err.println(invalidUsage.getMessage());
             err.flush();
@@ -475,16 +503,87 @@ public class Cli implements Callable<Integer> {
         Path reportDirectory = reportPlan.reportDirectory();
         Path actualOutputFile = reportPlan.actualOutputFile();
 
-        VariableResolver resolver = new VariableResolver(variableTable);
+        List<Path> resolvedProfiles;
+        try {
+            resolvedProfiles = resolveProfiles(paths);
+        } catch (IllegalArgumentException badProfile) {
+            err.println(badProfile.getMessage());
+            err.flush();
+            return 1;
+        }
+        if (!paths.runChild()) {
+            if (insideClearedRoots(paths, scriptFile)) {
+                err.println("ERROR: --execute path [" + scriptFile
+                        + "] is inside the work/output directory, which is cleared at startup.");
+                err.flush();
+                return CliDaemon.EXIT_USAGE;
+            }
+            if (insideClearedRoots(paths, referenceFile)) {
+                err.println("ERROR: --reference path [" + referenceFile
+                        + "] is inside the work/output directory, which is cleared at startup.");
+                err.flush();
+                return CliDaemon.EXIT_USAGE;
+            }
+            for (Path profile : resolvedProfiles) {
+                if (insideClearedRoots(paths, profile)) {
+                    err.println("ERROR: --profile path [" + profile
+                            + "] is inside the work/output directory, which is cleared at startup.");
+                    err.flush();
+                    return CliDaemon.EXIT_USAGE;
+                }
+            }
+        }
+        try {
+            paths.prepareRun(true);
+            JobDatabase.ensure(paths);
+        } catch (DbcliPaths.DirectoryException cannotPrepare) {
+            paths.close();
+            err.println(cannotPrepare.getMessage());
+            err.flush();
+            return CliDaemon.EXIT_USAGE;
+        } catch (RuntimeException cannotInitialize) {
+            paths.close();
+            err.println(cannotInitialize.getMessage());
+            err.flush();
+            return CliDaemon.EXIT_USAGE;
+        }
+
+        if (daemonMode) {
+            // 先在本进程把"脚本在不在"这类能立刻判断的事判掉，再 fork：否则错误只能落在后台副本的
+            // 输出里（POSIX 上那份输出是 /dev/null），使用者看到的是"父进程等 pidfile 等到超时"。
+            Integer daemonExitCode = startDaemon(stdinScript, out, err, paths);
+            if (daemonExitCode != null) {
+                return daemonExitCode;
+            }
+            // 返回 null = 开发模式（不是从 jar 启动）：脱离不了当前进程，继续**前台**跑，
+            // --pidfile 照旧会写，这样"起不来后台"时使用者仍然拿得到那个 pid
+        }
+
+        Path workingDirectory = paths.work();
+        Map<String, String> sessionVariables;
+        Map<String, String> localVariables;
+        try {
+            sessionVariables = VariableScopeCodec.decode(
+                    System.getenv(VariableScopeCodec.ENV_SESSION));
+            localVariables = VariableScopeCodec.decode(
+                    System.getenv(VariableScopeCodec.ENV_LOCAL));
+        } catch (IllegalArgumentException invalidSession) {
+            err.println("Invalid variable scope payload: " + invalidSession.getMessage());
+            err.flush();
+            return CliDaemon.EXIT_USAGE;
+        }
+
+        VariableResolver resolver = new VariableResolver(variableTable, sessionVariables,
+                localVariables, paths.globalVariables());
 
         // --pidfile：真正在跑脚本的进程把自己的 pid 写进去（后台副本就是靠这一步被使用者找到）。
         // 放在这里而不是更早：前面的每一处早退都是"这次运行没跑起来"，那时不该留下一个 pidfile。
         PidFile pidFileHolder = null;
         if (pidFile != null && !pidFile.isBlank()) {
             try {
-                pidFileHolder = new PidFile(resolvePidFile(pidFile));
+                pidFileHolder = new PidFile(paths.workFile(pidFile));
                 pidFileHolder.writeCurrent();
-            } catch (PathArguments.InvalidPathException invalidPath) {
+            } catch (IllegalArgumentException invalidPath) {
                 err.println(invalidPath.getMessage());
                 err.flush();
                 return CliDaemon.EXIT_ERROR;
@@ -501,8 +600,8 @@ public class Cli implements Callable<Integer> {
         if (!consoleMode) {
             try {
                 return runEmbeddedScripts(runPlan, scriptFile, stdinScript, logFileTarget, referenceFile,
-                        reportDirectory, actualOutputFile, workingDirectory, processDirectory,
-                        variableTable, out, err);
+                        reportDirectory, actualOutputFile, paths, resolvedProfiles,
+                        sessionVariables, localVariables, variableTable, out, err);
             } finally {
                 cleanUpRunArtifacts(pidFileHolder, daemonCopy, daemonScriptTemp, scriptFile);
             }
@@ -510,7 +609,7 @@ public class Cli implements Callable<Integer> {
 
         try (SqlExecutor executor = new JdbcSqlExecutor();
              ScriptOutput scriptOutput = terminal.scriptOutput();
-             ScriptContext context = new ScriptContext(executor, scriptOutput, resolver, workingDirectory)) {
+             ScriptContext context = new ScriptContext(executor, scriptOutput, resolver, paths)) {
             // 输出格式走默认值（table / 带表头 / 单格 40 列 / 整行 200 列）；
             // 脚本或 profile 里的 `_SET OUTFORMAT|HEADER|LINEWIDTH|COLWIDTH` 会按需改它
             // --logfile（或 --ref 隐含的 <脚本>.log）：把这次运行的数据输出写进文件
@@ -529,7 +628,7 @@ public class Cli implements Callable<Integer> {
             // 连接参数：命令行 --logon 优先，没给才用环境变量 SLACKERDB_LOGON；两者都没有就不自动连接
             LogonRequest logonRequest;
             try {
-                logonRequest = resolveLogon();
+                logonRequest = resolveLogon(paths);
             } catch (IllegalArgumentException e) {
                 // 配置名写错属于"命令行层面的错"：给一行可读信息，退出码 1（与 profile 文件不存在一致）
                 err.println(e.getMessage());
@@ -555,7 +654,7 @@ public class Cli implements Callable<Integer> {
                             referenceFile, reportDirectory, context, err);
                 }
             }
-            Integer profileCode = runProfiles(runner, context, err, processDirectory);
+            Integer profileCode = runProfiles(runner, context, err, resolvedProfiles);
             if (profileCode != null) {
                 // profile 是"环境准备"：它出错就不再往下跑
                 // （脚本内错误 ⇒ 退出码仍是 0；profile 文件不存在是命令行层面的错 ⇒ 1）
@@ -567,9 +666,16 @@ public class Cli implements Callable<Integer> {
                 return finish(context.finalExitCode(), scriptOutput, scriptName, actualOutputFile,
                         referenceFile, reportDirectory, context, err);
             }
+            // 主脚本（或控制台）退出前要等所有作业自然结束；profile 已在此前跑完，不受影响
+            context.setWaitForJobsOnExit(true);
             int runCode;
             if (consoleMode) {
                 runCode = runConsole(runner, context, err);
+                // 控制台走的是逐行会话，不经过 ScriptRunner#runScript 的顶层收尾
+                int finalCode = runner.finishTopLevel();
+                if (runCode == 0) {
+                    runCode = finalCode;
+                }
             } else if (scriptFile != null) {
                 runCode = runner.runFile(scriptFile, List.of());
             } else {
@@ -579,6 +685,9 @@ public class Cli implements Callable<Integer> {
                     reportDirectory, context, err);
         } finally {
             cleanUpRunArtifacts(pidFileHolder, daemonCopy, daemonScriptTemp, scriptFile);
+        }
+        } finally {
+            paths.close();
         }
     }
 
@@ -612,13 +721,15 @@ public class Cli implements Callable<Integer> {
      *
      * @return 连接请求；null 表示既不连接也不报错（现状）
      */
-    private LogonRequest resolveLogon() {
+    private LogonRequest resolveLogon(DbcliPaths paths) {
         if (logon != null) {
             return new LogonRequest(logon, false);
         }
         if (connectProfile != null && !connectProfile.isBlank()) {
-            org.slackerdb.common.profiles.ProfileStore store =
-                    org.slackerdb.common.profiles.ProfileStore.defaultStore();
+            Path preferred = paths.home().resolve(".slackerdb").resolve("profiles.json");
+            org.slackerdb.common.profiles.ProfileStore store = Files.isRegularFile(preferred)
+                    ? new org.slackerdb.common.profiles.ProfileStore(preferred)
+                    : org.slackerdb.common.profiles.ProfileStore.defaultStore();
             org.slackerdb.common.profiles.ConnectionProfile profile = store.find(connectProfile);
             if (profile == null) {
                 throw new IllegalArgumentException(
@@ -673,7 +784,7 @@ public class Cli implements Callable<Integer> {
      * @param stdinScript stdin 管道形态下的脚本文本（null 表示脚本来自 {@code --execute <file>}）
      * @return 已拉起 → 0；开发模式（不是从 jar 启动，无法脱离当前进程）→ null 表示"当前台继续跑"
      */
-    private Integer startDaemon(String stdinScript, PrintWriter out, PrintWriter err) {
+    private Integer startDaemon(String stdinScript, PrintWriter out, PrintWriter err, DbcliPaths paths) {
         AppDaemon.ParsedArguments parsed;
         try {
             // 保留选项的**原始顺序**：后台副本的命令行就是"用户写的这一份 + --daemon false"，
@@ -693,7 +804,8 @@ public class Cli implements Callable<Integer> {
             // 因此把它落成一个临时脚本文件，让副本按 --execute <临时文件> 跑，并由副本跑完自己删
             // （管道形态下"用户没写过 --execute"，所以这里可能要新增这个选项）。
             try {
-                tempScript = Files.createTempFile("dbcli-daemon-", ".sql");
+                tempScript = paths.workScratch("daemon-" + java.util.UUID.randomUUID()
+                        .toString().substring(0, 8) + ".sql");
                 Files.writeString(tempScript, stdinScript, StandardCharsets.UTF_8);
             } catch (IOException cannotMaterialize) {
                 err.println(CliDaemon.cannotStart(
@@ -705,10 +817,11 @@ public class Cli implements Callable<Integer> {
         }
 
         boolean hasPidFile = pidFile != null && !pidFile.isBlank();
-        Path pidFilePath = hasPidFile ? resolvePidFile(pidFile) : null;
+        Path pidFilePath = hasPidFile ? paths.workFile(pidFile) : null;
         // 告诉副本"你是副本"：它跑完不删自己的 pidfile，父进程才总能读到那个 pid
         // （快脚本会在两次轮询之间写完又删掉，见 --daemon-copy）
         options = withDaemonCopy(options);
+        options = withRunDirectories(options, paths);
         try {
             CliDaemon.StartResult started = CliDaemon.startInBackground(Cli.class, options,
                     logFile, pidFile, pidFilePath);
@@ -718,6 +831,8 @@ public class Cli implements Callable<Integer> {
                 deleteQuietly(tempScript);
                 return null;
             }
+            // 后台副本已经接手：锁文件留给它，父进程不要再删。
+            paths.transferLocks();
             if (!hasPidFile) {
                 // 没给 --pidfile：后台确实起来了，但父进程拿不到它的 pid，也不必多打一行——
                 // AppDaemon 已经报过"已在后台启动"，pid 的事交给使用者自己安排
@@ -775,6 +890,31 @@ public class Cli implements Callable<Integer> {
         return rewritten;
     }
 
+    /**
+     * 给副本显式带上三个目录 + “我是子进程”标记。
+     *
+     * <p>不能只靠环境变量：副本的默认 WORK 会按它自己的 PID 重新计算，HOME 也可能与父进程不同。
+     * 这里把父进程已解析的绝对路径钉死，并让副本跳过清空/抢锁。</p>
+     */
+    static List<AppDaemon.Option> withRunDirectories(List<AppDaemon.Option> options, DbcliPaths paths) {
+        List<AppDaemon.Option> rewritten = new ArrayList<>(options.size() + 4);
+        for (AppDaemon.Option option : options) {
+            String name = option.name() == null ? "" : option.name().toLowerCase(java.util.Locale.ROOT);
+            if (name.equals("home_dir") || name.equals("home-dir")
+                    || name.equals("work_dir") || name.equals("work-dir")
+                    || name.equals("output_dir") || name.equals("output-dir")
+                    || name.equals("run-child")) {
+                continue;
+            }
+            rewritten.add(option);
+        }
+        rewritten.add(new AppDaemon.Option("home_dir", paths.home().toString()));
+        rewritten.add(new AppDaemon.Option("work_dir", paths.work().toString()));
+        rewritten.add(new AppDaemon.Option("output_dir", paths.output().toString()));
+        rewritten.add(new AppDaemon.Option("run-child", null));
+        return rewritten;
+    }
+
     /** 删文件但不报错（临时文件的收尾不该改变结论）。 */
     private static void deleteQuietly(Path file) {
         if (file == null) {
@@ -785,11 +925,6 @@ public class Cli implements Callable<Integer> {
         } catch (IOException ignored) {
             // 临时目录里的文件删不掉不影响结论（下次系统清理）
         }
-    }
-
-    /** {@code --pidfile} 的相对路径基准是**进程当前目录**（控制面文件，不跟脚本走）。 */
-    private static Path resolvePidFile(String pidFile) {
-        return resolve(Path.of("").toAbsolutePath(), pidFile);
     }
 
     /**
@@ -809,10 +944,15 @@ public class Cli implements Callable<Integer> {
      */
     private int runEmbeddedScripts(RunPlan runPlan, Path scriptFile, String stdinScript,
                                    Path logFileTarget, Path referenceFile, Path reportDirectory,
-                                   Path actualOutputFile, Path workingDirectory, Path processDirectory,
+                                   Path actualOutputFile, DbcliPaths paths, List<Path> resolvedProfiles,
+                                   Map<String, String> sessionVariables,
+                                   Map<String, String> localVariables,
                                    Map<String, String> variableTable, PrintWriter out, PrintWriter err) {
         DbcliRunner.Request.Builder builder = DbcliRunner.Request.builder()
-                .workingDirectory(workingDirectory)
+                .workingDirectory(paths.work())
+                .paths(paths)
+                .sessionVariables(sessionVariables)
+                .localVariables(localVariables)
                 .variables(variableTable)
                 .out(out)
                 .err(err);
@@ -823,7 +963,7 @@ public class Cli implements Callable<Integer> {
         // 连接参数：命令行 --logon 优先，没给才用环境变量 SLACKERDB_LOGON；两者都没有就不自动连接
         LogonRequest logonRequest;
         try {
-            logonRequest = resolveLogon();
+            logonRequest = resolveLogon(paths);
         } catch (IllegalArgumentException e) {
             // 配置名写错属于"命令行层面的错"：给一行可读信息，退出码 1（与 profile 文件不存在一致）
             err.println(e.getMessage());
@@ -843,22 +983,9 @@ public class Cli implements Callable<Integer> {
             builder.logon(logonRequest.value());
         }
 
-        // --profile：先校验存在性（保持原来的报错文案与"命令行层面的错 ⇒ 1"）
-        for (String profile : profiles) {
-            Path resolved;
-            try {
-                resolved = PathArguments.resolve(processDirectory, profile);
-            } catch (PathArguments.InvalidPathException invalidPath) {
-                err.println(invalidPath.getMessage());
-                err.flush();
-                return 1;
-            }
-            if (!Files.isRegularFile(resolved)) {
-                err.println("Profile script [" + profile + "] does not exist.");
-                err.flush();
-                return 1;
-            }
-            builder.profile(resolved);
+        // --profile 的路径已经由 call() 在清空前解析并校验过
+        for (Path profile : resolvedProfiles) {
+            builder.profile(profile);
         }
 
         if (scriptFile != null) {
@@ -900,11 +1027,6 @@ public class Cli implements Callable<Integer> {
         return outcome.exitCode();
     }
 
-    /** 相对路径按给定的基准目录解析（命令行选项传的是**进程当前目录**）。 */
-    private static Path resolve(Path workingDirectory, String path) {
-        return PathArguments.resolve(workingDirectory, path);
-    }
-
     /**
      * 进入交互式控制台。
      *
@@ -935,28 +1057,32 @@ public class Cli implements Callable<Integer> {
      *         脚本内出错 ⇒ {@link ScriptContext#finalExitCode()}，通常就是 0）
      */
     private Integer runProfiles(ScriptRunner runner, ScriptContext context, PrintWriter err,
-                                Path processDirectory) {
-        for (String profile : profiles) {
-            Path resolved;
-            try {
-                resolved = PathArguments.resolve(processDirectory, profile);
-            } catch (PathArguments.InvalidPathException invalidPath) {
-                err.println(invalidPath.getMessage());
-                err.flush();
-                return 1;
-            }
-            if (!Files.isRegularFile(resolved)) {
-                err.println("Profile script [" + profile + "] does not exist.");
-                err.flush();
-                return 1;
-            }
+                                List<Path> resolvedProfiles) {
+        for (Path profile : resolvedProfiles) {
             int errorsBefore = context.errorCount();
-            runner.runFile(resolved, List.of());
+            runner.runFile(profile, List.of());
             if (context.exitRequested() || context.errorCount() > errorsBefore) {
                 return context.finalExitCode();
             }
         }
         return null;
+    }
+
+    /** 把 {@code --profile} 解析成绝对路径；入口脚本场景为 WORK → HOME。 */
+    private List<Path> resolveProfiles(DbcliPaths paths) {
+        List<Path> resolved = new ArrayList<>();
+        for (String profile : profiles) {
+            Path path = paths.findScript(profile, null);
+            if (path == null) {
+                throw new IllegalArgumentException("Profile script [" + profile + "] does not exist.");
+            }
+            resolved.add(path);
+        }
+        return resolved;
+    }
+
+    private static boolean insideClearedRoots(DbcliPaths paths, Path path) {
+        return path != null && paths.isInsideWorkOrOutput(path);
     }
 
     /** {@code --var NAME=VALUE}（可重复）→ 变量表；格式不对给 picocli 的参数错误（stderr + 退出 2）。 */

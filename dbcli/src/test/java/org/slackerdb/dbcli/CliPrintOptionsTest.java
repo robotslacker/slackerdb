@@ -94,8 +94,17 @@ class CliPrintOptionsTest {
         CommandLine commandLine = new CommandLine(cli);
         commandLine.setOut(new PrintWriter(out, true));
         commandLine.setErr(new PrintWriter(out, true)); // dbcli 从不写 stderr：参数错误也在 stdout
-        int exitCode = commandLine.execute(args);
-        Path log = Path.of(args[java.util.Arrays.asList(args).indexOf("--logfile") + 1]);
+        String[] withDirs = new String[args.length + 6];
+        withDirs[0] = "--home_dir";
+        withDirs[1] = tempDir.toString();
+        withDirs[2] = "--work_dir";
+        withDirs[3] = tempDir.resolve("work").toString();
+        withDirs[4] = "--output_dir";
+        withDirs[5] = tempDir.resolve("output").toString();
+        System.arraycopy(args, 0, withDirs, 6, args.length);
+        int exitCode = commandLine.execute(withDirs);
+        int logIndex = java.util.Arrays.asList(args).indexOf("--logfile");
+        Path log = logIndex < 0 ? null : Path.of(args[logIndex + 1]);
         return new Result(out.toString(), err.toString(), exitCode, log);
     }
 
@@ -240,14 +249,15 @@ class CliPrintOptionsTest {
 
         Result off = run("_compare work.txt ref.txt;\n");
         assertEquals(0, off.exitCode, off.out);
-        assertTrue(Files.exists(tempDir.resolve("work.dif")), "DIF 恒定写出");
-        assertFalse(Files.exists(tempDir.resolve("work.html")), "默认不写 HTML: " + tempDir);
+        assertTrue(Files.exists(tempDir.resolve("output").resolve("work.dif")), "DIF 恒定写出");
+        assertFalse(Files.exists(tempDir.resolve("output").resolve("work.html")),
+                "默认不写 HTML: " + tempDir);
 
-        Files.delete(tempDir.resolve("work.dif"));
+        Files.delete(tempDir.resolve("output").resolve("work.dif"));
         Result on = run("_set diff_report_html on;\n_compare work.txt ref.txt;\n");
         assertEquals(0, on.exitCode, on.out);
-        assertTrue(Files.exists(tempDir.resolve("work.dif")), "DIF 恒定写出");
-        assertTrue(Files.exists(tempDir.resolve("work.html")), "ON 时才写 HTML");
+        assertTrue(Files.exists(tempDir.resolve("output").resolve("work.dif")), "DIF 恒定写出");
+        assertTrue(Files.exists(tempDir.resolve("output").resolve("work.html")), "ON 时才写 HTML");
 
         Result bad = run("_set diff_report_html maybe;\n");
         assertEquals(0, bad.exitCode);

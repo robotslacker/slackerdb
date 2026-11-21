@@ -336,7 +336,8 @@ class CliRealProcessTest {
         assertTrue(result.stdout().contains("Job [CHILD] finished with exit code 0."),
                 "无限等待应当被放行后正常返回:\n" + result.stdout());
         // 作业自己的输出在 <作业名>.out 里（工作目录 = 父脚本所在目录）
-        String childOut = Files.readString(OUTPUT_DIR.resolve("CHILD.out"), StandardCharsets.UTF_8);
+        String childOut = Files.readString(OUTPUT_DIR.resolve("output").resolve("jobs")
+                .resolve("CHILD.out"), StandardCharsets.UTF_8);
         assertTrue(childOut.contains("child-passed-the-gate"), childOut);
     }
 

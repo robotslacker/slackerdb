@@ -1,9 +1,7 @@
 package org.slackerdb.dbcli.engine.command;
 
-import org.slackerdb.dbcli.common.PathArguments;
 import org.slackerdb.dbcli.engine.ScriptRunner;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -13,7 +11,8 @@ import java.util.Set;
 /**
  * {@code _START <脚本> [参数…]}：串行执行另一个脚本，共享会话状态。
  *
- * <p>相对脚本名先在工作目录里找，再在当前脚本所在目录里找（子脚本常与父脚本放一起）。
+ * <p>相对脚本名按 <b>WORK → 当前脚本所在目录 → HOME</b> 查找（见设计 §4.1）：
+ * WORK 里的运行期临时脚本优先，其次是与调用脚本放一起的子脚本，最后是 HOME。
  * 嵌套上限是 {@link ScriptRunner#MAX_SCRIPT_DEPTH}；跑完把**子脚本自己的**退出码记进会话，
  * 供随后的 {@code _ASSERT RUN.EXITCODE} 使用。</p>
  */
@@ -39,8 +38,8 @@ public final class StartCommand implements ScriptCommand {
         }
         Path file;
         try {
-            file = resolveScriptFile(call, script);
-        } catch (PathArguments.InvalidPathException invalidPath) {
+            file = call.context().paths().findScript(script, call.context().currentScriptDirectory());
+        } catch (IllegalArgumentException invalidPath) {
             call.reportError(invalidPath.getMessage());
             return;
         }
@@ -57,21 +56,5 @@ public final class StartCommand implements ScriptCommand {
         int childExitCode = call.host().runChildScript(file, childArgv);
         // 文档承诺 RUN.EXITCODE 是"子脚本的退出码"：跑完就记下来，供随后的 _ASSERT 使用
         call.context().setLastSubScriptExitCode(childExitCode);
-    }
-
-    /** 子脚本定位：先按工作目录，再按当前脚本所在目录。 */
-    private static Path resolveScriptFile(CommandCall call, String script) {
-        Path candidate = call.resolvePath(script);
-        if (Files.isRegularFile(candidate)) {
-            return candidate;
-        }
-        Path current = call.context().currentScriptFile();
-        if (current != null && current.getParent() != null) {
-            Path beside = current.getParent().resolve(script).normalize();
-            if (Files.isRegularFile(beside)) {
-                return beside;
-            }
-        }
-        return null;
     }
 }

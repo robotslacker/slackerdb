@@ -52,7 +52,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class SchedulerEngineTest {
 
     private static final String HOP_RUN_SCRIPT =
-            System.getProperty("scheduler.test.hopRunScript", "C:/Softwares/hop/hop-run.bat");
+            System.getProperty("scheduler.test.hopRunScript", "HOPNotExist");
 
     private static boolean isWindows() {
         return System.getProperty("os.name", "").toLowerCase().contains("win");

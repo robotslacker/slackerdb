@@ -2,6 +2,7 @@ package org.slackerdb.dbcli.engine;
 
 import org.slackerdb.dbcli.api.ApiClient;
 import org.slackerdb.dbcli.assertion.ResultModel;
+import org.slackerdb.dbcli.common.DbcliPaths;
 import org.slackerdb.dbcli.job.Job;
 import org.slackerdb.dbcli.job.JobManager;
 import org.slackerdb.dbcli.sql.SqlExecutor;
@@ -59,6 +60,7 @@ public final class ScriptContext implements AutoCloseable {
     private final SqlExecutor sqlExecutor;
     private final ScriptOutput output;
     private final VariableResolver variables;
+    private final DbcliPaths paths;
     private final Path workingDirectory;
     private final CommandDispatcher dispatcher;
 
@@ -91,12 +93,28 @@ public final class ScriptContext implements AutoCloseable {
      */
     private boolean jobFailureReporting = true;
 
+    /**
+     * 本次最外层运行在退出前是否等待所有作业自然结束（默认 false）。
+     *
+     * <p>由 {@code DbcliRunner}/{@code Cli} 在**主脚本**开始前置为 true；{@code --profile}、
+     * {@code --logon} 与作业线程里的上下文保持 false。这样 profile 里故意拉起的后台作业不会被
+     * 提前等掉，而主脚本无论是正常跑完、{@code _EXIT} 还是 {@code _WHENEVER ERROR EXIT} 收尾，
+     * 都会先把还在跑的作业等完再返回。</p>
+     */
+    private boolean waitForJobsOnExit;
+
     /** {@code _API} 的 HTTP 客户端；懒创建，首次真正调用 API 时才建。 */
     private ApiClient apiClient;
 
     public ScriptContext(SqlExecutor sqlExecutor, ScriptOutput output, VariableResolver variables,
                          Path workingDirectory) {
-        this(sqlExecutor, output, variables, workingDirectory, null);
+        this(sqlExecutor, output, variables, DbcliPaths.forDirectory(workingDirectory), null, true);
+    }
+
+    /** 生产入口：目录由 CLI/DbcliRunner 解析好后传入。 */
+    public ScriptContext(SqlExecutor sqlExecutor, ScriptOutput output, VariableResolver variables,
+                         DbcliPaths paths) {
+        this(sqlExecutor, output, variables, paths, null, true);
     }
 
     /**
@@ -108,7 +126,7 @@ public final class ScriptContext implements AutoCloseable {
      */
     public ScriptContext(SqlExecutor sqlExecutor, ScriptOutput output, VariableResolver variables,
                          Path workingDirectory, CommandDispatcher dispatcher) {
-        this(sqlExecutor, output, variables, workingDirectory, dispatcher, true);
+        this(sqlExecutor, output, variables, DbcliPaths.forDirectory(workingDirectory), dispatcher, true);
     }
 
     /**
@@ -117,11 +135,18 @@ public final class ScriptContext implements AutoCloseable {
      */
     public ScriptContext(SqlExecutor sqlExecutor, ScriptOutput output, VariableResolver variables,
                          Path workingDirectory, CommandDispatcher dispatcher, boolean jobFailureReporting) {
+        this(sqlExecutor, output, variables, DbcliPaths.forDirectory(workingDirectory), dispatcher,
+                jobFailureReporting);
+    }
+
+    public ScriptContext(SqlExecutor sqlExecutor, ScriptOutput output, VariableResolver variables,
+                         DbcliPaths paths, CommandDispatcher dispatcher, boolean jobFailureReporting) {
         this.sqlExecutor = sqlExecutor;
         this.output = output;
         this.variables = variables;
-        this.workingDirectory = workingDirectory;
-        this.dispatcher = dispatcher != null ? dispatcher : new CommandDispatcher(sqlExecutor, workingDirectory);
+        this.paths = paths;
+        this.workingDirectory = paths.work();
+        this.dispatcher = dispatcher != null ? dispatcher : new CommandDispatcher(sqlExecutor, paths);
         this.jobFailureReporting = jobFailureReporting;
     }
 
@@ -139,6 +164,17 @@ public final class ScriptContext implements AutoCloseable {
 
     public Path workingDirectory() {
         return workingDirectory;
+    }
+
+    /** 本次运行的三目录（自动写点的唯一入口）。 */
+    public DbcliPaths paths() {
+        return paths;
+    }
+
+    /** 当前脚本所在目录（stdin/控制台/无脚本时为 WORK）；用于 `_START`/`_JOB`/输入解析。 */
+    public Path currentScriptDirectory() {
+        Path file = currentScriptFile();
+        return file == null || file.getParent() == null ? workingDirectory : file.getParent();
     }
 
     public CommandDispatcher dispatcher() {
@@ -190,6 +226,21 @@ public final class ScriptContext implements AutoCloseable {
     /** 本次会话是否负责"作业失败传播"（见字段注释；作业线程为 false）。 */
     public boolean jobFailureReporting() {
         return jobFailureReporting;
+    }
+
+    /** 最外层运行退出前是否等待所有作业自然结束（见字段注释）。 */
+    public boolean waitForJobsOnExit() {
+        return waitForJobsOnExit;
+    }
+
+    /**
+     * 设置最外层运行退出前是否等待所有作业自然结束。
+     *
+     * <p>只应由 {@code --execute}/stdin 的**主脚本**入口打开；profile、{@code --logon}
+     * 与作业上下文不要打开，否则会把"留给主脚本的后台作业"提前等掉。</p>
+     */
+    public void setWaitForJobsOnExit(boolean waitForJobsOnExit) {
+        this.waitForJobsOnExit = waitForJobsOnExit;
     }
 
     /** 请求立刻结束整次运行并返回指定退出码（{@code _EXIT n} / {@code _WHENEVER ERROR EXIT n}）。 */

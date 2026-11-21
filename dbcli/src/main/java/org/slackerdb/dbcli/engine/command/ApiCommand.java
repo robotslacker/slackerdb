@@ -29,7 +29,8 @@ public final class ApiCommand implements ScriptCommand {
         String arguments = ir.get("arguments") == null ? "" : String.valueOf(ir.get("arguments"));
         ApiRequest request;
         try {
-            request = ApiRequestParser.parse(arguments, call.context().workingDirectory(),
+            request = ApiRequestParser.parse(arguments, call.context().paths(),
+                    call.context().currentScriptDirectory(),
                     call.context().variables()::lookup);
         } catch (ApiParseException invalid) {
             call.reportError(invalid.getMessage());

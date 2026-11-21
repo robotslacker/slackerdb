@@ -1,5 +1,6 @@
 package org.slackerdb.dbcli.embed;
 
+import org.slackerdb.dbcli.common.DbcliPaths;
 import org.slackerdb.dbcli.compare.LineRules;
 import org.slackerdb.dbcli.engine.ScriptContext;
 import org.slackerdb.dbcli.engine.ScriptOutput;
@@ -7,6 +8,7 @@ import org.slackerdb.dbcli.engine.ScriptRunner;
 import org.slackerdb.dbcli.engine.ScriptStoppedException;
 import org.slackerdb.dbcli.engine.StopSignal;
 import org.slackerdb.dbcli.engine.VariableResolver;
+import org.slackerdb.dbcli.job.JobDatabase;
 import org.slackerdb.dbcli.sql.JdbcSqlExecutor;
 
 import java.io.IOException;
@@ -64,6 +66,9 @@ public final class DbcliRunner {
             String scriptText,
             String scriptName,
             Path workingDirectory,
+            DbcliPaths paths,
+            Map<String, String> sessionVariables,
+            Map<String, String> localVariables,
             String logon,
             Map<String, String> variables,
             List<Path> profiles,
@@ -72,7 +77,8 @@ public final class DbcliRunner {
             PrintWriter err,
             BooleanSupplier stopRequested,
             Consumer<Runnable> onCancelReady,
-            boolean abortOnLogonFailure) {
+            boolean abortOnLogonFailure,
+            boolean cleanDirectories) {
 
         public static Builder builder() {
             return new Builder();
@@ -84,6 +90,9 @@ public final class DbcliRunner {
             private String scriptText;
             private String scriptName;
             private Path workingDirectory;
+            private DbcliPaths paths;
+            private Map<String, String> sessionVariables = Map.of();
+            private Map<String, String> localVariables = Map.of();
             private String logon;
             private Map<String, String> variables = Map.of();
             private final List<Path> profiles = new ArrayList<>();
@@ -93,6 +102,7 @@ public final class DbcliRunner {
             private BooleanSupplier stopRequested;
             private Consumer<Runnable> onCancelReady;
             private boolean abortOnLogonFailure;
+            private boolean cleanDirectories;
 
             public Builder script(Path script) {
                 this.script = script;
@@ -107,6 +117,26 @@ public final class DbcliRunner {
 
             public Builder workingDirectory(Path workingDirectory) {
                 this.workingDirectory = workingDirectory;
+                return this;
+            }
+
+            /** 本次运行的三目录；不传时用 workingDirectory 造一个兼容目录（测试/旧调用）。 */
+            public Builder paths(DbcliPaths paths) {
+                this.paths = paths;
+                return this;
+            }
+
+            /** fork 子 job 时传入的 SESSION 快照（默认空）。 */
+            public Builder sessionVariables(Map<String, String> sessionVariables) {
+                this.sessionVariables = sessionVariables == null ? Map.of()
+                        : new LinkedHashMap<>(sessionVariables);
+                return this;
+            }
+
+            /** LOCAL 初始变量（进程作业的作业参数；默认空）。 */
+            public Builder localVariables(Map<String, String> localVariables) {
+                this.localVariables = localVariables == null ? Map.of()
+                        : new LinkedHashMap<>(localVariables);
                 return this;
             }
 
@@ -163,10 +193,20 @@ public final class DbcliRunner {
                 return this;
             }
 
+            /**
+             * 嵌入运行是否按 root 规则清空 WORK/OUTPUT（默认 false：宿主目录可能含别的任务）。
+             * CLI 自己已清空，不会打开它；调度器共享 runDir 时保持 false。
+             */
+            public Builder cleanDirectories(boolean cleanDirectories) {
+                this.cleanDirectories = cleanDirectories;
+                return this;
+            }
+
             public Request build() {
-                return new Request(script, scriptText, scriptName, workingDirectory, logon, variables,
+                return new Request(script, scriptText, scriptName, workingDirectory, paths,
+                        sessionVariables, localVariables, logon, variables,
                         List.copyOf(profiles), logFile, out, err, stopRequested, onCancelReady,
-                        abortOnLogonFailure);
+                        abortOnLogonFailure, cleanDirectories);
             }
         }
     }
@@ -215,10 +255,21 @@ public final class DbcliRunner {
         validate(request);
 
         Path script = request.script();
-        Path workingDirectory = request.workingDirectory() != null
+        Path requestedDirectory = request.workingDirectory() != null
                 ? request.workingDirectory()
                 : (script != null && script.getParent() != null
                         ? script.getParent() : Path.of("").toAbsolutePath());
+        DbcliPaths paths = request.paths() != null
+                ? request.paths() : DbcliPaths.forDirectory(requestedDirectory);
+        Path workingDirectory = paths.work();
+        Path logFileTarget;
+        try {
+            logFileTarget = request.logFile() == null ? null
+                    : paths.outputFile(request.logFile().toString());
+        } catch (RuntimeException cannotPrepareOutput) {
+            // OUTPUT 按需创建：建不出来/锁不上时给一行可读错误（DbcliException 的既有约定）
+            throw new DbcliException(cannotPrepareOutput.getMessage(), cannotPrepareOutput);
+        }
         String scriptName = request.scriptName() != null && !request.scriptName().isBlank()
                 ? request.scriptName()
                 : (script != null && script.getFileName() != null
@@ -226,21 +277,41 @@ public final class DbcliRunner {
         BooleanSupplier stop = request.stopRequested() == null ? () -> false : request.stopRequested();
         StopSignal signal = stop::getAsBoolean;
 
+        boolean prepare = request.cleanDirectories();
+        if (prepare) {
+            try {
+                paths.prepareRun(true);
+            } catch (DbcliPaths.DirectoryException cannotPrepare) {
+                throw new DbcliException(cannotPrepare.getMessage(), cannotPrepare);
+            }
+        }
+        if (request.paths() != null) {
+            try {
+                JobDatabase.ensure(paths);
+            } catch (RuntimeException cannotInitialize) {
+                if (prepare) {
+                    paths.close();
+                }
+                throw new DbcliException(cannotInitialize.getMessage(), cannotInitialize);
+            }
+        }
+        try {
         try (JdbcSqlExecutor sql = new JdbcSqlExecutor();
              ScriptOutput output = new ScriptOutput(request.out(), request.err())) {
             if (request.onCancelReady() != null) {
                 request.onCancelReady().accept(sql::cancelCurrentStatement);
             }
-            if (request.logFile() != null) {
+            if (logFileTarget != null) {
                 try {
-                    output.startTee(request.logFile());
+                    output.startTee(logFileTarget);
                 } catch (IOException teeFailed) {
-                    throw new DbcliException("Cannot write the log file [" + request.logFile() + "]: "
+                    throw new DbcliException("Cannot write the log file [" + logFileTarget + "]: "
                             + teeFailed.getMessage(), teeFailed);
                 }
             }
             try (ScriptContext context = new ScriptContext(sql, output,
-                    new VariableResolver(request.variables()), workingDirectory)) {
+                    new VariableResolver(request.variables(), request.sessionVariables(),
+                            request.localVariables(), paths.globalVariables()), paths)) {
                 ScriptRunner runner = new ScriptRunner(context, signal);
 
                 // 与 --logon 同一条路径：一行 _connect（多行在 validate 里已拒掉）
@@ -267,6 +338,9 @@ public final class DbcliRunner {
                 if (context.exitRequested()) {
                     return result(context, context.finalExitCode());
                 }
+                // 主脚本退出前要等所有作业自然结束（见 ScriptContext#waitForJobsOnExit）。
+                // profile/--logon 在这之前执行，故意不打开：它们拉起的后台作业属于主脚本。
+                context.setWaitForJobsOnExit(true);
                 int code = script != null
                         ? runner.runFile(script, List.of())
                         : runner.runText(request.scriptText(), scriptName, List.of());
@@ -276,6 +350,11 @@ public final class DbcliRunner {
             }
         } catch (ScriptStoppedException stopped) {
             throw new StoppedException(stopped);
+        }
+        } finally {
+            if (prepare) {
+                paths.close();
+            }
         }
     }
 

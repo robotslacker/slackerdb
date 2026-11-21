@@ -100,7 +100,7 @@ public final class DbcliJobSpecFactory implements JobSpecFactory {
      *
      * <p>用 {@link Locale#ROOT} 而不是默认 Locale：土耳其语环境下 {@code "I"} 的
      * {@code toLowerCase} 会得到无点的 {@code "ı"}，同一个脚本在不同机器上就会认不出 {@code MODE}。
-     * 会合点名字的规范化（{@code rendezvous.RendezvousBackend.normalizePoint}）出于同样的原因也钉死 ROOT。</p>
+     * 会合点名字的规范化（{@code job.SqliteJobStore.normalizePoint}）出于同样的原因也钉死 ROOT。</p>
      */
     private static String canonicalName(String name) {
         if (name == null) {

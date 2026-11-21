@@ -6,8 +6,21 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.slackerdb.dbcli.common.GlobalVariableStore;
+
 /**
  * 变量替换层：{@code ${name}} 的解析与替换。
+ *
+ * <h2>作用域</h2>
+ * <p>{@code _SET} 变量分三层，优先级 **LOCAL > SESSION > GLOBAL**：</p>
+ * <ul>
+ *   <li><b>LOCAL</b>：当前 job/会话，不传给 fork 出来的 job；{@code _SET @x v} 与
+ *       {@code _SET LOCAL @x v} 都写这一层；</li>
+ *   <li><b>SESSION</b>：当前 job 及 fork/派生的 job；fork 时做快照，子 job 的修改不回传父 job/并行 job；</li>
+ *   <li><b>GLOBAL</b>：同一 WORK 内所有进程共享（SQLite 文件），子进程修改父进程下一次读取可见；</li>
+ * </ul>
+ * <p>{@code _ECHO @name} 捕获、{@code API.*} 运行时变量仍是 LOCAL 层的旁路：捕获写 LOCAL，
+ * 运行时变量排在 LOCAL 之后、SESSION 之前。</p>
  *
  * <h2>只有一种占位符外观</h2>
  * <p>变量写法**只有** {@code ${name}}。历史脚本里出现过的 mustache 风格双花括号写法<b>不再是
@@ -16,10 +29,12 @@ import java.util.regex.Pattern;
  *
  * <h2>三步解析（命中即停）</h2>
  * <ol>
- *   <li><b>已定义的变量</b>，按优先级先命中先用：
+ *   <li><b>已定义的变量</b>，按作用域优先级先命中先用：
  *     <ol>
- *       <li>脚本内变量：{@code _SET @名称 值}；</li>
+ *       <li>LOCAL：{@code _SET @名称 值} / {@code _SET LOCAL @名称 值} / {@code _ECHO @名称} 捕获；</li>
  *       <li>运行时变量：{@code _API} 的 {@code API.*}（每轮请求后整体替换）；</li>
+ *       <li>SESSION：{@code _SET SESSION @名称 值}（fork 时快照给子 job）；</li>
+ *       <li>GLOBAL：{@code _SET GLOBAL @名称 值}（同一 WORK 的 SQLite 文件）；</li>
  *       <li>{@code --var NAME=VALUE}（可重复）；</li>
  *       <li>{@code ${ARGV1}}/{@code ${ARGV2}}…：{@code _START} 传给子脚本的参数（1 基；越界视为未定义）；</li>
  *     </ol></li>
@@ -44,9 +59,9 @@ import java.util.regex.Pattern;
  * </ul>
  *
  * <h2>优先级</h2>
- * <p>命令行显式给定的值最硬，顺序是"脚本内变量（{@code _SET @x v}）> 运行时变量（{@code API.*}）>
- * {@code --var} > {@code ARGVn} > 同名环境变量"。顺序只在"同一个名字既给了 {@code --var}、环境里又有一份"
- * 时才看得出差别：定义了就用当前的值，环境变量只是兜底。</p>
+ * <p>命令行显式给定的值最软，顺序是"LOCAL > 运行时 > SESSION > GLOBAL > {@code --var} > {@code ARGVn} >
+ * 同名环境变量"。作用域只在同名变量同时出现在多层时才看得出差别；GLOBAL 读取的是同一 WORK 的
+ * SQLite 文件，因此父子进程/并行 job 互相可见。</p>
  */
 public final class VariableResolver {
 
@@ -61,7 +76,14 @@ public final class VariableResolver {
 
     private final Map<String, String> commandLineVariables;
 
+    /** LOCAL：{@code _SET @x} / {@code _SET LOCAL @x}，以及 {@code _ECHO @x} 捕获。 */
     private final Map<String, String> scriptVariables = new LinkedHashMap<>();
+
+    /** SESSION：fork 时快照给子 job；本 job 的修改不回传父/并行 job。 */
+    private final Map<String, String> sessionVariables = new LinkedHashMap<>();
+
+    /** GLOBAL：同一 WORK 的 SQLite 文件；每次查询读取，保证父子进程互相可见。 */
+    private final GlobalVariableStore globalVariables;
 
     /**
      * 运行时变量（当前只有 {@code _API} 的 {@code API.*}）：每次请求完成后**整体替换**。
@@ -77,13 +99,58 @@ public final class VariableResolver {
      * @param commandLineVariables {@code --var NAME=VALUE}（可为 null，等价于空表）
      */
     public VariableResolver(Map<String, String> commandLineVariables) {
-        this.commandLineVariables = commandLineVariables == null
-                ? new LinkedHashMap<>() : new LinkedHashMap<>(commandLineVariables);
+        this(commandLineVariables, Map.of(), null);
     }
 
-    /** {@code _SET @名称 值}：登记一个脚本内变量（优先级最高）。 */
+    /**
+     * @param sessionVariables fork 时从父 job 继承的 SESSION 快照（可为 null）
+     * @param globalVariables  同一 WORK 的 GLOBAL 存储（可为 null：只用 LOCAL/SESSION/--var）
+     */
+    public VariableResolver(Map<String, String> commandLineVariables,
+                            Map<String, String> sessionVariables,
+                            GlobalVariableStore globalVariables) {
+        this(commandLineVariables, sessionVariables, Map.of(), globalVariables);
+    }
+
+    /**
+     * @param localVariables 作业参数等 LOCAL 初始值（可为 null）；优先级最高
+     */
+    public VariableResolver(Map<String, String> commandLineVariables,
+                            Map<String, String> sessionVariables,
+                            Map<String, String> localVariables,
+                            GlobalVariableStore globalVariables) {
+        this.commandLineVariables = commandLineVariables == null
+                ? new LinkedHashMap<>() : new LinkedHashMap<>(commandLineVariables);
+        if (sessionVariables != null) {
+            this.sessionVariables.putAll(sessionVariables);
+        }
+        if (localVariables != null) {
+            this.scriptVariables.putAll(localVariables);
+        }
+        this.globalVariables = globalVariables;
+    }
+
+    /** {@code _SET @名称 值} / {@code _SET LOCAL @名称 值}：当前 job 的 LOCAL 变量。 */
     public void setVariable(String name, String value) {
         scriptVariables.put(name, value);
+    }
+
+    /** {@code _SET SESSION @名称 值}：当前 job 及后续 fork 的 job 可见。 */
+    public void setSessionVariable(String name, String value) {
+        sessionVariables.put(name, value);
+    }
+
+    /** {@code _SET GLOBAL @名称 值}：写入同一 WORK 的 SQLite 存储，所有 job/进程可见。 */
+    public void setGlobalVariable(String name, String value) {
+        if (globalVariables == null) {
+            throw new IllegalStateException("Global variable store is not available in this context.");
+        }
+        globalVariables.set(name, value);
+    }
+
+    /** fork 子 job 时传给它的 SESSION 快照（只读副本）。 */
+    public Map<String, String> sessionSnapshot() {
+        return Map.copyOf(sessionVariables);
     }
 
     /**
@@ -113,6 +180,14 @@ public final class VariableResolver {
         if (value != null) {
             return value;
         }
+        value = sessionVariables.get(name);
+        if (value != null) {
+            return value;
+        }
+        value = globalVariables == null ? null : globalVariables.get(name);
+        if (value != null) {
+            return value;
+        }
         value = commandLineVariables.get(name);
         if (value != null) {
             return value;
@@ -139,7 +214,8 @@ public final class VariableResolver {
     }
 
     /**
-     * 供 {@code _ASSERT} 的 {@code VAR.<名>} 取值用：脚本内变量 + {@code --var} + {@code ARGVn}。
+     * 供 {@code _ASSERT} 的 {@code VAR.<名>} 取值用：LOCAL + 运行时 + SESSION + GLOBAL +
+     * {@code --var} + {@code ARGVn}（与 {@link #lookup(String)} 同一优先级）。
      *
      * <p>不含环境变量：环境变量由本类在替换期兜底，
      * 断言要取环境变量时用 {@code ENV.<名>} 显式取。</p>
@@ -149,6 +225,10 @@ public final class VariableResolver {
         // 否则 `_set @x 1` 之后再 `_assert {% VAR.x = 1 %}` 会看到 --var 里的旧值，
         // 同一次运行里"替换"和"断言"对同一个名字给出两个答案。
         Map<String, String> snapshot = new LinkedHashMap<>(commandLineVariables);
+        if (globalVariables != null) {
+            snapshot.putAll(globalVariables.snapshot());
+        }
+        snapshot.putAll(sessionVariables);
         snapshot.putAll(runtimeVariables);
         snapshot.putAll(scriptVariables);
         for (int index = 0; index < argv.size(); index++) {
@@ -247,6 +327,14 @@ public final class VariableResolver {
             return value;
         }
         value = runtimeVariables.get(name);
+        if (value != null) {
+            return value;
+        }
+        value = sessionVariables.get(name);
+        if (value != null) {
+            return value;
+        }
+        value = globalVariables == null ? null : globalVariables.get(name);
         if (value != null) {
             return value;
         }

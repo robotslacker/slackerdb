@@ -138,6 +138,23 @@ class InstanceScannerTest {
     }
 
     @Test
+    @DisplayName("probe: the pid file location comes from instance.conf, not a hard-coded instance.pid")
+    void customPidFileIsUsed() throws Exception {
+        Path dir = root.resolve("custompid");
+        writeConf(dir, "data=custompid\nport=31009\nport_x=-1\npid=run/custom.pid\n");
+        Files.createDirectories(dir.resolve("run"));
+        // 一个几乎不可能存在的 pid；只有读到 run/custom.pid 才会给出 stale pid 的提示
+        Files.writeString(dir.resolve("run").resolve("custom.pid"), "999999", StandardCharsets.UTF_8);
+
+        ObservedInstance observed = scanner().probe("custompid", dir);
+
+        assertEquals(InstanceState.STOPPED, observed.state());
+        assertNotNull(observed.error(), "the custom pid file must be read");
+        assertTrue(observed.error().contains("999999"), observed.error());
+        assertTrue(observed.error().contains("stale pid file"), observed.error());
+    }
+
+    @Test
     @DisplayName("probe: a stale pid file does not make a stopped instance look alive")
     void stalePidIsNotAlive() throws Exception {
         Path dir = root.resolve("stale");

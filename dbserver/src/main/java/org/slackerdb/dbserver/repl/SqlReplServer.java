@@ -7,6 +7,7 @@ import io.javalin.Javalin;
 import io.javalin.websocket.WsContext;
 import org.duckdb.DuckDBConnection;
 import org.slackerdb.dbserver.server.DBInstance;
+import org.slackerdb.dbserver.server.QueryConcurrencyGate;
 import org.slackerdb.dbserver.sql.JsonValues;
 import org.slackerdb.dbserver.sql.MaxExecutionTime;
 import org.slackerdb.dbserver.sql.SqlTextExecutor;
@@ -465,22 +466,53 @@ public class SqlReplServer {
     private void runTask(SqlSession session, String sql, int fetchSize, Long perExecMaxExecutionTime) {
         boolean overridden = perExecMaxExecutionTime != null;
         Long baseline = null;
+        boolean gateHeld = false;
+        final QueryConcurrencyGate gate = dbInstance.getReplQueryGate();
         try {
             if (overridden) {
                 // 上一次恢复还在等事务结束时，以那个原值为准，避免把被污染的当前值当成会话值
                 baseline = session.pendingMaxExecutionTimeRestore != null
                         ? session.pendingMaxExecutionTimeRestore
-                        : MaxExecutionTime.read(session.conn);
-                MaxExecutionTime.apply(session.conn, perExecMaxExecutionTime);
+                        : withConnectionRetry(session, MaxExecutionTime::read);
+            }
+            long gateWaitMs = overridden && perExecMaxExecutionTime > 0
+                    ? Math.min(gate.getWaitMs(), perExecMaxExecutionTime)
+                    : gate.getWaitMs();
+            long gateStart = System.nanoTime();
+            gateHeld = gate.tryAcquire(gateWaitMs);
+            long waitedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - gateStart);
+            if (!gateHeld) {
+                failTask(session, "Server busy: too many concurrent SQL REPL queries, retry later.");
+                return;
+            }
+            if (overridden) {
+                // 排队时间计入本次请求预算，避免"排队 30s + 执行 60s"
+                long remainingMs = QueryConcurrencyGate.remainingBudgetMs(perExecMaxExecutionTime, waitedMs);
+                if (remainingMs <= 0) {
+                    failTask(session, "Server busy: request budget exhausted while queued, retry later.");
+                    return;
+                }
+                final long budgetMs = remainingMs;
+                withConnectionRetry(session, conn -> {
+                    MaxExecutionTime.apply(conn, budgetMs);
+                    return null;
+                });
             }
             executeTaskBody(session, sql, fetchSize);
         } catch (Exception e) {
             failTask(session, Objects.toString(e.getMessage(), ""));
         } finally {
+            if (gateHeld) {
+                gate.release();
+            }
             if (overridden && baseline != null) {
+                final long baselineMs = baseline;
                 try {
-                    MaxExecutionTime.restore(session.conn, baseline,
-                            dbInstance.serverConfiguration.getMax_execution_time());
+                    withConnectionRetry(session, conn -> {
+                        MaxExecutionTime.restore(conn, baselineMs,
+                                dbInstance.serverConfiguration.getMax_execution_time());
+                        return null;
+                    });
                     session.pendingMaxExecutionTimeRestore = null;
                 } catch (Exception restoreFailure) {
                     // 典型：超时把事务置为 aborted，此时 SET/RESET 也会失败。
@@ -500,8 +532,12 @@ public class SqlReplServer {
             return;
         }
         try {
-            MaxExecutionTime.restore(session.conn, pending,
-                    dbInstance.serverConfiguration.getMax_execution_time());
+            final long baselineMs = pending;
+            withConnectionRetry(session, conn -> {
+                MaxExecutionTime.restore(conn, baselineMs,
+                        dbInstance.serverConfiguration.getMax_execution_time());
+                return null;
+            });
             session.pendingMaxExecutionTimeRestore = null;
         } catch (Exception e) {
             logger.warn("[SERVER][SQL REPL   ] Still cannot restore max_execution_time ({}).", e.getMessage());
@@ -530,14 +566,37 @@ public class SqlReplServer {
                 return;
             }
 
-            Statement stmt = session.conn.createStatement();
-            if (fetchSize > 0) {
-                stmt.setFetchSize(fetchSize);
+            if (session.taskResourcesDirty) {
+                repairSessionConnection(session);
+                if (session.taskResourcesDirty) {
+                    failTask(session, "Session connection cannot be reset after an interrupted statement.");
+                    return;
+                }
             }
-            session.taskStatement = stmt;
-            session.activeStatement = stmt;
 
-            boolean hasResult = stmt.execute(sql);
+            Statement stmt = createTaskStatement(session, fetchSize);
+
+            boolean hasResult;
+            try {
+                hasResult = stmt.execute(sql);
+            } catch (SQLException executeFailure) {
+                if (!isOpenResultFailure(executeFailure)) {
+                    throw executeFailure;
+                }
+                // DuckDB keeps a pending result after some interrupted statements; closing it
+                // is not always enough, so destroy the connection and retry once.
+                logger.warn("[SERVER][SQL REPL   ] Session {} hit an open result; resetting connection and retrying.",
+                        session.id);
+                closeQuietlyForRepair(session.taskStatement);
+                closeQuietlyForRepair(session.taskResultSet);
+                session.taskStatement = null;
+                session.taskResultSet = null;
+                session.activeStatement = null;
+                session.taskResourcesDirty = true;
+                repairSessionConnection(session);
+                stmt = createTaskStatement(session, fetchSize);
+                hasResult = stmt.execute(sql);
+            }
             if (hasResult) {
                 session.taskResultSet = stmt.getResultSet();
                 session.taskStatus = "COMPLETED"; // 结果集就绪
@@ -609,12 +668,112 @@ public class SqlReplServer {
     private void failTask(SqlSession session, String message) {
         session.taskStatus = "ERROR";
         session.error = message;
+        if (session.taskResultSet != null) {
+            try { session.taskResultSet.close(); } catch (Exception e) { session.taskResourcesDirty = true; }
+            session.taskResultSet = null;
+        }
         if (session.taskStatement != null) {
-            try { session.taskStatement.close(); } catch (Exception ignored) {}
+            try { session.taskStatement.close(); } catch (Exception e) { session.taskResourcesDirty = true; }
             session.taskStatement = null;
         }
         session.activeStatement = null;
-        session.taskResultSet = null;
+    }
+
+    /** Create and register the statement that will run the current task. */
+    private static Statement createTaskStatement(SqlSession session, int fetchSize) throws SQLException {
+        Statement stmt = session.conn.createStatement();
+        if (fetchSize > 0) {
+            stmt.setFetchSize(fetchSize);
+        }
+        session.taskStatement = stmt;
+        session.activeStatement = stmt;
+        return stmt;
+    }
+
+    /** DuckDB reports a leftover pending result with this wording. */
+    private static boolean isOpenResultFailure(SQLException failure) {
+        String message = failure.getMessage();
+        return message != null && message.toLowerCase(java.util.Locale.ROOT).contains("open result");
+    }
+
+    private static void closeQuietlyForRepair(AutoCloseable closeable) {
+        if (closeable == null) {
+            return;
+        }
+        try {
+            closeable.close();
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** A statement executed on the session connection. */
+    @FunctionalInterface
+    private interface ConnectionCall<T> {
+        T run(Connection connection) throws SQLException;
+    }
+
+    /**
+     * Run a session-level statement, repairing the connection once if DuckDB reports a
+     * leftover open result. max_execution_time bookkeeping and the user statement share
+     * the same connection, so they all need this protection.
+     */
+    private <T> T withConnectionRetry(SqlSession session, ConnectionCall<T> call) throws SQLException {
+        try {
+            return call.run(session.conn);
+        } catch (SQLException failure) {
+            if (!isOpenResultFailure(failure)) {
+                throw failure;
+            }
+            logger.warn("[SERVER][SQL REPL   ] Session {} hit an open result on a session statement; "
+                    + "resetting connection and retrying.", session.id);
+            closeQuietlyForRepair(session.taskStatement);
+            closeQuietlyForRepair(session.taskResultSet);
+            session.taskStatement = null;
+            session.taskResultSet = null;
+            session.activeStatement = null;
+            session.taskResourcesDirty = true;
+            repairSessionConnection(session);
+            return call.run(session.conn);
+        }
+    }
+
+    /**
+     * Rebuild the connection behind a REPL session.
+     *
+     * <p>DuckDB refuses a new query while a previous result is still open. Closing the result
+     * set normally destroys it, but an interrupted statement can leave one behind; then the
+     * only reliable way out is to destroy the connection. Session state the REPL knows about
+     * ({@code search_path}) is re-applied; temporary tables are lost by design.</p>
+     */
+    private void repairSessionConnection(SqlSession session) {
+        String searchPath = null;
+        try (Statement probe = session.conn.createStatement();
+             ResultSet rs = probe.executeQuery("SELECT current_setting('search_path')")) {
+            if (rs.next()) {
+                searchPath = rs.getString(1);
+            }
+        } catch (Exception ignored) {
+            // The old connection may already be unusable; a fresh one still helps.
+        }
+        closeQuietlyForRepair(session.conn);
+        try {
+            Connection fresh = ((DuckDBConnection) this.dbInstance.backendSysConnection).duplicate();
+            fresh.setAutoCommit(true);
+            try (Statement init = fresh.createStatement()) {
+                init.execute("RESET max_execution_time");
+                if (searchPath != null && !searchPath.isBlank()) {
+                    init.execute("SET search_path = '" + searchPath.replace("'", "''") + "'");
+                }
+            }
+            session.conn = fresh;
+            session.taskResourcesDirty = false;
+            logger.warn("[SERVER][SQL REPL   ] Session {} connection replaced: previous statement could not be cleaned up.",
+                    session.id);
+        } catch (Exception e) {
+            session.taskStatus = "ERROR";
+            session.error = "Failed to reset session connection: " + e.getMessage();
+            logger.error("[SERVER][SQL REPL   ] Session {} connection reset failed.", session.id, e);
+        }
     }
 
     private void handleFetch(WsContext ctx, String requestId, Map<String, Object> data) {

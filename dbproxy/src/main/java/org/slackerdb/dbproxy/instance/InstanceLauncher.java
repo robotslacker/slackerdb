@@ -18,10 +18,11 @@ import java.util.List;
  * <p>代理不持有长期句柄：拉起之后只做"等 pid + 等 /health"，进程就与代理脱钩了
  * （stdio 已重定向到文件，代理被 kill 也不会影响它）。</p>
  *
- * <p>dbserver 运行时按固定顺序自动探测，<b>不引入新的配置项</b>：</p>
+ * <p>dbserver 运行时按固定顺序自动探测，jar 文件名模式由代理配置项 {@code dbserver_jar}
+ * 给出（<b>没有默认值</b>；未配置时 {@link InstanceController} 拒绝创建实例）：</p>
  * <ol>
- *   <li>系统属性 {@code slackerdb.dbserver.jar}（测试/应急用）；</li>
- *   <li>代理 jar 同目录的 {@code slackerdb-dbserver-*-standalone.jar}（发行包 jlib/）；</li>
+ *   <li>系统属性 {@code slackerdb.dbserver.jar}（测试/应急用，直接指定 jar 路径）；</li>
+ *   <li>代理 jar 同目录下匹配 {@code dbserver_jar} 的 jar（发行包 jlib/）；</li>
  *   <li>{@code <代理目录>/../jlib}；</li>
  *   <li>仓库布局：{@code <root>/dbserver/target}；</li>
  *   <li>当前目录的 {@code dbserver/target}、{@code jlib}、{@code lib}；</li>
@@ -31,9 +32,20 @@ import java.util.List;
 public final class InstanceLauncher {
 
     public static final String DBSERVER_MAIN = "org.slackerdb.dbserver.Main";
-    public static final String DBSERVER_JAR_PATTERN = "slackerdb-dbserver-*-standalone.jar";
+
+    /** 文件名模式；空字符串表示未配置，此时不做 jar 目录扫描。 */
+    private final String jarPattern;
 
     private volatile LaunchSpec cached;
+
+    public InstanceLauncher(String dbserverJarPattern) {
+        this.jarPattern = dbserverJarPattern == null ? "" : dbserverJarPattern.trim();
+    }
+
+    /** 是否配置了 dbserver jar 的文件名模式（未配置时不允许创建实例）。 */
+    public boolean hasJarPattern() {
+        return !jarPattern.isEmpty();
+    }
 
     public LaunchSpec resolve() {
         LaunchSpec current = cached;
@@ -53,12 +65,17 @@ public final class InstanceLauncher {
      *
      * @return 子进程句柄（用于"启动失败时快速失败"，不用于长期托管）
      */
-    public Process start(InstancePaths paths, InstanceConf conf) throws IOException {
+    public Process start(InstancePaths paths) throws IOException {
         Files.createDirectories(paths.consoleLog().getParent());
         LaunchSpec spec = resolve();
         List<String> command = spec.command("start", paths.conf().toAbsolutePath());
+        // 代理托管的一定是"前台进程"，这样"等 /health"才是有效的启动确认。
+        // 用户可能通过 key/value 写了 daemon=true；dbserver 里命令行参数优先于配置文件，
+        // 所以这里显式覆盖掉，不去改用户写下的值。
+        command.add("--daemon");
+        command.add("false");
 
-        // 把实际命令行写进 launch.log：排查"起不来"时第一眼要看的就是它。
+        // 把实际命令行写进 launch.log：用来排查启动故障
         // 单独一个文件，避免把超长的 classpath 混进 console.log 和错误信息里。
         Files.writeString(paths.launchLog(),
                 "==== " + java.time.LocalDateTime.now() + " (" + spec.description() + ") ====\n"
@@ -96,8 +113,9 @@ public final class InstanceLauncher {
         }
 
         throw new InstanceException(InstanceException.INTERNAL,
-                "dbserver runtime not found. Set -Dslackerdb.dbserver.jar=<path> or place "
-                        + DBSERVER_JAR_PATTERN + " next to the proxy jar. Searched: " + candidates);
+                "dbserver runtime not found. Set 'dbserver_jar' (a jar name pattern such as "
+                        + "slackerdb-dbserver-*-standalone.jar) in the proxy configuration file, "
+                        + "or -Dslackerdb.dbserver.jar=<path>. Searched: " + candidates);
     }
 
     private List<Path> jarCandidates() {
@@ -134,14 +152,15 @@ public final class InstanceLauncher {
         return candidates;
     }
 
-    private static List<Path> jarsIn(Path dir) {
-        if (dir == null || !Files.isDirectory(dir)) {
+    private List<Path> jarsIn(Path dir) {
+        if (dir == null || !Files.isDirectory(dir) || !hasJarPattern()) {
             return List.of();
         }
         List<Path> jars = new ArrayList<>();
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, DBSERVER_JAR_PATTERN)) {
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, jarPattern)) {
             stream.forEach(jars::add);
-        } catch (IOException ignored) {
+        } catch (IOException | RuntimeException ignored) {
+            // 模式已在 ServerConfiguration 里校验过；这里兜底，坏目录/坏模式一律视为"没找到"
             return List.of();
         }
         jars.sort(Comparator.comparing(Path::toString).reversed());

@@ -90,19 +90,19 @@ class JLineLineSourceHistoryTest {
             reader.getHistory().save();   // 没有配置历史文件时必须是空操作，不能抛
             assertEquals(1, reader.getHistory().size());
         }
-        assertFalse(Files.exists(notADirectory.resolve(".slackerdb")),
+        assertFalse(Files.exists(notADirectory.resolve(".dbcli")),
                 "降级路径不该尝试创建目录");
     }
 
     @Test
-    @DisplayName("默认历史文件是 ~/.slackerdb/dbcli.history")
+    @DisplayName("默认历史文件是 ~/.dbcli/history")
     void defaultHistoryFileLivesUnderTheHomeDirectory(@TempDir Path dir) throws Exception {
         String previousHome = System.getProperty("user.home");
         try {
             System.setProperty("user.home", dir.toString());
             Path history = JLineLineSource.defaultHistoryFile();
 
-            assertEquals(dir.resolve(".slackerdb").resolve("dbcli.history"), history);
+            assertEquals(dir.resolve(".dbcli").resolve("history"), history);
             assertTrue(Files.isDirectory(history.getParent()), "目录应当被建出来");
         } finally {
             System.setProperty("user.home", previousHome);

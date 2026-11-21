@@ -138,6 +138,11 @@ public class DBInstance {
     // DuckDB的数据库连接池
     public DBDataSourcePool dbDataSourcePool = null;
 
+    // Admission gate for data-service API queries (0 = unlimited).
+    private QueryConcurrencyGate apiQueryGate = null;
+    // Admission gate for SQL REPL statements (0 = unlimited); independent from the API gate.
+    private QueryConcurrencyGate replQueryGate = null;
+
     // SQL/API 历史记录队列的容量
     public static final int HISTORY_QUEUE_CAPACITY = 10 * 1000;
 
@@ -1024,6 +1029,10 @@ public class DBInstance {
         // 加载数据库的配置信息
         serverConfiguration = pServerConfiguration;
 
+        // Admission gate for data-service API queries (0 = unlimited).
+        this.apiQueryGate = new QueryConcurrencyGate(serverConfiguration.getMax_api_concurrent_queries());
+        this.replQueryGate = new QueryConcurrencyGate(serverConfiguration.getMax_repl_concurrent_queries());
+
         // 设置消息语言集
         resourceBundle = ResourceBundle.getBundle("message", serverConfiguration.getLocale());
 
@@ -1043,6 +1052,16 @@ public class DBInstance {
             throw new ServerException("Instance name is too long(>255). Invalid instance name [" + instanceName + "]");
         }
         this.instanceName = instanceName;
+    }
+
+    /** Admission gate for data-service API queries; disabled when the limit is 0. */
+    public QueryConcurrencyGate getApiQueryGate() {
+        return apiQueryGate;
+    }
+
+    /** Admission gate for SQL REPL statements; disabled when the limit is 0. */
+    public QueryConcurrencyGate getReplQueryGate() {
+        return replQueryGate;
     }
 
     public synchronized void start(org.slf4j.Logger appLogger) throws ServerException {

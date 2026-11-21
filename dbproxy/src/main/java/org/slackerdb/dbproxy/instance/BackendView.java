@@ -38,10 +38,6 @@ public record BackendView(
         return source == BackendSource.MANAGEMENT;
     }
 
-    public boolean routable() {
-        return state.routable() && pgPort > 0;
-    }
-
     public static BackendView management(ObservedInstance instance) {
         return new BackendView(instance.alias(), BackendSource.MANAGEMENT, instance.state(),
                 instance.dataName(), instance.pid(), instance.pgPort(), instance.mgmtPort(),

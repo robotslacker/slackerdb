@@ -2,7 +2,9 @@ package org.slackerdb.dbcli.job;
 
 import org.slackerdb.dbcli.common.CommandOutcome;
 import org.slackerdb.dbcli.common.UserNumber;
+import org.slackerdb.dbcli.engine.VariableResolver;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -50,8 +52,9 @@ import java.util.Map;
  * 而**其余** {@code k=v} 变成的脚本变量仍然区分大小写。</p>
  *
  * <p><b>作业的执行层</b>由 {@code _JOB CREATE … mode=<thread|process>} 决定（缺省 {@code thread}）：
- * 线程模式与任意深度的作业共享同一个 {@link JobManager}，{@code _JOB TIMER} 因此能唤醒作业脚本里的
- * {@code _JOB WAIT TIMER:…}（零 IPC）；进程模式下同一件事由 SQLite 同步库完成（跨进程）。
+ * 两种模式都把注册表、状态、停止意图与定时点写进**同一个 SQLite 作业库**；线程作业与同进程的
+ * 进程作业共享一个管理器/库文件，进程作业的子进程通过环境变量加入同一次运行。
+ * 因此 {@code _JOB TIMER} 能唤醒任意深度作业脚本里的 {@code _JOB WAIT TIMER:…}。
  * 两种模式下 {@code SHOW} 的 {@code thread} 列都表示"作业的运行身份"：线程模式是线程名
  * （{@code dbcli-job-<作业名>}），进程模式是 {@code pid <n>}，未启动时为空。</p>
  */
@@ -67,8 +70,21 @@ public final class JobCommandDispatcher {
         return manager;
     }
 
-    /** 执行一条 {@code _JOB} 命令。 */
+    /** 执行一条 {@code _JOB} 命令（兼容旧调用：定义目录取管理器的 WORK）。 */
     public List<CommandOutcome> execute(Map<String, Object> ir) {
+        return execute(ir, null);
+    }
+
+    /** 执行一条 {@code _JOB} 命令；{@code scriptDirectory} 是定义它的脚本所在目录。 */
+    public List<CommandOutcome> execute(Map<String, Object> ir, Path scriptDirectory) {
+        return execute(ir, scriptDirectory, null);
+    }
+
+    /**
+     * @param parentVariables 父 job 的变量作用域；{@code _JOB CREATE/START} 用它给子 job 拍 SESSION 快照
+     */
+    public List<CommandOutcome> execute(Map<String, Object> ir, Path scriptDirectory,
+                                        VariableResolver parentVariables) {
         List<CommandOutcome> outcomes = new ArrayList<>();
         String action = String.valueOf(ir.get("action"));
         try {
@@ -83,17 +99,19 @@ public final class JobCommandDispatcher {
                 }
                 case "create" -> {
                     String name = requireText(ir, "jobName");
-                    manager.create(name, parameters(ir));
+                    manager.create(name, parameters(ir), scriptDirectory,
+                            parentVariables == null ? Map.of() : parentVariables.sessionSnapshot());
                     outcomes.add(status("Job [" + name + "] created."));
                 }
                 case "set" -> {
                     String name = requireText(ir, "jobName");
-                    manager.setParameters(name, parameters(ir));
+                    manager.setParameters(name, parameters(ir), scriptDirectory);
                     outcomes.add(status("Job [" + name + "] parameters updated."));
                 }
                 case "start" -> {
                     String name = requireText(ir, "jobName");
-                    manager.start(name);
+                    manager.start(name,
+                            parentVariables == null ? null : parentVariables.sessionSnapshot());
                     outcomes.add(status("Job [" + name + "] started."));
                 }
                 case "wait" -> wait(ir, outcomes);

@@ -24,12 +24,15 @@ import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
@@ -962,13 +965,15 @@ public class CopyDoneRequest extends PostgresRequest {
                     // 每个表列一个写入器：按 DuckDB 列类型名构造一次，逐行复用。
                     // 块 Appender 不做隐式转换，文本 -> Java 值的解析全部由写入器负责。
                     List<String> copyTableDbColumnType = session.copyTableDbColumnType;
+                    ZoneId copySessionZone = copySessionZone(session);
                     int mappedColumnCount = copyTableDbColumnMapPos.size();
                     CopyValueWriters.ColumnWriter[] columnWriters =
                             new CopyValueWriters.ColumnWriter[mappedColumnCount];
                     for (int i = 0; i < mappedColumnCount; i++) {
                         if (copyTableDbColumnMapPos.get(i) != -1) {
                             try {
-                                columnWriters[i] = CopyValueWriters.writer(copyTableDbColumnType.get(i));
+                                columnWriters[i] = CopyValueWriters.writer(
+                                        copyTableDbColumnType.get(i), copySessionZone);
                             }
                             catch (SQLException unsupportedType) {
                                 // 类型名识别不了（例如需要扩展的类型）：在任何数据写入之前快速失败
@@ -1159,5 +1164,18 @@ public class CopyDoneRequest extends PostgresRequest {
         // 取消会话的开始时间，以及业务类型
         resetSessionExecutionState(ctx);
         out.close();
+    }
+
+    /** 读取当前 DuckDB 会话时区；取不到时退回服务端 JVM 默认（不让 COPY 因此失败）。 */
+    private static ZoneId copySessionZone(DBSession session) {
+        try (Statement statement = session.dbConnection.createStatement();
+             ResultSet row = statement.executeQuery("select current_setting('TimeZone')")) {
+            if (row.next()) {
+                return ZoneId.of(row.getString(1));
+            }
+        } catch (SQLException | DateTimeException ignored) {
+            // 会话没有可用时区信息：退回到与旧行为一致的 JVM 默认
+        }
+        return ZoneId.systemDefault();
     }
 }

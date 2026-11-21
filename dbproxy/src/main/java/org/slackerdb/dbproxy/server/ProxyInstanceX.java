@@ -15,11 +15,7 @@ import org.slackerdb.dbproxy.instance.InstanceException;
 import org.slackerdb.dbproxy.instance.InstanceSpec;
 import org.slackerdb.dbproxy.instance.ObservedInstance;
 import org.slf4j.LoggerFactory;
-import org.springframework.core.io.ClassPathResource;
 
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -360,21 +356,13 @@ public class ProxyInstanceX {
         Logger javalinLogger = (Logger) LoggerFactory.getLogger("io.javalin.Javalin");
         Logger jettyLogger = (Logger) LoggerFactory.getLogger("org.eclipse.jetty");
 
-        ClassPathResource page404Resource = new ClassPathResource("web/404.html");
-
         if (!this.logger.getLevel().equals(Level.TRACE)) {
             javalinLogger.setLevel(Level.OFF);
             jettyLogger.setLevel(Level.OFF);
         }
         this.managementApp = Javalin
-                .create(config -> {
-                    config.staticFiles.add(staticFiles -> {
-                        staticFiles.hostedPath = "/web";
-                        staticFiles.directory = "/web";
-                        staticFiles.location = io.javalin.http.staticfiles.Location.CLASSPATH;
-                    });
-                    config.bundledPlugins.enableCors(cors -> cors.addRule(corsConfig -> corsConfig.anyHost()));
-                })
+                .create(config -> config.bundledPlugins.enableCors(
+                        cors -> cors.addRule(corsConfig -> corsConfig.anyHost())))
                 .start(serverConfiguration.getBindHost(), serverConfiguration.getPortX());
 
         this.managementApp.unsafe.routes.before(ctx ->
@@ -408,14 +396,17 @@ public class ProxyInstanceX {
                     ctx.method(), ctx.path(), this.getClientIp(ctx), ctx.status(), duration);
         });
 
-        // 404 兜底页面。注意：转发层会主动写 JSON 404，这里不能覆盖已有的响应体
-        // （Javalin 的 error handler 对 handler 主动设置的 404 也会触发）。
+        // 404 兜底：管理口只提供 API，不再有任何 HTML 页面（Web UI 统一由 dbdesk 负责）。
+        // 转发层会主动写 JSON 404，这里不能覆盖已有的响应体。
         this.managementApp.unsafe.routes.error(404, ctx -> {
             String existing = ctx.result();
             if (existing != null && !existing.isEmpty()) {
                 return;
             }
-            ctx.html(readResource(page404Resource));
+            JSONObject body = new JSONObject();
+            body.put("retCode", 404);
+            body.put("retMsg", "Nothing is served at [" + ctx.path() + "].");
+            ctx.status(404).json(body);
         });
 
         this.managementApp.unsafe.routes.exception(Exception.class, (e, ctx) -> {
@@ -428,14 +419,6 @@ public class ProxyInstanceX {
                 serverConfiguration.getBindHost(), serverConfiguration.getPortX());
         logger.info("[PROXY][STARTUP    ] Instance management is {}.",
                 proxyInstance.isInstanceManagementEnabled() ? "enabled" : "disabled (data_dir is not set)");
-    }
-
-    private static String readResource(ClassPathResource resource) {
-        try {
-            return Files.readString(Path.of(resource.getURI()), StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            return "<html><body><h1>404 Not Found</h1></body></html>";
-        }
     }
 
     public void stop() {

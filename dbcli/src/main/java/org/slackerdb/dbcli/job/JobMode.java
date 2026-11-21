@@ -7,10 +7,11 @@ import java.util.Locale;
  *
  * <p>两种取值不是"哪个更高级"，而是**取舍不同**：</p>
  * <ul>
- *   <li>{@link #THREAD}（**默认**）：作业 = 同一 JVM 里的一个 daemon 线程。父子共享一个
- *       {@link JobManager}，定时点直接是进程内闸门，会合**零 IPC**；代价是"强杀"只能协作式；</li>
+ *   <li>{@link #THREAD}（**默认**）：作业 = 同一 JVM 里的一个 daemon 线程。编排状态与定时点
+ *       都落在同一个 SQLite 作业库里，跨线程与跨进程用同一套语义；代价是"强杀"只能协作式；</li>
  *   <li>{@link #PROCESS}：作业 = 一个独立 JVM 进程（再起一个 dbcli 跑同一份脚本）。隔离硬、
- *       超时能 OS 级强杀；跨进程的会合靠 SQLite 同步库（见 {@code rendezvous.SqliteRendezvous}）。</li>
+ *       超时能 OS 级强杀；跨进程的会合与状态共享由同一个作业库完成
+ *       （见 {@code job.SqliteJobStore}）。</li>
  * </ul>
  */
 public enum JobMode {

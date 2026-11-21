@@ -618,9 +618,13 @@ public class ProxyInstance {
             InstanceProbe probe = new InstanceProbe();
             this.instanceRegistry = new InstanceRegistry(instanceRoot, new InstanceScanner(probe));
             this.instanceController = new InstanceController(instanceRoot, this.instanceRegistry, probe,
-                    new InstanceLauncher(), this.logger);
+                    new InstanceLauncher(serverConfiguration.getDbserver_Jar()), this.logger);
             this.instanceRegistry.start();
             logger.info("[PROXY][STARTUP    ] Instance management enabled. data_dir={}", instanceRoot);
+            if (!serverConfiguration.isDbserverJarConfigured()) {
+                logger.warn("[PROXY][STARTUP    ] 'dbserver_jar' is not configured: creating new instances "
+                        + "is disabled. Existing instances can still be listed, stopped and destroyed.");
+            }
         } else {
             logger.info("[PROXY][STARTUP    ] Instance management disabled (data_dir is not set).");
         }

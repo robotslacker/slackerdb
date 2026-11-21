@@ -74,7 +74,7 @@ dbcli>
 
 === 3.2 命令行历史
 
-控制台的历史跨会话保存在 `~/.slackerdb/dbcli.history`：启动时读入，上下键能翻到之前敲过的语句，退出时写回。
+控制台的历史跨会话保存在 `~/.dbcli/history`：启动时读入，上下键能翻到之前敲过的语句，退出时写回。脚本/批处理不创建、不读取历史。
 
 == 4. 命令行选项
 
@@ -87,16 +87,49 @@ dbcli>
 | `--var NAME=VALUE` | 定义脚本变量，可重复；供 `${名字}` 取值
 | `--profile <脚本>` | 在主脚本/控制台**之前**执行该脚本，可重复，按给定顺序
 | `--silent` | 完全静默：终端上什么都不打印，只留退出码（日志等文件产物照常写）
-| `--logfile <文件>` | 把本次运行写进文件：被执行语句的原文 + 与终端相同的数据/状态输出
+| `--home_dir <目录>`、`--home-dir <目录>` | 代码目录（只读）；默认当前目录；环境变量 `DBCLI_HOME`
+| `--work_dir <目录>`、`--work-dir <目录>` | 可写工作目录，**启动时清空**；默认 `<java.io.tmpdir>/dbcli-<pid>`；环境变量 `DBCLI_WORK`
+| `--output_dir <目录>`、`--output-dir <目录>` | 可写输出目录，**只在本次运行真要往里写时才创建**；启动时已存在则清空；默认 `<HOME>/output`；环境变量 `DBCLI_OUTPUT`
+| `--logfile <文件>` | 把本次运行写进文件：被执行语句的原文 + 与终端相同的数据/状态输出（相对路径按 OUTPUT）
 | `--reference <文件>`、`--ref <文件>` | 把本次运行的数据输出与参考文件逐行比对（**ref 必须已存在**）
-| `--report-dir <目录>` | `--ref` 产物写进该目录（默认与 work 文件同目录）
+| `--report-dir <目录>` | `--ref` 产物写进该目录（默认 `OUTPUT/ref`；相对路径按 OUTPUT）
 | `--daemon <布尔>` | 把脚本放到后台跑；裸写 `--daemon` 等价 `true`
-| `--pidfile <文件>` | 执行脚本的进程把自己的 pid 写进去。**后台副本退出后保留该文件**（父进程要靠它报出 pid），拿里面的 pid 判断副本还在不在；前台运行退出时删掉
+| `--pidfile <文件>` | 执行脚本的进程把自己的 pid 写进去（相对路径按 WORK）。**后台副本退出后保留该文件**（父进程要靠它报出 pid），拿里面的 pid 判断副本还在不在；前台运行退出时删掉
 | `-h`、`--help` | 列出选项后退出
 | `-V`、`--version` | 打印版本与构建时间后退出
 |===
 
-**脚本里**的相对路径以 `--execute <文件>` 所在目录为参照（stdin 与控制台用进程当前目录）；命令行选项一律按进程当前目录解析。
+**路径规则。** `HOME` 是只读代码目录；`WORK` 与 `OUTPUT` 是单次运行的工作/输出目录。`WORK` 由每次 root
+启动时创建并清空（作业/daemon 子进程不清空）。`OUTPUT` **按需创建**：本次运行没有往它写东西
+（`--logfile`、`--ref`、`_compare`、`_job`）时，磁盘上不会多出 `output/`、`output/ref/` 这类目录；
+root 启动时它已存在则照旧加锁并清空。相对脚本名：入口/`--profile` 为 **WORK → HOME**；`_start` 与作业
+`script=`/`profile=` 为 **WORK → 调用脚本所在目录 → HOME**。相对输入用同样的查找。相对写路径按角色根
+（`--logfile`/`--report-dir` → OUTPUT；`_spool`/`--pidfile`/SFTP get → WORK）；绝对写路径原样使用。
+`_compare` 产物是 `OUTPUT/<目标基名>.dif|.suc|.html`。
+
+=== 4.1 对外公开的环境变量
+
+[cols="1,3",options="header"]
+|===
+| 变量 | 含义
+
+| `DBCLI_HOME` | 代码目录；命令行 `--home_dir` 优先。默认当前目录。
+| `DBCLI_WORK` | 工作目录，root 启动时清空；命令行 `--work_dir` 优先。默认 `<java.io.tmpdir>/dbcli-<pid>`。
+| `DBCLI_OUTPUT` | 输出目录，按需创建；root 启动时已存在则清空；命令行 `--output_dir` 优先。默认 `<DBCLI_HOME>/output`。
+| `SLACKERDB_LOGON` | 未给 `--logon` 时的默认连接串。
+|===
+
+**启动器变量**（由 `bin/dbcli.sh` / `bin/dbcli.bat` 读取，不是 dbcli 进程读取）：
+`SLACKERDB_JAVA_HOME`（JDK 目录，优先于 `JAVA_HOME`）、`JAVA_HOME`（兜底 JDK 目录）、
+`DBCLI_JAVA_OPTS`（追加的 JVM 参数）、`PATH`（查找 `java`；`_host` 子进程也会继承）。
+
+**JVM/OS 提供的变量**（不属于 dbcli）：`SHELL`（POSIX daemon 的 shell）、`HOME` / `USERPROFILE`
+（JVM `user.home`，`~/.dbcli/history` 与旧 profiles 只读路径使用）、`TMPDIR` / `TEMP` / `TMP`
+（JVM `java.io.tmpdir`，默认 WORK 的父目录）。
+
+另外，`${name}` 会兜底读取**任意同名环境变量**（`_ASSERT ENV.name` 也显式读取），`_host` 会继承
+整个环境；这些名字由使用者定义，不属于 dbcli 自有变量，因此不逐项列出。内部子进程标记属于私有
+实现细节，不是公开接口，不在本文档展开。
 
 == 5. 连接数据库
 
@@ -168,7 +201,7 @@ select version();
 * `_LOOP BREAK|CONTINUE`
 * `_ENDLOOP`
 * `_SESSION SAVE|RESTORE|RELEASE|SAVEURL|SHOW <name>`
-* `_SET @name <value>`
+* `_SET [LOCAL|SESSION|GLOBAL] @name <value>`
 * `_SET ECHO ON|OFF`
 * `_SET FEEDBACK ON|OFF`
 * `_SET TERMOUT ON|OFF`
@@ -272,7 +305,7 @@ _compare RESET                   # 回到默认值并清空全部规则
 * 选项：`CASE` / `NOCASE`（默认区分大小写）、`TRIM` / `NOTRIM`（默认不剥离首尾空白）、
   `MASK` / `NOMASK`（默认关；打开后把参考行当正则对工作行做整行匹配）、
   `IGBLANK` / `NOIGBLANK`（默认关；打开后空行不参与比较）。
-* 有差异写 `<目标文件去扩展名>.dif`，一致则写 `<目标文件去扩展名>.suc`。
+* 有差异写 `OUTPUT/<目标文件去扩展名>.dif`，一致则写 `OUTPUT/<目标文件去扩展名>.suc`。
   例：`_compare work.txt ref.txt` → `work.dif`，或（一致时）`work.suc`。
 * `_set diff_report_html on`（默认 off）时，有差异会另外写一份 `.html`。
 * 行规则声明即生效：`MASKLINE "<正则>" => "<替换>"` 替换命中内容，`SKIPLINE "<正则>"` 丢弃整行匹配的行，
@@ -296,11 +329,20 @@ _set colwidth 40        # 单元格最多多少显示列，超出用 ... 截断�
 _set diff_report_html on  # _compare 有差异时另外写 HTML（默认 off）
 _set autocommit off     # 切换 JDBC autocommit（默认 on）
 _set timeout 30         # 单条语句的服务端超时秒数（默认 0 = 不限）
-_set @name value        # 定义脚本变量（与 --var 同一种；未定义时取同名环境变量）
+_set @name value        # LOCAL 变量（默认；只当前 job/脚本可见）
+_set LOCAL @name value  # 同 _set @name
+_set SESSION @name value # 当前 job 及其 fork/派生 job；不影响父/并行 job
+_set GLOBAL @name value  # 同一 WORK 内所有 job/进程（SQLite 文件同步）
 ----
 
 `echo`、`feedback`、`termout`、`autocommit`、`looptrace` 默认 `on`，`timing`、`time`、`diff_report_html` 默认 `off`；
 开关只接受 `on` / `off`。
+
+变量作用域优先级为 **LOCAL > SESSION > GLOBAL > `--var`**。`_set @name` / `_set LOCAL @name` 只影响
+当前 job，不传给 fork 出来的 job。`_set SESSION` 在 fork（`_JOB CREATE`/`_JOB START`）时做快照；
+子 job 的修改不回传父 job 或并行 job。`_set GLOBAL` 写 `WORK/.dbcli/global-vars.db`，
+同一 WORK 内的线程/进程 job（含父子）都能读到；子进程写 GLOBAL，父进程下一次取变量即可见。
+作用域只适用于变量；`_set GLOBAL ECHO OFF` 会报错。
 
 * `echo`：日志里记不记"跑了什么"（被执行语句的原文）。控制台的日志是整段会话的转录。
 * `feedback`：打不打摘要与错误（`N rows selected.`、`Not connected.` 这类）。关掉不影响错误计数与退出码。
@@ -325,7 +367,7 @@ echo off
 `_echo @名字` 是同一块的**捕获形态**：块内各行按数据存入脚本变量（变量仍会展开），不打印；
 `_api` 的 `bodyvar=名字` 用它作为多行请求体。空块捕获成空串；名字非法会报可读错误。
 
-`_SPOOL` 必须带文件名或 `OFF`；`OFF` 是关键字，要输出到名字真的叫 `off` 的文件请写路径（`_spool ./off`）。
+`_SPOOL` 必须带文件名或 `OFF`；相对名写进 **WORK**（绝对路径原样）。`OFF` 是关键字，要输出到名字真的叫 `off` 的文件请写路径（`_spool ./off`）。
 
 === 7.7 `_start`
 
@@ -335,8 +377,7 @@ _start child.sql              # 串行执行另一个脚本
 _start child.sql arg1 arg2    # 传参数：${ARGV1}、${ARGV2} …
 ----
 
-子脚本与调用方共享会话状态（连接、变量、`_set` 选项、spool）。相对脚本名先在工作目录里找，
-再在当前脚本所在目录里找；嵌套上限 16 层。
+子脚本与调用方共享会话状态（连接、变量、`_set` 选项、spool）。相对脚本名按 **WORK → 调用脚本所在目录 → HOME** 查找；嵌套上限 16 层。
 
 === 7.8 `_whenever`
 
@@ -385,6 +426,11 @@ _job jobmanager off                             # 停止接受新作业
 * `mode=thread`（默认）跑在同一 JVM 的线程里；`mode=process` 是独立的 dbcli 进程（可以硬超时、杀进程树）。
 * `timeout=` 到点只表示"这次没等到"（作业继续跑、仍是 `RUNNING`），要收掉它得显式 `abort` / `shutdown`。
 * 每个作业写一个输出文件 `<作业名>.out`（stdout + stderr），`_job wait` 返回时可以读。
+* 共享协调库是 `WORK/dbcli_log.db`；即使完全不用 `_job`，每次运行也会创建它；正常关闭**不删除**，
+  由下一次 root 启动清空 WORK 时回收。
+* 审计：每次作业执行结束都会向该库的 `job_audit` 追加一行：`pid`、`script_name`、`started_at_ms`、
+  `finished_at_ms`、`state`、`exit_code`（另有 scope/作业名/mode/failure）。`mode=process` 记真正的
+  子进程 PID；线程作业记当前 dbcli 进程 PID；重复运行各追加一行。
 * `_job show` 不带名字时列出管理器里的**全部**作业（含已结束），按 `name` 排序；没有作业时只有表头。
 * `_job abort` / `_job shutdown` 是**请求**停止：作业正常响应时立即进入 `ABORTED` / `SHUTDOWN`；
   作业暂时没有响应时状态保持 `RUNNING`（`_job show` 如实显示），并在它真正结束后落到对应终态。
@@ -592,7 +638,8 @@ _start child.sql AAA 123        # 子脚本里 ${ARGV1}=AAA、${ARGV2}=123
 | `<工作文件去扩展名>.dif` | 有差异 | 与 `_compare` 的 `.dif` 同一种格式
 |===
 
-`--report-dir <目录>` 指定这两个产物的目录（默认与 work 文件同目录）。首次录制参考文件：
+`--report-dir <目录>` 指定这两个产物的目录（默认 `OUTPUT/ref`；相对路径按 OUTPUT）。没有 `--logfile`
+时，`--ref` 的 log 写到 `OUTPUT/logs/<脚本基名>.log`。首次录制参考文件：
 
 [source,bash]
 ----

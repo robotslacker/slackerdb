@@ -3,6 +3,7 @@ package org.slackerdb.common.utils;
 import org.slf4j.Logger;
 
 import java.io.File;
+import java.lang.management.ManagementFactory;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -274,8 +275,37 @@ public final class AppDaemon {
      * @param jarPath 可执行 jar 的路径；null 表示开发模式（无法转后台）
      * @return 前景命令；开发模式返回 null
      */
+    /**
+     * JVM flags of the current process that a daemon child must keep.
+     *
+     * <p>Debug-agent flags are dropped: reusing a JDWP port in the child would fail to bind
+     * and the daemon would exit immediately. Everything else ({@code -Xmx}, {@code -XX},
+     * {@code -Xlog}, {@code -D...}) is carried over so the daemon is sized and configured
+     * exactly like the launcher process.</p>
+     */
+    static List<String> inheritableJvmArguments() {
+        List<String> result = new ArrayList<>();
+        for (String argument : ManagementFactory.getRuntimeMXBean().getInputArguments()) {
+            String lower = argument.toLowerCase(Locale.ROOT);
+            if (lower.startsWith("-agentlib:jdwp") || lower.startsWith("-xrunjdwp")) {
+                continue;
+            }
+            result.add(argument);
+        }
+        return result;
+    }
+
     static List<String> buildForegroundCommand(String jarPath, String subCommand,
                                                List<Option> options) {
+        return buildForegroundCommand(jarPath, subCommand, options, inheritableJvmArguments());
+    }
+
+    /**
+     * Same as above but with an explicit JVM flag list, so callers/tests can control exactly
+     * what the daemon child inherits.
+     */
+    static List<String> buildForegroundCommand(String jarPath, String subCommand,
+                                               List<Option> options, List<String> jvmArguments) {
         if (jarPath == null) {
             return null;
         }
@@ -285,6 +315,12 @@ public final class AppDaemon {
 
         List<String> foreground = new ArrayList<>();
         foreground.add(javaExecutable);
+        // JVM flags (-Xmx/-XX/-Xlog/...) are process-level and are NOT part of the app
+        // argument list, so a plain re-exec would silently drop them and the daemon child
+        // would run with the JVM default heap. Carry them over explicitly.
+        if (jvmArguments != null) {
+            foreground.addAll(jvmArguments);
+        }
         foreground.add("-jar");
         foreground.add(jarPath);
 
@@ -324,13 +360,12 @@ public final class AppDaemon {
      * @param subCommand    子命令
      * @param options       有序选项（已经剥掉 {@code --daemon}）
      * @param logTarget     日志落盘目标，仅用于提示；可为 null（表示只写控制台）
-     * @param logOptionName 日志选项名（如 {@code log}），仅用于提示；可为 null
      * @param logger        用于记录启动信息的 logger；可为 null（此时只打印到控制台）
      * @return true 表示后台副本已启动（调用方应当立即退出）；false 表示开发模式，调用方应继续前台运行
      * @throws Exception 启动后台进程失败
      */
     public static boolean startInBackground(Class<?> anchor, String subCommand, List<Option> options,
-                                            String logTarget, String logOptionName,
+                                            String logTarget,
                                             Logger logger) throws Exception {
         List<String> command = buildDaemonCommand(anchor, subCommand, options);
         if (command == null) {
@@ -349,19 +384,9 @@ public final class AppDaemon {
 
         OSUtil.launchDaemon(command.toArray(new String[0]));
 
-        // 直接打到启动终端：日志可能已经只写文件了，但"父进程已退出、后台副本在跑"这件事用户必须看得见。
-        //
-        // 这里刻意<b>不打印 pid</b>：Windows 上后台副本是经 {@code cmd /c start} 拉起来的，
-        // 拿到的是那个中间 shell 的 pid，不是真正干活的那个 java 进程；把它当"服务 pid"报出去
-        // 只会误导（用它去 stop/kill 会打错目标）。真正的服务 pid 由 {@code --pid} 文件提供，
-        // 由副本自己写入。
+        // 控制台上显只显示启动信息
         String logDesc = logTarget == null || logTarget.isBlank() ? "CONSOLE" : logTarget;
         System.out.println("Daemon started in background (log: " + logDesc + ").");
-        if (logTarget == null || logTarget.isBlank()) {
-            // 这一条是"提醒"，属于诊断信息 -> stderr（"副本已经起来"那句状态行才是命令产物，留 stdout）
-            System.err.println("Warn: --" + (logOptionName == null ? "log" : logOptionName)
-                    + " was not given; background output stays on this console and may be lost when it closes.");
-        }
         if (logger != null) {
             logger.info("[DAEMON] Daemon started in background (log:{})."
                     + " Check the --pid file for the service pid.", logDesc);

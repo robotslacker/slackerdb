@@ -1,0 +1,42 @@
+version: 1
+
+defaults:
+  batch:
+    maxRows: 100
+  snapshot:
+    mode: replace
+    fetchSize: 100
+
+connections:
+  pg_main:
+    type: postgres
+    url: jdbc:postgresql://127.0.0.1:5432/appdb
+    username: sync_user
+    password: secret
+    replication:
+      statusIntervalMs: 5000
+
+targets:
+  duck_local:
+    schema: sync
+
+jobs:
+  - name: pg_orders
+    source: pg_main
+    target: duck_local
+    mode: snapshot+cdc
+    autoStart: true
+    replication:
+      publication: sdb_pub_pg_orders
+      slot: sdb_slot_pg_orders
+    tables:
+      include:
+        - match: "public.orders"
+          target: "orders"
+          primaryKey: [id]
+          columns:
+            exclude: [internal_note]
+            rename:
+              order_no: order_number
+            constants:
+              _source: pg_main
