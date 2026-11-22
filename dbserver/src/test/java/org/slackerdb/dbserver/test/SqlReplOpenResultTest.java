@@ -92,6 +92,18 @@ class SqlReplOpenResultTest {
         }
     }
 
+    @Test
+    void zeroMaxExecutionTimeMeansUnlimited() throws Exception {
+        try (WsClient client = new WsClient(wsPort)) {
+            String sid = client.start();
+            String taskId = client.exec(sid, "SELECT 5 AS answer", 0);
+            JSONObject result = client.fetchUntilSettled(sid, taskId);
+            assertEquals("completed", result.getJSONObject("data").getString("status"), result.toString());
+            assertEquals(5, result.getJSONObject("data").getJSONArray("rows")
+                    .getJSONObject(0).getIntValue("answer"));
+        }
+    }
+
     // ---------------------------------------------------------------- ws client
 
     static final class WsClient implements WebSocket.Listener, AutoCloseable {

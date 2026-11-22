@@ -213,6 +213,30 @@ public class APIService {
         }
     }
 
+    /** Milliseconds left before the request deadline; {@code null} means no explicit deadline. */
+    static Long remainingMillis(Long deadlineNanos) {
+        if (deadlineNanos == null) {
+            return null;
+        }
+        return TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime());
+    }
+
+    /**
+     * How long a cache-refresh follower may wait: never past the request deadline, and never
+     * longer than the single-flight cap. This is what keeps "refresh wait + queue + execute"
+     * inside one budget.
+     */
+    static long refreshWaitMs(Long deadlineNanos) {
+        Long remaining = remainingMillis(deadlineNanos);
+        if (remaining == null) {
+            return CACHE_REFRESH_WAIT_TIMEOUT_MS;
+        }
+        if (remaining <= 0) {
+            return 1L;
+        }
+        return Math.min(CACHE_REFRESH_WAIT_TIMEOUT_MS, remaining);
+    }
+
     private static void respondFailure(Context ctx, DBServiceDefinition service, String message) {
         ctx.attribute("cached", false);
         ctx.attribute("affectedRows", -1);
@@ -236,19 +260,26 @@ public class APIService {
      *                           不下发 {@code SET SESSION}，连接跟随服务器 GLOBAL 设置
      */
     private static RefreshOutcome executeQuery(DBDataSourcePool dbDataSourcePool,
-                                               QueryConcurrencyGate gate, long gateWaitMs,
-                                               String userSearchPath, String sql,
-                                               Long maxExecutionTimeMs)
+                                               QueryConcurrencyGate gate,
+                                               Long deadlineNanos,
+                                               Long maxExecutionTimeMs,
+                                               String userSearchPath, String sql)
             throws SQLException, InterruptedException {
         boolean gateHeld = false;
         Connection conn = null;
         try {
-            long gateStart = System.nanoTime();
-            gateHeld = gate != null && gate.tryAcquire(gateWaitMs);
+            Long beforeGateMs = remainingMillis(deadlineNanos);
+            if (beforeGateMs != null && beforeGateMs <= 0) {
+                throw new QueryBusyException(
+                        "Server busy: request budget exhausted before execution, retry later.");
+            }
+            long gateWaitMs = beforeGateMs == null
+                    ? gate.getWaitMs()
+                    : Math.min(gate.getWaitMs(), beforeGateMs);
+            gateHeld = gate.tryAcquire(gateWaitMs);
             if (!gateHeld) {
                 throw new QueryBusyException("Server busy: too many concurrent queries, retry later.");
             }
-            long waitedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - gateStart);
             conn = dbDataSourcePool.getConnection();
             // 把查询路径指向默认数据库
             try (Statement stmt = conn.createStatement()) {
@@ -256,15 +287,22 @@ public class APIService {
             }
             // 只有用户显式设置了（服务定义或请求头）才下发会话级覆盖：
             // 连接归还时连接池会 RESET，因此未显式设置时它自然跟随 GLOBAL。
-            // 排队时间计入请求预算：客户端拿到的是"端到端 maxExecutionTime"，不是"执行 60s + 排队 30s"。
+            // 预算是端到端的：这里剩下的时间才允许用于执行。
             if (maxExecutionTimeMs != null) {
-                long remainingMs = QueryConcurrencyGate.remainingBudgetMs(maxExecutionTimeMs, waitedMs);
-                if (remainingMs <= 0) {
-                    throw new QueryBusyException(
-                            "Server busy: request budget exhausted while queued, retry later.");
+                long value;
+                if (maxExecutionTimeMs > 0) {
+                    Long remainingMs = remainingMillis(deadlineNanos);
+                    if (remainingMs == null || remainingMs <= 0) {
+                        throw new QueryBusyException(
+                                "Server busy: request budget exhausted while queued, retry later.");
+                    }
+                    value = remainingMs;
+                } else {
+                    // 显式 0 = 本次不限制（覆盖 GLOBAL）；必须下发 0，不能"不设置"
+                    value = 0L;
                 }
                 try (Statement stmt = conn.createStatement()) {
-                    stmt.execute("SET SESSION max_execution_time=" + remainingMs);
+                    stmt.execute("SET SESSION max_execution_time=" + value);
                 }
             }
             // 统一交给 SqlTextExecutor：
@@ -380,6 +418,11 @@ public class APIService {
         final Long effectiveMaxExecutionTime = requestMaxExecutionTime != null
                 ? requestMaxExecutionTime
                 : dbServiceDefinition.maxExecutionTime;
+        // 端到端预算：从请求进入开始计时，覆盖“缓存刷新等待 + 闸门排队 + 执行”。
+        // 0 表示不限制（与 max_execution_time=0 语义一致），null 表示未显式设置。
+        final Long requestDeadlineNanos = effectiveMaxExecutionTime != null && effectiveMaxExecutionTime > 0
+                ? System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(effectiveMaxExecutionTime)
+                : null;
 
         // snapshotLimit 取服务定义与请求头中更小的值
         if (snapshotLimit > dbServiceDefinition.snapshotLimit)
@@ -464,9 +507,6 @@ public class APIService {
         final String key = cacheKey;
         final long ttlMs = snapshotLimit;
         final QueryConcurrencyGate gate = apiQueryGate;
-        final long gateWaitMs = effectiveMaxExecutionTime != null && effectiveMaxExecutionTime > 0
-                ? Math.min(gate.getWaitMs(), effectiveMaxExecutionTime)
-                : gate.getWaitMs();
 
         // 执行数据库查询。
         //
@@ -478,12 +518,12 @@ public class APIService {
         try {
             if (key == null) {
                 // 未开启缓存：每个请求各自查询
-                outcome = executeQuery(dbDataSourcePool, gate, gateWaitMs, searchPath, executedSql, effectiveMaxExecutionTime);
+                outcome = executeQuery(dbDataSourcePool, gate, requestDeadlineNanos, effectiveMaxExecutionTime, searchPath, executedSql);
                 executedByCaller = true;
             } else {
                 SingleFlight.Result<RefreshOutcome> refreshed = queryResultCache.refresh(
                         key,
-                        CACHE_REFRESH_WAIT_TIMEOUT_MS,
+                        refreshWaitMs(requestDeadlineNanos),
                         () -> {
                             // 成为 leader 后再确认一次：极小概率下别的线程已经在上面的缓存检查
                             // 与本步之间完成刷新，这时直接复用，不再多打一次库。
@@ -491,7 +531,7 @@ public class APIService {
                             if (landed != null) {
                                 return new RefreshOutcome(landed, affectedRowsOf(landed.data()), false);
                             }
-                            RefreshOutcome loaded = executeQuery(dbDataSourcePool, gate, gateWaitMs, searchPath, executedSql, effectiveMaxExecutionTime);
+                            RefreshOutcome loaded = executeQuery(dbDataSourcePool, gate, requestDeadlineNanos, effectiveMaxExecutionTime, searchPath, executedSql);
                             if (loaded.entry() != null) {
                                 queryResultCache.put(key, loaded.entry());
                             }
@@ -502,7 +542,7 @@ public class APIService {
                 if (outcome.entry() == null && !executedByCaller) {
                     // 非结果集语句（UPDATE/INSERT 等）本来就不进缓存：等待者不能拿 leader 的
                     // 更新行数当作自己的结果，自己执行一次。
-                    outcome = executeQuery(dbDataSourcePool, gate, gateWaitMs, searchPath, executedSql, effectiveMaxExecutionTime);
+                    outcome = executeQuery(dbDataSourcePool, gate, requestDeadlineNanos, effectiveMaxExecutionTime, searchPath, executedSql);
                     executedByCaller = true;
                 }
             }
@@ -520,7 +560,7 @@ public class APIService {
             logger.warn("[SERVER-API] Timed out after {} ms waiting for cache refresh, querying directly. key={}",
                     CACHE_REFRESH_WAIT_TIMEOUT_MS, key);
             try {
-                outcome = executeQuery(dbDataSourcePool, gate, gateWaitMs, searchPath, executedSql, effectiveMaxExecutionTime);
+                outcome = executeQuery(dbDataSourcePool, gate, requestDeadlineNanos, effectiveMaxExecutionTime, searchPath, executedSql);
                 executedByCaller = true;
             } catch (Exception e) {
                 logger.trace("[SERVER-API] Query failed: ", e);

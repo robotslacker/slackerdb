@@ -21,7 +21,7 @@ import java.util.Set;
  * {@link DuckDBChunkedResult}：查询结果按引擎原生的 2048 行列向量批次返回，
  * 可以直接按列批量读取，避免逐值过 JNI。对大结果集的导出来说，这是数量级的差别。</p>
  *
- * <p><b>为什么不能无条件使用</b>：chunk 读取器只覆盖部分类型。DuckDB 2.0.0.1 的
+ * <p><b>为什么不能无条件使用</b>：chunk 读取器只覆盖部分类型。DuckDB 2.0.1.0 的
  * {@link DuckDBReadableVector} 没有 BLOB、TIME、UUID、INTERVAL、BIT、ENUM、LIST、STRUCT、
  * MAP、ARRAY、UNION、VARIANT、GEOMETRY 等类型的读取方法；对这些列调用
  * {@code chunk.vector(i)} 会直接报 {@code Failed to resolve vector type info}。
@@ -40,10 +40,10 @@ import java.util.Set;
 public final class CopyOutChunkReader implements AutoCloseable {
 
     /**
-     * 元数据里可以安全交给 chunk 路径的类型名（DuckDB 2.0.0.1 的规范名）。
+     * 元数据里可以安全交给 chunk 路径的类型名（DuckDB 2.0.1.0 的规范名）。
      *
      * <p>DECIMAL 带精度/标度（如 {@code DECIMAL(18,3)}），因此单独用前缀判断。
-     * JSON 在这里也列出：DuckDB 2.0.0.1 把 JSON 暴露成 VARCHAR 向量，{@code getString}
+     * JSON 在这里也列出：DuckDB 2.0.1.0 把 JSON 暴露成 VARCHAR 向量，{@code getString}
      * 与 ResultSet 的 {@code JsonNode.toString()} 输出一致；下面的向量类型校验会兜底。</p>
      *
      * <p>刻意不包含：BLOB、TIME、TIME_NS、TIME WITH TIME ZONE、UUID、INTERVAL、BIT、ENUM、

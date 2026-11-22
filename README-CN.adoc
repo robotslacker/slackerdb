@@ -3151,7 +3151,7 @@ image::img/dbcli-select42.png[dbcli 连接成功后执行 select 42]
 
 仅支持部分 DuckDB 数据类型，主要是简单类型，例如 int、number、double、varchar…… 复杂类型要么仍在 开发中，要么无法在 PG 协议中表示（blob、list、map……），它们会以显式错误被拒绝，而不是被静默转换。
 
-上游限制（基于 `duckdb_jdbc` 2.0.0.1；DuckDB 预计近期会升级，我们也会跟随调整）：
+上游限制（基于 `duckdb_jdbc` 2.0.1.0；DuckDB 预计近期会升级，我们也会跟随调整）：
 
 * `COPY ... FROM STDIN` 写入 `BIGNUM`：DuckDB JDBC appender 没有 BIGNUM 的 C API 类型（`unsupported C API type: 35`），SlackerDB 当前无法支持。
 * `COPY ... FROM STDIN` 写入 `BIT`、`INTERVAL`、`TIME_NS`、`VARIANT`：同样缺少 appender 类型，只能拒绝。

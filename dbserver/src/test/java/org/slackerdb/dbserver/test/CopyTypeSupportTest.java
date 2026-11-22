@@ -218,6 +218,14 @@ public class CopyTypeSupportTest {
             index++;
             String table = "copy_type_" + index;
             try (Connection conn = connect()) {
+                // Several cases share the udemo type, and each case leaves its table behind.
+                // CREATE OR REPLACE TYPE would then fail with "cannot drop ... depends on it",
+                // so start every case from a clean slate.
+                for (String leftover : tableNames(conn)) {
+                    if (leftover.startsWith("copy_type_")) {
+                        exec(conn, "DROP TABLE IF EXISTS \"" + leftover + "\"");
+                    }
+                }
                 if (tc.prelude() != null) {
                     exec(conn, tc.prelude());
                 }

@@ -465,6 +465,7 @@ public class SqlReplServer {
      */
     private void runTask(SqlSession session, String sql, int fetchSize, Long perExecMaxExecutionTime) {
         boolean overridden = perExecMaxExecutionTime != null;
+        boolean hasBudget = overridden && perExecMaxExecutionTime > 0;
         Long baseline = null;
         boolean gateHeld = false;
         final QueryConcurrencyGate gate = dbInstance.getReplQueryGate();
@@ -475,7 +476,7 @@ public class SqlReplServer {
                         ? session.pendingMaxExecutionTimeRestore
                         : withConnectionRetry(session, MaxExecutionTime::read);
             }
-            long gateWaitMs = overridden && perExecMaxExecutionTime > 0
+            long gateWaitMs = hasBudget
                     ? Math.min(gate.getWaitMs(), perExecMaxExecutionTime)
                     : gate.getWaitMs();
             long gateStart = System.nanoTime();
@@ -486,15 +487,18 @@ public class SqlReplServer {
                 return;
             }
             if (overridden) {
-                // 排队时间计入本次请求预算，避免"排队 30s + 执行 60s"
-                long remainingMs = QueryConcurrencyGate.remainingBudgetMs(perExecMaxExecutionTime, waitedMs);
-                if (remainingMs <= 0) {
-                    failTask(session, "Server busy: request budget exhausted while queued, retry later.");
-                    return;
+                long budgetMs = 0L;   // 0 = unlimited, same as max_execution_time=0
+                if (hasBudget) {
+                    // 排队时间计入本次请求预算，避免"排队 30s + 执行 60s"
+                    budgetMs = QueryConcurrencyGate.remainingBudgetMs(perExecMaxExecutionTime, waitedMs);
+                    if (budgetMs <= 0) {
+                        failTask(session, "Server busy: request budget exhausted while queued, retry later.");
+                        return;
+                    }
                 }
-                final long budgetMs = remainingMs;
+                final long applyMs = budgetMs;
                 withConnectionRetry(session, conn -> {
-                    MaxExecutionTime.apply(conn, budgetMs);
+                    MaxExecutionTime.apply(conn, applyMs);
                     return null;
                 });
             }

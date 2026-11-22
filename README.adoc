@@ -3263,7 +3263,7 @@ You can fill in anything; they have no effect.
 
 Only some DuckDB data types are supported, mainly simple types such as int, number, double, varchar, … Complex types are either still under development or cannot be represented in the PG protocol (blob, list, map…); they are rejected with an explicit error rather than silently converted.
 
-Upstream blockers as of `duckdb_jdbc` 2.0.0.1 (DuckDB is expected to be upgraded soon; we will follow):
+Upstream blockers as of `duckdb_jdbc` 2.0.1.0 (DuckDB is expected to be upgraded soon; we will follow):
 
 * `COPY ... FROM STDIN` into `BIGNUM`: DuckDB's JDBC appender has no BIGNUM C API type (`unsupported C API type: 35`), so SlackerDB cannot support it yet.
 * `COPY ... FROM STDIN` into `BIT`, `INTERVAL`, `TIME_NS`, or `VARIANT`: same missing appender type, so they are rejected too.

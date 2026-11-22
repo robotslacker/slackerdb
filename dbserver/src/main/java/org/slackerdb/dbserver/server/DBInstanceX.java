@@ -1241,9 +1241,10 @@ public class DBInstanceX {
                 session.put("status", dbSession.status);
                 session.put("executingFunction", dbSession.executingFunction);
                 session.put("executingSql", dbSession.executingSQL);
-                if (dbSession.executingTime != null) {
-                    session.put("executingTime", dbSession.executingTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
-                    session.put("executingDurationSeconds", Duration.between(dbSession.executingTime, currentTime).getSeconds());
+                LocalDateTime executingTime = dbSession.executingTime;
+                if (executingTime != null) {
+                    session.put("executingTime", executingTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+                    session.put("executingDurationSeconds", Duration.between(executingTime, currentTime).getSeconds());
                 }
                 sessions.add(session);
             }

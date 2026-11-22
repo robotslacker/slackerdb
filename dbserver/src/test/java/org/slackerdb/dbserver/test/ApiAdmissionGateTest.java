@@ -92,6 +92,14 @@ class ApiAdmissionGateTest {
                 "the same request must succeed once the slot is free");
     }
 
+    @Test
+    void zeroBudgetHeaderMeansUnlimited() throws Exception {
+        HttpResponse<String> response = get("/api/1.0/gateRows", "0");
+        assertEquals(200, response.statusCode(), response.body());
+        assertEquals(0, JSONObject.parseObject(response.body()).getIntValue("retCode"),
+                "maxExecutionTime=0 is the documented 'no limit' value: " + response.body());
+    }
+
     private static HttpResponse<String> get(String path, String maxExecutionTime) throws Exception {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create("http://127.0.0.1:" + apiPort + path))
